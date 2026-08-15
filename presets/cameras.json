@@ -1,0 +1,54 @@
+{
+  "$comment": "Camera preset library. Shared by the editor and the fixture builder. Presets are a convenience only: every intrinsic is copied inline into the plan when a camera is placed, so a plan opened without this file is still fully specified. intrinsicsSource records how much to trust the numbers -- see CONVENTIONS.md section 4.",
+  "version": "1.0.0",
+  "presets": [
+    {
+      "id": "flir-t650sc-25deg",
+      "label": "FLIR T650sc — 25° lens",
+      "modality": "LWIR",
+      "resolution_px": [640, 480],
+      "sensor_mm": [10.88, 8.16],
+      "focalLength_mm": 24.6,
+      "spectralBand_um": [7.5, 14.0],
+      "framerate_hz": 30,
+      "intrinsicsSource": "datasheet",
+      "$note": "640x480 microbolometer at 17 um pitch gives the sensor size; the 24.6 mm standard lens gives 24.9° x 18.8°."
+    },
+    {
+      "id": "mwir-640-25mm",
+      "label": "MWIR 640×512 — 25 mm lens",
+      "modality": "MWIR",
+      "resolution_px": [640, 512],
+      "sensor_mm": [9.6, 7.68],
+      "focalLength_mm": 25.0,
+      "spectralBand_um": [3.0, 5.0],
+      "framerate_hz": 60,
+      "intrinsicsSource": "nominal",
+      "$note": "Generic cooled InSb at 15 um pitch. PLACEHOLDER — replace with the actual model's figures before using a plan as a reconstruction prior."
+    },
+    {
+      "id": "gopro-hero-wide",
+      "label": "GoPro HERO — wide, 1080p",
+      "modality": "RGB",
+      "resolution_px": [1920, 1080],
+      "sensor_mm": [6.17, 3.47],
+      "focalLength_mm": 1.71,
+      "spectralBand_um": null,
+      "framerate_hz": 60,
+      "intrinsicsSource": "nominal",
+      "$note": "Approximates the ~122° wide mode as an ideal pinhole. The real lens is strongly non-rectilinear, so this is adequate for framing checks and NOT adequate for reconstruction — calibrate and populate `distortion` first."
+    },
+    {
+      "id": "iphone-main-26mm",
+      "label": "iPhone main camera — 26 mm equiv.",
+      "modality": "RGB",
+      "resolution_px": [4032, 3024],
+      "sensor_mm": [7.01, 5.26],
+      "focalLength_mm": 5.06,
+      "spectralBand_um": null,
+      "framerate_hz": 30,
+      "intrinsicsSource": "nominal",
+      "$note": "Tuned to the ~69° horizontal field of a 26 mm-equivalent main camera. Varies by model; verify before relying on it."
+    }
+  ]
+}

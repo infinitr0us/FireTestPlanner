@@ -1,0 +1,25 @@
+# Node / web
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+build/
+.venv/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# Desktop shell build output
+python/shell/build/
+python/shell/dist/
+*.spec

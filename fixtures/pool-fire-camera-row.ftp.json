@@ -1,0 +1,176 @@
+{
+  "format": "fire-test-plan",
+  "version": "1.0.0",
+  "meta": {
+    "title": "Pool fire — 4-camera row under calorimeter hood",
+    "testId": "EX-001",
+    "siteName": "Fire test bay",
+    "created": "2026-08-15T00:00:00Z",
+    "modified": "2026-08-15T00:00:00Z",
+    "revision": "A",
+    "notes": "Reference fixture reconstructed from the hand sketch in example.jpg. The camera row sits 9 ft back from the pan centre in X and is spread in Y, so each camera's radial standoff is a little over 9 ft. Note the framing consequence: an 18-19 degree vertical field at a ~3.1 m slant range covers barely a 1 m slice, so both IR cameras clip the 1.30 m flame at BOTH ends -- they miss the base as well as the tip, catching only about 70 percent of the plume. The two wide RGB cameras cover it entirely. Backing the IR row out to about 4.5 m frames the whole flame."
+  },
+  "units": {
+    "length": "m",
+    "angle": "rad",
+    "power": "kW",
+    "temperature": "C",
+    "display": {
+      "length": "ft",
+      "angle": "deg"
+    }
+  },
+  "coordinateSystem": {
+    "convention": "Z-up-right-handed",
+    "origin": "burner-center-floor"
+  },
+  "environment": {
+    "floorSize_m": [12.0, 12.0],
+    "ceilingHeight_m": null,
+    "ambientTemperature_C": 20.0,
+    "notes": "Open bay; hood is the only overhead structure."
+  },
+  "objects": [
+    {
+      "id": "burner-main",
+      "type": "burner",
+      "name": "Heptane pan, 1 ft square",
+      "transform": {
+        "position_m": [0.0, 0.0, 0.0]
+      },
+      "footprint": {
+        "shape": "square",
+        "size_m": [0.3048, 0.3048]
+      },
+      "rimHeight_m": 0.1,
+      "fire": {
+        "fuel": "n-heptane",
+        "hrr_kw": 130.0,
+        "hrrCurve": null
+      }
+    },
+    {
+      "id": "hood-main",
+      "type": "hood",
+      "name": "Calorimeter hood",
+      "transform": {
+        "position_m": [0.0, 0.0, 0.0]
+      },
+      "opening_m": [2.4384, 2.4384],
+      "height_m": 2.7432,
+      "skirtDepth_m": 0.3048,
+      "duct": {
+        "diameter_m": 0.6,
+        "length_m": 2.0
+      }
+    },
+    {
+      "id": "cam-mwir",
+      "type": "camera",
+      "name": "MWIR",
+      "transform": {
+        "position_m": [-2.7432, -0.75, 1.5],
+        "rotation_quat": [0.485146, -0.370311, -0.480632, 0.629679],
+        "aimTarget_m": [0.0, 0.0, 0.75]
+      },
+      "camera": {
+        "modality": "MWIR",
+        "presetId": "mwir-640-25mm",
+        "resolution_px": [640, 512],
+        "sensor_mm": [9.6, 7.68],
+        "focalLength_mm": 25.0,
+        "principalPoint_px": null,
+        "distortion": null,
+        "intrinsicsSource": "nominal",
+        "spectralBand_um": [3.0, 5.0],
+        "framerate_hz": 60
+      },
+      "mount": {
+        "type": "tripod",
+        "height_m": 1.5
+      },
+      "recording": null
+    },
+    {
+      "id": "cam-lwir-t650",
+      "type": "camera",
+      "name": "FLIR T650 LWIR",
+      "transform": {
+        "position_m": [-2.7432, -0.25, 1.5],
+        "rotation_quat": [0.448387, -0.409382, -0.535749, 0.586795],
+        "aimTarget_m": [0.0, 0.0, 0.75]
+      },
+      "camera": {
+        "modality": "LWIR",
+        "presetId": "flir-t650sc-25deg",
+        "resolution_px": [640, 480],
+        "sensor_mm": [10.88, 8.16],
+        "focalLength_mm": 24.6,
+        "principalPoint_px": null,
+        "distortion": null,
+        "intrinsicsSource": "datasheet",
+        "spectralBand_um": [7.5, 14.0],
+        "framerate_hz": 30
+      },
+      "mount": {
+        "type": "tripod",
+        "height_m": 1.5
+      },
+      "recording": null
+    },
+    {
+      "id": "cam-gopro",
+      "type": "camera",
+      "name": "GoPro",
+      "transform": {
+        "position_m": [-2.7432, 0.25, 1.2],
+        "rotation_quat": [0.436648, -0.478251, -0.562721, 0.51377],
+        "aimTarget_m": [0.0, 0.0, 0.75]
+      },
+      "camera": {
+        "modality": "RGB",
+        "presetId": "gopro-hero-wide",
+        "resolution_px": [1920, 1080],
+        "sensor_mm": [6.17, 3.47],
+        "focalLength_mm": 1.71,
+        "principalPoint_px": null,
+        "distortion": null,
+        "intrinsicsSource": "nominal",
+        "spectralBand_um": null,
+        "framerate_hz": 60
+      },
+      "mount": {
+        "type": "tripod",
+        "height_m": 1.2
+      },
+      "recording": null
+    },
+    {
+      "id": "cam-iphone",
+      "type": "camera",
+      "name": "iPhone",
+      "transform": {
+        "position_m": [-2.7432, 0.75, 1.2],
+        "rotation_quat": [0.394082, -0.516289, -0.604407, 0.461343],
+        "aimTarget_m": [0.0, 0.0, 0.75]
+      },
+      "camera": {
+        "modality": "RGB",
+        "presetId": "iphone-main-26mm",
+        "resolution_px": [4032, 3024],
+        "sensor_mm": [7.01, 5.26],
+        "focalLength_mm": 5.06,
+        "principalPoint_px": null,
+        "distortion": null,
+        "intrinsicsSource": "nominal",
+        "spectralBand_um": null,
+        "framerate_hz": 30
+      },
+      "mount": {
+        "type": "tripod",
+        "height_m": 1.2
+      },
+      "recording": null
+    }
+  ]
+}
