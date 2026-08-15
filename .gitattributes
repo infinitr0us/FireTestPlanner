@@ -1,0 +1,13 @@
+# Keep LF in the working tree on every platform.
+#
+# Not cosmetic: the canonical writer emits LF, and the round-trip test asserts that
+# the committed fixture is byte-identical to its own re-serialisation. Letting git
+# check it out with CRLF on Windows would break that test on a fresh clone.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
