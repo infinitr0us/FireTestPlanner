@@ -19,6 +19,10 @@ import {
 import { columnsToQuat, forwardOf, lookAtQuat, quatToColumns } from './math';
 import {
   burnerDiameterM,
+  ceilingAreaM2,
+  ceilingChecks,
+  ceilingCoversXY,
+  ceilings,
   checkPlan,
   flameTipZM,
   fxOf,
@@ -35,6 +39,7 @@ import {
 import { serializePlan } from './serialize';
 import type { CameraObject, PlanDocument } from './types';
 import { formatLength, parseLength } from './units';
+import { describeErrors, validateStructure } from './validate';
 
 const FIXTURE_PATH = fileURLToPath(new URL('../../../fixtures/pool-fire-camera-row.ftp.json', import.meta.url));
 const FIXTURE_TEXT = readFileSync(FIXTURE_PATH, 'utf8');
@@ -260,6 +265,190 @@ describe('plan checks', () => {
 
   it('flags a plan with no burner', () => {
     expect(codes(newPlan('empty'))).toContain('no-burner');
+  });
+});
+
+// -- ceilings -------------------------------------------------------------
+
+describe('ceilings', () => {
+  const planWith = (height: number, half = 3, offsetX = 0): PlanDocument => {
+    const doc = newPlan('ceiling');
+    doc.objects.push({
+      id: 'burner-main',
+      type: 'burner',
+      transform: { position_m: [0, 0, 0] },
+      footprint: { shape: 'square', size_m: [0.3048, 0.3048] },
+      rimHeight_m: 0.1,
+      fire: { fuel: 'n-heptane', hrr_kw: 130, hrrCurve: null },
+    } as never);
+    doc.objects.push({
+      id: 'ceiling-main',
+      type: 'ceiling',
+      transform: { position_m: [offsetX, 0, 0] },
+      polygon_m: [[-half, -half], [half, -half], [half, half], [-half, half]],
+      height_m: height,
+      thickness_m: 0.15,
+    } as never);
+    return doc;
+  };
+
+  const codes = (doc: PlanDocument): Set<string> =>
+    new Set(ceilingChecks(doc).map((i) => i.code));
+
+  it('flags a flame reaching the soffit', () => {
+    expect(codes(planWith(1.2))).toContain('ceiling-impingement');
+  });
+
+  it('warns on marginal clearance before it impinges', () => {
+    const found = codes(planWith(1.6));
+    expect(found).toContain('ceiling-clearance');
+    expect(found).not.toContain('ceiling-impingement');
+  });
+
+  it('stays silent under a high ceiling', () => {
+    expect(ceilingChecks(planWith(6))).toEqual([]);
+  });
+
+  it('ignores a slab that does not cover the fire', () => {
+    expect(ceilingChecks(planWith(1, 1, 10))).toEqual([]);
+  });
+
+  it('tests containment against the polygon, offset included', () => {
+    const slab = ceilings(planWith(3, 2))[0];
+    expect(ceilingCoversXY(slab, 0, 0)).toBe(true);
+    expect(ceilingCoversXY(slab, 1.99, 1.99)).toBe(true);
+    expect(ceilingCoversXY(slab, 2.01, 0)).toBe(false);
+    expect(ceilingCoversXY(slab, 0, -2.5)).toBe(false);
+  });
+
+  it('computes area by the shoelace formula, including concave slabs', () => {
+    expect(ceilingAreaM2(ceilings(planWith(3, 2.5))[0])).toBeCloseTo(25, 9);
+
+    const doc = newPlan('L');
+    doc.objects.push({
+      id: 'c',
+      type: 'ceiling',
+      polygon_m: [[0, 0], [4, 0], [4, 2], [2, 2], [2, 4], [0, 4]],
+      height_m: 3,
+    } as never);
+    expect(ceilingAreaM2(ceilings(doc)[0])).toBeCloseTo(12, 9);
+  });
+
+  it('agrees with the Python reader, which sees the same geometry', () => {
+    // Both implementations must reach the same verdict or the editor and the
+    // reader would disagree about whether a plan is sound.
+    expect(codes(planWith(1.2))).toContain('ceiling-impingement');
+    expect(ceilingChecks(planWith(6))).toEqual([]);
+  });
+
+  it('serialises in canonical key order', () => {
+    const doc = newPlan('order');
+    doc.objects.push({
+      thickness_m: 0.15,
+      height_m: 3,
+      type: 'ceiling',
+      polygon_m: [[0, 0], [1, 0], [1, 1]],
+      id: 'c',
+    } as never);
+    expect(Object.keys(JSON.parse(serializePlan(doc)).objects[0]))
+      .toEqual(['id', 'type', 'polygon_m', 'height_m', 'thickness_m']);
+  });
+});
+
+// -- load-time validation -------------------------------------------------
+
+describe('structural validation', () => {
+  const codesOf = (doc: PlanDocument): Set<string> =>
+    new Set(validateStructure(doc).map((i) => i.code));
+
+  const withObject = (raw: unknown): PlanDocument => {
+    const doc = newPlan('validation');
+    doc.objects.push(raw as never);
+    return doc;
+  };
+
+  it('accepts the reference fixture', () => {
+    expect(validateStructure(fixture())).toEqual([]);
+  });
+
+  it('accepts a fresh empty plan', () => {
+    expect(validateStructure(newPlan('empty'))).toEqual([]);
+  });
+
+  // These mirror the cases python/tests/test_roundtrip.py asserts the JSON Schema
+  // rejects. Keeping the two lists aligned is what stops the browser check from
+  // drifting away from the normative schema.
+  it('rejects a camera missing its intrinsics', () => {
+    const found = codesOf(withObject({
+      id: 'cam', type: 'camera',
+      camera: { modality: 'RGB', resolution_px: [640, 480] },
+    }));
+    expect(found).toContain('bad-sensor');
+    expect(found).toContain('bad-focal-length');
+  });
+
+  it('rejects a populated recording block, which v1 reserves', () => {
+    expect(codesOf(withObject({
+      id: 'cam', type: 'camera',
+      camera: { modality: 'RGB', resolution_px: [640, 480], sensor_mm: [6, 4.5], focalLength_mm: 4 },
+      recording: { path: 'video.mp4' },
+    }))).toContain('reserved-recording');
+  });
+
+  it('rejects a circular burner with no diameter', () => {
+    expect(codesOf(withObject({
+      id: 'b', type: 'burner', footprint: { shape: 'circle', size_m: [1, 1] },
+    }))).toContain('bad-diameter');
+  });
+
+  it('rejects a ceiling with too few polygon points', () => {
+    expect(codesOf(withObject({
+      id: 'c', type: 'ceiling', polygon_m: [[0, 0], [1, 0]], height_m: 3,
+    }))).toContain('bad-polygon');
+  });
+
+  it('rejects duplicate ids', () => {
+    const doc = newPlan('dupes');
+    for (let i = 0; i < 2; i += 1) {
+      doc.objects.push({ id: 'same', type: 'burner', footprint: { shape: 'circle', diameter_m: 0.3 } } as never);
+    }
+    expect(codesOf(doc)).toContain('duplicate-id');
+  });
+
+  it('rejects a non-metric declaration', () => {
+    const doc = newPlan('imperial');
+    (doc.units as unknown as Record<string, unknown>).length = 'ft';
+    expect(codesOf(doc)).toContain('bad-units');
+  });
+
+  it('rejects NaN and missing coordinates rather than letting them reach the renderer', () => {
+    expect(codesOf(withObject({
+      id: 'b', type: 'burner',
+      transform: { position_m: [0, Number.NaN, 0] },
+      footprint: { shape: 'circle', diameter_m: 0.3 },
+    }))).toContain('bad-position');
+
+    expect(codesOf(withObject({
+      id: 'b2', type: 'burner',
+      transform: { position_m: [0, 0] },
+      footprint: { shape: 'circle', diameter_m: 0.3 },
+    }))).toContain('bad-position');
+  });
+
+  it('leaves unknown object types alone', () => {
+    expect(validateStructure(withObject({
+      id: 'tc', type: 'thermocoupleTree', heights_m: [0.5, 1],
+    }))).toEqual([]);
+  });
+
+  it('summarises errors for a dialog without dumping all of them', () => {
+    const doc = newPlan('many');
+    for (let i = 0; i < 20; i += 1) {
+      doc.objects.push({ id: `h${i}`, type: 'hood', opening_m: [0, 0], height_m: -1 } as never);
+    }
+    const text = describeErrors(validateStructure(doc));
+    expect(text).toContain('…and');
+    expect(text.split('\n').length).toBeLessThanOrEqual(9);
   });
 });
 

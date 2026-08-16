@@ -8,12 +8,14 @@
  */
 
 import { defaultAimTarget } from '../core/factory';
-import { lookAtQuat, quatToColumns } from '../core/math';
+import { lookAtQuat } from '../core/math';
 import {
   burnerDiameterM,
   burnerFlameHeightM,
+  ceilingAreaM2,
+  ceilingCoversXY,
   flameTipZM,
-  fuelSurfaceZM,
+  framingOf,
   fxOf,
   fyOf,
   groundSampleDistanceM,
@@ -21,6 +23,7 @@ import {
   hoodIntakeHeightM,
   isBurner,
   isCamera,
+  isCeiling,
   isHood,
   isWall,
   plumeRadiusAtZ,
@@ -36,6 +39,7 @@ import { formatLength, formatLengthWithUnit } from '../core/units';
 import type {
   BurnerObject,
   CameraObject,
+  CeilingObject,
   HoodObject,
   IntrinsicsSource,
   LengthUnit,
@@ -132,6 +136,7 @@ export class Inspector {
     else if (isBurner(obj)) this.renderBurner(obj, unit);
     else if (isHood(obj)) this.renderHood(obj, unit);
     else if (isWall(obj)) this.renderWall(obj, unit);
+    else if (isCeiling(obj)) this.renderCeiling(obj, unit);
     else this.renderUnknown(obj);
 
     this.root.append(sectionTitle('Display'));
@@ -335,8 +340,7 @@ export class Inspector {
       readout('Resolution at the fire', `${(groundSampleDistanceM(cam) * 1000).toFixed(2)} mm/px`),
     ];
 
-    const burner = primaryBurner(this.store.document);
-    const framing = burner ? this.framing(cam, burner) : null;
+    const framing = framingOf(this.store.document, cam);
     if (framing) {
       items.push(
         readout('Flame base in frame', framing.base ? 'yes' : 'no', framing.base ? 'good' : 'bad'),
@@ -356,59 +360,6 @@ export class Inspector {
 
     this.root.append(sectionTitle('Coverage'));
     this.root.append(h('div', { class: 'readouts' }, items));
-  }
-
-  /** Project the plume envelope and report what lands inside the image.
-   *  Mirrors Plan.framing() in the Python reader. */
-  private framing(
-    cam: CameraObject,
-    burner: BurnerObject,
-  ): { base: boolean; tip: boolean; fraction: number } | null {
-    const baseZ = fuelSurfaceZM(burner);
-    const tipZ = flameTipZM(burner);
-    if (tipZ === null) return null;
-    const bp = positionOf(burner);
-
-    const samples: Vec3[] = [];
-    const rings = 24;
-    for (let i = 0; i < rings; i += 1) {
-      const z = baseZ + ((tipZ - baseZ) * i) / (rings - 1);
-      const r = plumeRadiusAtZ(burner, z) ?? 0;
-      for (const a of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
-        samples.push([bp[0] + r * Math.cos(a), bp[1] + r * Math.sin(a), z]);
-      }
-    }
-
-    const visible = samples.filter((p) => this.projectVisible(cam, p)).length;
-    return {
-      base: this.projectVisible(cam, [bp[0], bp[1], baseZ]),
-      tip: this.projectVisible(cam, [bp[0], bp[1], tipZ]),
-      fraction: visible / samples.length,
-    };
-  }
-
-  private projectVisible(cam: CameraObject, point: Vec3): boolean {
-    const q = cam.transform?.rotation_quat ?? [0, 0, 0, 1];
-    const p = positionOf(cam);
-
-    // World -> camera in the OpenCV frame: X right, Y down, Z forward. The stored
-    // frame is OpenGL, so y and z flip (CONVENTIONS.md section 3).
-    const cols = quatToColumns(q);
-    const right = cols[0];
-    const down: Vec3 = [-cols[1][0], -cols[1][1], -cols[1][2]];
-    const fwd: Vec3 = [-cols[2][0], -cols[2][1], -cols[2][2]];
-    const d: Vec3 = [point[0] - p[0], point[1] - p[1], point[2] - p[2]];
-
-    const z = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
-    if (z <= 0) return false; // behind the camera; never a false positive
-    const x = d[0] * right[0] + d[1] * right[1] + d[2] * right[2];
-    const y = d[0] * down[0] + d[1] * down[1] + d[2] * down[2];
-
-    const [w, hgt] = cam.camera.resolution_px;
-    const [cx, cy] = principalPointOf(cam);
-    const u = (fxOf(cam) * x) / z + cx;
-    const v = (fyOf(cam) * y) / z + cy;
-    return u >= 0 && u <= w - 1 && v >= 0 && v <= hgt - 1;
   }
 
   // -- burner ------------------------------------------------------------
@@ -593,6 +544,73 @@ export class Inspector {
       })));
     }
     this.root.append(h('div', { class: 'panel__actions' }, actions));
+  }
+
+  // -- ceiling -----------------------------------------------------------
+
+  private renderCeiling(slab: CeilingObject, unit: LengthUnit): void {
+    this.root.append(sectionTitle('Ceiling'));
+    this.root.append(
+      row(`Soffit height (${unit})`,
+        lengthField(slab.height_m, unit, (m) =>
+          this.patch(slab.id, 'Set ceiling height', (o) => {
+            (o as CeilingObject).height_m = Math.max(0.1, m);
+          })),
+        'Underside above the floor — the surface a flame impinges on'),
+      row(`Thickness (${unit})`,
+        lengthField(slab.thickness_m ?? 0.1, unit, (m) =>
+          this.patch(slab.id, 'Set ceiling thickness', (o) => {
+            (o as CeilingObject).thickness_m = Math.max(0.01, m);
+          }))),
+    );
+
+    this.root.append(sectionTitle('Footprint'));
+    slab.polygon_m.forEach((pt, i) => {
+      this.root.append(row(`Point ${i + 1} (${unit})`,
+        vecField(pt, unit, ['X', 'Y'], (axis, m) =>
+          this.patch(slab.id, 'Move ceiling point', (o) => {
+            const poly = (o as CeilingObject).polygon_m.map((q) => [...q] as [number, number]);
+            poly[i][axis] = m;
+            (o as CeilingObject).polygon_m = poly;
+          }))));
+    });
+
+    const actions: HTMLElement[] = [
+      button('Add point', () => this.patch(slab.id, 'Add ceiling point', (o) => {
+        const c = o as CeilingObject;
+        const last = c.polygon_m[c.polygon_m.length - 1];
+        c.polygon_m = [...c.polygon_m, [last[0] + 1, last[1]]];
+      })),
+    ];
+    if (slab.polygon_m.length > 3) {
+      actions.push(button('Remove last', () => this.patch(slab.id, 'Remove ceiling point', (o) => {
+        const c = o as CeilingObject;
+        c.polygon_m = c.polygon_m.slice(0, -1);
+      })));
+    }
+    this.root.append(h('div', { class: 'panel__actions' }, actions));
+
+    const burner = primaryBurner(this.store.document);
+    const items: HTMLElement[] = [
+      readout('Slab area', `${ceilingAreaM2(slab).toFixed(2)} m²`),
+      readout('Covers the fire',
+        burner && ceilingCoversXY(slab, positionOf(burner)[0], positionOf(burner)[1]) ? 'yes' : 'no',
+        'muted'),
+    ];
+    if (burner) {
+      const tip = flameTipZM(burner);
+      if (tip !== null) {
+        const clearance = slab.height_m - tip;
+        items.push(readout('Flame tip clearance', formatLengthWithUnit(clearance, unit),
+          clearance > 0.2 * slab.height_m ? 'good' : 'bad'));
+        items.push(h('p', { class: 'readout__note' }, [
+          'Flame on a ceiling spreads as a ceiling jet, and the free-plume correlations ' +
+          'used elsewhere here stop applying.',
+        ]));
+      }
+    }
+    this.root.append(sectionTitle('Clearance'));
+    this.root.append(h('div', { class: 'readouts' }, items));
   }
 
   private renderUnknown(obj: PlanObject): void {

@@ -18,7 +18,7 @@ reader returns OpenCV by default because that is what reconstruction tooling wan
 
 from . import correlations
 from ._math import look_at_quat, matrix_to_quat, quat_to_matrix
-from .objects import Burner, Camera, Hood, PlanObject, UnknownObject, Wall
+from .objects import Burner, Camera, Ceiling, Hood, PlanObject, UnknownObject, Wall
 from .plan import FORMAT, VERSION, Issue, Plan, PlanError
 from .serialize import dumps as dumps_canonical
 
@@ -32,6 +32,7 @@ __all__ = [
     "Burner",
     "Hood",
     "Wall",
+    "Ceiling",
     "PlanObject",
     "UnknownObject",
     "correlations",

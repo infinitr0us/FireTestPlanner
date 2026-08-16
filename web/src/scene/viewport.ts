@@ -22,23 +22,27 @@ import {
   hfovRadOf,
   isCamera,
   positionOf,
+  quatOf,
   standoffHorizontalM,
   vfovRadOf,
 } from '../core/plan';
 import { formatLengthWithUnit, gridStep } from '../core/units';
+import { makeLabel } from './labels';
 import type {
   BurnerObject,
   CameraObject,
+  CeilingObject,
   HoodObject,
   PlanObject,
   WallObject,
 } from '../core/types';
-import type { Store } from '../state/store';
+import { isOrthoMode, type Store } from '../state/store';
 import {
   LAYER_DEFAULT,
   LAYER_EDITOR,
   buildBurner,
   buildCamera,
+  buildCeiling,
   buildHood,
   buildStandoffDimension,
   buildWall,
@@ -99,6 +103,19 @@ export class Viewport {
   private frameHandle = 0;
   private disposed = false;
 
+  /** Proxy the gizmo drives when more than one object is selected. */
+  private pivot = new THREE.Object3D();
+  private pivotStart = new THREE.Matrix4();
+  private dragStart = new Map<string, { position: THREE.Vector3; quaternion: THREE.Quaternion }>();
+
+  private measureRoot = new THREE.Group();
+  private measurePoints: THREE.Vector3[] = [];
+  /** Completed measurements, kept out of the document: this is a ruler, not a
+   *  drawing annotation, and it should not survive a save. */
+  private measurements: Array<[THREE.Vector3, THREE.Vector3]> = [];
+  measureMode = false;
+  onMeasureChange: (count: number) => void = () => {};
+
   onSelect: (id: string | null, additive: boolean) => void = () => {};
   /** When set, the next viewport click places an object instead of selecting one. */
   placementMode = false;
@@ -128,7 +145,8 @@ export class Viewport {
     container.appendChild(this.previewFrame);
 
     this.scene.background = new THREE.Color(0x0f172a);
-    this.scene.add(this.contentRoot, this.furnitureRoot, this.dimensionRoot);
+    this.scene.add(this.contentRoot, this.furnitureRoot, this.dimensionRoot, this.measureRoot);
+    this.scene.add(this.pivot);
 
     this.perspective = new THREE.PerspectiveCamera(50, 1, 0.05, 500);
     this.perspective.position.set(-7, -7, 5);
@@ -221,16 +239,22 @@ export class Viewport {
     this.gizmo.addEventListener('dragging-changed', (e) => {
       this.dragging = Boolean(e.value);
       this.activeOrbit.enabled = !this.dragging;
-      if (!this.dragging) {
+      if (this.dragging) {
+        if (this.gizmo.object === this.pivot) this.beginGroupDrag();
+      } else {
         // Rebuild only once the drag ends: derived geometry (plume, frustum reach,
         // dimensions) depends on the transform, but rebuilding mid-drag would
         // detach the gizmo from under the pointer every frame.
         this.store.commit();
+        this.dragStart.clear();
         this.rebuild();
       }
     });
 
-    this.gizmo.addEventListener('objectChange', () => this.writeBackGizmo());
+    this.gizmo.addEventListener('objectChange', () => {
+      if (this.gizmo.object === this.pivot) this.applyGroupDrag();
+      else this.writeBackGizmo();
+    });
 
     this.renderer.domElement.addEventListener('pointerdown', this.onPointerDown);
   }
@@ -246,9 +270,97 @@ export class Viewport {
       return;
     }
 
+    if (this.measureMode) {
+      const point = this.pickPoint(event.clientX, event.clientY);
+      if (point) this.addMeasurePoint(point);
+      return;
+    }
+
     const hit = this.pick(event.clientX, event.clientY);
     this.onSelect(hit, event.shiftKey || event.ctrlKey || event.metaKey);
   };
+
+  // -- measuring ---------------------------------------------------------
+
+  setMeasureMode(on: boolean): void {
+    this.measureMode = on;
+    if (!on) this.measurePoints.length = 0;
+    this.redrawMeasurements();
+  }
+
+  clearMeasurements(): void {
+    this.measurements.length = 0;
+    this.measurePoints.length = 0;
+    this.redrawMeasurements();
+    this.onMeasureChange(0);
+  }
+
+  private addMeasurePoint(point: THREE.Vector3): void {
+    this.measurePoints.push(point);
+    if (this.measurePoints.length === 2) {
+      this.measurements.push([this.measurePoints[0], this.measurePoints[1]]);
+      this.measurePoints.length = 0;
+      this.onMeasureChange(this.measurements.length);
+    }
+    this.redrawMeasurements();
+  }
+
+  private redrawMeasurements(): void {
+    this.disposeTree(this.measureRoot);
+    const unit = this.store.displayUnit;
+
+    const marker = (p: THREE.Vector3, color: number): THREE.Object3D => {
+      const dot = new THREE.Mesh(
+        new THREE.SphereGeometry(0.045, 12, 8),
+        new THREE.MeshBasicMaterial({ color, depthTest: false }),
+      );
+      dot.position.copy(p);
+      dot.renderOrder = 10;
+      return dot;
+    };
+
+    for (const [a, b] of this.measurements) {
+      this.measureRoot.add(marker(a, 0x34d399), marker(b, 0x34d399));
+
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([a, b]),
+        new THREE.LineBasicMaterial({ color: 0x34d399, depthTest: false }),
+      );
+      line.renderOrder = 10;
+      this.measureRoot.add(line);
+
+      const distance = a.distanceTo(b);
+      const dz = Math.abs(b.z - a.z);
+      const label = makeLabel(
+        dz > 1e-3
+          ? `${formatLengthWithUnit(distance, unit)}  (Δz ${formatLengthWithUnit(dz, unit)})`
+          : formatLengthWithUnit(distance, unit),
+        'dimension',
+      );
+      label.position.copy(a).add(b).multiplyScalar(0.5);
+      this.measureRoot.add(label);
+    }
+
+    // The pending first click of an unfinished measurement.
+    for (const p of this.measurePoints) this.measureRoot.add(marker(p, 0xfbbf24));
+
+    this.measureRoot.traverse((o) => o.layers.set(LAYER_EDITOR));
+  }
+
+  /** Exact surface point under the cursor, falling back to the floor plane. */
+  private pickPoint(clientX: number, clientY: number): THREE.Vector3 | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.activeCamera);
+    this.raycaster.layers.set(LAYER_DEFAULT);
+
+    const hits = this.raycaster.intersectObjects(this.contentRoot.children, true);
+    if (hits.length > 0) return hits[0].point.clone();
+    return this.screenToGround(clientX, clientY);
+  }
 
   /** Object id under the cursor, or null. */
   pick(clientX: number, clientY: number): string | null {
@@ -324,24 +436,63 @@ export class Viewport {
 
   // -- cameras -----------------------------------------------------------
 
+  /** True only for the top-down view, which is the one that hides ceilings. */
   private get isPlanMode(): boolean {
     return this.store.viewMode === 'plan';
   }
 
+  private get isOrtho(): boolean {
+    return isOrthoMode(this.store.viewMode);
+  }
+
   private get activeCamera(): THREE.Camera {
-    return this.isPlanMode ? this.ortho : this.perspective;
+    return this.isOrtho ? this.ortho : this.perspective;
   }
 
   private get activeOrbit(): OrbitControls {
-    return this.isPlanMode ? this.orbitOrtho : this.orbitPerspective;
+    return this.isOrtho ? this.orbitOrtho : this.orbitPerspective;
   }
 
   syncViewMode(): void {
-    const plan = this.isPlanMode;
-    this.orbitOrtho.enabled = plan;
-    this.orbitPerspective.enabled = !plan;
+    const ortho = this.isOrtho;
+    this.orbitOrtho.enabled = ortho;
+    this.orbitPerspective.enabled = !ortho;
     this.gizmo.camera = this.activeCamera;
+
+    if (ortho) this.orientOrthoCamera();
     this.resize();
+    // Ceilings are hidden in plan mode, so scene content depends on the mode.
+    this.rebuild();
+  }
+
+  /**
+   * Point the shared orthographic camera along the axis its mode implies.
+   *
+   * OrbitControls derives orientation from position and target on update, so
+   * setting those plus `up` is enough -- no explicit lookAt needed.
+   */
+  private orientOrthoCamera(): void {
+    const target = this.orbitOrtho.target;
+    switch (this.store.viewMode) {
+      case 'plan':
+        this.ortho.up.set(0, 1, 0);
+        this.ortho.position.set(target.x, target.y, ORTHO_ELEVATION);
+        break;
+      case 'front':
+        // Looking north (+Y), so the XZ plane faces the viewer.
+        this.ortho.up.set(0, 0, 1);
+        this.ortho.position.set(target.x, target.y - ORTHO_ELEVATION, target.z);
+        break;
+      case 'side':
+        // Looking east (+X) from the west, so the YZ plane faces the viewer with
+        // +Y to the right. Matches the side elevation in the exported drawing.
+        this.ortho.up.set(0, 0, 1);
+        this.ortho.position.set(target.x - ORTHO_ELEVATION, target.y, target.z);
+        break;
+      default:
+        break;
+    }
+    this.ortho.updateProjectionMatrix();
   }
 
   /**
@@ -375,6 +526,11 @@ export class Viewport {
           box.expandByPoint(new THREE.Vector3(p[0] + x, p[1] + y, p[2]));
           box.expandByPoint(new THREE.Vector3(p[0] + x, p[1] + y, p[2] + wall.height_m));
         }
+      } else if (obj.type === 'ceiling') {
+        const slab = obj as CeilingObject;
+        for (const [x, y] of slab.polygon_m) {
+          box.expandByPoint(new THREE.Vector3(p[0] + x, p[1] + y, slab.height_m));
+        }
       }
     }
 
@@ -393,8 +549,9 @@ export class Viewport {
     const dir = new THREE.Vector3(-1, -1, 0.65).normalize();
     this.perspective.position.copy(center).addScaledVector(dir, radius * 2.4);
 
-    this.orbitOrtho.target.set(center.x, center.y, 0);
-    this.ortho.position.set(center.x, center.y, ORTHO_ELEVATION);
+    // Elevations look at the mid-height of the content; plan looks at the floor.
+    this.orbitOrtho.target.set(center.x, center.y, this.isPlanMode ? 0 : center.z);
+    this.orientOrthoCamera();
 
     // Zoom is a ratio of world units, NOT pixels: the frustum is already
     // ORTHO_HALF_HEIGHT world units tall, scaled sideways by the aspect ratio.
@@ -435,6 +592,7 @@ export class Viewport {
     }
 
     this.setupFurniture();
+    this.redrawMeasurements(); // labels are rebuilt with the current display unit
     this.syncSelection();
   }
 
@@ -446,6 +604,10 @@ export class Viewport {
         return buildHood(obj as never);
       case 'wall':
         return buildWall(obj as never);
+      case 'ceiling':
+        // Hidden in plan mode, the way a floor plan cuts below the ceiling --
+        // otherwise the slab covers everything the top-down view is for.
+        return this.isPlanMode ? null : buildCeiling(obj as never);
       case 'camera':
         return buildCamera(obj as never, this.options.showFrustums);
       default:
@@ -471,16 +633,84 @@ export class Viewport {
   // -- selection ---------------------------------------------------------
 
   syncSelection(): void {
-    const sole = this.store.soleSelected;
-    const group = sole ? this.objectGroups.get(sole.id) : undefined;
+    const selected = this.store.selected.filter((o) => o.display?.locked !== true);
 
-    if (group && sole?.display?.locked !== true) {
-      this.gizmo.attach(group);
+    if (selected.length === 1) {
+      const group = this.objectGroups.get(selected[0].id);
+      if (group) this.gizmo.attach(group);
+      else this.gizmo.detach();
+    } else if (selected.length > 1) {
+      // Multi-select drives a pivot rather than any one object: the gizmo moves the
+      // pivot, and the drag is replayed onto every member as a rigid transform, so
+      // the group keeps its internal arrangement.
+      const centre = new THREE.Vector3();
+      for (const obj of selected) {
+        const p = positionOf(obj);
+        centre.add(new THREE.Vector3(p[0], p[1], p[2]));
+      }
+      centre.divideScalar(selected.length);
+      this.pivot.position.copy(centre);
+      this.pivot.quaternion.identity();
+      this.pivot.updateMatrixWorld(true);
+      this.gizmo.attach(this.pivot);
     } else {
       this.gizmo.detach();
     }
+
     this.refreshSelectionBox();
     this.updatePreviewCamera();
+  }
+
+  /** Snapshot the transforms a multi-object drag will be applied to. */
+  private beginGroupDrag(): void {
+    this.pivotStart.copy(this.pivot.matrix);
+    this.dragStart.clear();
+    for (const obj of this.store.selected) {
+      if (obj.display?.locked === true) continue;
+      const p = positionOf(obj);
+      const q = quatOf(obj);
+      this.dragStart.set(obj.id, {
+        position: new THREE.Vector3(p[0], p[1], p[2]),
+        quaternion: new THREE.Quaternion(q[0], q[1], q[2], q[3]),
+      });
+    }
+  }
+
+  /**
+   * Replay the pivot's movement onto every selected object.
+   *
+   * delta = pivotNow * pivotStart^-1, applied to each object's starting matrix, so
+   * rotation carries the members around the pivot instead of spinning them in place.
+   */
+  private applyGroupDrag(): void {
+    if (this.dragStart.size === 0) return;
+
+    const inverse = this.pivotStart.clone().invert();
+    const delta = this.pivot.matrix.clone().multiply(inverse);
+
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    const rotating = this.gizmo.getMode() === 'rotate';
+
+    this.store.edit('Move selection', (doc) => {
+      for (const [id, start] of this.dragStart) {
+        const obj = findObject(doc, id);
+        if (!obj) continue;
+
+        const startMatrix = new THREE.Matrix4().compose(
+          start.position, start.quaternion, new THREE.Vector3(1, 1, 1),
+        );
+        delta.clone().multiply(startMatrix).decompose(position, quaternion, scale);
+
+        const t = obj.transform ?? (obj.transform = { position_m: [0, 0, 0] });
+        t.position_m = [position.x, position.y, position.z];
+        if (rotating) {
+          t.rotation_quat = [quaternion.x, quaternion.y, quaternion.z, quaternion.w];
+          t.aimTarget_m = null; // a hand rotation invalidates the recorded intent
+        }
+      }
+    });
   }
 
   private refreshSelectionBox(): void {
@@ -635,6 +865,7 @@ export class Viewport {
     this.disposeTree(this.contentRoot);
     this.disposeTree(this.dimensionRoot);
     this.disposeTree(this.furnitureRoot);
+    this.disposeTree(this.measureRoot);
     this.gizmo.detach();
     this.gizmo.dispose();
     this.orbitPerspective.dispose();

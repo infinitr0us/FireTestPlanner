@@ -12,7 +12,15 @@ import type { LengthUnit, PlanDocument, PlanObject } from '../core/types';
 
 const HISTORY_LIMIT = 100;
 
-export type ViewMode = 'plan' | '3d';
+/**
+ * Four standard views. The three orthographic ones share a camera and differ only
+ * in direction, which is how engineers actually read a layout: plan for footprint
+ * and standoff, elevations for heights.
+ */
+export type ViewMode = 'plan' | 'front' | 'side' | '3d';
+
+export const ORTHO_MODES: ViewMode[] = ['plan', 'front', 'side'];
+export const isOrthoMode = (m: ViewMode): boolean => ORTHO_MODES.includes(m);
 export type StoreEvent = 'document' | 'selection' | 'view' | 'dirty';
 type Listener = (event: StoreEvent) => void;
 

@@ -108,6 +108,99 @@ def test_hood_checks_stay_silent_with_no_hood():
     assert plan.hood_checks() == []
 
 
+# -- ceiling checks ------------------------------------------------------
+
+def _plan_with_ceiling(height_m, half_extent_m=3.0, offset_m=0.0, hrr_kw=130.0):
+    plan = Plan.new("ceiling test")
+    plan.add({
+        "id": "burner-main",
+        "type": "burner",
+        "transform": {"position_m": [0.0, 0.0, 0.0]},
+        "footprint": {"shape": "square", "size_m": [0.3048, 0.3048]},
+        "rimHeight_m": 0.1,
+        "fire": {"fuel": "n-heptane", "hrr_kw": hrr_kw, "hrrCurve": None},
+    })
+    h = half_extent_m
+    plan.add({
+        "id": "ceiling-main",
+        "type": "ceiling",
+        "transform": {"position_m": [offset_m, 0.0, 0.0]},
+        "polygon_m": [[-h, -h], [h, -h], [h, h], [-h, h]],
+        "height_m": height_m,
+        "thickness_m": 0.15,
+    })
+    return plan
+
+
+def test_flame_reaching_the_ceiling_is_an_error():
+    """130 kW on a 1 ft pan gives a ~1.30 m flame tip; a 1.2 m ceiling is inside it."""
+    plan = _plan_with_ceiling(height_m=1.2)
+    assert "ceiling-impingement" in codes(plan.ceiling_checks())
+
+
+def test_marginal_ceiling_clearance_is_a_warning():
+    plan = _plan_with_ceiling(height_m=1.6)
+    found = codes(plan.ceiling_checks())
+    assert "ceiling-clearance" in found
+    assert "ceiling-impingement" not in found
+
+
+def test_a_high_ceiling_is_silent():
+    assert codes(_plan_with_ceiling(height_m=6.0).ceiling_checks()) == set()
+
+
+def test_a_ceiling_that_does_not_cover_the_fire_is_ignored():
+    """A slab off to one side is not a ceiling for this burner, however low it is."""
+    plan = _plan_with_ceiling(height_m=1.0, half_extent_m=1.0, offset_m=10.0)
+    assert plan.ceiling_checks() == []
+
+
+def test_ceiling_containment_is_exact_at_the_edges():
+    plan = _plan_with_ceiling(height_m=3.0, half_extent_m=2.0)
+    ceiling = plan.ceilings[0]
+    assert ceiling.contains_xy(0.0, 0.0)
+    assert ceiling.contains_xy(1.99, 1.99)
+    assert not ceiling.contains_xy(2.01, 0.0)
+    assert not ceiling.contains_xy(0.0, -2.5)
+
+
+def test_ceiling_area_uses_the_shoelace_formula():
+    plan = _plan_with_ceiling(height_m=3.0, half_extent_m=2.5)
+    assert plan.ceilings[0].area_m2 == pytest.approx(25.0)  # 5 m x 5 m
+
+
+def test_ceiling_area_handles_a_non_rectangular_slab():
+    plan = Plan.new("L-shaped")
+    plan.add({
+        "id": "c", "type": "ceiling",
+        "polygon_m": [[0, 0], [4, 0], [4, 2], [2, 2], [2, 4], [0, 4]],
+        "height_m": 3.0,
+    })
+    # 4x2 leg plus 2x2 leg = 12 m2.
+    assert plan.ceilings[0].area_m2 == pytest.approx(12.0)
+
+
+def test_ceiling_checks_stay_silent_without_hrr():
+    plan = _plan_with_ceiling(height_m=1.0)
+    plan.burner.raw["fire"]["hrr_kw"] = None
+    assert plan.ceiling_checks() == []
+
+
+def test_ceiling_appears_in_the_equipment_table():
+    plan = _plan_with_ceiling(height_m=3.0, half_extent_m=2.0)
+    row = next(r for r in plan.equipment_table() if r["category"] == "ceiling")
+    assert "16.0 m2" in row["detail"]
+    assert row["height_m"] == pytest.approx(3.0)
+
+
+def test_ceiling_round_trips_and_validates():
+    plan = _plan_with_ceiling(height_m=3.0)
+    plan.validate_schema()
+    reloaded = Plan.loads(plan.dumps())
+    assert reloaded.dumps() == plan.dumps()
+    assert reloaded.ceilings[0].height_m == 3.0
+
+
 # -- plan hygiene --------------------------------------------------------
 
 def test_duplicate_ids_are_an_error():

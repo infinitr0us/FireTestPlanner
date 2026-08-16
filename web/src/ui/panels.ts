@@ -3,6 +3,7 @@
 import {
   createBurner,
   createCamera,
+  createCeiling,
   createHood,
   createWall,
   defaultCameraPosition,
@@ -18,6 +19,7 @@ const TYPE_ICON: Record<string, string> = {
   burner: '▲',
   hood: '⌂',
   wall: '▬',
+  ceiling: '▭',
 };
 
 export class Palette {
@@ -35,12 +37,12 @@ export class Palette {
 
     this.root.append(h('h3', { class: 'panel__section' }, ['Add']));
 
-    const geometry = h('div', { class: 'palette__grid' }, [
+    this.root.append(h('div', { class: 'palette__grid' }, [
       this.tile('▲', 'Fuel pan', () => createBurner(this.store.document, [0, 0, 0])),
       this.tile('⌂', 'Hood', () => createHood(this.store.document)),
       this.tile('▬', 'Wall', () => createWall(this.store.document)),
-    ]);
-    this.root.append(geometry);
+      this.tile('▭', 'Ceiling', () => createCeiling(this.store.document)),
+    ]));
 
     this.root.append(h('h3', { class: 'panel__section' }, ['Cameras']));
     this.root.append(

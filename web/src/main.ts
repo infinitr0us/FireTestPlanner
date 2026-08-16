@@ -2,8 +2,9 @@
 
 import examplePlan from '../../fixtures/pool-fire-camera-row.ftp.json';
 
-import { newPlan } from './core/plan';
+import { newPlan, parsePlan } from './core/plan';
 import type { LengthUnit, PlanDocument } from './core/types';
+import { describeErrors, validateStructure } from './core/validate';
 import {
   buildShareableHtml,
   captureBootHtml,
@@ -19,6 +20,7 @@ import { Store } from './state/store';
 import { h, qs } from './ui/dom';
 import { Inspector } from './ui/inspector';
 import { ChecksPanel, Outliner, Palette } from './ui/panels';
+import { ReportOverlay } from './ui/report-overlay';
 import './styles.css';
 
 // Must run before anything mutates the DOM: 'export shareable viewer' hands
@@ -33,9 +35,33 @@ const checks = new ChecksPanel(qs('#checks'), store);
 const palette = new Palette(qs('#palette'), store, (armed) => {
   viewport.placementMode = armed;
   document.body.classList.toggle('is-placing', armed);
+  if (armed && measuring) toggleMeasure();
 });
 
+viewport.onMeasureChange = (count) => {
+  measurementCount = count;
+  renderToolbar();
+};
+
+const reportOverlay = new ReportOverlay((html, name) => { void saveShareableHtml(html, name); });
+
 let gizmoMode: GizmoMode = 'translate';
+let measuring = false;
+let measurementCount = 0;
+
+/** Placement and measuring both consume viewport clicks, so only one can be armed. */
+function toggleMeasure(): void {
+  measuring = !measuring;
+  if (measuring) palette.cancel();
+  viewport.setMeasureMode(measuring);
+  document.body.classList.toggle('is-measuring', measuring);
+  renderToolbar();
+}
+
+function clearMeasurements(): void {
+  viewport.clearMeasurements();
+  renderToolbar();
+}
 
 // -- wiring ---------------------------------------------------------------
 
@@ -88,20 +114,26 @@ function renderToolbar(): void {
     ]),
 
     group([
+      btn('Drawing…', openDrawing,
+        'Dimensioned plan and elevations, equipment list and coverage — print to PDF'),
       btn('Share…', exportShareable,
         'Export a single self-contained HTML file with this plan baked in'),
     ]),
 
     group([
       toggle('Plan', store.viewMode === 'plan', () => store.setViewMode('plan'), 'Top-down orthographic (1)'),
-      toggle('3D', store.viewMode === '3d', () => store.setViewMode('3d'), 'Perspective orbit (2)'),
+      toggle('Front', store.viewMode === 'front', () => store.setViewMode('front'), 'Front elevation, looking +Y (2)'),
+      toggle('Side', store.viewMode === 'side', () => store.setViewMode('side'), 'Side elevation, looking −X (3)'),
+      toggle('3D', store.viewMode === '3d', () => store.setViewMode('3d'), 'Perspective orbit (4)'),
     ]),
 
     group([
       toggle('Move', gizmoMode === 'translate', () => setGizmo('translate'), 'G'),
       toggle('Rotate', gizmoMode === 'rotate', () => setGizmo('rotate'), 'R'),
       toggle('Snap', opts.snap, () => viewport.setOptions({ snap: !opts.snap })),
-    ]),
+      toggle('Measure', measuring, toggleMeasure, 'Click two points for a distance (M)'),
+      measurementCount > 0 ? btn('Clear', clearMeasurements, 'Remove all measurements') : null,
+    ].filter(Boolean) as HTMLElement[]),
 
     group([
       toggle('Frustums', opts.showFrustums, () => viewport.setOptions({ showFrustums: !opts.showFrustums })),
@@ -163,7 +195,23 @@ async function openPlan(): Promise<void> {
   try {
     const result = await openPlanText();
     if (!result) return;
-    store.loadFromText(result.text, result.name);
+
+    // Validate before adopting it. A structurally broken plan would otherwise
+    // reach the renderer as NaN geometry, which is far harder to diagnose than
+    // being told which object is malformed.
+    const doc = parsePlan(result.text);
+    const errors = validateStructure(doc);
+    if (errors.length > 0) {
+      window.alert(
+        `${result.name} is not a valid fire test plan:\n\n${describeErrors(errors)}\n\n` +
+        'Nothing was loaded. Fix the file, or validate it with ' +
+        '`python -c "from fireplan import Plan; Plan.load(path).validate_schema()"` ' +
+        'for the full schema report.',
+      );
+      return;
+    }
+
+    store.replaceDocument(doc, result.name);
     viewport.frameAll();
   } catch (err) {
     window.alert(`Could not open that file.\n\n${(err as Error).message}`);
@@ -193,6 +241,14 @@ function loadExample(): void {
   viewport.frameAll();
 }
 
+function openDrawing(): void {
+  reportOverlay.open(
+    store.document,
+    store.displayUnit,
+    suggestFileName().replace(/\.ftp\.json$/, '') + '-drawing.html',
+  );
+}
+
 async function exportShareable(): Promise<void> {
   if (!isSingleFileBuild() && !shell()) {
     window.alert(
@@ -217,6 +273,12 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
+  // The drawing preview owns the keyboard while it is up.
+  if (reportOverlay.isOpen) {
+    if (e.key === 'Escape') reportOverlay.close();
+    return;
+  }
+
   const ctrl = e.ctrlKey || e.metaKey;
   if (ctrl && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); store.undo(); return; }
   if (ctrl && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
@@ -233,13 +295,17 @@ window.addEventListener('keydown', (e) => {
       break;
     case 'Escape':
       palette.cancel();
+      if (measuring) toggleMeasure();
       store.select([]);
       break;
     case 'g': case 'G': setGizmo('translate'); break;
     case 'r': case 'R': setGizmo('rotate'); break;
+    case 'm': case 'M': toggleMeasure(); break;
     case 'f': case 'F': viewport.frameAll(); break;
     case '1': store.setViewMode('plan'); break;
-    case '2': store.setViewMode('3d'); break;
+    case '2': store.setViewMode('front'); break;
+    case '3': store.setViewMode('side'); break;
+    case '4': store.setViewMode('3d'); break;
     default: break;
   }
 });

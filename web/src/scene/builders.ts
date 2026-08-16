@@ -31,6 +31,7 @@ import {
 import type {
   BurnerObject,
   CameraObject,
+  CeilingObject,
   HoodObject,
   PlanObject,
   WallObject,
@@ -45,6 +46,7 @@ export const COLORS = {
   hood: 0x38bdf8,
   duct: 0x0ea5e9,
   wall: 0x94a3b8,
+  ceiling: 0xcbd5e1,
   cameraBody: 0x334155,
 };
 
@@ -344,6 +346,57 @@ export function buildWall(wall: WallObject): THREE.Group {
 
     travelled += segLen;
   }
+
+  return group;
+}
+
+// -- ceiling --------------------------------------------------------------
+
+/**
+ * Slab extruded upward from its underside.
+ *
+ * Translucent because an opaque ceiling would hide the entire scene the moment
+ * you orbit above it; plan mode hides ceilings outright, the way a floor plan does.
+ */
+export function buildCeiling(c: CeilingObject): THREE.Group {
+  const group = new THREE.Group();
+  applyTransform(group, c);
+
+  const shape = new THREE.Shape();
+  c.polygon_m.forEach(([x, y], i) => (i === 0 ? shape.moveTo(x, y) : shape.lineTo(x, y)));
+  shape.closePath();
+
+  const thickness = c.thickness_m ?? 0.1;
+  const slab = new THREE.Mesh(
+    new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false }),
+    new THREE.MeshStandardMaterial({
+      color: COLORS.ceiling,
+      roughness: 0.95,
+      metalness: 0,
+      transparent: true,
+      opacity: 0.32,
+      side: THREE.DoubleSide,
+    }),
+  );
+  slab.position.z = c.height_m;
+  group.add(slab);
+
+  // Hard outline on the soffit: that is the plane the impingement check judges.
+  const outline = new THREE.LineLoop(
+    new THREE.BufferGeometry().setFromPoints(
+      c.polygon_m.map(([x, y]) => new THREE.Vector3(x, y, c.height_m)),
+    ),
+    new THREE.LineBasicMaterial({ color: COLORS.ceiling }),
+  );
+  group.add(outline);
+
+  const centroid = c.polygon_m.reduce(
+    (acc, [x, y]) => [acc[0] + x / c.polygon_m.length, acc[1] + y / c.polygon_m.length],
+    [0, 0],
+  );
+  const label = makeLabel(displayName(c), 'object');
+  label.position.set(centroid[0], centroid[1], c.height_m + thickness + 0.15);
+  group.add(label);
 
   return group;
 }

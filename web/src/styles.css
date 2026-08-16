@@ -32,6 +32,7 @@ html, body {
 
 body { display: flex; flex-direction: column; }
 body.is-placing .viewport { cursor: crosshair; }
+body.is-measuring .viewport { cursor: cell; }
 
 /* -- toolbar ------------------------------------------------------------ */
 
@@ -339,6 +340,43 @@ body.is-placing .viewport { cursor: crosshair; }
 .btn:hover { border-color: var(--accent); }
 .btn--danger { color: var(--bad); }
 .btn--danger:hover { border-color: var(--bad); }
+
+/* -- drawing preview ---------------------------------------------------- */
+
+.report-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: #e2e8f0;
+}
+
+.report-overlay__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.report-overlay__title { font-weight: 600; }
+.report-overlay__hint { flex: 1; color: var(--text-faint); font-size: 12px; }
+
+.report-overlay__body { flex: 1; overflow-y: auto; }
+.report-overlay__body .report { max-width: 940px; margin: 0 auto; padding: 28px 24px 64px; }
+
+/* Printing prints the drawing, not the editor behind it. */
+@media print {
+  body > *:not(.report-overlay) { display: none !important; }
+  .report-overlay { position: static; background: #fff; }
+  .report-overlay__body { overflow: visible; }
+  .report-overlay__body .report { max-width: none; padding: 0; }
+  .no-print { display: none !important; }
+  .drawing { break-inside: avoid; }
+  tr { break-inside: avoid; }
+}
+@page { size: A4 portrait; margin: 14mm; }
 
 /* -- scrollbars --------------------------------------------------------- */
 

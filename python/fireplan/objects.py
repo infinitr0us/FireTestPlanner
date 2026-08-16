@@ -427,6 +427,47 @@ class Wall(PlanObject):
         return float(np.sum(np.linalg.norm(np.diff(p, axis=0), axis=1)))
 
 
+class Ceiling(PlanObject):
+    @property
+    def polygon_m(self) -> np.ndarray:
+        return np.asarray(self.raw["polygon_m"], dtype=float)
+
+    @property
+    def height_m(self) -> float:
+        """Underside above the floor -- the surface a flame impinges on."""
+        return float(self.raw["height_m"])
+
+    @property
+    def thickness_m(self) -> float:
+        return float(self.raw.get("thickness_m") or 0.1)
+
+    @property
+    def area_m2(self) -> float:
+        """Shoelace formula over the closed polygon."""
+        p = self.polygon_m
+        x, y = p[:, 0], p[:, 1]
+        return float(abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))) / 2.0)
+
+    def contains_xy(self, x: float, y: float) -> bool:
+        """Point-in-polygon by ray casting, in the ceiling's own local XY.
+
+        Used so a slab off to one side does not claim a flame impinges on it.
+        """
+        p = self.polygon_m
+        origin = self.position
+        inside = False
+        n = len(p)
+        for i in range(n):
+            x0, y0 = p[i] + origin[:2]
+            x1, y1 = p[(i + 1) % n] + origin[:2]
+            # Half-open edge test avoids double-counting a vertex on the ray.
+            if (y0 > y) != (y1 > y):
+                t = (y - y0) / (y1 - y0)
+                if x < x0 + t * (x1 - x0):
+                    inside = not inside
+        return inside
+
+
 class UnknownObject(PlanObject):
     """An object type this version does not recognise.
 
@@ -434,7 +475,13 @@ class UnknownObject(PlanObject):
     """
 
 
-TYPE_MAP = {"camera": Camera, "burner": Burner, "hood": Hood, "wall": Wall}
+TYPE_MAP = {
+    "camera": Camera,
+    "burner": Burner,
+    "hood": Hood,
+    "wall": Wall,
+    "ceiling": Ceiling,
+}
 
 
 def wrap(raw: Dict[str, Any]) -> PlanObject:

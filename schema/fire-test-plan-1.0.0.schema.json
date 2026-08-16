@@ -398,6 +398,35 @@
       }
     },
 
+    "ceiling": {
+      "allOf": [{ "$ref": "#/$defs/objectCommon" }],
+      "type": "object",
+      "required": ["id", "type", "polygon_m", "height_m"],
+      "additionalProperties": false,
+      "description": "A horizontal slab. Together with walls this covers the building geometry a fire test needs: the tool targets open bays and simple enclosures, not detailed room layouts.",
+      "properties": {
+        "id": true, "type": { "const": "ceiling" }, "name": true,
+        "transform": true, "display": true, "notes": true,
+
+        "polygon_m": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/vec2" },
+          "minItems": 3,
+          "description": "Plan-view outline in world XY. Assumed closed; do not repeat the first point."
+        },
+        "height_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Height of the UNDERSIDE above the floor. This is the surface a flame impinges on, so it is the one measured."
+        },
+        "thickness_m": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0,
+          "description": "Slab thickness, extruded upward from the underside."
+        }
+      }
+    },
+
     "unknown": {
       "description": "Any object type this version does not recognise. Preserved verbatim on load and re-emitted unchanged on save, so a newer plan opened in an older tool does not silently lose objects.",
       "type": "object",
@@ -427,6 +456,10 @@
         {
           "if": { "properties": { "type": { "const": "wall" } }, "required": ["type"] },
           "then": { "$ref": "#/$defs/wall" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "ceiling" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/ceiling" }
         }
       ]
     }

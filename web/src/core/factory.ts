@@ -7,6 +7,7 @@ import { specFromPreset, type CameraPreset } from './presets';
 import type {
   BurnerObject,
   CameraObject,
+  CeilingObject,
   HoodObject,
   PlanDocument,
   Vec3,
@@ -66,6 +67,25 @@ export function createWall(doc: PlanDocument, position: Vec3 = [0, 0, 0]): WallO
     thickness_m: 0.1,
     baseHeight_m: 0,
     openings: [],
+  };
+}
+
+export function createCeiling(doc: PlanDocument, position: Vec3 = [0, 0, 0]): CeilingObject {
+  const [x, y] = position;
+  const half = 3;
+  return {
+    id: nextId(doc, 'ceiling'),
+    type: 'ceiling',
+    name: 'Ceiling',
+    transform: { position_m: [0, 0, 0] },
+    polygon_m: [
+      [x - half, y - half],
+      [x + half, y - half],
+      [x + half, y + half],
+      [x - half, y + half],
+    ],
+    height_m: 3,
+    thickness_m: 0.15,
   };
 }
 

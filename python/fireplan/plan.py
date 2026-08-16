@@ -13,7 +13,7 @@ import numpy as np
 
 from . import serialize
 from ._math import normalize
-from .objects import Burner, Camera, Hood, PlanObject, Wall, wrap
+from .objects import Burner, Camera, Ceiling, Hood, PlanObject, Wall, wrap
 
 FORMAT = "fire-test-plan"
 VERSION = "1.0.0"
@@ -163,6 +163,10 @@ class Plan:
         return list(self._of_type("wall"))
 
     @property
+    def ceilings(self) -> List[Ceiling]:
+        return list(self._of_type("ceiling"))
+
+    @property
     def burner(self) -> Burner:
         """The primary burner: the one at the origin, which by definition is the
         one the coordinate system was built around."""
@@ -260,6 +264,7 @@ class Plan:
                     issues.append(Issue("info", "no-hrr", "no hrr_kw, so flame and plume geometry cannot be drawn", b.id))
 
         issues.extend(self.hood_checks())
+        issues.extend(self.ceiling_checks())
         return issues
 
     # -- fire geometry ---------------------------------------------------
@@ -323,6 +328,50 @@ class Plan:
                           "draught or an off-centre fire".format(plume_d, opening), hood.id)
                 )
 
+        return issues
+
+    def ceiling_checks(self) -> List[Issue]:
+        """Flame reaching a ceiling slab above the fire.
+
+        Distinct from the hood check and worth its own: a flame on a ceiling stops
+        behaving as a free plume, spreads as a ceiling jet, and invalidates the
+        correlations this tool draws everything else with. Only slabs whose
+        footprint actually covers the burner count.
+        """
+        issues: List[Issue] = []
+        ceilings = self.ceilings
+        if not ceilings:
+            return issues
+        try:
+            burner = self.burner
+            if burner.hrr_kw is None:
+                return issues
+        except PlanError:
+            return issues
+
+        tip = burner.flame_tip_z_m()
+        bx, by = float(burner.position[0]), float(burner.position[1])
+
+        for ceiling in ceilings:
+            if ceiling.height_m <= burner.fuel_surface_z_m:
+                continue  # below the fire; not a ceiling for this burner
+            if not ceiling.contains_xy(bx, by):
+                continue  # off to one side
+
+            if tip >= ceiling.height_m:
+                issues.append(
+                    Issue("error", "ceiling-impingement",
+                          "mean flame tip reaches {:.2f} m, at or above the ceiling soffit at "
+                          "{:.2f} m -- the fire will spread as a ceiling jet and the free-plume "
+                          "correlations no longer apply".format(tip, ceiling.height_m), ceiling.id)
+                )
+            elif tip > 0.8 * ceiling.height_m:
+                issues.append(
+                    Issue("warning", "ceiling-clearance",
+                          "mean flame tip at {:.2f} m leaves only {:.2f} m below the ceiling; "
+                          "an intermittent tip will reach higher"
+                          .format(tip, ceiling.height_m - tip), ceiling.id)
+                )
         return issues
 
     # -- camera framing --------------------------------------------------
@@ -452,6 +501,13 @@ class Plan:
                 "id": wl.id, "name": wl.name, "category": "wall",
                 "detail": "{:.2f} m long, {:.2f} m high".format(wl.length_m, wl.height_m),
                 "standoff_m": None, "height_m": round(wl.height_m, 3),
+                "hfov_deg": None, "intrinsics": None,
+            })
+        for cl in self.ceilings:
+            rows.append({
+                "id": cl.id, "name": cl.name, "category": "ceiling",
+                "detail": "{:.1f} m2 slab, soffit at {:.2f} m".format(cl.area_m2, cl.height_m),
+                "standoff_m": None, "height_m": round(cl.height_m, 3),
                 "hfov_deg": None, "intrinsics": None,
             })
         return rows

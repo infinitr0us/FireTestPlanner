@@ -37,6 +37,7 @@ const OBJECT_ORDER: Record<string, string[]> = {
   burner: ['id', 'type', 'name', 'transform', 'footprint', 'rimHeight_m', 'fire', 'display', 'notes'],
   hood: ['id', 'type', 'name', 'transform', 'opening_m', 'height_m', 'skirtDepth_m', 'duct', 'display', 'notes'],
   wall: ['id', 'type', 'name', 'transform', 'polyline_m', 'height_m', 'thickness_m', 'baseHeight_m', 'openings', 'display', 'notes'],
+  ceiling: ['id', 'type', 'name', 'transform', 'polygon_m', 'height_m', 'thickness_m', 'display', 'notes'],
 };
 const OBJECT_FALLBACK = ['id', 'type', 'name', 'transform', 'display', 'notes'];
 

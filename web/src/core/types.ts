@@ -102,6 +102,15 @@ export interface WallObject extends BaseObject {
   openings?: WallOpening[];
 }
 
+export interface CeilingObject extends BaseObject {
+  type: 'ceiling';
+  /** Plan-view outline in world XY. Assumed closed; the first point is not repeated. */
+  polygon_m: Vec2[];
+  /** Height of the UNDERSIDE above the floor — the surface a flame impinges on. */
+  height_m: number;
+  thickness_m?: number | null;
+}
+
 /** Any type this build does not know. Held so it survives a load/save cycle. */
 export interface UnknownObject extends BaseObject {
   [key: string]: unknown;
@@ -112,6 +121,7 @@ export type PlanObject =
   | BurnerObject
   | HoodObject
   | WallObject
+  | CeilingObject
   | UnknownObject;
 
 export interface PlanMeta {
@@ -168,7 +178,8 @@ export const isCamera = (o: PlanObject): o is CameraObject => o.type === 'camera
 export const isBurner = (o: PlanObject): o is BurnerObject => o.type === 'burner';
 export const isHood = (o: PlanObject): o is HoodObject => o.type === 'hood';
 export const isWall = (o: PlanObject): o is WallObject => o.type === 'wall';
+export const isCeiling = (o: PlanObject): o is CeilingObject => o.type === 'ceiling';
 
-export const KNOWN_TYPES = ['camera', 'burner', 'hood', 'wall'] as const;
+export const KNOWN_TYPES = ['camera', 'burner', 'hood', 'wall', 'ceiling'] as const;
 export const isKnownType = (t: string): boolean =>
   (KNOWN_TYPES as readonly string[]).includes(t);
