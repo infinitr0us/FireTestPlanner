@@ -189,19 +189,44 @@ provisional until verified against datasheets.
 
 ## 7. Milestones
 
-| # | Milestone | Contents | Exit criteria |
+| # | Milestone | Contents | Status |
 |---|---|---|---|
-| M0 | **Contract** | JSON Schema, `fireplan` reader, convention docs, fixture files | Round-trip test green; a hand-written fixture loads in Python and yields correct `K` and extrinsics |
-| M1 | **Scene core** | Vite + TS + Three.js, Z-up world, scaled grid, ortho/persp toggle, orbit | A fixture `.ftp.json` renders read-only and is navigable |
-| M2 | **Editing** | Palette drag-in, transform gizmo, grid + object snapping, unit-aware inspector, undo/redo, multi-select, duplicate | Reproduce the `example.jpg` layout from scratch in the UI |
-| M3 | **Cameras** | Preset library, frustum, PIP preview, aim-at-target, coverage warnings | Each of the four sketch cameras placed with correct FOV; PIP matches expectation |
-| M4 | **Geometry** | Burner shapes + HRR + plume cone, hood + skirt + duct, walls/floor/openings | Full sketch reproduced including hood |
-| M5 | **Share** | Save/load, single-file HTML export with plan embedded, dimensions + measure tool | Exported `.html` opens on a clean machine and orbits |
-| M6 | **Drawing** | Plan + elevation to PDF/PNG with dimension lines; equipment table | Output is staple-to-a-protocol quality |
-| M7 | **Desktop** | pywebview shell, native dialogs, recent files, PyInstaller exe | Single `.exe` runs on a clean Windows 11 box |
-| M8 | **Flame** *(Phase 2)* | Import reconstructed 3D flame; time sequence playback | Deferred — blocked on format decision |
+| M0 | **Contract** | JSON Schema, `fireplan` reader, convention docs, fixture | **done** — 80 tests |
+| M1 | **Scene core** | Vite + TS + Three.js, Z-up world, scaled grid, ortho/persp toggle, orbit | **done** |
+| M2 | **Editing** | Palette placement, transform gizmo, grid snapping, unit-aware inspector, undo/redo, multi-select, duplicate | **done** |
+| M3 | **Cameras** | Preset library, frustum, PIP preview, aim-at-target, coverage readout | **done** |
+| M4 | **Geometry** | Burner shapes + HRR + plume cone, hood + skirt + duct, walls with openings | **done** |
+| M5 | **Share** | Save/load, single-file HTML export with plan embedded, standoff dimensions | **done** — measure tool still to do |
+| M6 | **Drawing** | Plan + elevation to PDF/PNG with dimension lines; equipment table | next |
+| M7 | **Desktop** | pywebview shell, native dialogs, recent files, PyInstaller exe | next |
+| M8 | **Flame** *(Phase 2)* | Import reconstructed 3D flame; time sequence playback | blocked on format decision |
 
-M0 through M5 is the substance of the work. M6 and M7 are mechanical once the core exists.
+### What the reference layout demonstrates
+
+Loading `fixtures/pool-fire-camera-row.ftp.json` and selecting each camera shows the
+trade-off the tool exists to surface. At the sketch's 9 ft standoff:
+
+| Camera | Field of view | Plume in frame | Resolution at the fire |
+|---|---|---|---|
+| FLIR T650 LWIR | 24.9° × 18.8° | 72% — clips base *and* tip | 2.17 mm/px |
+| MWIR 640×512 | 21.7° × 17.5° | 71% — clips base *and* tip | 2.34 mm/px |
+| GoPro (wide) | 122° × 90.8° | 100% | 5.65 mm/px |
+| iPhone | 69.4° × 54.9° | 100% | 1.05 mm/px |
+
+An 18–19° vertical field at ~3.1 m covers barely a 1 m slice, and the flame is
+1.30 m tall. Backing the IR row out to about 4.5 m frames it completely — at the
+cost of resolution. That is a decision worth making before hauling gear to a site,
+and it is the whole argument for the frustum and preview being in v1.
+
+### Remaining work in the current milestones
+
+- **Measure tool** — click two objects, get the distance, drop a dimension line.
+- **Elevation views** — front/side orthographic, for setting heights the way the
+  sketch does.
+- **Multi-select transform** — the gizmo currently attaches to a single object.
+- **Schema validation in the editor** — the Python reader validates against the
+  JSON Schema; the browser does not yet, so a hand-edited file can load with
+  structural errors that only `check()` catches.
 
 ## 8. Open questions
 
