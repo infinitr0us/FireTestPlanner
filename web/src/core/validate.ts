@@ -10,6 +10,7 @@
  * cases the Python schema test rejects.
  */
 
+import { HEX_COLOR, parsePlan } from './plan';
 import type { Issue, PlanDocument, PlanObject } from './types';
 import { FORMAT } from './types';
 
@@ -68,6 +69,15 @@ export function validateStructure(doc: PlanDocument): Issue[] {
     if (typeof obj.type !== 'string' || obj.type.length === 0) {
       err('bad-type', `Object "${obj.id}" has no type.`, obj.id);
       return;
+    }
+
+    // Advisory, but it reaches HTML and SVG attributes in the drawing export, so a
+    // value the schema would reject is rejected here too rather than sanitised
+    // silently at each consumer.
+    const color = obj.display?.color;
+    if (color !== undefined && color !== null && !(typeof color === 'string' && HEX_COLOR.test(color))) {
+      err('bad-color',
+        `Object "${obj.id}" has display.color ${JSON.stringify(color)}; expected "#rrggbb".`, obj.id);
     }
 
     const t = obj.transform;
@@ -178,4 +188,28 @@ export function describeErrors(issues: Issue[], limit = 8): string {
   const lines = issues.slice(0, limit).map((i) => `  • ${i.message}`);
   if (issues.length > limit) lines.push(`  • …and ${issues.length - limit} more.`);
   return lines.join('\n');
+}
+
+/** Thrown by `parseAndValidatePlan`, carrying the issues for the caller to show. */
+export class PlanValidationError extends Error {
+  constructor(readonly issues: Issue[]) {
+    super(describeErrors(issues));
+    this.name = 'PlanValidationError';
+  }
+}
+
+/**
+ * The single load boundary: parse, validate, and only then hand back a document.
+ *
+ * Every entry point goes through here -- Open, a plan named on the desktop shell's
+ * command line, and a plan baked into a shared page -- so the same file is accepted
+ * or rejected identically however it arrives. Validating before anything adopts the
+ * document is the point: `replaceDocument` mutates store state before it emits, so a
+ * document that fails a builder halfway through would already be installed.
+ */
+export function parseAndValidatePlan(text: string): PlanDocument {
+  const doc = parsePlan(text);
+  const errors = validateStructure(doc);
+  if (errors.length > 0) throw new PlanValidationError(errors);
+  return doc;
 }

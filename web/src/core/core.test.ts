@@ -16,15 +16,17 @@ import {
   plumeRadiusM,
   virtualOriginM,
 } from './correlations';
-import { columnsToQuat, forwardOf, lookAtQuat, quatToColumns } from './math';
+import { angleBetweenDeg, columnsToQuat, forwardOf, lookAtQuat, quatToColumns, sub } from './math';
 import {
   burnerDiameterM,
+  cameraColor,
   ceilingAreaM2,
   ceilingChecks,
   ceilingCoversXY,
   ceilings,
   checkPlan,
   flameTipZM,
+  footprintXY,
   fxOf,
   hfovDegOf,
   hoodChecks,
@@ -34,16 +36,23 @@ import {
   principalPointOf,
   standoffHorizontalM,
   standoffM,
+  toLocal,
+  toWorld,
   vfovDegOf,
 } from './plan';
 import { serializePlan } from './serialize';
-import type { CameraObject, PlanDocument } from './types';
+import { setPosition, setRotation } from './transform';
+import type { CameraObject, CeilingObject, PlanDocument, Quat, Vec3 } from './types';
 import { formatLength, parseLength } from './units';
 import { describeErrors, validateStructure } from './validate';
 
 const FIXTURE_PATH = fileURLToPath(new URL('../../../fixtures/pool-fire-camera-row.ftp.json', import.meta.url));
 const FIXTURE_TEXT = readFileSync(FIXTURE_PATH, 'utf8');
 const fixture = (): PlanDocument => parsePlan(FIXTURE_TEXT);
+
+const FWD_COMPAT_PATH = fileURLToPath(new URL('../../../fixtures/forward-compat.ftp.json', import.meta.url));
+const FWD_COMPAT_TEXT = readFileSync(FWD_COMPAT_PATH, 'utf8');
+const FWD_COMPAT = (): PlanDocument => parsePlan(FWD_COMPAT_TEXT);
 
 // -- serialisation parity -------------------------------------------------
 
@@ -74,6 +83,43 @@ describe('canonical serialisation', () => {
     expect(raw.junctionType).toBe('K');
   });
 
+  it('reproduces the forward-compatibility fixture byte for byte', () => {
+    // The unknown-object half of the Python parity contract. If this fails, one
+    // writer has started tidying data the format does not define.
+    expect(serializePlan(FWD_COMPAT())).toBe(FWD_COMPAT_TEXT);
+  });
+
+  it('keeps unknown objects out of the canonical rounding and reordering', () => {
+    // CONVENTIONS.md section 6 promises byte-identical re-emission. Rounding a
+    // coefficient whose units we do not know, or sorting fields against a schema we
+    // have never seen, silently corrupts a plan from a newer tool.
+    const doc = newPlan('fwd compat');
+    doc.objects.push({
+      zzz_trailingKey: 'must stay last',
+      id: 'spec-1',
+      type: 'spectrometer',
+      calibration: { coefficient: 1.23456789 },
+    } as never);
+
+    const raw = parsePlan(serializePlan(doc)).objects[0] as Record<string, unknown>;
+    expect((raw.calibration as Record<string, number>).coefficient).toBe(1.23456789);
+    expect(Object.keys(raw)).toEqual(['zzz_trailingKey', 'id', 'type', 'calibration']);
+  });
+
+  it('still rounds the transform of an unknown object', () => {
+    // The editor can drag an unrecognised object, and gizmo output is raw float
+    // noise -- transform is a format 1.0 block this version does own.
+    const doc = newPlan('fwd compat');
+    doc.objects.push({
+      id: 'spec-1',
+      type: 'spectrometer',
+      transform: { position_m: [0.123456789, 0, 0] },
+    } as never);
+
+    const raw = parsePlan(serializePlan(doc)).objects[0] as Record<string, unknown>;
+    expect((raw.transform as { position_m: number[] }).position_m[0]).toBe(0.123457);
+  });
+
   it('emits keys in canonical order regardless of input order', () => {
     const doc = newPlan('ordering');
     doc.objects.push({
@@ -98,6 +144,25 @@ describe('canonical serialisation', () => {
     const text = serializePlan(doc);
     expect(text).toContain('"position_m": [2.7432, 0.123457, 0]');
     expect(text).not.toContain('-0.0');
+  });
+
+  it('spells exotic numbers exactly as the Python writer does', () => {
+    // Mirror of test_roundtrip.py's parity table. JSON.stringify is the reference
+    // spelling and serialize.py reproduces it, so these strings are what BOTH writers
+    // must emit -- inside an unknown object, where nothing rounds them first.
+    const doc = newPlan('exotic numbers');
+    doc.objects.push({
+      id: 'spec-1',
+      type: 'spectrometer',
+      calibration: { dark: 1.23e-8, floor: 1e-6, scale: 1e16, big: 2 ** 60, huge: 1e21 },
+    } as never);
+
+    const text = serializePlan(doc);
+    expect(text).toContain('"dark": 1.23e-8');
+    expect(text).toContain('"floor": 0.000001');
+    expect(text).toContain('"scale": 10000000000000000');
+    expect(text).toContain('"big": 1152921504606847000');
+    expect(text).toContain('"huge": 1e+21');
   });
 
   it('does not rewrite numeric-looking text inside strings', () => {
@@ -248,6 +313,61 @@ describe('plan checks', () => {
     expect(new Set(hoodChecks(doc).map((i) => i.code))).toContain('plume-spillage');
   });
 
+  // -- hood placement ----------------------------------------------------
+  //
+  // A hood only captures the plume it is actually over. Judging capture from the
+  // opening size alone lets a hood parked in the next bay report clean, which is a
+  // false negative on a measurement-validity check.
+
+  const hoodAt = (position: Vec3, quat?: Quat): PlanDocument => {
+    const doc = fixture();
+    const hood = doc.objects.find((o) => o.type === 'hood')!;
+    hood.transform = { position_m: position, ...(quat ? { rotation_quat: quat } : {}) };
+    return doc;
+  };
+
+  it('flags a hood that is nowhere near the burner', () => {
+    const found = hoodChecks(hoodAt([100, 100, 0]));
+    expect(found.map((i) => i.code)).toContain('hood-offset');
+    // And it does not also claim the plume merely lacks margin.
+    expect(found.map((i) => i.code)).not.toContain('plume-margin');
+  });
+
+  it('flags a hood nudged just past the burner', () => {
+    // The reference opening is 8 ft; half of that plus a hair puts the burner out.
+    const halfOpening = (8 * 0.3048) / 2;
+    expect(hoodChecks(hoodAt([halfOpening + 0.01, 0, 0])).map((i) => i.code))
+      .toContain('hood-offset');
+    expect(hoodChecks(hoodAt([halfOpening - 0.01, 0, 0])).map((i) => i.code))
+      .not.toContain('hood-offset');
+  });
+
+  it('spills when an off-centre fire pushes the plume past the rim', () => {
+    // Centred, this hood is fine; the same hood shifted is not, because what has to
+    // fit is a disk centred on the BURNER, not on the opening.
+    expect(hoodChecks(fixture())).toEqual([]);
+    expect(hoodChecks(hoodAt([0.9, 0, 0])).map((i) => i.code))
+      .toEqual(expect.arrayContaining(['plume-spillage']));
+  });
+
+  it('reads an offset in the hood’s own frame, so yaw counts', () => {
+    // A long narrow opening rotated 90 degrees presents its short side to an
+    // offset the unrotated hood would have swallowed.
+    const narrow = (doc: PlanDocument): PlanDocument => {
+      const hood = doc.objects.find((o) => o.type === 'hood')!;
+      hood['opening_m' as never] = [4, 0.8] as never;
+      return doc;
+    };
+    const yaw90: Quat = [0, 0, Math.SQRT1_2, Math.SQRT1_2];
+
+    // Burner 1.2 m along the hood's local +X: inside a 4 m axis unrotated...
+    expect(hoodChecks(narrow(hoodAt([-1.2, 0, 0]))).map((i) => i.code))
+      .not.toContain('hood-offset');
+    // ...and outside once that axis points along world Y instead.
+    expect(hoodChecks(narrow(hoodAt([-1.2, 0, 0], yaw90))).map((i) => i.code))
+      .toContain('hood-offset');
+  });
+
   it('flags a quaternion that disagrees with its aim target', () => {
     const doc = fixture();
     const cam = doc.objects.find((o) => o.id === 'cam-gopro')!;
@@ -265,6 +385,157 @@ describe('plan checks', () => {
 
   it('flags a plan with no burner', () => {
     expect(codes(newPlan('empty'))).toContain('no-burner');
+  });
+});
+
+// -- transforms -----------------------------------------------------------
+//
+// The 3D view applies rotation_quat to every object group, so anything that reads
+// geometry back out -- checks, drawings, tables -- has to apply it too, or the
+// picture and the verdict disagree about the same plan.
+
+describe('object frames', () => {
+  const slab = (quat?: Quat): CeilingObject => ({
+    id: 'ceiling-1',
+    type: 'ceiling',
+    transform: { position_m: [0, 0, 0], ...(quat ? { rotation_quat: quat } : {}) },
+    // Long in X, narrow in Y.
+    polygon_m: [[-4, -0.5], [4, -0.5], [4, 0.5], [-4, 0.5]],
+    height_m: 3,
+  } as never);
+
+  const yaw90: Quat = [0, 0, Math.SQRT1_2, Math.SQRT1_2];
+
+  it('rotates a footprint vertex into world space', () => {
+    const [x, y] = footprintXY(slab(yaw90), [4, 0]);
+    expect(x).toBeCloseTo(0, 9);
+    expect(y).toBeCloseTo(4, 9);
+  });
+
+  it('round-trips a point through toWorld and toLocal', () => {
+    const o = slab(lookAtQuat([0, 0, 0], [1, 2, 3]));
+    const back = toLocal(o, toWorld(o, [0.4, -1.2, 2]));
+    expect(back[0]).toBeCloseTo(0.4, 9);
+    expect(back[1]).toBeCloseTo(-1.2, 9);
+    expect(back[2]).toBeCloseTo(2, 9);
+  });
+
+  it('judges ceiling coverage against the rotated footprint', () => {
+    // (3, 0) is under the unrotated slab's long arm and outside it once yawed.
+    expect(ceilingCoversXY(slab(), 3, 0)).toBe(true);
+    expect(ceilingCoversXY(slab(yaw90), 3, 0)).toBe(false);
+    expect(ceilingCoversXY(slab(yaw90), 0, 3)).toBe(true);
+  });
+
+  it('flags impingement only for the orientation actually drawn', () => {
+    const doc = (quat?: Quat): PlanDocument => {
+      const d = newPlan('rotated ceiling');
+      d.objects.push({
+        id: 'burner-main',
+        type: 'burner',
+        transform: { position_m: [3, 0, 0] },
+        footprint: { shape: 'square', size_m: [0.3048, 0.3048] },
+        rimHeight_m: 0.1,
+        fire: { fuel: 'n-heptane', hrr_kw: 130, hrrCurve: null },
+      } as never);
+      d.objects.push({ ...slab(quat), height_m: 1.2 } as never);
+      return d;
+    };
+    expect(new Set(ceilingChecks(doc()).map((i) => i.code))).toContain('ceiling-impingement');
+    expect(new Set(ceilingChecks(doc(yaw90)).map((i) => i.code))).not.toContain('ceiling-impingement');
+  });
+});
+
+// -- movement invariants --------------------------------------------------
+
+describe('moving objects', () => {
+  const camAt = (position: Vec3, target: Vec3 | null): CameraObject => ({
+    id: 'cam-1',
+    type: 'camera',
+    transform: {
+      position_m: position,
+      rotation_quat: target ? lookAtQuat(position, target) : [0, 0, 0, 1],
+      aimTarget_m: target,
+    },
+    camera: {
+      modality: 'RGB', resolution_px: [1920, 1080], sensor_mm: [6.17, 4.55],
+      focalLength_mm: 4.3, intrinsicsSource: 'nominal',
+    },
+    mount: { type: 'tripod', height_m: position[2] },
+    recording: null,
+  } as never);
+
+  it('re-aims a camera carried to a new position', () => {
+    // Without this, a camera dropped from the palette or dragged with the gizmo
+    // keeps the orientation it was constructed with and points at nothing, while
+    // still carrying an aimTarget_m claiming otherwise.
+    const cam = camAt([-3, -1, 1.5], [0, 0, 0.75]);
+    setPosition(cam, [3, 0, 1.5]);
+
+    const off = angleBetweenDeg(
+      sub(cam.transform!.aimTarget_m!, cam.transform!.position_m),
+      forwardOf(cam.transform!.rotation_quat!),
+    );
+    expect(off).toBeLessThan(1e-6);
+    expect(checkPlan({ ...newPlan('aim'), objects: [cam] }).map((i) => i.code))
+      .not.toContain('aim-mismatch');
+  });
+
+  it('leaves a hand-rotated camera pointing where it was put', () => {
+    const cam = camAt([-3, 0, 1.5], null);
+    const before = [...cam.transform!.rotation_quat!];
+    setPosition(cam, [2, 2, 1.5]);
+    expect(cam.transform!.rotation_quat).toEqual(before);
+  });
+
+  it('keeps the advisory mount height in step with Z', () => {
+    const cam = camAt([-3, 0, 1.5], [0, 0, 0.75]);
+    setPosition(cam, [-3, 0, 2.2]);
+    expect(cam.mount?.height_m).toBe(2.2);
+  });
+
+  it('drops the recorded aim when the orientation is set by hand', () => {
+    const cam = camAt([-3, 0, 1.5], [0, 0, 0.75]);
+    setRotation(cam, [0, 0, 0, 1]);
+    expect(cam.transform!.aimTarget_m).toBeNull();
+  });
+});
+
+// -- untrusted plan content -----------------------------------------------
+
+describe('display colour', () => {
+  const withColor = (color: unknown): CameraObject => {
+    const doc = fixture();
+    const cam = doc.objects.find((o) => o.type === 'camera') as CameraObject;
+    cam.display = { ...(cam.display ?? {}), color } as never;
+    return cam;
+  };
+
+  it('passes through a well-formed hex colour', () => {
+    expect(cameraColor(withColor('#ff8800'))).toBe('#ff8800');
+  });
+
+  it('refuses a colour that would break out of an HTML attribute', () => {
+    // A plan is someone else's file, and this value lands inside style="..." and
+    // SVG fill="..." in the drawing export, which is assigned via innerHTML.
+    const hostile = 'red"></span><img src=x onerror="alert(1)';
+    const resolved = cameraColor(withColor(hostile));
+    expect(resolved).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(resolved).not.toContain('<');
+  });
+
+  it('falls back for a non-string colour', () => {
+    expect(cameraColor(withColor(42))).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(cameraColor(withColor(null))).toMatch(/^#[0-9a-f]{6}$/i);
+  });
+
+  it('rejects a bad colour at load time rather than sanitising it silently', () => {
+    const doc = fixture();
+    (doc.objects[0] as never as { display: unknown }).display = { color: 'red' };
+    expect(validateStructure(doc).map((i) => i.code)).toContain('bad-color');
+    // A legitimate one still loads.
+    (doc.objects[0] as never as { display: unknown }).display = { color: '#A1B2C3' };
+    expect(validateStructure(doc).map((i) => i.code)).not.toContain('bad-color');
   });
 });
 

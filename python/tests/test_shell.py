@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -101,13 +102,101 @@ def test_writing_uses_lf_so_plans_do_not_diff_across_platforms(tmp_path):
     make every plan saved from the desktop app differ from one saved elsewhere."""
     shell = shell_app.Shell()
     out = tmp_path / "written.ftp.json"
-    assert shell._write(str(out), '{\n  "a": 1\n}\n') is True
+    assert shell._write(str(out), '{\n  "a": 1\n}\n') is None   # None means it worked
     assert out.read_bytes() == b'{\n  "a": 1\n}\n'
 
 
 def test_writing_to_an_unwritable_path_reports_failure(tmp_path):
     shell = shell_app.Shell()
-    assert shell._write(str(tmp_path / "no such dir" / "x.json"), "{}") is False
+    reason = shell._write(str(tmp_path / "no such dir" / "x.json"), "{}")
+    # The reason travels back to the page: a user whose disk is full needs to be told
+    # so, not left looking at an unsaved dot with no explanation.
+    assert reason and "x.json" in reason
+
+
+def test_a_failed_write_leaves_the_previous_plan_intact(tmp_path, monkeypatch):
+    """Opening the destination directly truncates it before a byte is written, so a
+    disk-full or a crash mid-save destroys the plan and leaves nothing in its place."""
+    shell = shell_app.Shell()
+    out = tmp_path / "plan.ftp.json"
+    out.write_text('{"original": true}\n', encoding="utf-8")
+
+    real_replace = os.replace
+
+    def explode(src, dst):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(shell_app.os, "replace", explode)
+    assert shell._write(str(out), '{"new": true}\n') is not None
+    assert out.read_text(encoding="utf-8") == '{"original": true}\n'
+
+    # And no half-written temporary is left lying beside it.
+    monkeypatch.setattr(shell_app.os, "replace", real_replace)
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
+
+
+def test_save_writes_back_to_the_open_file_but_save_as_asks(tmp_path, monkeypatch):
+    """Prompting for a filename the user already chose is not a save."""
+    shell = shell_app.Shell()
+    out = tmp_path / "plan.ftp.json"
+    out.write_text('{"v": 1}\n', encoding="utf-8")
+
+    assert shell.read_plan(str(out)) is not None      # this is what sets current_path
+    asked = []
+    monkeypatch.setattr(shell, "_ask_save", lambda name, kinds: asked.append(name) or None)
+
+    assert shell.save_plan('{"v": 2}\n', "plan.ftp.json") == {"path": str(out)}
+    assert out.read_text(encoding="utf-8") == '{"v": 2}\n'
+    assert asked == []                                 # no dialog for a plain Save
+
+    assert shell.save_plan('{"v": 3}\n', "elsewhere.ftp.json", save_as=True) is None
+    assert asked == ["elsewhere.ftp.json"]             # Save as... does ask
+    assert out.read_text(encoding="utf-8") == '{"v": 2}\n'
+
+
+def test_save_asks_when_the_page_is_showing_a_different_document(tmp_path, monkeypatch):
+    """Open A, then hit Example, then Save: A must not be overwritten.
+
+    The page can replace its document without telling the shell -- the Example button
+    does exactly that -- and then `current_path` still names the file that was opened
+    while the editor holds something else entirely. Writing to it anyway destroys the
+    user's plan through a two-click path, with no dialog to warn them.
+    """
+    shell = shell_app.Shell()
+    original = tmp_path / "site-layout.ftp.json"
+    original.write_text('{"the user": "spent all afternoon on this"}\n', encoding="utf-8")
+    assert shell.read_plan(str(original)) is not None
+
+    asked = []
+    monkeypatch.setattr(shell, "_ask_save", lambda name, kinds: asked.append(name) or None)
+
+    # The Example button leaves the page reporting the example's own filename.
+    assert shell.save_plan('{"example": true}\n', "pool-fire-camera-row.ftp.json") is None
+    assert asked == ["pool-fire-camera-row.ftp.json"]
+    assert original.read_text(encoding="utf-8") == '{"the user": "spent all afternoon on this"}\n'
+
+
+def test_a_plan_with_no_file_behind_it_still_asks(monkeypatch):
+    shell = shell_app.Shell()
+    asked = []
+    monkeypatch.setattr(shell, "_ask_save", lambda name, kinds: asked.append(name) or None)
+    assert shell.save_plan("{}", "untitled.ftp.json") is None
+    assert asked == ["untitled.ftp.json"]
+
+
+def test_a_failed_save_is_reported_rather_than_looking_like_a_cancel(tmp_path, monkeypatch):
+    """Both leave the file unwritten; only one of them is what the user asked for."""
+    shell = shell_app.Shell()
+    out = tmp_path / "plan.ftp.json"
+    out.write_text('{"v": 1}\n', encoding="utf-8")
+    shell.read_plan(str(out))
+
+    def explode(src, dst):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(shell_app.os, "replace", explode)
+    result = shell.save_plan('{"v": 2}\n', "plan.ftp.json")
+    assert result is not None and "No space left on device" in result["error"]
 
 
 def test_a_queued_plan_is_handed_over_exactly_once(plan_file):
@@ -187,6 +276,12 @@ def test_ready_triggers_the_selftest_hook_in_selftest_mode(server):
     shell, _, base, ready_calls = server
     shell.selftest = True
     request(base, "/api/ready", "test-token", {"canvas": True})
+    # The hook fires *after* the response goes out, deliberately: it ends in
+    # os._exit, and the page should have its answer before the process leaves. So the
+    # client can get here first -- wait for the handler thread rather than racing it.
+    deadline = time.time() + 5
+    while not ready_calls and time.time() < deadline:
+        time.sleep(0.01)
     assert ready_calls == [shell]
 
 

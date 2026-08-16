@@ -107,6 +107,9 @@ class Shell:
         self._settings = self._load_settings()
         self._queued_plan: Optional[str] = None
         self.ready_info: Optional[Dict[str, Any]] = None
+        # Absolute path of the plan currently open. The page only ever knows the
+        # basename, so this is what makes Save mean "save" rather than "save as".
+        self.current_path: Optional[str] = None
 
     # -- settings ------------------------------------------------------
 
@@ -159,22 +162,59 @@ class Shell:
             report("could not read {}: {}".format(path, exc))
             return None
         self._remember(path)
+        self.current_path = os.path.abspath(path)
         self._set_title(os.path.basename(path))
         return {"path": path, "text": text}
 
-    def save_plan(self, text: str, suggested_name: str) -> Optional[str]:
-        path = self._ask_save(suggested_name, PLAN_FILTER)
-        if not path or not self._write(path, text):
-            return None
-        self._remember(path)
-        self._set_title(os.path.basename(path))
-        return path
+    def save_plan(self, text: str, suggested_name: str, save_as: bool = False) -> Optional[Dict[str, str]]:
+        """Save to the open file, or ask for a destination.
 
-    def save_html(self, html: str, suggested_name: str) -> Optional[str]:
+        `Save` on a plan that came from disk writes straight back to it -- prompting
+        for a filename the user already chose is not a save, and it is how a plan
+        ends up saved next to itself under three near-identical names. `Save as...`,
+        and any plan with no file behind it yet, still ask.
+
+        Returns `{"path": ...}`, or `{"error": ...}` if the write failed, or None if
+        the user cancelled the dialog. The page has to tell those apart: a failed
+        save that looks like a cancelled one leaves the user believing their work is
+        on disk when it is not.
+        """
+        path = None if save_as else self._writeback_path(suggested_name)
+        if path is None:
+            path = self._ask_save(suggested_name, PLAN_FILTER)
+        if not path:
+            return None
+        error = self._write(path, text)
+        if error:
+            return {"error": error}
+        self._remember(path)
+        self.current_path = os.path.abspath(path)
+        self._set_title(os.path.basename(path))
+        return {"path": path}
+
+    def _writeback_path(self, suggested_name: str) -> Optional[str]:
+        """The open file, if the page is still showing the document that came from it.
+
+        The editor can replace its document without the shell hearing about it -- the
+        Example button does exactly that, and so does a command-line plan the page
+        rejects -- after which `current_path` names a file that has nothing to do with
+        what is on screen. Writing to it anyway destroys the user's plan silently,
+        which is worse than the extra dialog it was meant to save.
+
+        The page knows only a basename, and sends it back as the suggested name on a
+        plain Save. Matching that against the open file is enough to tell 'this is the
+        file I opened' from 'this is some other document now'.
+        """
+        if not self.current_path:
+            return None
+        return self.current_path if suggested_name == os.path.basename(self.current_path) else None
+
+    def save_html(self, html: str, suggested_name: str) -> Optional[Dict[str, str]]:
         path = self._ask_save(suggested_name, HTML_FILTER)
         if not path:
             return None
-        return path if self._write(path, html) else None
+        error = self._write(path, html)
+        return {"error": error} if error else {"path": path}
 
     def take_queued_plan(self) -> Optional[Dict[str, str]]:
         queued, self._queued_plan = self._queued_plan, None
@@ -196,19 +236,39 @@ class Shell:
         # Older pywebview returns a string here and newer versions a sequence.
         return result if isinstance(result, str) else result[0]
 
-    def _write(self, path: str, text: str) -> bool:
+    def _write(self, path: str, text: str) -> Optional[str]:
+        """Write via a temporary file in the same directory, then rename over.
+
+        Opening the destination directly truncates it before a single byte is
+        written, so a disk-full, a crash or a pulled USB stick mid-save destroys the
+        previous plan and leaves nothing in its place. os.replace is atomic on the
+        same filesystem, so the destination is either the old file or the new one.
+
+        Returns None on success, or the reason it failed -- which the caller shows the
+        user, because 'the disk is full' is not something to leave in a log file.
+        """
+        directory = os.path.dirname(os.path.abspath(path))
+        temp = os.path.join(directory, ".{}.tmp".format(os.path.basename(path)))
         try:
             # newline="" keeps the LF the canonical writer emitted; letting Python
             # translate to CRLF would make every plan diff wholesale against one
             # saved on another platform.
-            with open(path, "w", encoding="utf-8", newline="") as fh:
+            with open(temp, "w", encoding="utf-8", newline="") as fh:
                 fh.write(text)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(temp, path)
         except OSError as exc:
-            report("could not write {}: {}".format(path, exc))
-            return False
-        self._settings["lastDirectory"] = os.path.dirname(path)
+            message = "could not write {}: {}".format(path, exc)
+            report(message)
+            try:
+                os.remove(temp)
+            except OSError:
+                pass
+            return message
+        self._settings["lastDirectory"] = directory
         self._save_settings()
-        return True
+        return None
 
     def _last_directory(self) -> str:
         directory = self._settings.get("lastDirectory", "")
@@ -280,7 +340,11 @@ class Handler(SimpleHTTPRequestHandler):
             elif route == "/api/open-recent":
                 self._send_json(self.shell.read_plan(str(body.get("path", ""))))
             elif route == "/api/save":
-                self._send_json(self.shell.save_plan(body.get("text", ""), body.get("name", "plan.ftp.json")))
+                self._send_json(self.shell.save_plan(
+                    body.get("text", ""),
+                    body.get("name", "plan.ftp.json"),
+                    save_as=bool(body.get("saveAs")),
+                ))
             elif route == "/api/save-html":
                 self._send_json(self.shell.save_html(body.get("html", ""), body.get("name", "page.html")))
             else:

@@ -10,6 +10,7 @@ import {
 } from '../core/factory';
 import { checkPlan, displayName, cameraColor, isCamera } from '../core/plan';
 import { CAMERA_PRESETS } from '../core/presets';
+import { setPosition } from '../core/transform';
 import type { Issue, PlanObject, Vec3 } from '../core/types';
 import type { Store } from '../state/store';
 import { clear, h } from './dom';
@@ -92,12 +93,10 @@ export class Palette {
     const obj = this.pending();
     const t = obj.transform ?? (obj.transform = { position_m: [0, 0, 0] });
     // Cameras keep the tripod height they were created with; ground objects drop
-    // to the floor.
-    t.position_m = [at[0], at[1], isCamera(obj) ? t.position_m[2] : at[2]];
-    if (isCamera(obj) && t.aimTarget_m) {
-      // Re-derive the orientation for the actual drop point.
-      obj.transform = { ...t };
-    }
+    // to the floor. setPosition re-derives the orientation for the actual drop
+    // point, so a camera lands aimed at the fire rather than at wherever the
+    // factory's default position happened to face.
+    setPosition(obj, [at[0], at[1], isCamera(obj) ? t.position_m[2] : at[2]]);
     this.store.addObject(obj);
     this.cancel();
   }

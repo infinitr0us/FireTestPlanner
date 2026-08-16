@@ -45,7 +45,7 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
 
   for (const cam of cameras(doc)) {
     rows.push('<tr>' + [
-      `<td><span class="swatch" style="background:${cameraColor(cam)}"></span>${esc(displayName(cam))}</td>`,
+      `<td><span class="swatch" style="background:${esc(cameraColor(cam))}"></span>${esc(displayName(cam))}</td>`,
       cell(cam.camera.modality),
       cell(`${cam.camera.resolution_px[0]}×${cam.camera.resolution_px[1]}`),
       cell(`${hfovDegOf(cam).toFixed(1)}° × ${vfovDegOf(cam).toFixed(1)}°`),
@@ -124,7 +124,7 @@ function coverageTable(doc: PlanDocument, unit: LengthUnit): string {
     const c = framingOf(doc, cam);
     const yesNo = (v: boolean): string => `<td class="${v ? 'ok' : 'bad'}">${v ? 'yes' : 'no'}</td>`;
     return '<tr>' + [
-      `<td><span class="swatch" style="background:${cameraColor(cam)}"></span>${esc(displayName(cam))}</td>`,
+      `<td><span class="swatch" style="background:${esc(cameraColor(cam))}"></span>${esc(displayName(cam))}</td>`,
       cell(formatLength(standoffM(cam), unit), 'num'),
       cell(`${(groundSampleDistanceM(cam) * 1000).toFixed(2)}`, 'num'),
     ].join('')
@@ -155,19 +155,30 @@ function checksList(issues: Issue[]): string {
 
 // -- document -------------------------------------------------------------
 
+/**
+ * Every selector is scoped under `.report`, and must stay that way.
+ *
+ * The drawing preview injects this stylesheet into the editor's own page and leaves
+ * it there (it has to: the styles are what the browser prints). An unscoped rule
+ * therefore restyles the app for the rest of the session -- `.checks li` alone was
+ * enough to grow a white box around every item in the editor's checks panel after
+ * one visit to the preview. The report's markup is entirely inside
+ * `<div class="report">`, so scoping costs nothing and the standalone HTML file is
+ * unaffected. `core.test.ts` asserts the invariant rather than trusting it.
+ */
 const REPORT_CSS = `
   .report { color: #111827; background: #fff; font: 12px/1.5 "Segoe UI", system-ui, sans-serif; }
   .report h1 { font-size: 19px; margin: 0 0 2px; }
   .report h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
                color: #475569; margin: 26px 0 8px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }
-  .titleblock { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 18px;
-                border: 1px solid #cbd5e1; padding: 12px 14px; border-radius: 4px; }
-  .titleblock .k { color: #64748b; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
-  .titleblock .v { font-weight: 600; }
-  .titleblock .wide { grid-column: 1 / -1; font-weight: 400; }
-  .drawing { border: 1px solid #e2e8f0; border-radius: 4px; display: block; }
-  .drawing .dim-text { font: 10px "Cascadia Mono", Consolas, monospace; fill: #0369a1; }
-  .drawing .obj-label { font: 10px "Segoe UI", sans-serif; fill: #1f2937; }
+  .report .titleblock { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 18px;
+                        border: 1px solid #cbd5e1; padding: 12px 14px; border-radius: 4px; }
+  .report .titleblock .k { color: #64748b; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+  .report .titleblock .v { font-weight: 600; }
+  .report .titleblock .wide { grid-column: 1 / -1; font-weight: 400; }
+  .report .drawing { border: 1px solid #e2e8f0; border-radius: 4px; display: block; }
+  .report .drawing .dim-text { font: 10px "Cascadia Mono", Consolas, monospace; fill: #0369a1; }
+  .report .drawing .obj-label { font: 10px "Segoe UI", sans-serif; fill: #1f2937; }
   .report table { width: 100%; border-collapse: collapse; font-size: 11px; }
   .report th { text-align: left; background: #f1f5f9; padding: 5px 7px; border-bottom: 1px solid #cbd5e1;
                font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #475569; }
@@ -175,26 +186,30 @@ const REPORT_CSS = `
   .report td.num { text-align: right; font-family: "Cascadia Mono", Consolas, monospace; }
   .report td.ok { color: #047857; font-weight: 600; }
   .report td.bad { color: #b91c1c; font-weight: 600; }
-  .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
-  .checks { list-style: none; padding: 0; margin: 0; }
-  .checks li { padding: 5px 9px; border-left: 3px solid #cbd5e1; background: #f8fafc; margin-bottom: 4px; }
-  .checks li.sev-error { border-left-color: #dc2626; }
-  .checks li.sev-warning { border-left-color: #d97706; }
-  .checks li strong { text-transform: uppercase; font-size: 10px; letter-spacing: .05em; margin-right: 6px; }
+  .report .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+  .report .checks { list-style: none; padding: 0; margin: 0; }
+  .report .checks li { padding: 5px 9px; border-left: 3px solid #cbd5e1; background: #f8fafc; margin-bottom: 4px; }
+  .report .checks li.sev-error { border-left-color: #dc2626; }
+  .report .checks li.sev-warning { border-left-color: #d97706; }
+  .report .checks li strong { text-transform: uppercase; font-size: 10px; letter-spacing: .05em; margin-right: 6px; }
   .report .note, .report .empty { color: #64748b; font-size: 11px; margin: 6px 0 0; }
   .report footer { margin-top: 28px; padding-top: 10px; border-top: 1px solid #e2e8f0;
                    color: #64748b; font-size: 10px; }
-  .page-break { break-before: page; }
+  .report .page-break { break-before: page; }
 `;
 
+/** Only the standalone file uses this -- the app has its own print rules in
+ *  styles.css -- but it is scoped like REPORT_CSS so that stays true by accident
+ *  rather than by luck. `.no-print` is deliberately global: it marks the preview
+ *  chrome, which sits outside the report. */
 const PRINT_CSS = `
   @page { size: A4 portrait; margin: 14mm; }
   @media print {
     .no-print { display: none !important; }
     .report { padding: 0 !important; }
-    .drawing { break-inside: avoid; }
-    table { break-inside: auto; }
-    tr { break-inside: avoid; }
+    .report .drawing { break-inside: avoid; }
+    .report table { break-inside: auto; }
+    .report tr { break-inside: avoid; }
   }
 `;
 

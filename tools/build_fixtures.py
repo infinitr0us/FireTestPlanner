@@ -121,22 +121,68 @@ def build_camera_row() -> Plan:
     return plan
 
 
+def build_forward_compat():
+    """A plan carrying objects from a format version this build does not know.
+
+    Deliberately awkward: an unrecognised `type`, keys in an order no 1.0 writer
+    would choose, and coefficients with more precision than the 1 um rounding known
+    fields get. CONVENTIONS.md section 6 promises all of it survives a load/save
+    cycle unchanged, and both writers have to agree on that byte for byte -- so this
+    is the fixture that would break if either of them started tidying data it does
+    not understand.
+    """
+    plan = Plan.new("Forward compatibility")
+    plan.add({
+        "id": "burner-main",
+        "type": "burner",
+        "name": "Fuel pan",
+        "transform": {"position_m": [0.0, 0.0, 0.0]},
+        "footprint": {"shape": "square", "size_m": [FT, FT]},
+        "rimHeight_m": 0.1,
+        "fire": {"fuel": "n-heptane", "hrr_kw": 130.0, "hrrCurve": None},
+    })
+    plan.add({
+        # Key order is intentionally not the canonical one.
+        "zzz_trailingKey": "must stay last",
+        "id": "spec-1",
+        "type": "spectrometer",              # not in format 1.0
+        "calibration": {
+            "coefficient": 1.23456789,       # finer than FLOAT_DECIMALS
+            "gain": 12.0,                    # integral float: 12, never 12.0
+            "counts": 4096,
+            # Values whose two languages spell them differently unless the writers
+            # agree on JavaScript's rules: Python's repr gives 1.23e-08, 1e-06 and
+            # 1e+21 where JSON.stringify gives 1.23e-8, 0.000001 and 1e+21.
+            "darkCurrent_a": 1.23e-8,
+            "noiseFloor_a": 1e-6,
+            "fullScale_counts": 1e21,
+        },
+        "transform": {"position_m": [1.5, -0.25, 1.0]},
+        "name": "Future device",
+        "sampleRate_hz": 1000,
+    })
+    return plan
+
+
 def main() -> None:
     out_dir = os.path.join(ROOT, "fixtures")
     os.makedirs(out_dir, exist_ok=True)
 
-    plan = build_camera_row()
-    plan.validate_schema()
-    # Fixed timestamps: a rebuild that changes nothing should produce no diff.
-    plan.meta["created"] = "2026-08-15T00:00:00Z"
-    plan.meta["modified"] = "2026-08-15T00:00:00Z"
+    for name, plan in [
+        ("pool-fire-camera-row.ftp.json", build_camera_row()),
+        ("forward-compat.ftp.json", build_forward_compat()),
+    ]:
+        plan.validate_schema()
+        # Fixed timestamps: a rebuild that changes nothing should produce no diff.
+        plan.meta["created"] = "2026-08-15T00:00:00Z"
+        plan.meta["modified"] = "2026-08-15T00:00:00Z"
 
-    path = os.path.join(out_dir, "pool-fire-camera-row.ftp.json")
-    plan.save(path, update_modified=False)
-    print("wrote {}".format(path))
+        path = os.path.join(out_dir, name)
+        plan.save(path, update_modified=False)
+        print("wrote {}".format(path))
 
-    for issue in plan.check():
-        print("  " + str(issue))
+        for issue in plan.check():
+            print("  " + str(issue))
 
 
 if __name__ == "__main__":

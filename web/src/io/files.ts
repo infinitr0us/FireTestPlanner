@@ -6,14 +6,30 @@
  * desktop build gets real Save As without a second code path.
  */
 
-import type { PlanDocument } from '../core/types';
-
 export interface ShellBridge {
   openPlan(): Promise<{ path: string; text: string } | null>;
-  savePlan(text: string, suggestedName: string): Promise<string | null>;
+  /** `saveAs` forces a destination dialog; otherwise the shell writes back to the
+   *  file it opened, if the page is still showing that document.
+   *  Resolves to null when the user cancels, and REJECTS when the write fails. */
+  savePlan(text: string, suggestedName: string, saveAs: boolean): Promise<string | null>;
   saveHtml(html: string, suggestedName: string): Promise<string | null>;
   recentFiles(): Promise<string[]>;
   openRecent(path: string): Promise<{ path: string; text: string } | null>;
+}
+
+/** What the shell's save routes answer: a destination, a reason, or null for cancel. */
+type SaveResult = { path?: string; error?: string } | null;
+
+/**
+ * Cancel and failure look the same from the outside -- both leave the file unwritten
+ * -- but they are opposites to the user: one is what they asked for, the other is
+ * their work not being on disk. A cancel is null; a failure throws, so the caller has
+ * to deal with it rather than silently doing nothing.
+ */
+function unwrapSave(result: SaveResult): string | null {
+  if (!result) return null;
+  if (result.error) throw new Error(result.error);
+  return result.path ?? null;
 }
 
 let bridge: ShellBridge | undefined;
@@ -57,8 +73,9 @@ export function connectShell(onReady: () => void): void {
 
   bridge = {
     openPlan: () => call<{ path: string; text: string } | null>('/api/open', {}).then((r) => r ?? null),
-    savePlan: (text, name) => call<string | null>('/api/save', { text, name }),
-    saveHtml: (html, name) => call<string | null>('/api/save-html', { html, name }),
+    savePlan: (text, name, saveAs) =>
+      call<SaveResult>('/api/save', { text, name, saveAs }).then(unwrapSave),
+    saveHtml: (html, name) => call<SaveResult>('/api/save-html', { html, name }).then(unwrapSave),
     recentFiles: () => call<string[]>('/api/recent').then((r) => r ?? []),
     openRecent: (path) => call<{ path: string; text: string } | null>('/api/open-recent', { path }),
   };
@@ -92,17 +109,16 @@ export function captureBootHtml(): void {
   bootHtml = `<!doctype html>\n${document.documentElement.outerHTML}`;
 }
 
-/** A plan baked into the page by a previous 'export shareable viewer', if any. */
-export function embeddedPlan(): PlanDocument | null {
+/**
+ * Raw text of a plan baked into the page by a previous 'export shareable viewer'.
+ *
+ * Text, not a parsed document: a shared page is a file from someone else, and it has
+ * to go through the same parse-and-validate boundary as a plan opened from disk
+ * rather than being trusted because it arrived inside the HTML.
+ */
+export function embeddedPlanText(): string | null {
   const el = document.getElementById(EMBED_ID);
-  const text = el?.textContent?.trim();
-  if (!text) return null;
-  try {
-    return JSON.parse(text) as PlanDocument;
-  } catch {
-    console.warn('Embedded plan is not valid JSON; ignoring it.');
-    return null;
-  }
+  return el?.textContent?.trim() || null;
 }
 
 function download(blob: Blob, filename: string): void {
@@ -118,9 +134,15 @@ function download(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-export async function savePlanText(text: string, suggestedName: string): Promise<string | null> {
+export async function savePlanText(
+  text: string,
+  suggestedName: string,
+  saveAs = false,
+): Promise<string | null> {
   const bridge = shell();
-  if (bridge) return bridge.savePlan(text, suggestedName);
+  // Only the desktop shell can distinguish the two: a browser download always
+  // goes through the browser's own destination handling.
+  if (bridge) return bridge.savePlan(text, suggestedName, saveAs);
   download(new Blob([text], { type: 'application/json' }), suggestedName);
   return suggestedName;
 }

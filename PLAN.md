@@ -237,6 +237,12 @@ and it is the whole argument for the frustum and preview being in v1.
   `js_api` bound to this page the WebView2 message channel never came up; see
   `python/shell/README.md`. The HTTP bridge is also the right shape for Phase 2.
 - **Measurements are not saved.** The measure tool is a ruler, not an annotation.
+- **Wall openings do not appear in the exported elevations.** The 3D view cuts doors
+  and windows out of a wall; the drawing renders the wall as a solid rectangle. Worth
+  knowing before a drawing is handed to someone who will build from it.
+- **Pitch and roll are honoured in the 3D view only** — checks, plan view and
+  elevations all read a tilted wall, hood or ceiling as if it were upright. Yaw is
+  handled consistently everywhere. See CONVENTIONS §5a.
 
 ## 8. Open questions
 

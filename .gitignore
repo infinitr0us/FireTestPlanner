@@ -24,3 +24,6 @@ python/shell/build/
 python/shell/dist/
 *.spec
 selftest*.log
+
+# Code review reports: working notes about the code, not part of it
+review/

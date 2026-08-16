@@ -48,6 +48,10 @@ def _utc_now_iso() -> str:
 
 
 class Plan:
+    #: Where this plan was loaded from, or None for one built or parsed in memory.
+    #: Declared here so `Plan.loads(text).source_path` answers rather than raising.
+    source_path: Optional[str] = None
+
     def __init__(self, data: Dict[str, Any]):
         if not isinstance(data, dict):
             raise PlanError("plan data must be a JSON object")
@@ -282,6 +286,11 @@ class Plan:
         Both are measurement-validity questions, not cosmetics: flame in the canopy
         is no longer a free plume, and a hood that spills plume under-reads HRR by
         oxygen consumption.
+
+        Capture is a spatial question, not just a size one. The plume rises from the
+        burner, so what has to fit inside the opening is a disk centred on the
+        BURNER, offset from the opening centre by however far apart the two are. A
+        hood that is merely large is not a hood that captures.
         """
         issues: List[Issue] = []
         hoods = self.hoods
@@ -295,9 +304,23 @@ class Plan:
             return issues
 
         flame_tip = burner.flame_tip_z_m()
+        bp = burner.position
 
         for hood in hoods:
             intake = hood.intake_height_m
+            off_u, off_v, overhang = hood.opening_offset(bp[0], bp[1])
+
+            # Nothing else is meaningful about a hood that is not over the fire: the
+            # flame cannot reach a canopy beside it, and the plume it fails to
+            # capture is not a margin problem but a placement one.
+            if overhang > 0.0:
+                issues.append(
+                    Issue("error", "hood-offset",
+                          "the hood opening does not cover the burner -- the burner centre is "
+                          "{:.2f} m outside the opening, so this hood captures none of the plume"
+                          .format(overhang), hood.id)
+                )
+                continue
 
             if flame_tip >= intake:
                 issues.append(
@@ -312,20 +335,34 @@ class Plan:
                           "an intermittent tip will reach higher".format(flame_tip, intake - flame_tip), hood.id)
                 )
 
-            plume_d = 2.0 * burner.plume_radius_m(intake)
-            opening = min(hood.opening_m)
-            if plume_d > opening:
+            radius = burner.plume_radius_m(intake)
+            plume_d = 2.0 * radius
+            # Span the plume demands along each opening axis, and the axis with the
+            # least slack -- which is the one that spills first.
+            axes = [
+                (2.0 * (abs(off_u) + radius), hood.opening_m[0]),
+                (2.0 * (abs(off_v) + radius), hood.opening_m[1]),
+            ]
+            need, avail = min(axes, key=lambda a: a[1] - a[0])
+            eccentricity = math.hypot(off_u, off_v)
+            eccentric = (
+                ", {:.2f} m off the opening centre".format(eccentricity)
+                if eccentricity > 1e-9 else ""
+            )
+
+            if need > avail:
                 issues.append(
                     Issue("error", "plume-spillage",
-                          "plume is {:.2f} m across at the hood intake but the opening is only {:.2f} m -- "
-                          "the hood will spill and HRR by oxygen consumption will read low"
-                          .format(plume_d, opening), hood.id)
+                          "plume is {:.2f} m across at the hood intake{}, needing {:.2f} m of a "
+                          "{:.2f} m opening -- the hood will spill and HRR by oxygen consumption "
+                          "will read low".format(plume_d, eccentric, need, avail), hood.id)
                 )
-            elif plume_d > 0.8 * opening:
+            elif need > 0.8 * avail:
                 issues.append(
                     Issue("warning", "plume-margin",
-                          "plume is {:.2f} m across at a {:.2f} m opening, leaving little margin for "
-                          "draught or an off-centre fire".format(plume_d, opening), hood.id)
+                          "plume is {:.2f} m across at the hood intake{}, needing {:.2f} m of a "
+                          "{:.2f} m opening -- little margin for draught or an off-centre fire"
+                          .format(plume_d, eccentric, need, avail), hood.id)
                 )
 
         return issues

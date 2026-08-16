@@ -43,12 +43,31 @@ and coverage table, ready to print to PDF.
 
 ## Desktop app
 
+Rebuilding the exe means rebuilding the web bundle first — the exe carries
+`web/dist/index.html` as bundled data, and packaging around a stale bundle looks
+exactly like the code change simply not working. `build.bat` does the whole chain:
+
+```bat
+build.bat                   :: web bundle -> exe -> selftest
+build.bat clean test        :: both suites first, then a clean package
+build.bat console           :: console variant, so --selftest prints to a terminal
+build.bat noverify          :: skip the post-build selftest
+```
+
+It creates `python/shell/.venv` and runs `npm install` on first use, stops on the
+first failure rather than shipping a broken build, and finishes by running the
+packaged exe's own `--selftest`. Output lands in
+`python/shell/dist/FireTestPlanner.exe` (~10 MB).
+
+The underlying steps, if you want them by hand:
+
 ```bash
-cd python/shell
+cd web && npm run build                         # the bundle the exe will carry
+cd ../python/shell
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
-.venv\Scripts\python.exe app.py                 # run
-.venv\Scripts\python.exe build_exe.py           # -> dist/FireTestPlanner.exe (~10 MB)
+.venv\Scripts\python.exe app.py                 # run from source
+.venv\Scripts\python.exe build_exe.py           # -> dist/FireTestPlanner.exe
 ```
 
 Same bundle, in a native window with native file dialogs and a recent-files list.

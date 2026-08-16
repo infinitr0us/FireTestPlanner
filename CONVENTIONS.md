@@ -175,20 +175,75 @@ r(z) = tan(α) · (z − z₀),     α = 15° by default
 The 15° half-angle is an engineering rule of thumb for visualisation, not a rigorous
 Gaussian plume half-width. It is a parameter so it can be changed.
 
-These drive two checks against the hood, which is why the hood needs a height and an
-opening size but not an accurate shape:
+These drive three checks against the hood, which is why the hood needs a height, an
+opening size and a **position**, but not an accurate shape:
 
+- **Placement** — the plume rises from the burner, so capture is judged against a disk
+  centred on the *burner*, evaluated in the hood's own opening axes (position and yaw
+  both count). A burner outside the opening footprint is `hood-offset`: this hood
+  captures nothing, and the two checks below are not meaningful for it.
 - **Flame impingement** — `L_f` approaching or exceeding `hood.height_m` means flame in
-  the canopy, not a free plume.
-- **Plume capture** — `2·r(hood.height_m)` exceeding the smaller opening dimension means
-  the hood spills plume, and oxygen-consumption HRR will read low. This is a
+  the canopy, not a free plume. Only for a hood that is actually over the burner.
+- **Plume capture** — the span the plume demands along an opening axis is
+  `2·(offset + r(hood.height_m))`; exceeding that axis's opening dimension means the
+  hood spills plume, and oxygen-consumption HRR will read low. A large hood parked to
+  one side spills exactly as badly as a small one centred. This is a
   measurement-validity problem, not a cosmetic one.
+
+## 5a. Object frames
+
+`transform.rotation_quat` applies to every object, not just cameras. Vertex lists
+(`polyline_m`, `polygon_m`, hood openings, rectangular burner footprints) are in the
+object's **local** frame, so anything that consumes them — the 3D scene, the semantic
+checks, the SVG drawings, the equipment table — must put them through the object's
+full transform. One helper does it everywhere: `toWorld`/`footprintXY` in
+`web/src/core/plan.ts`, mirrored by `PlanObject.to_world`/`footprint_xy` in
+`python/fireplan/objects.py`.
+
+A rotation that shows in the 3D view but not in the printed plan, or in the plan but
+not in the containment check, is the failure mode this rule exists to prevent.
+
+**Yaw is the case that is honoured everywhere. Pitch and roll are 3D-only.** Nothing
+stops the rotate gizmo tilting a wall, hood or ceiling, and the 3D view renders the
+tilt faithfully — but `footprintXY` drops z, so the checks and the plan view see the
+projected footprint, and the elevations still draw an upright extrusion. A hood's
+`opening_offset` is likewise evaluated at `z = 0` in the hood's own axes, which skews
+for a pitched hood. Cameras are exempt: a camera's full orientation is authoritative
+and used as stored. Tilting anything else produces a drawing that does not match the
+scene, so treat it as unsupported rather than as a feature.
 
 ## 6. Forward compatibility
 
 - **Unknown object types round-trip verbatim.** An object whose `type` this version does
-  not recognise is preserved on load and re-emitted byte-identical on save. A newer plan
-  opened in an older tool does not silently lose objects.
+  not recognise is preserved on load and re-emitted byte-identical on save — including
+  its key order and the full precision of its numbers. The canonical rounding and
+  reordering in section 7 apply only to types this version defines. A newer plan opened
+  in an older tool does not silently lose objects, and does not silently lose digits off
+  a calibration coefficient either.
+
+  One narrow exception, and it is two format 1.0 blocks this version genuinely owns and
+  can edit: an unknown object's `transform` and `display` are canonicalised normally,
+  because the editor can drag, hide and lock one, and raw gizmo output is float noise.
+  Every other number is re-emitted digit for digit.
+
+  **Unknown keys on a *known* object type are not covered by this.** A `calibration`
+  block added to a v1.1 *camera* is preserved and kept in order, but its numbers go
+  through the 1 µm rounding that applies to the rest of that object — this version has
+  no way to tell a new coefficient from a new length. Anything whose precision matters
+  should arrive as its own object type until a later format version teaches the writer
+  about it, and that is a decision to take before the first v1.1 field lands.
+
+  `fixtures/forward-compat.ftp.json` is the regression fixture for all of this, checked
+  from both languages.
+- **Both writers spell numbers the same way**, which is JavaScript's way:
+  `JSON.stringify` is the reference and `python/fireplan/serialize.py` reproduces it
+  (`_js_number`). This matters because `repr` does not agree with it — Python writes
+  `1.23e-08`, `1e-06`, `1e+16` and `12.0` where JavaScript writes `1.23e-8`,
+  `0.000001`, `10000000000000000` and `12` — and a plan that changes bytes depending on
+  which tool last saved it is not byte-identical in any useful sense. The digits are
+  never touched: both languages already emit the shortest decimal that round-trips, so
+  only the layout needed reconciling. `NaN` and `Infinity` are not JSON and are refused
+  rather than written.
 - **`recording` and `hrrCurve` are reserved and must be `null` in 1.0.** Reserving the
   keys now means the post-test-record design can land later without a format version
   bump, and `cam.recording is None` already works.

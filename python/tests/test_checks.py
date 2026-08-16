@@ -9,6 +9,7 @@ import pytest
 
 from fireplan import Plan
 from fireplan._math import look_at_quat
+from fireplan.objects import MODALITY_COLORS
 
 FIXTURES = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "fixtures"
@@ -20,7 +21,8 @@ def codes(issues):
     return {i.code for i in issues}
 
 
-def _plan_with_hood(hood_height_m, opening_m, hrr_kw=130.0, skirt_m=0.0):
+def _plan_with_hood(hood_height_m, opening_m, hrr_kw=130.0, skirt_m=0.0,
+                    hood_position=(0.0, 0.0, 0.0), hood_quat=None):
     plan = Plan.new("hood test")
     plan.add({
         "id": "burner-main",
@@ -30,10 +32,13 @@ def _plan_with_hood(hood_height_m, opening_m, hrr_kw=130.0, skirt_m=0.0):
         "rimHeight_m": 0.1,
         "fire": {"fuel": "n-heptane", "hrr_kw": hrr_kw, "hrrCurve": None},
     })
+    transform = {"position_m": [float(v) for v in hood_position]}
+    if hood_quat is not None:
+        transform["rotation_quat"] = [float(v) for v in hood_quat]
     plan.add({
         "id": "hood-main",
         "type": "hood",
-        "transform": {"position_m": [0.0, 0.0, 0.0]},
+        "transform": transform,
         "opening_m": list(opening_m),
         "height_m": hood_height_m,
         "skirtDepth_m": skirt_m,
@@ -108,6 +113,59 @@ def test_hood_checks_stay_silent_with_no_hood():
     assert plan.hood_checks() == []
 
 
+# -- hood placement ------------------------------------------------------
+#
+# A hood only captures the plume it is actually over. Judging capture from the
+# opening size alone lets a hood parked in the next bay report clean, which is a
+# false negative on a measurement-validity check. Mirrors the TypeScript cases in
+# web/src/core/core.test.ts.
+
+def test_a_hood_in_the_next_bay_captures_nothing():
+    plan = _plan_with_hood(hood_height_m=3.0, opening_m=[3.0, 3.0],
+                           hood_position=(100.0, 100.0, 0.0))
+    found = codes(plan.hood_checks())
+    assert "hood-offset" in found
+    # And it does not also report the plume as merely short of margin.
+    assert "plume-margin" not in found
+
+
+def test_the_opening_edge_is_where_offset_starts():
+    inside = _plan_with_hood(hood_height_m=3.0, opening_m=[3.0, 3.0],
+                             hood_position=(1.49, 0.0, 0.0))
+    outside = _plan_with_hood(hood_height_m=3.0, opening_m=[3.0, 3.0],
+                              hood_position=(1.51, 0.0, 0.0))
+    assert "hood-offset" not in codes(inside.hood_checks())
+    assert "hood-offset" in codes(outside.hood_checks())
+
+
+def test_an_off_centre_fire_spills_a_hood_that_would_pass_centred():
+    """What has to fit is a disk centred on the burner, not on the opening."""
+    centred = _plan_with_hood(hood_height_m=3.0, opening_m=[1.6, 1.6])
+    shifted = _plan_with_hood(hood_height_m=3.0, opening_m=[1.6, 1.6],
+                              hood_position=(0.7, 0.0, 0.0))
+    assert "plume-spillage" not in codes(centred.hood_checks())
+    assert "plume-spillage" in codes(shifted.hood_checks())
+
+
+def test_the_offset_is_measured_in_the_hoods_own_frame():
+    """A long narrow opening presents its short side once it is yawed 90 degrees."""
+    yaw90 = [0.0, 0.0, 2 ** -0.5, 2 ** -0.5]
+    flat = _plan_with_hood(hood_height_m=3.0, opening_m=[4.0, 0.8],
+                           hood_position=(-1.2, 0.0, 0.0))
+    turned = _plan_with_hood(hood_height_m=3.0, opening_m=[4.0, 0.8],
+                             hood_position=(-1.2, 0.0, 0.0), hood_quat=yaw90)
+    assert "hood-offset" not in codes(flat.hood_checks())
+    assert "hood-offset" in codes(turned.hood_checks())
+
+
+def test_hood_offset_matches_the_reference_plan_when_the_hood_is_moved():
+    """The reference layout is clean; moving its hood away must not stay clean."""
+    plan = Plan.load(CAMERA_ROW)
+    assert plan.hood_checks() == []
+    plan.hoods[0].position = [100.0, 100.0, 0.0]
+    assert "hood-offset" in codes(plan.hood_checks())
+
+
 # -- ceiling checks ------------------------------------------------------
 
 def _plan_with_ceiling(height_m, half_extent_m=3.0, offset_m=0.0, hrr_kw=130.0):
@@ -167,6 +225,56 @@ def test_ceiling_containment_is_exact_at_the_edges():
 def test_ceiling_area_uses_the_shoelace_formula():
     plan = _plan_with_ceiling(height_m=3.0, half_extent_m=2.5)
     assert plan.ceilings[0].area_m2 == pytest.approx(25.0)  # 5 m x 5 m
+
+
+# -- object frames -------------------------------------------------------
+#
+# The 3D editor applies rotation_quat to every object group, so anything reading
+# geometry back out has to apply it too, or the picture and the verdict disagree
+# about the same plan. Mirrors 'object frames' in web/src/core/core.test.ts.
+
+def _slab_plan(quat=None):
+    plan = _plan_with_ceiling(height_m=1.2)
+    ceiling = plan.ceilings[0]
+    # Long in X, narrow in Y, and shifted so only the long arm reaches the burner.
+    ceiling.raw["polygon_m"] = [[-1.0, -0.5], [7.0, -0.5], [7.0, 0.5], [-1.0, 0.5]]
+    ceiling.raw["transform"]["position_m"] = [0.0, 0.0, 0.0]
+    if quat is not None:
+        ceiling.raw["transform"]["rotation_quat"] = list(quat)
+    return plan
+
+
+YAW90 = [0.0, 0.0, 2 ** -0.5, 2 ** -0.5]
+
+
+def test_footprint_vertices_go_through_the_object_frame():
+    ceiling = _slab_plan(YAW90).ceilings[0]
+    x, y = ceiling.footprint_xy([4.0, 0.0])
+    assert x == pytest.approx(0.0, abs=1e-9)
+    assert y == pytest.approx(4.0, abs=1e-9)
+
+
+def test_to_world_and_to_local_round_trip():
+    obj = _slab_plan(look_at_quat(np.zeros(3), np.array([1.0, 2.0, 3.0]))).ceilings[0]
+    back = obj.to_local(obj.to_world([0.4, -1.2, 2.0]))
+    assert back == pytest.approx([0.4, -1.2, 2.0], abs=1e-9)
+
+
+def test_containment_follows_the_rotated_footprint():
+    assert _slab_plan().ceilings[0].contains_xy(3.0, 0.0)
+    assert not _slab_plan(YAW90).ceilings[0].contains_xy(3.0, 0.0)
+    assert _slab_plan(YAW90).ceilings[0].contains_xy(0.0, 3.0)
+
+
+def test_impingement_follows_the_orientation_actually_drawn():
+    """A slab yawed off the fire stops being this burner's ceiling."""
+    plan = _slab_plan()
+    plan.burner.position = [3.0, 0.0, 0.0]
+    assert "ceiling-impingement" in codes(plan.ceiling_checks())
+
+    turned = _slab_plan(YAW90)
+    turned.burner.position = [3.0, 0.0, 0.0]
+    assert "ceiling-impingement" not in codes(turned.ceiling_checks())
 
 
 def test_ceiling_area_handles_a_non_rectangular_slab():
@@ -370,6 +478,30 @@ def test_modality_drives_the_default_colour():
     plan = Plan.load(CAMERA_ROW)
     assert plan.cameras["cam-lwir-t650"].color != plan.cameras["cam-gopro"].color
     assert plan.cameras["cam-mwir"].color != plan.cameras["cam-lwir-t650"].color
+
+
+@pytest.mark.parametrize("stored", [
+    '"><script>alert(1)</script>',
+    "red; background: url(x)",
+    "#abc",          # short form: allowed by CSS, not by this schema
+    "#12345g",
+    12,
+    None,
+])
+def test_a_hostile_display_colour_never_leaves_this_property(stored):
+    """A plan is someone else's file, and this value is what a report interpolates
+    into markup. Mirror of the `cameraColor` tests on the TypeScript side."""
+    plan = Plan.load(CAMERA_ROW)
+    cam = plan.cameras["cam-gopro"]
+    cam.raw.setdefault("display", {})["color"] = stored
+    assert cam.color == MODALITY_COLORS["RGB"]
+
+
+def test_a_valid_display_colour_is_used_as_given():
+    plan = Plan.load(CAMERA_ROW)
+    cam = plan.cameras["cam-gopro"]
+    cam.raw.setdefault("display", {})["color"] = "#A1b2C3"
+    assert cam.color == "#A1b2C3"
 
 
 def test_cameras_can_be_selected_by_modality():

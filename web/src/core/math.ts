@@ -91,6 +91,24 @@ export function lookAtQuat(eye: Vec3, target: Vec3, upHint: Vec3 = WORLD_UP): Qu
   return columnsToQuat([right, up, back]);
 }
 
+/** Rotate a local-frame vector into world. Columns are the local axes' world
+ *  directions, so this is just the column combination. */
+export function rotateVec(q: Quat, v: Vec3): Vec3 {
+  const [c0, c1, c2] = quatToColumns(q);
+  return [
+    c0[0] * v[0] + c1[0] * v[1] + c2[0] * v[2],
+    c0[1] * v[0] + c1[1] * v[1] + c2[1] * v[2],
+    c0[2] * v[0] + c1[2] * v[1] + c2[2] * v[2],
+  ];
+}
+
+/** Rotate a world-frame vector into the local frame. The matrix is orthonormal, so
+ *  the inverse is the transpose -- i.e. project onto each column. */
+export function unrotateVec(q: Quat, v: Vec3): Vec3 {
+  const [c0, c1, c2] = quatToColumns(q);
+  return [dot(c0, v), dot(c1, v), dot(c2, v)];
+}
+
 /** World-space view direction: the stored frame looks down local -Z. */
 export function forwardOf(q: Quat): Vec3 {
   const c = quatToColumns(q)[2];

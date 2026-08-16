@@ -12,8 +12,15 @@ import { h } from './dom';
 
 const STYLE_ID = 'report-styles';
 
-/** Reuse the standalone document's stylesheet rather than keeping a second copy in
- *  styles.css, so the preview and the downloaded file cannot drift apart. */
+/**
+ * Reuse the standalone document's stylesheet rather than keeping a second copy in
+ * styles.css, so the preview and the downloaded file cannot drift apart.
+ *
+ * The tag stays in `<head>` after close, because it has to survive printing and
+ * reopening. That is only safe because every rule in `REPORT_CSS` is scoped under
+ * `.report`; an unscoped one would restyle the editor permanently after a single
+ * visit to the preview. See the note above REPORT_CSS in export/report.ts.
+ */
 function ensureStyles(): void {
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement('style');

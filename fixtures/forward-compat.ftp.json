@@ -1,0 +1,65 @@
+{
+  "format": "fire-test-plan",
+  "version": "1.0.0",
+  "meta": {
+    "title": "Forward compatibility",
+    "created": "2026-08-15T00:00:00Z",
+    "modified": "2026-08-15T00:00:00Z"
+  },
+  "units": {
+    "length": "m",
+    "angle": "rad",
+    "power": "kW",
+    "temperature": "C",
+    "display": {
+      "length": "m",
+      "angle": "deg"
+    }
+  },
+  "coordinateSystem": {
+    "convention": "Z-up-right-handed",
+    "origin": "burner-center-floor"
+  },
+  "environment": {
+    "floorSize_m": [20, 20],
+    "ambientTemperature_C": 20
+  },
+  "objects": [
+    {
+      "id": "burner-main",
+      "type": "burner",
+      "name": "Fuel pan",
+      "transform": {
+        "position_m": [0, 0, 0]
+      },
+      "footprint": {
+        "shape": "square",
+        "size_m": [0.3048, 0.3048]
+      },
+      "rimHeight_m": 0.1,
+      "fire": {
+        "fuel": "n-heptane",
+        "hrr_kw": 130,
+        "hrrCurve": null
+      }
+    },
+    {
+      "zzz_trailingKey": "must stay last",
+      "id": "spec-1",
+      "type": "spectrometer",
+      "calibration": {
+        "coefficient": 1.23456789,
+        "gain": 12,
+        "counts": 4096,
+        "darkCurrent_a": 1.23e-8,
+        "noiseFloor_a": 0.000001,
+        "fullScale_counts": 1e+21
+      },
+      "transform": {
+        "position_m": [1.5, -0.25, 1]
+      },
+      "name": "Future device",
+      "sampleRate_hz": 1000
+    }
+  ]
+}

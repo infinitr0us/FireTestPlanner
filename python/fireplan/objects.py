@@ -7,6 +7,7 @@ mutations round-trip on save and unknown keys are never dropped.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
@@ -27,6 +28,9 @@ _FRAME_FLIPS = {
     "cv": np.diag([1.0, -1.0, -1.0]),
     "colmap": np.diag([1.0, -1.0, -1.0]),
 }
+
+# The one colour literal the schema allows. Mirror of HEX_COLOR in web/src/core/plan.ts.
+_HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 MODALITY_COLORS = {
     "RGB": "#3b82f6",
@@ -92,6 +96,25 @@ class PlanObject:
         q = look_at_quat(self.position, np.asarray(target))
         self._transform["rotation_quat"] = [float(v) for v in q]
         self._transform["aimTarget_m"] = target
+
+    def to_world(self, local) -> np.ndarray:
+        """A point in this object's local frame, in world coordinates.
+
+        `rotation_quat` is part of every object's transform and the 3D editor draws
+        it, so checks and drawings have to apply it too -- otherwise a rotated wall
+        is in one place on screen and another in the printed plan. Vertex lists
+        (`polyline_m`, `polygon_m`, hood openings) are all local, so they all come
+        through here. Mirror of `toWorld` in web/src/core/plan.ts.
+        """
+        return self.position + self.rotation_matrix @ np.asarray(local, dtype=float)
+
+    def to_local(self, world) -> np.ndarray:
+        """A world point in this object's local frame -- the inverse of `to_world`."""
+        return self.rotation_matrix.T @ (np.asarray(world, dtype=float) - self.position)
+
+    def footprint_xy(self, xy) -> np.ndarray:
+        """A local footprint vertex `[x, y]` as a world `[x, y]`, dropping height."""
+        return self.to_world([float(xy[0]), float(xy[1]), 0.0])[:2]
 
     def __repr__(self) -> str:
         return "<{} {!r}>".format(type(self).__name__, self.id)
@@ -295,8 +318,19 @@ class Camera(PlanObject):
 
     @property
     def color(self) -> str:
-        display = self.raw.get("display") or {}
-        return display.get("color") or MODALITY_COLORS.get(self.modality, MODALITY_COLORS["other"])
+        """This camera's display colour, normalised to `#rrggbb`.
+
+        A plan is someone else's file, and this value is exactly the kind of thing
+        that ends up interpolated into markup -- `equipment_table()` output pasted
+        into a report, a notebook rendering a swatch. Anything that is not the one
+        literal the schema allows falls back to the modality colour rather than being
+        handed on. Mirror of `cameraColor` in web/src/core/plan.ts, which guards the
+        editor's own SVG and HTML sinks.
+        """
+        raw = (self.raw.get("display") or {}).get("color")
+        if isinstance(raw, str) and _HEX_COLOR.match(raw):
+            return raw
+        return MODALITY_COLORS.get(self.modality, MODALITY_COLORS["other"])
 
 
 class Burner(PlanObject):
@@ -399,6 +433,26 @@ class Hood(PlanObject):
     def duct(self) -> Optional[Dict[str, Any]]:
         return self.raw.get("duct")
 
+    @property
+    def opening_corners_xy(self) -> np.ndarray:
+        """The four corners of the opening in world XY, honouring the hood's rotation."""
+        w, d = self.opening_m
+        local = [(-w / 2, -d / 2), (w / 2, -d / 2), (w / 2, d / 2), (-w / 2, d / 2)]
+        return np.array([self.footprint_xy(c) for c in local])
+
+    def opening_offset(self, x: float, y: float) -> Tuple[float, float, float]:
+        """Where a world XY point sits relative to the opening, in the hood's own axes.
+
+        Returns `(u, v, overhang)`: the in-plane offset from the opening centre, and
+        how far the point lies beyond the rim -- zero when it is inside. Mirror of
+        `hoodOpeningOffset` in web/src/core/plan.ts.
+        """
+        local = self.to_local([float(x), float(y), 0.0])
+        w, d = self.opening_m
+        over_u = max(0.0, abs(local[0]) - w / 2)
+        over_v = max(0.0, abs(local[1]) - d / 2)
+        return float(local[0]), float(local[1]), float(math.hypot(over_u, over_v))
+
 
 class Wall(PlanObject):
     @property
@@ -449,17 +503,19 @@ class Ceiling(PlanObject):
         return float(abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))) / 2.0)
 
     def contains_xy(self, x: float, y: float) -> bool:
-        """Point-in-polygon by ray casting, in the ceiling's own local XY.
+        """Point-in-polygon by ray casting, over the slab's world footprint.
 
-        Used so a slab off to one side does not claim a flame impinges on it.
+        Used so a slab off to one side does not claim a flame impinges on it. The
+        footprint goes through the object frame rather than a bare translation: a
+        rotated slab covers a different area, and the 3D editor already draws it
+        rotated.
         """
         p = self.polygon_m
-        origin = self.position
         inside = False
         n = len(p)
         for i in range(n):
-            x0, y0 = p[i] + origin[:2]
-            x1, y1 = p[(i + 1) % n] + origin[:2]
+            x0, y0 = self.footprint_xy(p[i])
+            x1, y1 = self.footprint_xy(p[(i + 1) % n])
             # Half-open edge test avoids double-counting a vertex on the ray.
             if (y0 > y) != (y1 > y):
                 t = (y - y0) / (y1 - y0)

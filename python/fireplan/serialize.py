@@ -1,17 +1,23 @@
-"""Canonical JSON writer.
+"""Canonical JSON writer. Mirror of web/src/core/serialize.ts.
 
 Plans are revised by editing into a new file, so git history is the audit trail and
 readable diffs are a feature, not a nicety. This module therefore fixes key order,
 rounds floats to 1 um, and keeps coordinate arrays on one line -- so a plan that was
 merely re-saved produces an empty diff, and a plan where one camera moved produces a
 one-line diff.
+
+The two writers must agree byte for byte, so this one does its own JSON emission
+rather than calling `json.dumps` for the whole document: `json.dumps` renders floats
+with `repr`, and `repr` disagrees with `JSON.stringify` about how to spell `1e-6`,
+`1e16` and `12.0`. `_js_number` is where that is reconciled; everything else here
+reproduces `json.dumps(indent=2, ensure_ascii=False)` verbatim.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 # 1 um. Finer than any tape measure used on a test site, and coarse enough that
 # float round-trip noise never shows up in a diff.
@@ -44,7 +50,6 @@ _OBJECT_ORDER = {
     "wall": ["id", "type", "name", "transform", "polyline_m", "height_m", "thickness_m", "baseHeight_m", "openings", "display", "notes"],
     "ceiling": ["id", "type", "name", "transform", "polygon_m", "height_m", "thickness_m", "display", "notes"],
 }
-_OBJECT_FALLBACK = ["id", "type", "name", "transform", "display", "notes"]
 
 
 def _round_floats(value: Any) -> Any:
@@ -53,21 +58,14 @@ def _round_floats(value: Any) -> Any:
     bool is a subclass of int in Python, so it is tested first -- otherwise True
     would serialise as 1.
 
-    Integral floats are demoted to int so that 12.0 serialises as `12`, not `12.0`.
-    JSON has a single number type, and the trailing `.0` is a Python artifact: the
-    TypeScript writer cannot produce it at all, and cross-language byte parity is a
-    hard requirement (see web/src/core/core.test.ts).
+    Nothing here has to worry about how the result is spelled: `12.0` reaches the
+    file as `12` and `-0.0` as `0` because `_js_number` writes every float the way
+    JavaScript would, not the way `repr` would.
     """
     if isinstance(value, bool):
         return value
     if isinstance(value, float):
-        r = round(value, FLOAT_DECIMALS)
-        # Collapse -0.0 to 0.0 so a mirrored object does not diff against itself.
-        if r == 0.0:
-            return 0
-        if r == int(r) and abs(r) < 1e15:
-            return int(r)
-        return r
+        return round(value, FLOAT_DECIMALS)
     if isinstance(value, dict):
         return {k: _round_floats(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -118,7 +116,26 @@ def _canon_object(obj: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(o.get("openings"), list):
             o["openings"] = [_canon_sub(x, _OPENING) for x in o["openings"]]
 
-    return _order(o, _OBJECT_ORDER.get(kind, _OBJECT_FALLBACK))
+    return _round_floats(_order(o, _OBJECT_ORDER[kind]))
+
+
+def _canon_unknown_object(obj: Dict[str, Any]) -> Dict[str, Any]:
+    """An object whose `type` this version does not recognise.
+
+    Only the two blocks this version genuinely owns are canonicalised: `transform`,
+    because the editor can drag an unknown object and would otherwise write float
+    noise into it, and `display`, because it can be hidden or locked. Everything else
+    -- key order, unknown keys, and full numeric precision -- is re-emitted exactly as
+    it arrived. Rounding a coefficient whose meaning we do not know, or reordering
+    fields against a schema we have never seen, is data loss dressed up as tidiness,
+    and CONVENTIONS.md section 6 promises it will not happen.
+    """
+    o = dict(obj)
+    if isinstance(o.get("transform"), dict):
+        o["transform"] = _round_floats(_order(o["transform"], _TRANSFORM))
+    if isinstance(o.get("display"), dict):
+        o["display"] = _round_floats(_order(o["display"], _DISPLAY))
+    return o
 
 
 def canonicalize(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -136,8 +153,122 @@ def canonicalize(data: Dict[str, Any]) -> Dict[str, Any]:
     if "environment" in d:
         d["environment"] = _canon_sub(d["environment"], _ENV)
     if isinstance(d.get("objects"), list):
-        d["objects"] = [_canon_object(o) if isinstance(o, dict) else o for o in d["objects"]]
-    return _round_floats(_order(d, _TOP))
+        d["objects"] = [
+            (_canon_object(o) if o.get("type") in _OBJECT_ORDER else _canon_unknown_object(o))
+            if isinstance(o, dict) else o
+            for o in d["objects"]
+        ]
+
+    # Objects have already had the rounding their own type warrants; the rest of the
+    # document is all format 1.0 and rounds wholesale.
+    ordered = _order(d, _TOP)
+    return {
+        k: (v if k == "objects" else _round_floats(v)) for k, v in ordered.items()
+    }
+
+
+# -- writing -------------------------------------------------------------
+#
+# The output is JSON, but it is not `json.dumps` output, because `json.dumps` spells
+# floats with `repr` and `repr` is not what JavaScript writes. Everything below
+# reproduces `json.dumps(indent=2, ensure_ascii=False, allow_nan=False)` exactly,
+# except for floats, which go through `_js_number`.
+
+_INDENT = "  "
+_INF = float("inf")
+
+
+def _shortest_digits(value: float) -> Tuple[str, int]:
+    """The shortest round-tripping digits of a positive float, and its power of ten.
+
+    `value == int(digits) * 10 ** exponent`. Python's float repr already produces the
+    shortest digit string that round-trips -- the same digits V8 produces -- so this
+    only has to take the decimal point and any padding zeros back out of it.
+
+    `float.__repr__`, not `repr`, and for the same reason `json` uses it: a float
+    subclass gets to override `repr`, and numpy 2 does -- `repr(np.float64(1.5))` is
+    `np.float64(1.5)`. A plan holding a stray numpy scalar has to serialise as the
+    number it is, not as its Python spelling.
+    """
+    mantissa, _, exp = float.__repr__(value).partition("e")
+    exponent = int(exp) if exp else 0
+    whole, _, frac = mantissa.partition(".")
+    digits = (whole + frac).lstrip("0")
+    exponent -= len(frac)
+    trimmed = digits.rstrip("0")
+    exponent += len(digits) - len(trimmed)
+    return trimmed, exponent
+
+
+def _js_number(value: float) -> str:
+    """Format a float exactly as JavaScript's `JSON.stringify` would.
+
+    Byte parity between this writer and the TypeScript one is a hard requirement
+    (CONVENTIONS section 6), and `repr` is not it. The digits always agree -- both
+    languages emit the shortest decimal that round-trips -- but the layout does not:
+
+        Python  1.23e-08   1e-06     1e+16                12.0   -0.0
+        JS      1.23e-8    0.000001  10000000000000000    12     0
+
+    So the digits come from `repr` and the layout comes from ECMA-262's
+    Number::toString, which is the rule below: fixed notation while the decimal
+    exponent sits in [-6, 21), exponential outside it.
+    """
+    if value != value or value == _INF or value == -_INF:
+        raise ValueError("Out of range float values are not JSON compliant: {!r}".format(value))
+    if value == 0.0:
+        return "0"  # including -0.0, which JSON.stringify also writes as 0
+    if value < 0:
+        return "-" + _js_number(-value)
+
+    digits, exponent = _shortest_digits(value)
+    k = len(digits)          # how many digits there are
+    n = k + exponent         # where the decimal point goes, counted from the left
+
+    if k <= n <= 21:
+        return digits + "0" * (n - k)
+    if 0 < n <= 21:
+        return digits[:n] + "." + digits[n:]
+    if -6 < n <= 0:
+        return "0." + "0" * -n + digits
+    mantissa = digits if k == 1 else digits[0] + "." + digits[1:]
+    return "{}e{}{}".format(mantissa, "+" if n - 1 > 0 else "-", abs(n - 1))
+
+
+def _encode(value: Any, level: int) -> str:
+    """One JSON value, indented as `json.dumps(indent=2)` would indent it."""
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, int):  # after the bool checks: bool subclasses int
+        return int.__repr__(value)  # a subclass's own repr is not a JSON number
+    if isinstance(value, float):
+        return _js_number(value)
+
+    pad = _INDENT * (level + 1)
+    close = "\n" + _INDENT * level
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        items = []
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError("plan keys must be strings, got {!r}".format(key))
+            items.append("{}{}: {}".format(
+                pad, json.dumps(key, ensure_ascii=False), _encode(item, level + 1)))
+        return "{\n" + ",\n".join(items) + close + "}"
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return "[]"
+        items = ["{}{}".format(pad, _encode(v, level + 1)) for v in value]
+        return "[\n" + ",\n".join(items) + close + "]"
+
+    raise TypeError("Object of type {} is not JSON serializable".format(type(value).__name__))
 
 
 # Matches an array whose entire content is numeric -- no quotes, braces or nested
@@ -148,7 +279,7 @@ _NUMERIC_ARRAY = re.compile(r"\[[\s0-9eE.,+-]*\]")
 
 def _collapse(match: "re.Match") -> str:
     text = match.group(0)
-    # Only collapse arrays json.dumps actually broke across lines. Without this, a
+    # Only collapse arrays the writer actually broke across lines. Without this, a
     # numeric-looking substring inside a `notes` string would get its spacing rewritten.
     if "\n" not in text:
         return text
@@ -158,5 +289,4 @@ def _collapse(match: "re.Match") -> str:
 
 def dumps(data: Dict[str, Any]) -> str:
     """Serialise a plan to canonical JSON text, newline-terminated."""
-    text = json.dumps(canonicalize(data), indent=2, ensure_ascii=False, allow_nan=False)
-    return _NUMERIC_ARRAY.sub(_collapse, text) + "\n"
+    return _NUMERIC_ARRAY.sub(_collapse, _encode(canonicalize(data), 0)) + "\n"

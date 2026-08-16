@@ -6,8 +6,9 @@
  * that touch several objects at once (delete a burner, re-aim every camera).
  */
 
-import { parsePlan, newPlan } from '../core/plan';
+import { newPlan } from '../core/plan';
 import { serializePlan } from '../core/serialize';
+import { parseAndValidatePlan } from '../core/validate';
 import type { LengthUnit, PlanDocument, PlanObject } from '../core/types';
 
 const HISTORY_LIMIT = 100;
@@ -227,8 +228,9 @@ export class Store {
     this.emit('selection');
   }
 
+  /** Throws before touching state if the text is not a valid plan. */
   loadFromText(text: string, fileName: string): void {
-    this.replaceDocument(parsePlan(text), fileName);
+    this.replaceDocument(parseAndValidatePlan(text), fileName);
   }
 
   serialize(): string {

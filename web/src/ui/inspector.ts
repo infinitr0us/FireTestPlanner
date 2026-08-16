@@ -8,7 +8,7 @@
  */
 
 import { defaultAimTarget } from '../core/factory';
-import { lookAtQuat } from '../core/math';
+import { setAimTarget, setPosition } from '../core/transform';
 import {
   burnerDiameterM,
   burnerFlameHeightM,
@@ -21,6 +21,7 @@ import {
   groundSampleDistanceM,
   hfovDegOf,
   hoodIntakeHeightM,
+  hoodOpeningOffset,
   isBurner,
   isCamera,
   isCeiling,
@@ -171,12 +172,11 @@ export class Inspector {
         `Position (${unit})`,
         vecField(p, unit, ['X', 'Y', 'Z'], (index, metres) =>
           this.patch(obj.id, 'Move', (o) => {
-            const t = o.transform ?? (o.transform = { position_m: [0, 0, 0] });
-            const next = [...t.position_m] as Vec3;
+            const next = [...(o.transform?.position_m ?? [0, 0, 0])] as Vec3;
             next[index] = metres;
-            t.position_m = next;
-            // Keep a camera pointed where it was told to point when it moves.
-            if (t.aimTarget_m) t.rotation_quat = lookAtQuat(next, t.aimTarget_m);
+            // Shared with palette drop and both gizmo drags, so a camera ends up
+            // aimed the same way however it was moved.
+            setPosition(o, next);
           }),
         ),
         'Measured from the burner centre at floor level',
@@ -234,11 +234,9 @@ export class Inspector {
       row(`Aim target (${unit})`,
         vecField(target ?? [0, 0, 0], unit, ['X', 'Y', 'Z'], (index, metres) =>
           this.patch(cam.id, 'Re-aim', (o) => {
-            const t = o.transform ?? (o.transform = { position_m: [0, 0, 0] });
-            const next = [...(t.aimTarget_m ?? [0, 0, 0])] as Vec3;
+            const next = [...(o.transform?.aimTarget_m ?? [0, 0, 0])] as Vec3;
             next[index] = metres;
-            t.aimTarget_m = next;
-            t.rotation_quat = lookAtQuat(t.position_m, next);
+            setAimTarget(o as CameraObject, next);
           })),
         target
           ? 'Advisory; the stored quaternion is authoritative'
@@ -246,10 +244,7 @@ export class Inspector {
       h('div', { class: 'panel__actions' }, [
         button('Aim at fire', () =>
           this.patch(cam.id, 'Aim at fire', (o) => {
-            const t = o.transform ?? (o.transform = { position_m: [0, 0, 0] });
-            const aim = defaultAimTarget(this.store.document);
-            t.aimTarget_m = aim;
-            t.rotation_quat = lookAtQuat(t.position_m, aim);
+            setAimTarget(o as CameraObject, defaultAimTarget(this.store.document));
           })),
       ]),
     );
@@ -474,6 +469,16 @@ export class Inspector {
     const items: HTMLElement[] = [readout('Intake plane', formatLengthWithUnit(intake, unit))];
 
     if (burner) {
+      const bp = positionOf(burner);
+      const off = hoodOpeningOffset(hood, [bp[0], bp[1]]);
+      const eccentricity = Math.hypot(off.u, off.v);
+
+      // Over the fire or not comes first: everything below assumes it is.
+      items.push(readout('Fire under the opening', off.inside ? 'yes' : 'no',
+        off.inside ? 'good' : 'bad'));
+      items.push(readout('Offset from opening centre', formatLengthWithUnit(eccentricity, unit),
+        eccentricity < 0.1 ? 'muted' : undefined));
+
       const tip = flameTipZM(burner);
       if (tip !== null) {
         items.push(readout('Flame tip clearance', formatLengthWithUnit(intake - tip, unit),
@@ -482,12 +487,21 @@ export class Inspector {
       const radius = plumeRadiusAtZ(burner, intake);
       if (radius !== null) {
         const plumeD = 2 * radius;
-        const opening = Math.min(hood.opening_m[0], hood.opening_m[1]);
+        // The span the plume actually demands: a disk centred on the burner, not on
+        // the opening, so an off-centre fire needs more than its own width.
+        const axes: Array<[number, number]> = [
+          [2 * (Math.abs(off.u) + radius), hood.opening_m[0]],
+          [2 * (Math.abs(off.v) + radius), hood.opening_m[1]],
+        ];
+        const [need, avail] = axes.reduce((a, b) => (a[1] - a[0] <= b[1] - b[0] ? a : b));
         items.push(
-          readout('Plume width at intake', formatLengthWithUnit(plumeD, unit),
-            plumeD < 0.8 * opening ? 'good' : 'bad'),
+          readout('Plume width at intake', formatLengthWithUnit(plumeD, unit)),
+          readout('Opening needed / available',
+            `${formatLength(need, unit)} / ${formatLengthWithUnit(avail, unit)}`,
+            off.inside && need < 0.8 * avail ? 'good' : 'bad'),
           h('p', { class: 'readout__note' }, [
-            'A hood that spills plume under-reads HRR by oxygen consumption.',
+            'A hood that spills plume under-reads HRR by oxygen consumption. What has ' +
+            'to fit is the plume disk where it sits, not just its width.',
           ]),
         );
       }

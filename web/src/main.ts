@@ -2,22 +2,22 @@
 
 import examplePlan from '../../fixtures/pool-fire-camera-row.ftp.json';
 
-import { newPlan, parsePlan } from './core/plan';
+import { newPlan } from './core/plan';
 import type { LengthUnit, PlanDocument } from './core/types';
-import { describeErrors, validateStructure } from './core/validate';
+import { parseAndValidatePlan } from './core/validate';
 import {
   announceReady,
   buildShareableHtml,
   captureBootHtml,
   connectShell,
-  embeddedPlan,
+  embeddedPlanText,
   isSingleFileBuild,
   openPlanText,
   savePlanText,
   saveShareableHtml,
   shell,
 } from './io/files';
-import { Viewport, type GizmoMode } from './scene/viewport';
+import { Viewport, type GizmoMode, type ViewportOptions } from './scene/viewport';
 import { Store } from './state/store';
 import { h, qs } from './ui/dom';
 import { Inspector } from './ui/inspector';
@@ -29,7 +29,27 @@ import './styles.css';
 // someone this page with a plan baked in, and it has to be the pristine page.
 captureBootHtml();
 
-const store = new Store(embeddedPlan() ?? newPlan('Untitled fire test'));
+const embedded = embeddedPlanText();
+
+/** True once an embedded plan has actually been adopted -- which is not the same as
+ *  the page carrying one, because it still has to survive validation. */
+let sharedPlanAdopted = false;
+
+/** A shared page's plan, if it survives validation. A broken one opens an empty
+ *  editor with a console note rather than a half-built scene. */
+function initialDocument(): PlanDocument {
+  if (!embedded) return newPlan('Untitled fire test');
+  try {
+    const doc = parseAndValidatePlan(embedded);
+    sharedPlanAdopted = true;
+    return doc;
+  } catch (err) {
+    console.warn(`Embedded plan rejected:\n${(err as Error).message}`);
+    return newPlan('Untitled fire test');
+  }
+}
+
+const store = new Store(initialDocument());
 const viewport = new Viewport(qs('#viewport'), store);
 const inspector = new Inspector(qs('#inspector'), store);
 const outliner = new Outliner(qs('#outliner'), store);
@@ -45,7 +65,16 @@ viewport.onMeasureChange = (count) => {
   renderToolbar();
 };
 
-const reportOverlay = new ReportOverlay((html, name) => { void saveShareableHtml(html, name); });
+const reportOverlay = new ReportOverlay((html, name) => { void saveHtml(html, name); });
+
+/** Write an HTML export, and say so if it fails rather than doing nothing visible. */
+async function saveHtml(html: string, name: string): Promise<void> {
+  try {
+    await saveShareableHtml(html, name);
+  } catch (err) {
+    window.alert(`${name} was not saved:\n\n${(err as Error).message}`);
+  }
+}
 
 let gizmoMode: GizmoMode = 'translate';
 let measuring = false;
@@ -98,8 +127,26 @@ store.subscribe((event) => {
 
 const toolbar = qs('#toolbar');
 
+/**
+ * A viewport-option toggle.
+ *
+ * The current value is read at CLICK time, not at render time. A render-time
+ * snapshot captured in the handler goes stale the moment the option changes --
+ * `setOptions` rebuilds the viewport but emits no store event, so the toolbar is
+ * never rerendered and every later click writes the same value again. Re-rendering
+ * after the change is what keeps the active state honest too.
+ */
+const option = (
+  label: string,
+  key: keyof ViewportOptions,
+  title?: string,
+): HTMLElement =>
+  toggle(label, viewport.getOptions()[key], () => {
+    viewport.setOptions({ [key]: !viewport.getOptions()[key] });
+    renderToolbar();
+  }, title);
+
 function renderToolbar(): void {
-  const opts = viewport.getOptions();
   const dirtyMark = store.dirty ? ' •' : '';
 
   toolbar.replaceChildren(
@@ -124,37 +171,32 @@ function renderToolbar(): void {
 
     group([
       toggle('Plan', store.viewMode === 'plan', () => store.setViewMode('plan'), 'Top-down orthographic (1)'),
-      toggle('Front', store.viewMode === 'front', () => store.setViewMode('front'), 'Front elevation, looking +Y (2)'),
-      toggle('Side', store.viewMode === 'side', () => store.setViewMode('side'), 'Side elevation, looking −X (3)'),
+      toggle('Front', store.viewMode === 'front', () => store.setViewMode('front'), 'Front elevation, looking +Y north (2)'),
+      toggle('Side', store.viewMode === 'side', () => store.setViewMode('side'), 'Side elevation, looking +X east (3)'),
       toggle('3D', store.viewMode === '3d', () => store.setViewMode('3d'), 'Perspective orbit (4)'),
     ]),
 
     group([
       toggle('Move', gizmoMode === 'translate', () => setGizmo('translate'), 'G'),
       toggle('Rotate', gizmoMode === 'rotate', () => setGizmo('rotate'), 'R'),
-      toggle('Snap', opts.snap, () => viewport.setOptions({ snap: !opts.snap })),
+      option('Snap', 'snap', 'Snap gizmo drags to a quarter of the grid step'),
       toggle('Measure', measuring, toggleMeasure, 'Click two points for a distance (M)'),
       measurementCount > 0 ? btn('Clear', clearMeasurements, 'Remove all measurements') : null,
     ].filter(Boolean) as HTMLElement[]),
 
     group([
-      toggle('Frustums', opts.showFrustums, () => viewport.setOptions({ showFrustums: !opts.showFrustums })),
-      toggle('Flame', opts.showFlame, () => viewport.setOptions({ showFlame: !opts.showFlame }),
-        'Heskestad flame cone and plume envelope'),
-      toggle('Dims', opts.showDimensions, () => viewport.setOptions({ showDimensions: !opts.showDimensions }),
-        'Standoff dimension lines from the fire'),
-      toggle('Preview', opts.showPreview, () => viewport.setOptions({ showPreview: !opts.showPreview }),
-        "Picture-in-picture of the selected camera's view"),
+      option('Frustums', 'showFrustums', 'Camera field-of-view pyramids'),
+      option('Flame', 'showFlame', 'Heskestad flame cone and plume envelope'),
+      option('Dims', 'showDimensions', 'Standoff dimension lines from the fire'),
+      option('Preview', 'showPreview', "Picture-in-picture of the selected camera's view"),
     ]),
 
     group([
       h('select', {
         class: 'toolbar__select',
         title: 'Display units. Stored values are always metric.',
-        onchange: (e: Event) => {
-          store.setDisplayUnit((e.target as HTMLSelectElement).value as LengthUnit);
-          viewport.rebuild();
-        },
+        // setDisplayUnit emits 'document', which rebuilds the viewport already.
+        onchange: (e: Event) => store.setDisplayUnit((e.target as HTMLSelectElement).value as LengthUnit),
       }, (['m', 'cm', 'mm', 'ft', 'in'] as LengthUnit[]).map((u) =>
         h('option', { value: u, selected: u === store.displayUnit }, [u]))),
       btn('Fit', () => viewport.frameAll(), 'F'),
@@ -194,38 +236,55 @@ function confirmDiscard(): boolean {
 
 async function openPlan(): Promise<void> {
   if (!confirmDiscard()) return;
+  let result: Awaited<ReturnType<typeof openPlanText>>;
   try {
-    const result = await openPlanText();
-    if (!result) return;
+    result = await openPlanText();
+  } catch (err) {
+    // The desktop bridge can fail outright -- the shell's server gone, the file
+    // unreadable. Left uncaught this is an unhandled rejection and the Open button
+    // simply does nothing, which reads as a broken app rather than a failed read.
+    window.alert(`Could not open a plan:\n\n${(err as Error).message}`);
+    return;
+  }
+  if (!result) return;
+  adopt(result.text, result.name);
+}
 
-    // Validate before adopting it. A structurally broken plan would otherwise
-    // reach the renderer as NaN geometry, which is far harder to diagnose than
-    // being told which object is malformed.
-    const doc = parsePlan(result.text);
-    const errors = validateStructure(doc);
-    if (errors.length > 0) {
-      window.alert(
-        `${result.name} is not a valid fire test plan:\n\n${describeErrors(errors)}\n\n` +
-        'Nothing was loaded. Fix the file, or validate it with ' +
-        '`python -c "from fireplan import Plan; Plan.load(path).validate_schema()"` ' +
-        'for the full schema report.',
-      );
-      return;
-    }
-
-    store.replaceDocument(doc, result.name);
+/**
+ * Adopt a plan from any source, or explain why not.
+ *
+ * Shared by Open and by a plan named on the desktop shell's command line, so both
+ * validate before the store is touched and both leave the current document intact
+ * on failure.
+ */
+function adopt(text: string, name: string): void {
+  try {
+    store.replaceDocument(parseAndValidatePlan(text), name);
     viewport.frameAll();
   } catch (err) {
-    window.alert(`Could not open that file.\n\n${(err as Error).message}`);
+    window.alert(
+      `${name} could not be opened as a fire test plan:\n\n${(err as Error).message}\n\n` +
+      'Nothing was loaded. Fix the file, or validate it with ' +
+      '`python -c "from fireplan import Plan; Plan.load(path).validate_schema()"` ' +
+      'for the full schema report.',
+    );
   }
 }
 
-async function savePlan(forceName = false): Promise<void> {
-  const suggested = forceName || store.fileName === 'untitled.ftp.json'
+async function savePlan(saveAs = false): Promise<void> {
+  const suggested = saveAs || store.fileName === 'untitled.ftp.json'
     ? suggestFileName()
     : store.fileName;
-  const saved = await savePlanText(store.serialize(), suggested);
-  if (saved) store.markSaved(saved.split(/[\\/]/).pop() ?? suggested);
+  try {
+    const saved = await savePlanText(store.serialize(), suggested, saveAs);
+    // null means the user cancelled the dialog; a failed write throws.
+    if (saved) store.markSaved(saved.split(/[\\/]/).pop() ?? suggested);
+  } catch (err) {
+    window.alert(
+      `${suggested} was not saved:\n\n${(err as Error).message}\n\n` +
+      'The plan is still open and unchanged — try Save as… to a different location.',
+    );
+  }
 }
 
 function suggestFileName(): string {
@@ -262,7 +321,7 @@ async function exportShareable(): Promise<void> {
   }
   const title = store.document.meta?.title ?? 'Fire test plan';
   const html = buildShareableHtml(store.serialize(), title);
-  await saveShareableHtml(html, suggestFileName().replace(/\.ftp\.json$/, '') + '-viewer.html');
+  await saveHtml(html, suggestFileName().replace(/\.ftp\.json$/, '') + '-viewer.html');
 }
 
 // -- keyboard -------------------------------------------------------------
@@ -328,8 +387,13 @@ renderToolbar();
 viewport.setGizmoMode(gizmoMode);
 viewport.frameAll();
 
-// A page exported by 'Share' opens straight into the plan it carries.
-if (embeddedPlan()) {
+// A page exported by 'Share' opens straight into the plan it carries. Keyed on the
+// plan having been adopted, not on the page merely carrying one: a shared page whose
+// payload failed validation is showing an empty untitled plan, and presenting that as
+// a saved document invites the user to Save over a filename that means nothing.
+// (`is-shared-view` and `is-desktop` carry no styling of their own; they are hooks for
+// a user stylesheet, and for anything that later wants to trim the chrome.)
+if (sharedPlanAdopted) {
   store.markSaved(`${(store.document.meta?.title ?? 'plan')}.ftp.json`);
   document.body.classList.add('is-shared-view');
 }
@@ -347,11 +411,6 @@ connectShell(() => {
   }).then((queued) => {
     // A plan named on the shell's command line comes back from app_ready().
     if (!queued) return;
-    try {
-      store.replaceDocument(parsePlan(queued.text), queued.path.split(/[\\/]/).pop() ?? 'plan.ftp.json');
-      viewport.frameAll();
-    } catch (err) {
-      window.alert(`Could not open ${queued.path}\n\n${(err as Error).message}`);
-    }
+    adopt(queued.text, queued.path.split(/[\\/]/).pop() ?? 'plan.ftp.json');
   });
 });

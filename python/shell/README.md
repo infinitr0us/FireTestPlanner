@@ -52,11 +52,20 @@ and drive the user's file dialogs.
 | `/api/ready` | POST | The app reports it has booted; returns any plan named on the command line |
 | `/api/open` | POST | Native open dialog; returns `{path, text}` |
 | `/api/open-recent` | POST | Read a known path |
-| `/api/save` | POST | Native save dialog, writes the plan |
+| `/api/save` | POST | Writes the plan; asks for a destination unless it can write back |
 | `/api/save-html` | POST | Native save dialog, writes an exported page |
 | `/api/recent` | GET | Recent paths that still exist |
 
 Everything else is served as static files from the bundle directory.
+
+Both save routes answer `{"path": ...}`, `{"error": ...}` or `null`. The three are
+distinct on purpose: `null` is a cancelled dialog, which needs no comment, while an
+`error` is the user's work not reaching the disk and has to be shown to them.
+
+`/api/save` writes straight back to the open file only when the page's suggested
+filename still matches it. The page can swap its document without telling the shell —
+the Example button does — and the file that was opened must not be overwritten with
+whatever is on screen now.
 
 ## Packaging
 
@@ -66,3 +75,8 @@ WebView2 runtime that ships with Windows 11 rather than embedding a browser, whi
 is what keeps it in the tens of megabytes.
 
 Use `--console` when building if you want to see `--selftest` output from the exe.
+
+Note that `build_exe.py` packages whatever is already in `web/dist` — it does not
+build it. Prefer `build.bat` in the repo root, which rebuilds the bundle first and
+then verifies the packaged exe; running `build_exe.py` alone after editing the
+frontend produces an exe carrying the previous bundle.

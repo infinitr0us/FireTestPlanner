@@ -19,13 +19,16 @@ import {
   displayName,
   findObject,
   flameTipZM,
+  footprintXY,
   hfovRadOf,
+  hoodOpeningCornersXY,
   isCamera,
   positionOf,
   quatOf,
   standoffHorizontalM,
   vfovRadOf,
 } from '../core/plan';
+import { setPosition, setRotation } from '../core/transform';
 import { formatLengthWithUnit, gridStep } from '../core/units';
 import { makeLabel } from './labels';
 import type {
@@ -175,11 +178,10 @@ export class Viewport {
     this.scene.add(this.gizmoHelper);
 
     this.setupLights();
-    this.setupFurniture();
     this.bindEvents();
 
     this.resize();
-    this.rebuild();
+    this.rebuild(); // builds the furniture too, so there is no separate first pass
     this.tick();
   }
 
@@ -204,7 +206,11 @@ export class Viewport {
   }
 
   private setupFurniture(): void {
-    this.furnitureRoot.clear();
+    // disposeTree, not clear(): clear() detaches the children but leaves their
+    // geometries and materials on the GPU, and this runs on every edit, view change
+    // and visibility toggle. A long authoring session would accumulate one grid and
+    // one floor plane per rebuild.
+    this.disposeTree(this.furnitureRoot);
 
     const size = this.store.document.environment?.floorSize_m ?? [20, 20];
     const extent = Math.max(size[0], size[1]);
@@ -406,17 +412,22 @@ export class Viewport {
     this.store.edit(`Move ${id}`, (doc) => {
       const obj = findObject(doc, id);
       if (!obj) return;
-      const t = obj.transform ?? (obj.transform = { position_m: [0, 0, 0] });
-      t.position_m = [target.position.x, target.position.y, target.position.z];
       if (this.gizmo.getMode() === 'rotate') {
         const q = target.quaternion;
-        t.rotation_quat = [q.x, q.y, q.z, q.w];
-        // The quaternion is authoritative, so a manual rotation invalidates the
-        // recorded intent rather than silently disagreeing with it.
-        t.aimTarget_m = null;
+        // Position first: setRotation drops the aim target, and setPosition would
+        // otherwise re-derive the orientation the user is currently dragging.
+        (obj.transform ?? (obj.transform = { position_m: [0, 0, 0] })).position_m =
+          [target.position.x, target.position.y, target.position.z];
+        setRotation(obj, [q.x, q.y, q.z, q.w]);
+      } else {
+        setPosition(obj, [target.position.x, target.position.y, target.position.z]);
       }
     });
     this.refreshSelectionBox();
+    // Keep the picture-in-picture live while a camera is being dragged. Rebuilds are
+    // suppressed mid-drag, so without this the preview shows the pre-drag view until
+    // the pointer is released -- which is the one moment it is most worth watching.
+    this.updatePreviewCamera();
   }
 
   setGizmoMode(mode: GizmoMode): void {
@@ -425,9 +436,21 @@ export class Viewport {
 
   setOptions(patch: Partial<ViewportOptions>): void {
     this.options = { ...this.options, ...patch };
+    this.rebuild(); // applies the snap along with everything else
+  }
+
+  /**
+   * Push the snap option onto the gizmo.
+   *
+   * Called from `rebuild()` rather than only from `setOptions()`, for two reasons:
+   * TransformControls starts with no snap at all, so a Snap button that renders lit
+   * from `DEFAULT_OPTIONS` would be lying until the user toggled it off and on; and
+   * the translation step is derived from the display unit, which changes without any
+   * option changing. `rebuild()` runs on both occasions.
+   */
+  private applySnap(): void {
     this.gizmo.setTranslationSnap(this.options.snap ? gridStep(this.store.displayUnit) / 4 : null);
     this.gizmo.setRotationSnap(this.options.snap ? THREE.MathUtils.degToRad(5) : null);
-    this.rebuild();
   }
 
   getOptions(): ViewportOptions {
@@ -516,20 +539,24 @@ export class Viewport {
         box.expandByPoint(new THREE.Vector3(p[0] - r, p[1] - r, p[2]));
         box.expandByPoint(new THREE.Vector3(p[0] + r, p[1] + r, flameTipZM(b) ?? p[2] + 1));
       } else if (obj.type === 'hood') {
+        // Rotated footprints, so Fit frames what is actually drawn.
         const hood = obj as HoodObject;
-        const [w, d] = hood.opening_m;
-        box.expandByPoint(new THREE.Vector3(p[0] - w / 2, p[1] - d / 2, 0));
-        box.expandByPoint(new THREE.Vector3(p[0] + w / 2, p[1] + d / 2, hood.height_m + 1));
+        for (const [x, y] of hoodOpeningCornersXY(hood)) {
+          box.expandByPoint(new THREE.Vector3(x, y, 0));
+          box.expandByPoint(new THREE.Vector3(x, y, hood.height_m + 1));
+        }
       } else if (obj.type === 'wall') {
         const wall = obj as WallObject;
-        for (const [x, y] of wall.polyline_m) {
-          box.expandByPoint(new THREE.Vector3(p[0] + x, p[1] + y, p[2]));
-          box.expandByPoint(new THREE.Vector3(p[0] + x, p[1] + y, p[2] + wall.height_m));
+        for (const v of wall.polyline_m) {
+          const [x, y] = footprintXY(wall, v);
+          box.expandByPoint(new THREE.Vector3(x, y, p[2]));
+          box.expandByPoint(new THREE.Vector3(x, y, p[2] + wall.height_m));
         }
       } else if (obj.type === 'ceiling') {
         const slab = obj as CeilingObject;
-        for (const [x, y] of slab.polygon_m) {
-          box.expandByPoint(new THREE.Vector3(p[0] + x, p[1] + y, slab.height_m));
+        for (const v of slab.polygon_m) {
+          const [x, y] = footprintXY(slab, v);
+          box.expandByPoint(new THREE.Vector3(x, y, slab.height_m));
         }
       }
     }
@@ -592,6 +619,7 @@ export class Viewport {
     }
 
     this.setupFurniture();
+    this.applySnap(); // the step follows the grid, and the grid follows the display unit
     this.redrawMeasurements(); // labels are rebuilt with the current display unit
     this.syncSelection();
   }
@@ -681,6 +709,11 @@ export class Viewport {
    *
    * delta = pivotNow * pivotStart^-1, applied to each object's starting matrix, so
    * rotation carries the members around the pivot instead of spinning them in place.
+   *
+   * Translating a group re-aims each camera at its own unchanged target, exactly as
+   * dragging one camera does -- the alternative, carrying every target along rigidly,
+   * would silently redefine what a camera was pointed at. Rotating a group is a hand
+   * orientation, so it drops the targets instead.
    */
   private applyGroupDrag(): void {
     if (this.dragStart.size === 0) return;
@@ -703,29 +736,44 @@ export class Viewport {
         );
         delta.clone().multiply(startMatrix).decompose(position, quaternion, scale);
 
-        const t = obj.transform ?? (obj.transform = { position_m: [0, 0, 0] });
-        t.position_m = [position.x, position.y, position.z];
         if (rotating) {
-          t.rotation_quat = [quaternion.x, quaternion.y, quaternion.z, quaternion.w];
-          t.aimTarget_m = null; // a hand rotation invalidates the recorded intent
+          (obj.transform ?? (obj.transform = { position_m: [0, 0, 0] })).position_m =
+            [position.x, position.y, position.z];
+          setRotation(obj, [quaternion.x, quaternion.y, quaternion.z, quaternion.w]);
+        } else {
+          setPosition(obj, [position.x, position.y, position.z]);
         }
       }
     });
   }
 
+  /**
+   * Point the selection outline at whatever is selected now.
+   *
+   * One helper, retargeted -- not a new one per call. This runs on every gizmo
+   * `objectChange`, i.e. every pointer-move of a drag, and a fresh `BoxHelper` brings
+   * a fresh `LineBasicMaterial` with it; recreating it would leak one material per
+   * mouse movement, which is the same leak the furniture used to have.
+   */
   private refreshSelectionBox(): void {
-    if (this.selectionBox) {
-      this.scene.remove(this.selectionBox);
-      this.selectionBox.geometry.dispose();
-      this.selectionBox = null;
-    }
     const ids = this.store.selectedIds;
-    if (ids.length === 0) return;
-    const group = this.objectGroups.get(ids[0]);
-    if (!group) return;
-    this.selectionBox = new THREE.BoxHelper(group, 0x38bdf8);
-    this.selectionBox.layers.set(LAYER_EDITOR);
-    this.scene.add(this.selectionBox);
+    const group = ids.length > 0 ? this.objectGroups.get(ids[0]) : undefined;
+
+    if (!group) {
+      if (this.selectionBox) this.selectionBox.visible = false;
+      return;
+    }
+
+    if (!this.selectionBox) {
+      this.selectionBox = new THREE.BoxHelper(group, 0x38bdf8);
+      this.selectionBox.layers.set(LAYER_EDITOR);
+      this.scene.add(this.selectionBox);
+    } else {
+      // setFromObject rebinds the helper and refits it in one call; the geometry is
+      // reused, so nothing is allocated.
+      this.selectionBox.setFromObject(group);
+      this.selectionBox.visible = true;
+    }
   }
 
   // -- camera preview ----------------------------------------------------
@@ -824,7 +872,7 @@ export class Viewport {
     this.frameHandle = requestAnimationFrame(this.tick);
 
     this.activeOrbit.update();
-    if (this.selectionBox) this.selectionBox.update();
+    if (this.selectionBox?.visible) this.selectionBox.update();
 
     const camera = this.activeCamera;
     // Editor furniture is on its own layer so the camera preview can drop it.
@@ -866,6 +914,11 @@ export class Viewport {
     this.disposeTree(this.dimensionRoot);
     this.disposeTree(this.furnitureRoot);
     this.disposeTree(this.measureRoot);
+    // The selection box hangs off the scene rather than one of the roots above.
+    this.selectionBox?.geometry.dispose();
+    (this.selectionBox?.material as THREE.Material | undefined)?.dispose();
+    this.selectionBox?.removeFromParent();
+    this.selectionBox = null;
     this.gizmo.detach();
     this.gizmo.dispose();
     this.orbitPerspective.dispose();

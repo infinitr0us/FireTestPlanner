@@ -10,7 +10,16 @@ import {
   plumeRadiusM,
   virtualOriginM,
 } from './correlations';
-import { angleBetweenDeg, forwardOf, IDENTITY_QUAT, length, quatToColumns, sub } from './math';
+import {
+  angleBetweenDeg,
+  forwardOf,
+  IDENTITY_QUAT,
+  length,
+  quatToColumns,
+  rotateVec,
+  sub,
+  unrotateVec,
+} from './math';
 import {
   FORMAT,
   FORMAT_VERSION,
@@ -112,6 +121,34 @@ export const positionOf = (o: PlanObject): Vec3 => o.transform?.position_m ?? [0
 export const quatOf = (o: PlanObject): Quat => o.transform?.rotation_quat ?? IDENTITY_QUAT;
 export const displayName = (o: PlanObject): string => o.name || o.id;
 
+// -- object frames --------------------------------------------------------
+
+/**
+ * A point in an object's local frame, in world coordinates.
+ *
+ * `rotation_quat` is part of every object's transform and the 3D view draws it, so
+ * checks and drawings have to apply it too -- otherwise a rotated wall is in one
+ * place on screen and another in the printed plan. Vertex lists (`polyline_m`,
+ * `polygon_m`, hood openings) are all local, so they all go through here.
+ */
+export function toWorld(o: PlanObject, local: Vec3): Vec3 {
+  const r = rotateVec(quatOf(o), local);
+  const p = positionOf(o);
+  return [p[0] + r[0], p[1] + r[1], p[2] + r[2]];
+}
+
+/** A world point in the object's local frame -- the inverse of `toWorld`. */
+export function toLocal(o: PlanObject, world: Vec3): Vec3 {
+  const p = positionOf(o);
+  return unrotateVec(quatOf(o), [world[0] - p[0], world[1] - p[1], world[2] - p[2]]);
+}
+
+/** A local footprint vertex `[x, y]` as a world `[x, y]`, dropping height. */
+export function footprintXY(o: PlanObject, xy: readonly [number, number]): [number, number] {
+  const w = toWorld(o, [xy[0], xy[1], 0]);
+  return [w[0], w[1]];
+}
+
 // -- camera ---------------------------------------------------------------
 
 export const resolutionOf = (c: CameraObject): [number, number] => c.camera.resolution_px;
@@ -156,8 +193,23 @@ export const standoffHorizontalM = (c: CameraObject): number => {
 export const groundSampleDistanceM = (c: CameraObject, distanceM?: number): number =>
   (distanceM ?? standoffM(c)) / fxOf(c);
 
-export const cameraColor = (c: CameraObject): string =>
-  c.display?.color || MODALITY_COLORS[c.camera.modality] || MODALITY_COLORS.other;
+/** The one colour literal the schema allows: `#rrggbb`. */
+export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+/**
+ * A camera's display colour, normalised.
+ *
+ * Plans are untrusted input -- a shared `.ftp.json` is someone else's file -- and
+ * this value ends up inside SVG and HTML attributes. Anything that is not the plain
+ * six-digit hex the schema mandates is dropped for the modality colour rather than
+ * passed through, so a crafted `display.color` cannot escape its attribute. Doing it
+ * here covers every consumer, because this is the only place the field is read.
+ */
+export const cameraColor = (c: CameraObject): string => {
+  const raw = c.display?.color;
+  if (typeof raw === 'string' && HEX_COLOR.test(raw)) return raw;
+  return MODALITY_COLORS[c.camera.modality] || MODALITY_COLORS.other;
+};
 
 export const intrinsicsSourceOf = (c: CameraObject) => c.camera.intrinsicsSource ?? 'nominal';
 
@@ -288,6 +340,37 @@ export function plumeRadiusAtZ(b: BurnerObject, zAboveFloorM: number): number | 
 /** Lowest plane that must capture the plume: opening, less any skirt. */
 export const hoodIntakeHeightM = (h: HoodObject): number => h.height_m - (h.skirtDepth_m ?? 0);
 
+/** The four corners of the opening in world XY, honouring the hood's own rotation. */
+export function hoodOpeningCornersXY(h: HoodObject): Array<[number, number]> {
+  const [w, d] = h.opening_m;
+  const local: Array<[number, number]> = [
+    [-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2],
+  ];
+  return local.map((c) => footprintXY(h, c));
+}
+
+/**
+ * Where a point sits relative to the opening, in the hood's own opening axes.
+ *
+ * `inside` answers 'is the hood over this?'; `overhang` is how far past the rim it
+ * is, which is the number worth printing when it is not.
+ */
+export function hoodOpeningOffset(
+  h: HoodObject,
+  worldXY: readonly [number, number],
+): { u: number; v: number; halfW: number; halfD: number; inside: boolean; overhang: number } {
+  const l = toLocal(h, [worldXY[0], worldXY[1], 0]);
+  const halfW = h.opening_m[0] / 2;
+  const halfD = h.opening_m[1] / 2;
+  const overU = Math.max(0, Math.abs(l[0]) - halfW);
+  const overV = Math.max(0, Math.abs(l[1]) - halfD);
+  return {
+    u: l[0], v: l[1], halfW, halfD,
+    inside: overU === 0 && overV === 0,
+    overhang: Math.hypot(overU, overV),
+  };
+}
+
 // -- ceiling --------------------------------------------------------------
 
 /** Shoelace area of the slab footprint. */
@@ -304,15 +387,14 @@ export function ceilingAreaM2(c: CeilingObject): number {
 /** Point-in-polygon by ray casting, so a slab off to one side does not claim a
  *  flame impinges on it. */
 export function ceilingCoversXY(c: CeilingObject, x: number, y: number): boolean {
-  const origin = positionOf(c);
   const p = c.polygon_m;
   let inside = false;
   for (let i = 0; i < p.length; i += 1) {
     const j = (i + 1) % p.length;
-    const x0 = p[i][0] + origin[0];
-    const y0 = p[i][1] + origin[1];
-    const x1 = p[j][0] + origin[0];
-    const y1 = p[j][1] + origin[1];
+    // Through the object frame, not a bare translation: a rotated slab covers a
+    // different footprint, and the 3D view already draws it rotated.
+    const [x0, y0] = footprintXY(c, p[i]);
+    const [x1, y1] = footprintXY(c, p[j]);
     // Half-open edge test avoids double-counting a vertex sitting on the ray.
     if ((y0 > y) !== (y1 > y)) {
       const t = (y - y0) / (y1 - y0);
@@ -333,6 +415,11 @@ const issue = (severity: Issue['severity'], code: string, message: string, objec
  * Both are measurement-validity questions, not cosmetics: flame in the canopy is no
  * longer a free plume, and a hood that spills plume under-reads HRR by oxygen
  * consumption.
+ *
+ * Capture is a spatial question, not just a size one. The plume rises from the
+ * burner, so what has to fit inside the opening is a disk centred on the BURNER,
+ * offset from the opening centre by however far apart the two are. A hood that is
+ * merely large is not a hood that captures.
  */
 export function hoodChecks(d: PlanDocument): Issue[] {
   const out: Issue[] = [];
@@ -343,9 +430,22 @@ export function hoodChecks(d: PlanDocument): Issue[] {
   if (!burner) return out;
   const tip = flameTipZM(burner);
   if (tip === null) return out;
+  const bp = positionOf(burner);
 
   for (const hood of allHoods) {
     const intake = hoodIntakeHeightM(hood);
+    const off = hoodOpeningOffset(hood, [bp[0], bp[1]]);
+
+    // Nothing else is meaningful about a hood that is not over the fire: the flame
+    // cannot reach a canopy beside it, and the plume it fails to capture is not a
+    // margin problem but a placement one.
+    if (!off.inside) {
+      out.push(issue('error', 'hood-offset',
+        `The hood opening does not cover the burner — the burner centre is ` +
+        `${off.overhang.toFixed(2)} m outside the opening, so this hood captures ` +
+        `none of the plume.`, hood.id));
+      continue;
+    }
 
     if (tip >= intake) {
       out.push(issue('error', 'flame-impingement',
@@ -360,16 +460,27 @@ export function hoodChecks(d: PlanDocument): Issue[] {
     const radius = plumeRadiusAtZ(burner, intake);
     if (radius !== null) {
       const plumeD = 2 * radius;
-      const opening = Math.min(hood.opening_m[0], hood.opening_m[1]);
-      if (plumeD > opening) {
+      // Span the plume demands along each opening axis, and the axis with the least
+      // slack -- which is the one that spills first.
+      const axes: Array<[number, number]> = [
+        [2 * (Math.abs(off.u) + radius), hood.opening_m[0]],
+        [2 * (Math.abs(off.v) + radius), hood.opening_m[1]],
+      ];
+      const [need, avail] = axes.reduce((a, b) => (a[1] - a[0] <= b[1] - b[0] ? a : b));
+      const eccentric = Math.hypot(off.u, off.v) > 1e-9
+        ? `, ${Math.hypot(off.u, off.v).toFixed(2)} m off the opening centre`
+        : '';
+
+      if (need > avail) {
         out.push(issue('error', 'plume-spillage',
-          `Plume is ${plumeD.toFixed(2)} m across at the hood intake but the opening is only ` +
-          `${opening.toFixed(2)} m — the hood will spill and HRR by oxygen consumption will read low.`,
-          hood.id));
-      } else if (plumeD > 0.8 * opening) {
+          `Plume is ${plumeD.toFixed(2)} m across at the hood intake${eccentric}, needing ` +
+          `${need.toFixed(2)} m of a ${avail.toFixed(2)} m opening — the hood will spill and ` +
+          `HRR by oxygen consumption will read low.`, hood.id));
+      } else if (need > 0.8 * avail) {
         out.push(issue('warning', 'plume-margin',
-          `Plume is ${plumeD.toFixed(2)} m across at a ${opening.toFixed(2)} m opening, leaving ` +
-          `little margin for draught or an off-centre fire.`, hood.id));
+          `Plume is ${plumeD.toFixed(2)} m across at the hood intake${eccentric}, needing ` +
+          `${need.toFixed(2)} m of a ${avail.toFixed(2)} m opening — little margin for ` +
+          `draught or an off-centre fire.`, hood.id));
       }
     }
   }

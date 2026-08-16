@@ -39,7 +39,6 @@ const OBJECT_ORDER: Record<string, string[]> = {
   wall: ['id', 'type', 'name', 'transform', 'polyline_m', 'height_m', 'thickness_m', 'baseHeight_m', 'openings', 'display', 'notes'],
   ceiling: ['id', 'type', 'name', 'transform', 'polygon_m', 'height_m', 'thickness_m', 'display', 'notes'],
 };
-const OBJECT_FALLBACK = ['id', 'type', 'name', 'transform', 'display', 'notes'];
 
 type Json = unknown;
 type Obj = Record<string, Json>;
@@ -49,11 +48,9 @@ const isPlainObject = (v: Json): v is Obj =>
 
 function roundFloats(value: Json): Json {
   if (typeof value === 'number') {
-    if (Number.isInteger(value)) return value === 0 ? 0 : value;
+    if (Number.isInteger(value)) return value;
     const f = 10 ** FLOAT_DECIMALS;
-    const r = Math.round(value * f) / f;
-    // Collapse -0 so a mirrored object does not diff against itself.
-    return r === 0 ? 0 : r;
+    return Math.round(value * f) / f;
   }
   if (Array.isArray(value)) return value.map(roundFloats);
   if (isPlainObject(value)) {
@@ -111,7 +108,28 @@ function canonObject(raw: Obj): Obj {
       break;
   }
 
-  return order(o, OBJECT_ORDER[String(o.type)] ?? OBJECT_FALLBACK);
+  return roundFloats(order(o, OBJECT_ORDER[String(o.type)])) as Obj;
+}
+
+/**
+ * An object whose `type` this version does not recognise.
+ *
+ * Only the two blocks this version genuinely owns are canonicalised: `transform`,
+ * because the editor can drag an unknown object and would otherwise write float
+ * noise into it, and `display`, because it can be hidden or locked. Everything else
+ * -- key order, unknown keys, and full numeric precision -- is re-emitted exactly as
+ * it arrived, not so much as a digit touched. Rounding a coefficient whose meaning we
+ * do not know, or reordering fields against a schema we have never seen, is data loss
+ * dressed up as tidiness, and CONVENTIONS.md section 6 promises it will not happen.
+ *
+ * Byte parity with Python needs nothing here: `JSON.stringify` is the reference
+ * spelling of a number, and `serialize.py` reproduces it (`_js_number`).
+ */
+function canonUnknownObject(raw: Obj): Obj {
+  const out: Obj = { ...raw };
+  if (isPlainObject(out.transform)) out.transform = roundFloats(order(out.transform, TRANSFORM));
+  if (isPlainObject(out.display)) out.display = roundFloats(order(out.display, DISPLAY));
+  return out;
 }
 
 export function canonicalize(data: PlanDocument): Obj {
@@ -125,9 +143,20 @@ export function canonicalize(data: PlanDocument): Obj {
   if ('coordinateSystem' in d) d.coordinateSystem = orderIfObject(d.coordinateSystem, COORD);
   if ('environment' in d) d.environment = orderIfObject(d.environment, ENV);
   if (Array.isArray(d.objects)) {
-    d.objects = d.objects.map((o) => (isPlainObject(o) ? canonObject(o) : o));
+    d.objects = d.objects.map((o) => {
+      if (!isPlainObject(o)) return o;
+      return String(o.type) in OBJECT_ORDER ? canonObject(o) : canonUnknownObject(o);
+    });
   }
-  return roundFloats(order(d, TOP)) as Obj;
+
+  // Objects have already been through the rounding their own type warrants; the
+  // rest of the document is all format 1.0 and rounds wholesale.
+  const ordered = order(d, TOP);
+  const out: Obj = {};
+  for (const k of Object.keys(ordered)) {
+    out[k] = k === 'objects' ? ordered[k] : roundFloats(ordered[k]);
+  }
+  return out;
 }
 
 /**

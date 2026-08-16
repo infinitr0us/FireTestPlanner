@@ -14,9 +14,11 @@ import {
   displayName,
   cameraColor,
   flameTipZM,
+  footprintXY,
   fuelSurfaceZM,
   hfovRadOf,
   hoodIntakeHeightM,
+  hoodOpeningCornersXY,
   hoods,
   plumeRadiusAtZ,
   positionOf,
@@ -101,19 +103,20 @@ function collectPoints(doc: PlanDocument, view: DrawingView): Vec3[] {
     if (tip !== null) pts.push([p[0], p[1], tip]);
   }
   for (const hd of hoods(doc)) {
-    const p = positionOf(hd);
-    const [w, d] = hd.opening_m;
-    pts.push([p[0] - w / 2, p[1] - d / 2, 0], [p[0] + w / 2, p[1] + d / 2, hd.height_m]);
+    for (const [x, y] of hoodOpeningCornersXY(hd)) pts.push([x, y, 0], [x, y, hd.height_m]);
   }
   for (const wl of walls(doc)) {
     const p = positionOf(wl);
-    for (const [x, y] of wl.polyline_m) {
-      pts.push([p[0] + x, p[1] + y, p[2]], [p[0] + x, p[1] + y, p[2] + wl.height_m]);
+    for (const v of wl.polyline_m) {
+      const [x, y] = footprintXY(wl, v);
+      pts.push([x, y, p[2]], [x, y, p[2] + wl.height_m]);
     }
   }
   for (const cl of ceilings(doc)) {
-    const p = positionOf(cl);
-    for (const [x, y] of cl.polygon_m) pts.push([p[0] + x, p[1] + y, cl.height_m]);
+    for (const v of cl.polygon_m) {
+      const [x, y] = footprintXY(cl, v);
+      pts.push([x, y, cl.height_m]);
+    }
   }
   for (const cam of cameras(doc)) {
     const p = positionOf(cam);
@@ -215,30 +218,22 @@ function dimension(
 function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
   const out: string[] = [];
 
+  // Footprints go through footprintXY, so a rotated wall or slab is drawn in the
+  // orientation the 3D view shows rather than its unrotated one.
   for (const cl of ceilings(doc)) {
-    const origin = positionOf(cl);
-    const pts = cl.polygon_m.map(([x, y]) => p.project([origin[0] + x, origin[1] + y, 0]));
+    const pts = cl.polygon_m.map((v) => p.project([...footprintXY(cl, v), 0]));
     out.push(polygon(pts, `fill="none" stroke="${COLORS.ceiling}" stroke-width="0.8" stroke-dasharray="6 3"`));
   }
 
   for (const wl of walls(doc)) {
-    const origin = positionOf(wl);
-    const pts = wl.polyline_m.map(([x, y]) => p.project([origin[0] + x, origin[1] + y, 0]));
+    const pts = wl.polyline_m.map((v) => p.project([...footprintXY(wl, v), 0]));
     const d = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
     const widthPx = Math.max((wl.thickness_m ?? 0.1) * p.pxPerMetre, 2);
     out.push(`<path d="${d}" fill="none" stroke="${COLORS.wall}" stroke-width="${widthPx.toFixed(2)}" stroke-linecap="butt"/>`);
   }
 
   for (const hd of hoods(doc)) {
-    const origin = positionOf(hd);
-    const [w, d] = hd.opening_m;
-    const corners: Vec3[] = [
-      [origin[0] - w / 2, origin[1] - d / 2, 0],
-      [origin[0] + w / 2, origin[1] - d / 2, 0],
-      [origin[0] + w / 2, origin[1] + d / 2, 0],
-      [origin[0] - w / 2, origin[1] + d / 2, 0],
-    ];
-    out.push(polygon(corners.map((c) => p.project(c)),
+    out.push(polygon(hoodOpeningCornersXY(hd).map(([x, y]) => p.project([x, y, 0])),
       `fill="${COLORS.hood}" fill-opacity="0.06" stroke="${COLORS.hood}" stroke-width="1" stroke-dasharray="8 4"`));
   }
 
@@ -252,7 +247,9 @@ function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
     const [ax, ay] = p.project(origin);
     const arm = (a: number): [number, number] =>
       p.project([origin[0] + Math.cos(a) * reach, origin[1] + Math.sin(a) * reach, origin[2]]);
-    const color = cameraColor(cam);
+    // cameraColor already rejects anything but #rrggbb; escaping as well means a
+    // future caller that widens it cannot break out of the attribute.
+    const color = escapeXml(cameraColor(cam));
     out.push(polygon([[ax, ay], arm(heading - half), arm(heading + half)],
       `fill="${color}" fill-opacity="0.07" stroke="${color}" stroke-width="0.6" stroke-opacity="0.55"`));
   }
@@ -265,12 +262,11 @@ function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
       out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="${Math.max(r, 2).toFixed(2)}" fill="${COLORS.flame}" fill-opacity="0.25" stroke="${COLORS.burner}" stroke-width="1.4"/>`);
     } else {
       const [w, d] = b.footprint.size_m ?? [0.3, 0.3];
-      out.push(polygon([
-        p.project([origin[0] - w / 2, origin[1] - d / 2, 0]),
-        p.project([origin[0] + w / 2, origin[1] - d / 2, 0]),
-        p.project([origin[0] + w / 2, origin[1] + d / 2, 0]),
-        p.project([origin[0] - w / 2, origin[1] + d / 2, 0]),
-      ], `fill="${COLORS.flame}" fill-opacity="0.25" stroke="${COLORS.burner}" stroke-width="1.4"`));
+      const corners: Array<[number, number]> = [
+        [-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2],
+      ];
+      out.push(polygon(corners.map((c) => p.project([...footprintXY(b, c), 0])),
+        `fill="${COLORS.flame}" fill-opacity="0.25" stroke="${COLORS.burner}" stroke-width="1.4"`));
     }
   }
 
@@ -280,7 +276,7 @@ function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
     const [cx, cy] = p.project(origin);
     const [ox, oy] = p.project([0, 0, 0]);
     out.push(dimension(ox, oy, cx, cy, formatLengthWithUnit(standoffHorizontalM(cam), unit)));
-    out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${cameraColor(cam)}" stroke="#ffffff" stroke-width="1"/>`);
+    out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${escapeXml(cameraColor(cam))}" stroke="#ffffff" stroke-width="1"/>`);
     out.push(objectLabel(cx, cy - 9, displayName(cam)));
   }
 
@@ -300,9 +296,11 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
   const groundRight = p.project([1000, 1000, 0]);
   out.push(line(0, groundLeft[1], PAGE_WIDTH_PX, groundRight[1], COLORS.ink, 'stroke-width="1.4"'));
 
+  // An elevation shows an object's extent along the view's lateral axis, so the
+  // footprint has to be rotated before it is flattened -- a wall turned 90 degrees
+  // spans a different width on the page.
   for (const cl of ceilings(doc)) {
-    const origin = positionOf(cl);
-    const coords = cl.polygon_m.map(([x, y]) => lateral([origin[0] + x, origin[1] + y, 0]));
+    const coords = cl.polygon_m.map((v) => lateral([...footprintXY(cl, v), 0]));
     const lo = Math.min(...coords);
     const hi = Math.max(...coords);
     const a = p.project(view === 'side' ? [0, lo, cl.height_m] : [lo, 0, cl.height_m]);
@@ -313,7 +311,7 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
 
   for (const wl of walls(doc)) {
     const origin = positionOf(wl);
-    const coords = wl.polyline_m.map(([x, y]) => lateral([origin[0] + x, origin[1] + y, 0]));
+    const coords = wl.polyline_m.map((v) => lateral([...footprintXY(wl, v), 0]));
     const lo = Math.min(...coords);
     const hi = Math.max(...coords);
     const base = origin[2] + (wl.baseHeight_m ?? 0);
@@ -325,9 +323,11 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
   }
 
   for (const hd of hoods(doc)) {
-    const origin = positionOf(hd);
-    const span = view === 'side' ? hd.opening_m[1] : hd.opening_m[0];
-    const centre = lateral(origin);
+    // Extent of the rotated opening along this view's axis, not the raw opening
+    // dimension: a hood at 45 degrees presents a wider face than either side.
+    const coords = hoodOpeningCornersXY(hd).map(([x, y]) => lateral([x, y, 0]));
+    const span = Math.max(...coords) - Math.min(...coords);
+    const centre = (Math.max(...coords) + Math.min(...coords)) / 2;
     const intake = hoodIntakeHeightM(hd);
     const at = (u: number, z: number): [number, number] =>
       p.project(view === 'side' ? [0, u, z] : [u, 0, z]);
@@ -401,7 +401,7 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
     occupied.set(key, stacked + 1);
 
     out.push(line(cx, cy, fx, fy, COLORS.faint, 'stroke-width="1" stroke-dasharray="3 3"'));
-    out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${cameraColor(cam)}" stroke="#ffffff" stroke-width="1"/>`);
+    out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${escapeXml(cameraColor(cam))}" stroke="#ffffff" stroke-width="1"/>`);
     out.push(objectLabel(cx, cy - 9 - stacked * 11, displayName(cam)));
     if (stacked === 0) {
       out.push(text(cx + 7, cy + 4, formatLengthWithUnit(origin[2], unit), 'class="dim-text"'));
