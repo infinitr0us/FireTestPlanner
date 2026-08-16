@@ -25,9 +25,9 @@
     "origin": "burner-center-floor"
   },
   "environment": {
-    "floorSize_m": [12.0, 12.0],
+    "floorSize_m": [12, 12],
     "ceilingHeight_m": null,
-    "ambientTemperature_C": 20.0,
+    "ambientTemperature_C": 20,
     "notes": "Open bay; hood is the only overhead structure."
   },
   "objects": [
@@ -36,7 +36,7 @@
       "type": "burner",
       "name": "Heptane pan, 1 ft square",
       "transform": {
-        "position_m": [0.0, 0.0, 0.0]
+        "position_m": [0, 0, 0]
       },
       "footprint": {
         "shape": "square",
@@ -45,7 +45,7 @@
       "rimHeight_m": 0.1,
       "fire": {
         "fuel": "n-heptane",
-        "hrr_kw": 130.0,
+        "hrr_kw": 130,
         "hrrCurve": null
       }
     },
@@ -54,14 +54,14 @@
       "type": "hood",
       "name": "Calorimeter hood",
       "transform": {
-        "position_m": [0.0, 0.0, 0.0]
+        "position_m": [0, 0, 0]
       },
       "opening_m": [2.4384, 2.4384],
       "height_m": 2.7432,
       "skirtDepth_m": 0.3048,
       "duct": {
         "diameter_m": 0.6,
-        "length_m": 2.0
+        "length_m": 2
       }
     },
     {
@@ -71,18 +71,18 @@
       "transform": {
         "position_m": [-2.7432, -0.75, 1.5],
         "rotation_quat": [0.485146, -0.370311, -0.480632, 0.629679],
-        "aimTarget_m": [0.0, 0.0, 0.75]
+        "aimTarget_m": [0, 0, 0.75]
       },
       "camera": {
         "modality": "MWIR",
         "presetId": "mwir-640-25mm",
         "resolution_px": [640, 512],
         "sensor_mm": [9.6, 7.68],
-        "focalLength_mm": 25.0,
+        "focalLength_mm": 25,
         "principalPoint_px": null,
         "distortion": null,
         "intrinsicsSource": "nominal",
-        "spectralBand_um": [3.0, 5.0],
+        "spectralBand_um": [3, 5],
         "framerate_hz": 60
       },
       "mount": {
@@ -98,7 +98,7 @@
       "transform": {
         "position_m": [-2.7432, -0.25, 1.5],
         "rotation_quat": [0.448387, -0.409382, -0.535749, 0.586795],
-        "aimTarget_m": [0.0, 0.0, 0.75]
+        "aimTarget_m": [0, 0, 0.75]
       },
       "camera": {
         "modality": "LWIR",
@@ -109,7 +109,7 @@
         "principalPoint_px": null,
         "distortion": null,
         "intrinsicsSource": "datasheet",
-        "spectralBand_um": [7.5, 14.0],
+        "spectralBand_um": [7.5, 14],
         "framerate_hz": 30
       },
       "mount": {
@@ -125,7 +125,7 @@
       "transform": {
         "position_m": [-2.7432, 0.25, 1.2],
         "rotation_quat": [0.436648, -0.478251, -0.562721, 0.51377],
-        "aimTarget_m": [0.0, 0.0, 0.75]
+        "aimTarget_m": [0, 0, 0.75]
       },
       "camera": {
         "modality": "RGB",
@@ -152,7 +152,7 @@
       "transform": {
         "position_m": [-2.7432, 0.75, 1.2],
         "rotation_quat": [0.394082, -0.516289, -0.604407, 0.461343],
-        "aimTarget_m": [0.0, 0.0, 0.75]
+        "aimTarget_m": [0, 0, 0.75]
       },
       "camera": {
         "modality": "RGB",

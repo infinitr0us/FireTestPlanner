@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fire Test Plan Editor</title>
+    <!--
+      A plan baked in by "Share…" lands here. Empty in the app itself; an exported
+      viewer carries its plan in this tag and loads it on boot.
+    -->
+    <script type="application/json" id="embedded-plan"></script>
+  </head>
+  <body>
+    <header id="toolbar" class="toolbar"></header>
+
+    <main class="layout">
+      <aside class="panel panel--left">
+        <section id="palette" class="panel__block"></section>
+        <section id="outliner" class="panel__block panel__block--grow"></section>
+        <section id="checks" class="panel__block"></section>
+      </aside>
+
+      <div id="viewport" class="viewport"></div>
+
+      <aside id="inspector" class="panel panel--right"></aside>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -113,7 +113,9 @@ def test_floats_are_rounded_so_noise_never_diffs():
         "footprint": {"shape": "circle", "diameter_m": 0.3},
     })
     text = plan.dumps()
-    assert '"position_m": [2.7432, 0.123457, 0.0]' in text
+    # Integral floats are demoted to int: JSON has one number type, and the
+    # TypeScript writer cannot emit a trailing ".0" at all.
+    assert '"position_m": [2.7432, 0.123457, 0]' in text
     assert "-0.0" not in text  # negative zero collapsed
 
 

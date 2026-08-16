@@ -51,13 +51,22 @@ def _round_floats(value: Any) -> Any:
 
     bool is a subclass of int in Python, so it is tested first -- otherwise True
     would serialise as 1.
+
+    Integral floats are demoted to int so that 12.0 serialises as `12`, not `12.0`.
+    JSON has a single number type, and the trailing `.0` is a Python artifact: the
+    TypeScript writer cannot produce it at all, and cross-language byte parity is a
+    hard requirement (see web/src/core/core.test.ts).
     """
     if isinstance(value, bool):
         return value
     if isinstance(value, float):
         r = round(value, FLOAT_DECIMALS)
         # Collapse -0.0 to 0.0 so a mirrored object does not diff against itself.
-        return 0.0 if r == 0.0 else r
+        if r == 0.0:
+            return 0
+        if r == int(r) and abs(r) < 1e15:
+            return int(r)
+        return r
     if isinstance(value, dict):
         return {k: _round_floats(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
