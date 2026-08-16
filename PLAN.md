@@ -11,7 +11,9 @@ Supersedes nothing; complements `ideas.md`.
 |---|---|
 | Architecture | Shared TypeScript/Three.js core; two shells (single-file HTML, pywebview+PyInstaller exe) |
 | Units | SI internal (metres, kW, °C, radians in file / degrees in UI), imperial display toggle |
-| v1 objects | Cameras, burner + hood + duct, walls/floor/enclosure |
+| v1 objects | Cameras, burner + hood + duct, walls, ceilings |
+| Building geometry | Simple composable components — walls and ceilings pieced together. Not detailed room layouts; the tool targets open bays and simple enclosures |
+| Planned vs as-built | Planned only. A layout that differs from the plan becomes a new file recording the true positions |
 | Deferred to v2 | Thermocouple trees, heat flux gauges, load cell, gas sampling |
 | Primary deliverable | The plan file itself, as an FSE ↔ data-scientist interchange format |
 | Secondary deliverable | Dimensioned plan + elevation drawing, and equipment table |
@@ -197,9 +199,11 @@ provisional until verified against datasheets.
 | M3 | **Cameras** | Preset library, frustum, PIP preview, aim-at-target, coverage readout | **done** |
 | M4 | **Geometry** | Burner shapes + HRR + plume cone, hood + skirt + duct, walls with openings | **done** |
 | M5 | **Share** | Save/load, single-file HTML export with plan embedded, standoff dimensions | **done** — measure tool still to do |
-| M6 | **Drawing** | Plan + elevation to PDF/PNG with dimension lines; equipment table | next |
-| M7 | **Desktop** | pywebview shell, native dialogs, recent files, PyInstaller exe | next |
+| M6 | **Drawing** | Dimensioned plan + elevations, equipment list, coverage table, print to PDF | **done** |
+| M7 | **Desktop** | pywebview shell, native dialogs, recent files, PyInstaller exe | **done** — 9.8 MB exe |
 | M8 | **Flame** *(Phase 2)* | Import reconstructed 3D flame; time sequence playback | blocked on format decision |
+
+Phase 1 is complete. 113 Python tests, 52 web tests.
 
 ### What the reference layout demonstrates
 
@@ -218,15 +222,21 @@ An 18–19° vertical field at ~3.1 m covers barely a 1 m slice, and the flame i
 cost of resolution. That is a decision worth making before hauling gear to a site,
 and it is the whole argument for the frustum and preview being in v1.
 
-### Remaining work in the current milestones
+### Known limitations
 
-- **Measure tool** — click two objects, get the distance, drop a dimension line.
-- **Elevation views** — front/side orthographic, for setting heights the way the
-  sketch does.
-- **Multi-select transform** — the gizmo currently attaches to a single object.
-- **Schema validation in the editor** — the Python reader validates against the
-  JSON Schema; the browser does not yet, so a hand-edited file can load with
-  structural errors that only `check()` catches.
+- **The browser's load-time validation is a subset of the schema.** It catches the
+  structural damage that would reach the renderer as NaN geometry and names the
+  offending object; `fireplan.validate_schema()` remains the authoritative check.
+  The two are kept aligned by mirrored test cases, not by shared code.
+- **Camera distortion is stored but never applied.** A wide-angle action camera's
+  frustum and framing verdict assume an ideal pinhole, which overstates coverage at
+  the edges. Fine for planning; calibrate before reconstructing.
+- **The plume cone is a 15° rule of thumb**, not a Gaussian plume half-width, and
+  flame height is the *mean* — the intermittent tip goes higher than anything drawn.
+- **The desktop shell uses a loopback HTTP bridge, not pywebview's `js_api`.** With
+  `js_api` bound to this page the WebView2 message channel never came up; see
+  `python/shell/README.md`. The HTTP bridge is also the right shape for Phase 2.
+- **Measurements are not saved.** The measure tool is a ruler, not an annotation.
 
 ## 8. Open questions
 

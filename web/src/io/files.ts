@@ -12,15 +12,70 @@ export interface ShellBridge {
   openPlan(): Promise<{ path: string; text: string } | null>;
   savePlan(text: string, suggestedName: string): Promise<string | null>;
   saveHtml(html: string, suggestedName: string): Promise<string | null>;
+  recentFiles(): Promise<string[]>;
+  openRecent(path: string): Promise<{ path: string; text: string } | null>;
 }
 
-declare global {
-  interface Window {
-    fireplanShell?: ShellBridge;
-  }
+let bridge: ShellBridge | undefined;
+let shellToken: string | null = null;
+
+export const shell = (): ShellBridge | undefined => bridge;
+
+/**
+ * Call the desktop shell's local API.
+ *
+ * Same origin as the page -- the shell serves both -- so there is no CORS to
+ * arrange. The token proves the caller is the page the shell opened rather than
+ * some other process on the machine that fancies driving a file dialog.
+ */
+async function call<T>(route: string, body?: unknown): Promise<T | null> {
+  if (!shellToken) return null;
+  const response = await fetch(route, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: {
+      'X-Shell-Token': shellToken,
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  if (!response.ok) throw new Error(`Shell call ${route} failed: ${response.status}`);
+  return (await response.json()) as T | null;
 }
 
-export const shell = (): ShellBridge | undefined => window.fireplanShell;
+/**
+ * Adopt the desktop bridge if the shell launched this page.
+ *
+ * A loopback HTTP API rather than pywebview's `js_api`: with `js_api` bound to this
+ * page the WebView2 message channel never came up at all (see python/shell/app.py).
+ * HTTP is also the right shape for Phase 2, where flame sequences want range
+ * requests rather than a JS bridge.
+ */
+export function connectShell(onReady: () => void): void {
+  const token = new URLSearchParams(window.location.search).get('shell');
+  if (!token) return; // an ordinary browser tab
+  shellToken = token;
+
+  bridge = {
+    openPlan: () => call<{ path: string; text: string } | null>('/api/open', {}).then((r) => r ?? null),
+    savePlan: (text, name) => call<string | null>('/api/save', { text, name }),
+    saveHtml: (html, name) => call<string | null>('/api/save-html', { html, name }),
+    recentFiles: () => call<string[]>('/api/recent').then((r) => r ?? []),
+    openRecent: (path) => call<{ path: string; text: string } | null>('/api/open-recent', { path }),
+  };
+  onReady();
+}
+
+/**
+ * Tell the shell the app is up, and hand it enough detail to self-check.
+ * Resolves with a plan the shell wants opened, if one was named on its command line.
+ */
+export async function announceReady(
+  info: Record<string, unknown>,
+): Promise<{ path: string; text: string } | null> {
+  if (!shellToken) return null;
+  const result = await call<{ queuedPlan: { path: string; text: string } | null }>('/api/ready', info);
+  return result?.queuedPlan ?? null;
+}
 
 const EMBED_ID = 'embedded-plan';
 

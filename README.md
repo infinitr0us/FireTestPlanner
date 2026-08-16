@@ -14,9 +14,10 @@ CONVENTIONS.md                                — frames, units, correlations
 presets/     camera preset library (shared by the editor and the fixture builder)
 fixtures/    reference plans
 python/      fireplan — reader, validator, exporters
+python/shell/  desktop shell (pywebview + PyInstaller)
 web/         the 3D editor
 tools/       build_fixtures.py
-PLAN.md      milestones and open questions
+PLAN.md      milestones, decisions and known limitations
 ```
 
 ## Try it
@@ -37,6 +38,22 @@ npm run build               # -> dist/index.html, one self-contained file
 That single file is the lightweight variant: no server, no install, works offline.
 **Share…** inside the app writes a copy with the current plan baked in, so a
 collaborator can double-click it and orbit the scene with nothing installed.
+**Drawing…** produces the dimensioned plan and elevations with an equipment list
+and coverage table, ready to print to PDF.
+
+## Desktop app
+
+```bash
+cd python/shell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe app.py                 # run
+.venv\Scripts\python.exe build_exe.py           # -> dist/FireTestPlanner.exe (~10 MB)
+```
+
+Same bundle, in a native window with native file dialogs and a recent-files list.
+See [`python/shell/README.md`](python/shell/README.md) for how the bridge works and
+why it is HTTP rather than pywebview's `js_api`.
 
 ## Read a plan in Python
 
@@ -77,8 +94,8 @@ definitions in [CONVENTIONS.md](CONVENTIONS.md) section 3.
 ## Tests
 
 ```bash
-python -m pytest python/tests -q     # 80 tests
-cd web && npm test                   # 33 tests
+python -m pytest python/tests -q     # 113 tests, no GUI needed
+cd web && npm test                   # 52 tests
 ```
 
 The web suite asserts that the TypeScript writer reproduces the Python-written

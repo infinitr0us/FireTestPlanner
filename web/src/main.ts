@@ -6,8 +6,10 @@ import { newPlan, parsePlan } from './core/plan';
 import type { LengthUnit, PlanDocument } from './core/types';
 import { describeErrors, validateStructure } from './core/validate';
 import {
+  announceReady,
   buildShareableHtml,
   captureBootHtml,
+  connectShell,
   embeddedPlan,
   isSingleFileBuild,
   openPlanText,
@@ -331,3 +333,25 @@ if (embeddedPlan()) {
   store.markSaved(`${(store.document.meta?.title ?? 'plan')}.ftp.json`);
   document.body.classList.add('is-shared-view');
 }
+
+// Adopt the desktop bridge if we are inside the pywebview shell, then report in.
+// The shell's selftest waits on this call, so it doubles as the readiness signal.
+connectShell(() => {
+  document.body.classList.add('is-desktop');
+  renderToolbar();
+  void announceReady({
+    title: document.title,
+    toolbarButtons: document.querySelectorAll('#toolbar button').length,
+    canvas: Boolean(document.querySelector('canvas.viewport-canvas')),
+    objects: store.document.objects.length,
+  }).then((queued) => {
+    // A plan named on the shell's command line comes back from app_ready().
+    if (!queued) return;
+    try {
+      store.replaceDocument(parsePlan(queued.text), queued.path.split(/[\\/]/).pop() ?? 'plan.ftp.json');
+      viewport.frameAll();
+    } catch (err) {
+      window.alert(`Could not open ${queued.path}\n\n${(err as Error).message}`);
+    }
+  });
+});
