@@ -15,16 +15,28 @@
       "$note": "640x480 microbolometer at 17 um pitch gives the sensor size; the 24.6 mm standard lens gives 24.9° x 18.8°."
     },
     {
-      "id": "mwir-640-25mm",
-      "label": "MWIR 640×512 — 25 mm lens",
+      "id": "flir-a700-24deg",
+      "label": "FLIR A700 — 24° lens",
+      "modality": "LWIR",
+      "resolution_px": [640, 480],
+      "sensor_mm": [7.68, 5.76],
+      "focalLength_mm": 18.07,
+      "spectralBand_um": [7.5, 14.0],
+      "framerate_hz": 30,
+      "intrinsicsSource": "datasheet",
+      "$note": "640x480 uncooled microbolometer at 12 um pitch gives the sensor size. The focal length is back-solved from the published 24 deg x 18 deg field of view rather than the lens's nominal '17 mm' designation, which does not close against a 7.68 mm array -- see docs/datasheets/README.md. Reproduces the datasheet's 0.66 mrad/px. Other lenses: 6, 14, 42, 80 deg."
+    },
+    {
+      "id": "flir-a8303sc-25mm",
+      "label": "FLIR A8303sc — 25 mm lens",
       "modality": "MWIR",
-      "resolution_px": [640, 512],
-      "sensor_mm": [9.6, 7.68],
+      "resolution_px": [1280, 720],
+      "sensor_mm": [17.92, 10.08],
       "focalLength_mm": 25.0,
       "spectralBand_um": [3.0, 5.0],
       "framerate_hz": 60,
-      "intrinsicsSource": "nominal",
-      "$note": "Generic cooled InSb at 15 um pitch. PLACEHOLDER — replace with the actual model's figures before using a plan as a reconstruction prior."
+      "intrinsicsSource": "datasheet",
+      "$note": "Cooled InSb, 1280x720 at 14 um pitch, f/4.0, 60 Hz at full window. The 25 mm lens gives 39.4 deg x 22.8 deg. Other FLIR lenses for this body are 17, 50, 100 and 200 mm -- add them with 'Save as preset' after typing the focal length. Digital zoom is 1x/2x on this camera; set it in the Zoom field rather than by editing the focal length."
     },
     {
       "id": "gopro-hero-wide",

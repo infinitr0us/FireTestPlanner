@@ -2,14 +2,16 @@
  *  rather than merely non-crashing. */
 
 import { lookAtQuat } from './math';
-import { flameTipZM, fuelSurfaceZM, nextId, primaryBurner } from './plan';
+import { firePointSourceM, fuelSurfaceZM, nextId, primaryBurner } from './plan';
 import { specFromPreset, type CameraPreset } from './presets';
 import type {
   BurnerObject,
   CameraObject,
   CeilingObject,
+  HeatFluxSensorObject,
   HoodObject,
   PlanDocument,
+  ThermocoupleObject,
   Vec3,
   WallObject,
 } from './types';
@@ -17,14 +19,14 @@ import type {
 /**
  * A sensible aim point: mid-flame if the plan has a burner with a known HRR,
  * otherwise 0.5 m above the origin. Cameras pointed at the pan rim miss the part
- * of the fire anyone actually wants to film.
+ * of the fire anyone actually wants to film, and a heat flux gauge aimed there is
+ * not aimed at the emitter the point-source model assumes.
  */
 export function defaultAimTarget(doc: PlanDocument): Vec3 {
+  const source = firePointSourceM(doc);
+  if (source) return source;
   const burner = primaryBurner(doc);
-  if (!burner) return [0, 0, 0.5];
-  const base = fuelSurfaceZM(burner);
-  const tip = flameTipZM(burner);
-  return tip === null ? [0, 0, base + 0.5] : [0, 0, (base + tip) / 2];
+  return burner ? [0, 0, fuelSurfaceZM(burner) + 0.5] : [0, 0, 0.5];
 }
 
 export function createBurner(doc: PlanDocument, position: Vec3 = [0, 0, 0]): BurnerObject {
@@ -86,6 +88,60 @@ export function createCeiling(doc: PlanDocument, position: Vec3 = [0, 0, 0]): Ce
     ],
     height_m: 3,
     thickness_m: 0.15,
+  };
+}
+
+/**
+ * A heat flux gauge, aimed at the fire.
+ *
+ * Aimed rather than axis-aligned because the gauge's orientation is not decoration:
+ * the cos(theta) it contributes is a first-order term in what it reads, so a gauge
+ * dropped facing an arbitrary direction would report a number that means nothing.
+ */
+export function createHeatFluxSensor(
+  doc: PlanDocument,
+  position: Vec3 = [-1.5, 0, 0.5],
+): HeatFluxSensorObject {
+  const target = defaultAimTarget(doc);
+  return {
+    id: nextId(doc, 'hf'),
+    type: 'heatFluxSensor',
+    name: 'Heat flux gauge',
+    transform: {
+      position_m: position,
+      rotation_quat: lookAtQuat(position, target),
+      aimTarget_m: target,
+    },
+    gauge: {
+      kind: 'schmidt-boelter',
+      range_kw_m2: 50,
+      viewAngle_deg: 180,
+      waterCooled: true,
+      serial: null,
+    },
+    mount: { type: 'tripod', height_m: position[2] },
+  };
+}
+
+/** A single-bead thermocouple. Add beads in the inspector to make it a rake --
+ *  same object, longer list, which is why there is no separate 'tree' type. */
+export function createThermocouple(
+  doc: PlanDocument,
+  position: Vec3 = [0.6, 0, 0.5],
+): ThermocoupleObject {
+  return {
+    id: nextId(doc, 'tc'),
+    type: 'thermocouple',
+    name: 'Thermocouple',
+    transform: { position_m: position },
+    beadOffsets_m: [0],
+    thermocouple: {
+      tcType: 'K',
+      beadDiameter_mm: 1.5,
+      sheathed: true,
+      maxTemperature_C: null,
+    },
+    mount: { type: 'pole', height_m: 0 },
   };
 }
 

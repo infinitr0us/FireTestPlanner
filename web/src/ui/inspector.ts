@@ -7,45 +7,73 @@
  * intrinsics they come from.
  */
 
+import { DEFAULT_RADIATIVE_FRACTION, POINT_SOURCE_MIN_DIAMETERS } from '../core/correlations';
 import { defaultAimTarget } from '../core/factory';
-import { setAimTarget, setPosition } from '../core/transform';
+import { setAimTarget, setPosition, type AimableObject } from '../core/transform';
 import {
+  beadOffsetsOf,
   burnerDiameterM,
   burnerFlameHeightM,
   ceilingAreaM2,
   ceilingCoversXY,
+  effectiveFocalLengthMm,
   flameTipZM,
   framingOf,
   fxOf,
   fyOf,
+  gaugeRangeKwM2,
+  gaugeViewAngleDeg,
   groundSampleDistanceM,
+  heatFluxEstimate,
   hfovDegOf,
   hoodIntakeHeightM,
   hoodOpeningOffset,
   isBurner,
   isCamera,
   isCeiling,
+  isHeatFluxSensor,
   isHood,
+  isThermocouple,
   isWall,
   plumeRadiusAtZ,
   positionOf,
   primaryBurner,
   principalPointOf,
+  radiativeFractionOf,
   standoffHorizontalM,
   standoffM,
+  TC_MAX_TEMPERATURE_C,
+  tcMaxTemperatureC,
+  tcTypeOf,
+  thermocoupleBeads,
+  verticalCoverageM,
   vfovDegOf,
+  zoomOf,
 } from '../core/plan';
-import { CAMERA_PRESETS, focalLengthForHfov, specFromPreset } from '../core/presets';
+import {
+  cameraPresets,
+  deleteCustomPreset,
+  focalLengthForHfov,
+  isCustomPreset,
+  presetFromCamera,
+  presetsArePersistent,
+  saveCustomPreset,
+  specFromPreset,
+} from '../core/presets';
 import { formatLength, formatLengthWithUnit } from '../core/units';
 import type {
   BurnerObject,
   CameraObject,
   CeilingObject,
+  GaugeKind,
+  HeatFluxSensorObject,
   HoodObject,
   IntrinsicsSource,
   LengthUnit,
   Modality,
   PlanObject,
+  TcType,
+  ThermocoupleObject,
   Vec3,
   WallObject,
 } from '../core/types';
@@ -64,7 +92,35 @@ import {
   vecField,
 } from './fields';
 
+/** Object types whose `type` string does not read as a heading on its own. The
+ *  panel title is uppercased by CSS, and "HEATFLUXSENSOR" is not a phrase. */
+const TYPE_LABEL: Record<string, string> = {
+  heatFluxSensor: 'heat flux gauge',
+};
+
 export class Inspector {
+  /**
+   * Fired when the camera preset library changes.
+   *
+   * The library lives outside the document, so saving or deleting a preset emits
+   * no store event and nothing would repaint -- including the palette, which is a
+   * different panel listing the same presets. main.ts wires this to both.
+   */
+  onPresetLibraryChange: (() => void) | null = null;
+
+  /**
+   * The preset being named, or null when no save is in progress.
+   *
+   * An inline row rather than `window.prompt`, which would be the only blocking
+   * dialog in the editing path and is not guaranteed to be there at all -- the
+   * desktop shell is an embedded WebView, and every other field in this panel is
+   * inline anyway.
+   *
+   * Scoped to a camera id so that selecting a different camera closes the form
+   * rather than silently re-pointing it at another camera's optics.
+   */
+  private pendingPreset: { cameraId: string; name: string } | null = null;
+
   constructor(
     private root: HTMLElement,
     private store: Store,
@@ -123,7 +179,7 @@ export class Inspector {
     }
 
     const obj = selected[0];
-    this.root.append(sectionTitle(obj.type));
+    this.root.append(sectionTitle(TYPE_LABEL[obj.type] ?? obj.type));
     this.root.append(
       row('Name', textField(obj.name ?? '', (v) =>
         this.patch(obj.id, 'Rename', (o) => { o.name = v || null; }))),
@@ -138,6 +194,8 @@ export class Inspector {
     else if (isHood(obj)) this.renderHood(obj, unit);
     else if (isWall(obj)) this.renderWall(obj, unit);
     else if (isCeiling(obj)) this.renderCeiling(obj, unit);
+    else if (isHeatFluxSensor(obj)) this.renderHeatFluxSensor(obj, unit);
+    else if (isThermocouple(obj)) this.renderThermocouple(obj, unit);
     else this.renderUnknown(obj);
 
     this.root.append(sectionTitle('Display'));
@@ -223,46 +281,47 @@ export class Inspector {
     );
   }
 
-  // -- camera ------------------------------------------------------------
+  // -- aim ---------------------------------------------------------------
 
-  private renderCamera(cam: CameraObject, unit: LengthUnit): void {
-    const spec = cam.camera;
-    const target = cam.transform?.aimTarget_m ?? null;
+  /**
+   * The aim block, shared by cameras and heat flux gauges.
+   *
+   * Both store their orientation the same way and both mean the same thing by it
+   * ("this is what I am pointed at"), so they get the same control rather than two
+   * that could drift.
+   */
+  private renderAim(obj: AimableObject, unit: LengthUnit, handRotatedHint: string): void {
+    const target = obj.transform?.aimTarget_m ?? null;
 
     this.root.append(sectionTitle('Aim'));
     this.root.append(
       row(`Aim target (${unit})`,
         vecField(target ?? [0, 0, 0], unit, ['X', 'Y', 'Z'], (index, metres) =>
-          this.patch(cam.id, 'Re-aim', (o) => {
+          this.patch(obj.id, 'Re-aim', (o) => {
             const next = [...(o.transform?.aimTarget_m ?? [0, 0, 0])] as Vec3;
             next[index] = metres;
-            setAimTarget(o as CameraObject, next);
+            setAimTarget(o as AimableObject, next);
           })),
-        target
-          ? 'Advisory; the stored quaternion is authoritative'
-          : 'No target set — this camera was rotated by hand'),
+        target ? 'Advisory; the stored quaternion is authoritative' : handRotatedHint),
       h('div', { class: 'panel__actions' }, [
         button('Aim at fire', () =>
-          this.patch(cam.id, 'Aim at fire', (o) => {
-            setAimTarget(o as CameraObject, defaultAimTarget(this.store.document));
+          this.patch(obj.id, 'Aim at fire', (o) => {
+            setAimTarget(o as AimableObject, defaultAimTarget(this.store.document));
           })),
       ]),
     );
+  }
+
+  // -- camera ------------------------------------------------------------
+
+  private renderCamera(cam: CameraObject, unit: LengthUnit): void {
+    const spec = cam.camera;
+
+    this.renderAim(cam, unit, 'No target set — this camera was rotated by hand');
 
     this.root.append(sectionTitle('Optics'));
     this.root.append(
-      row('Preset',
-        selectField(spec.presetId ?? '', [
-          { value: '', label: '— custom —' },
-          ...CAMERA_PRESETS.map((p) => ({ value: p.id, label: p.label })),
-        ], (id) => {
-          const preset = CAMERA_PRESETS.find((p) => p.id === id);
-          if (!preset) return;
-          this.patch(cam.id, 'Apply preset', (o) => {
-            (o as CameraObject).camera = specFromPreset(preset);
-          });
-        }),
-        'Intrinsics are copied inline, so the plan stays self-contained'),
+      this.presetRow(cam),
       row('Modality',
         selectField(spec.modality,
           (['RGB', 'LWIR', 'MWIR', 'SWIR', 'NIR', 'other'] as Modality[]).map((m) => ({ value: m, label: m })),
@@ -295,13 +354,29 @@ export class Inspector {
         numberField(spec.focalLength_mm, (v) =>
           this.patch(cam.id, 'Set focal length', (o) => {
             (o as CameraObject).camera.focalLength_mm = Math.max(0.1, v);
-          }), { step: 0.1, min: 0.1 })),
+          }), { step: 0.1, min: 0.1 }),
+        'The lens itself. Zoom is separate, so this stays the number on the barrel'),
+      row('Zoom (×)',
+        numberField(zoomOf(cam), (v) =>
+          this.patch(cam.id, 'Set zoom', (o) => {
+            const c = (o as CameraObject).camera;
+            const z = Math.max(0.01, v);
+            // 1x is the absence of a zoom rather than a value. Omitting it keeps a
+            // plan that does not use the feature declaring format 1.0, so it still
+            // opens in a build that predates zoom.
+            if (Math.abs(z - 1) < 1e-9) delete c.zoomFactor;
+            else c.zoomFactor = z;
+          }), { step: 0.5, min: 0.01 }),
+        'Multiplies the effective focal length: 2× halves both fields of view'),
       row('Horizontal FOV (°)',
         numberField(hfovDegOf(cam), (deg) =>
           this.patch(cam.id, 'Set field of view', (o) => {
             const c = (o as CameraObject).camera;
             const clamped = Math.min(Math.max(deg, 1), 179);
-            c.focalLength_mm = focalLengthForHfov(c.sensor_mm[0], (clamped * Math.PI) / 180);
+            const effective = focalLengthForHfov(c.sensor_mm[0], (clamped * Math.PI) / 180);
+            // Back out the zoom, so typing a field of view changes the LENS and
+            // leaves the zoom setting where the operator put it.
+            c.focalLength_mm = effective / zoomOf(o as CameraObject);
           }), { step: 1, min: 1, max: 179 }),
         'Typing a field of view back-solves the focal length, which is what gets stored'),
       row('Frame rate (Hz)',
@@ -323,9 +398,143 @@ export class Inspector {
     this.renderCameraCoverage(cam, unit);
   }
 
+  // -- camera presets ----------------------------------------------------
+
+  /**
+   * Preset picker, plus the actions that let the library grow.
+   *
+   * The library is not a file the user maintains (see core/presets.ts), so every
+   * way of adding to it has to be here, next to the numbers being captured:
+   * saving the optics in front of you, and adopting a preset named by a plan
+   * someone else authored. That second one is how a preset crosses machines
+   * without ever becoming an attachment.
+   */
+  private presetRow(cam: CameraObject): HTMLElement {
+    const spec = cam.camera;
+    const library = cameraPresets();
+    const named = spec.presetId ?? '';
+    const foreign = named !== '' && !library.some((p) => p.id === named);
+
+    const options = [
+      { value: '', label: '— custom —' },
+      ...(foreign ? [{ value: named, label: `${named} — not in your library` }] : []),
+      ...library.map((p) => ({ value: p.id, label: p.label })),
+    ];
+
+    const naming = this.pendingPreset?.cameraId === cam.id;
+    const actions: HTMLElement[] = [
+      button(naming ? 'Cancel' : 'Save as preset…', () => {
+        this.pendingPreset = naming
+          ? null
+          : { cameraId: cam.id, name: this.suggestedPresetName(cam) };
+        this.renderInner();
+        (this.root.querySelector('.preset-name input') as HTMLInputElement | null)?.select();
+      }),
+    ];
+    if (foreign) {
+      actions.push(button('Add to my presets', () => this.adoptPreset(cam, named)));
+    } else if (named && isCustomPreset(named)) {
+      actions.push(button('Delete preset', () => this.deletePreset(named), 'btn--danger'));
+    }
+
+    return h('div', {}, [
+      row('Preset',
+        selectField(named, options, (id) => {
+          const preset = library.find((p) => p.id === id);
+          if (!preset) return;
+          this.patch(cam.id, 'Apply preset', (o) => {
+            (o as CameraObject).camera = specFromPreset(preset);
+          });
+        }),
+        'Intrinsics are copied inline, so the plan stays self-contained'),
+      h('div', { class: 'panel__actions' }, actions),
+      naming ? this.presetNameForm(cam) : null,
+      foreign
+        ? h('p', { class: 'panel__hint' }, [
+          'This plan names a preset your library does not have. The camera is complete '
+          + 'either way — every intrinsic is stored inline — but adding it lets you place '
+          + 'more of the same camera.',
+        ])
+        : null,
+    ].filter(Boolean) as HTMLElement[]);
+  }
+
+  private suggestedPresetName(cam: CameraObject): string {
+    return cam.name
+      || cameraPresets().find((p) => p.id === cam.camera.presetId)?.label
+      || 'My camera';
+  }
+
+  /** The inline "name it" row. Rendered only while a save is in progress. */
+  private presetNameForm(cam: CameraObject): HTMLElement {
+    const input = textField(this.pendingPreset?.name ?? '', (v) => {
+      if (this.pendingPreset) this.pendingPreset.name = v;
+    });
+    // `change` only fires on blur, and Enter is what anyone naming a thing presses.
+    input.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this.commitPreset(cam, input.value);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        this.pendingPreset = null;
+        this.renderInner();
+      }
+    });
+
+    return h('div', { class: 'preset-name' }, [
+      row('Preset name', input,
+        'Saved to your library in this browser, not to a file beside the plan'),
+      h('div', { class: 'panel__actions' }, [
+        button('Save preset', () => this.commitPreset(cam, input.value)),
+      ]),
+      h('p', { class: 'panel__hint' }, [
+        'Captures the optics above — resolution, sensor, focal length, band and frame '
+        + 'rate — but not the zoom, which belongs to the shot rather than to the camera.',
+        presetsArePersistent()
+          ? ''
+          : ' This browser is not storing site data, so the preset will last only for this '
+            + 'session. The plan itself is unaffected: every intrinsic is written into the '
+            + 'camera.',
+      ]),
+    ]);
+  }
+
+  private commitPreset(cam: CameraObject, typed: string): void {
+    const label = typed.trim();
+    if (!label) return;
+    this.pendingPreset = null;
+
+    const saved = saveCustomPreset(presetFromCamera(cam, label));
+    // Point the camera at the preset it just became, so the picker shows it
+    // selected rather than "custom" and the two cannot look unrelated.
+    this.patch(cam.id, 'Save camera preset', (o) => {
+      (o as CameraObject).camera.presetId = saved.id;
+    });
+    this.onPresetLibraryChange?.();
+  }
+
+  private adoptPreset(cam: CameraObject, id: string): void {
+    saveCustomPreset(presetFromCamera(cam, cam.name || id, id));
+    this.onPresetLibraryChange?.();
+    this.render();
+  }
+
+  private deletePreset(id: string): void {
+    if (!window.confirm(
+      `Remove the preset "${id}" from your library?\n\n`
+      + 'Cameras already placed keep their intrinsics — a preset is only a starting '
+      + 'point, and nothing in any plan depends on it.',
+    )) return;
+    deleteCustomPreset(id);
+    this.onPresetLibraryChange?.();
+    this.render();
+  }
+
   /** Derived numbers: what this camera will actually get. */
   private renderCameraCoverage(cam: CameraObject, unit: LengthUnit): void {
     const [cx, cy] = principalPointOf(cam);
+    const zoom = zoomOf(cam);
     const items: HTMLElement[] = [
       readout('Field of view', `${hfovDegOf(cam).toFixed(1)}° × ${vfovDegOf(cam).toFixed(1)}°`),
       readout('Standoff (plan / slant)',
@@ -334,6 +543,11 @@ export class Inspector {
       readout('Principal point', `${cx.toFixed(1)}, ${cy.toFixed(1)} px`),
       readout('Resolution at the fire', `${(groundSampleDistanceM(cam) * 1000).toFixed(2)} mm/px`),
     ];
+
+    if (zoom !== 1) {
+      items.splice(1, 0, readout('Effective focal length',
+        `${effectiveFocalLengthMm(cam).toFixed(2)} mm — ${cam.camera.focalLength_mm} mm at ${zoom}×`));
+    }
 
     const framing = framingOf(this.store.document, cam);
     if (framing) {
@@ -344,13 +558,31 @@ export class Inspector {
           framing.fraction > 0.999 ? 'good' : 'bad'),
       );
       if (!framing.tip || !framing.base) {
-        const covers = 2 * Math.tan((vfovDegOf(cam) * Math.PI) / 360) * standoffM(cam);
+        // Deliberately NOT compared against the flame height to decide whether the
+        // miss is "marginal". This strip is measured across the optical axis, the
+        // flame stands vertically, and a camera tilted down at the fire makes those
+        // two quantities incomparable -- near enough that the arithmetic looks fine
+        // and far enough that it is wrong. `Plume in frame` above is the honest
+        // measure of how badly a camera misses, and it comes from the projection.
+        const covers = verticalCoverageM(cam);
         items.push(h('p', { class: 'readout__note' }, [
           `A ${vfovDegOf(cam).toFixed(0)}° vertical field at ` +
           `${formatLengthWithUnit(standoffM(cam), unit)} covers about ` +
-          `${formatLengthWithUnit(covers, unit)} of height. Move back, or fit a wider lens.`,
+          `${formatLengthWithUnit(covers, unit)} across the frame. Move back, ` +
+          `${zoom > 1 ? 'zoom out, ' : ''}or fit a wider lens.`,
         ]));
       }
+    }
+
+    // The framing is real at any zoom; the resolution is only real at optical
+    // zoom. Saying so here is the difference between a planning number and a
+    // number someone sizes a reconstruction on.
+    if (zoom > 1) {
+      items.push(h('p', { class: 'readout__note' }, [
+        `Fields of view above are at ${zoom}× and are correct either way. If this is a `
+        + 'DIGITAL zoom, though, it crops and interpolates: the mm/px figure is what the '
+        + 'output pixels imply, not detail the detector actually resolved.',
+      ]));
     }
 
     this.root.append(sectionTitle('Coverage'));
@@ -412,6 +644,20 @@ export class Inspector {
             const burner = o as BurnerObject;
             burner.fire = { ...(burner.fire ?? {}), hrr_kw: v > 0 ? v : null };
           }), { step: 10, min: 0 })),
+      row('Radiative fraction',
+        numberField(radiativeFractionOf(b), (v) =>
+          this.patch(b.id, 'Set radiative fraction', (o) => {
+            const burner = o as BurnerObject;
+            const f = Math.min(Math.max(v, 0.01), 1);
+            const fire: NonNullable<BurnerObject['fire']> = { ...(burner.fire ?? {}) };
+            // Same rule as camera zoom: the default is the absence of the field,
+            // so a plan that leaves it alone still declares format 1.0.
+            if (Math.abs(f - DEFAULT_RADIATIVE_FRACTION) < 1e-9) delete fire.radiativeFraction;
+            else fire.radiativeFraction = f;
+            burner.fire = fire;
+          }), { step: 0.05, min: 0.01, max: 1 }),
+        'Fraction radiated rather than convected — drives what a heat flux gauge reads. '
+        + '≈0.35 heptane, 0.2 methanol. 0.3 is the default and is not written to the file'),
     );
 
     const flame = burnerFlameHeightM(b);
@@ -624,6 +870,232 @@ export class Inspector {
       }
     }
     this.root.append(sectionTitle('Clearance'));
+    this.root.append(h('div', { class: 'readouts' }, items));
+  }
+
+  // -- heat flux sensor --------------------------------------------------
+
+  private renderHeatFluxSensor(s: HeatFluxSensorObject, unit: LengthUnit): void {
+    const gauge = s.gauge ?? {};
+    const patchGauge = (label: string, fn: (g: NonNullable<HeatFluxSensorObject['gauge']>) => void) =>
+      this.patch(s.id, label, (o) => {
+        const sensor = o as HeatFluxSensorObject;
+        sensor.gauge = { ...(sensor.gauge ?? {}) };
+        fn(sensor.gauge);
+      });
+
+    this.renderAim(s, unit, 'No target set — this gauge was rotated by hand');
+
+    this.root.append(sectionTitle('Gauge'));
+    this.root.append(
+      row('Kind',
+        selectField(gauge.kind ?? 'schmidt-boelter', [
+          { value: 'schmidt-boelter' as GaugeKind, label: 'Schmidt-Boelter' },
+          { value: 'gardon' as GaugeKind, label: 'Gardon (foil)' },
+          { value: 'thermopile' as GaugeKind, label: 'Thermopile' },
+          { value: 'other' as GaugeKind, label: 'Other' },
+        ], (v) => patchGauge('Set gauge kind', (g) => { g.kind = v; })),
+        'Recorded for the equipment list; it does not change the predicted flux'),
+      row('Range (kW/m²)',
+        numberField(gaugeRangeKwM2(s) ?? 0, (v) =>
+          patchGauge('Set gauge range', (g) => { g.range_kw_m2 = v > 0 ? v : null; }),
+          { step: 5, min: 0 }),
+        'Full scale. Zero means unrecorded, and the over-range check goes quiet'),
+      row('View angle (°)',
+        numberField(gaugeViewAngleDeg(s), (v) =>
+          patchGauge('Set view angle', (g) => {
+            g.viewAngle_deg = Math.min(Math.max(v, 1), 180);
+          }), { step: 5, min: 1, max: 180 }),
+        'Full acceptance angle. 180° is an open hemisphere; less means a view tube'),
+      row('Water-cooled',
+        checkboxField(gauge.waterCooled === true, (v) =>
+          patchGauge('Toggle cooling', (g) => { g.waterCooled = v; }))),
+      row('Serial',
+        textField(gauge.serial ?? '', (v) =>
+          patchGauge('Set serial', (g) => { g.serial = v || null; })),
+        'Which physical gauge this is, for the calibration record'),
+    );
+
+    this.renderHeatFluxExposure(s, unit);
+  }
+
+  /** What this gauge will read, and whether that is a usable measurement. */
+  private renderHeatFluxExposure(s: HeatFluxSensorObject, unit: LengthUnit): void {
+    const doc = this.store.document;
+    const estimate = heatFluxEstimate(doc, s);
+    const items: HTMLElement[] = [];
+
+    if (!estimate) {
+      items.push(
+        readout('Predicted incident flux', 'needs a burner with an HRR', 'muted'),
+        h('p', { class: 'readout__note' }, [
+          'The point-source model needs a heat release rate to radiate. Set one on the '
+          + 'fuel pan and this fills in.',
+        ]),
+      );
+    } else {
+      const burner = primaryBurner(doc);
+      const range = gaugeRangeKwM2(s);
+
+      items.push(
+        readout('Distance to mid-flame', formatLengthWithUnit(estimate.distanceM, unit)),
+        readout('Off the gauge axis', `${estimate.offAxisDeg.toFixed(0)}°`,
+          estimate.facesFire && estimate.withinViewAngle ? 'good' : 'bad'),
+        readout('Predicted incident flux',
+          Number.isFinite(estimate.incidentKwM2)
+            ? `${estimate.incidentKwM2.toFixed(2)} kW/m²`
+            : 'inside the fire',
+          estimate.facesFire ? undefined : 'bad'),
+      );
+
+      if (range !== null && estimate.fractionOfRange !== null) {
+        const frac = estimate.fractionOfRange;
+        items.push(readout('Fraction of range',
+          Number.isFinite(frac) ? `${(frac * 100).toFixed(1)}% of ${range} kW/m²` : 'over range',
+          frac > 1 || frac < 0.05 ? 'bad' : 'good'));
+      }
+
+      items.push(readout('Radiative fraction used',
+        burner ? radiativeFractionOf(burner).toFixed(2) : '—', 'muted'));
+
+      items.push(h('p', { class: 'readout__note' }, [
+        'Point source at mid-flame height: q″ = χ_r·Q̇·cos θ / (4πr²). A first-order '
+        + 'estimate for sizing and placement, and it assumes an unobstructed view — it '
+        + 'knows nothing about the walls in this plan.',
+      ]));
+
+      if (estimate.nearField && burner) {
+        items.push(h('p', { class: 'readout__note' }, [
+          `At ${formatLengthWithUnit(estimate.distanceM, unit)} from a `
+          + `${formatLengthWithUnit(burnerDiameterM(burner), unit)} fire this is inside `
+          + `${POINT_SOURCE_MIN_DIAMETERS} diameters, where the fire is plainly not a point. `
+          + 'Treat the figure above as an order of magnitude.',
+        ]));
+      }
+    }
+
+    this.root.append(sectionTitle('Exposure'));
+    this.root.append(h('div', { class: 'readouts' }, items));
+  }
+
+  // -- thermocouple ------------------------------------------------------
+
+  private renderThermocouple(t: ThermocoupleObject, unit: LengthUnit): void {
+    const tc = t.thermocouple ?? {};
+    const patchTc = (label: string, fn: (x: NonNullable<ThermocoupleObject['thermocouple']>) => void) =>
+      this.patch(t.id, label, (o) => {
+        const obj = o as ThermocoupleObject;
+        obj.thermocouple = { ...(obj.thermocouple ?? {}) };
+        fn(obj.thermocouple);
+      });
+
+    const type = tcTypeOf(t);
+    // Not "Thermocouple": that is already the panel heading, and a section that
+    // repeats its parent tells the reader nothing about what is in it.
+    this.root.append(sectionTitle('Wire and limits'));
+    this.root.append(
+      row('Type',
+        selectField(type,
+          (Object.keys(TC_MAX_TEMPERATURE_C) as TcType[]).map((k) => ({
+            value: k, label: `Type ${k} — to ${TC_MAX_TEMPERATURE_C[k]} °C`,
+          })),
+          (v) => patchTc('Set thermocouple type', (x) => { x.tcType = v; })),
+        'Sets the default upper limit, which is what the over-temperature check uses'),
+      row('Bead ⌀ (mm)',
+        numberField(tc.beadDiameter_mm ?? 1.5, (v) =>
+          patchTc('Set bead diameter', (x) => { x.beadDiameter_mm = v > 0 ? v : null; }),
+          { step: 0.5, min: 0 }),
+        'Recorded, not corrected for: a bigger bead lags more and radiates more'),
+      row('Sheathed',
+        checkboxField(tc.sheathed === true, (v) =>
+          patchTc('Toggle sheath', (x) => { x.sheathed = v; }))),
+      row('Max temperature (°C)',
+        numberField(tcMaxTemperatureC(t), (v) =>
+          patchTc('Set max temperature', (x) => { x.maxTemperature_C = v; }),
+          { step: 50, min: 0 }),
+        `Blank in the file means the type ${type} standard limit, ${TC_MAX_TEMPERATURE_C[type]} °C`),
+      h('div', { class: 'panel__actions' }, [
+        button(`Use type ${type} default`, () =>
+          patchTc('Clear max temperature', (x) => { x.maxTemperature_C = null; })),
+      ]),
+    );
+
+    this.renderBeads(t, unit);
+  }
+
+  /** The rake itself. One bead or twelve is the same list, so it is the same UI as
+   *  a wall's point list rather than a second way of editing a series of numbers. */
+  private renderBeads(t: ThermocoupleObject, unit: LengthUnit): void {
+    const offsets = beadOffsetsOf(t);
+
+    this.root.append(sectionTitle(offsets.length === 1 ? 'Bead' : `Beads (${offsets.length})`));
+    offsets.forEach((offset, i) => {
+      this.root.append(row(`Bead ${i + 1} (${unit})`,
+        lengthField(offset, unit, (m) =>
+          this.patch(t.id, 'Move bead', (o) => {
+            const next = [...beadOffsetsOf(o as ThermocoupleObject)];
+            next[i] = m;
+            (o as ThermocoupleObject).beadOffsets_m = next;
+          })),
+        i === 0 ? 'Height above the object origin, along the rake' : undefined));
+    });
+
+    const actions: HTMLElement[] = [
+      button('Add bead', () => this.patch(t.id, 'Add bead', (o) => {
+        const next = [...beadOffsetsOf(o as ThermocoupleObject)];
+        (o as ThermocoupleObject).beadOffsets_m = [...next, next[next.length - 1] + 0.3];
+      })),
+    ];
+    if (offsets.length > 1) {
+      actions.push(button('Remove last', () => this.patch(t.id, 'Remove bead', (o) => {
+        (o as ThermocoupleObject).beadOffsets_m = beadOffsetsOf(o as ThermocoupleObject).slice(0, -1);
+      })));
+    }
+    this.root.append(h('div', { class: 'panel__actions' }, actions));
+
+    this.renderBeadPredictions(t, unit);
+  }
+
+  private renderBeadPredictions(t: ThermocoupleObject, unit: LengthUnit): void {
+    const doc = this.store.document;
+    const burner = primaryBurner(doc);
+    const beads = thermocoupleBeads(doc, t);
+    const limit = tcMaxTemperatureC(t);
+    const items: HTMLElement[] = [];
+
+    if (!burner || flameTipZM(burner) === null) {
+      items.push(readout('Fire region', 'needs a burner with an HRR', 'muted'));
+    } else {
+      const REGION_LABEL = {
+        flame: 'in the flame',
+        plume: 'in the plume',
+        outside: 'outside the plume',
+      } as const;
+
+      for (const bead of beads) {
+        const where = REGION_LABEL[bead.region];
+        const temp = bead.gasTemperatureC === null
+          ? '—'
+          : `${bead.gasTemperatureC.toFixed(0)} °C`;
+        const hot = bead.gasTemperatureC !== null && bead.gasTemperatureC > limit;
+        items.push(readout(
+          `Bead ${bead.index + 1} at ${formatLengthWithUnit(bead.world[2], unit)}`,
+          `${where}${bead.gasTemperatureC === null ? '' : `, ${temp}`}`,
+          hot ? 'bad' : bead.region === 'outside' ? 'muted' : 'good',
+        ));
+      }
+
+      const tip = flameTipZM(burner);
+      items.push(readout('Mean flame tip', formatLengthWithUnit(tip as number, unit), 'muted'));
+
+      items.push(h('p', { class: 'readout__note' }, [
+        'Temperatures are the Heskestad PLUME CENTRELINE, quoted only for beads above the '
+        + 'mean flame tip and inside the envelope — the correlation says nothing about the '
+        + 'flame itself, and a bead off the axis reads lower than the figure shown.',
+      ]));
+    }
+
+    this.root.append(sectionTitle('Predicted'));
     this.root.append(h('div', { class: 'readouts' }, items));
   }
 

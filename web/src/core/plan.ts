@@ -5,16 +5,22 @@
  */
 
 import {
+  DEFAULT_RADIATIVE_FRACTION,
+  POINT_SOURCE_MIN_DIAMETERS,
   effectiveDiameterM,
   flameHeightM,
+  plumeCentrelineRiseK,
   plumeRadiusM,
+  pointSourceFluxKwM2,
   virtualOriginM,
 } from './correlations';
 import {
   angleBetweenDeg,
+  dot,
   forwardOf,
   IDENTITY_QUAT,
   length,
+  normalize,
   quatToColumns,
   rotateVec,
   sub,
@@ -23,27 +29,37 @@ import {
 import {
   FORMAT,
   FORMAT_VERSION,
+  isAimable,
   isBurner,
   isCamera,
   isCeiling,
+  isHeatFluxSensor,
   isHood,
+  isThermocouple,
   isWall,
+  maxVersion,
+  requiredFormatVersion,
   type BurnerObject,
   type CameraObject,
   type CeilingObject,
+  type HeatFluxSensorObject,
   type HoodObject,
   type Issue,
   type Modality,
   type PlanDocument,
   type PlanObject,
   type Quat,
+  type TcType,
+  type ThermocoupleObject,
   type Vec3,
   type WallObject,
 } from './types';
 
 // Re-exported so callers get the whole plan vocabulary from one module rather than
 // having to know that narrowing helpers live next door in types.ts.
-export { isBurner, isCamera, isCeiling, isHood, isWall } from './types';
+export {
+  isAimable, isBurner, isCamera, isCeiling, isHeatFluxSensor, isHood, isThermocouple, isWall,
+} from './types';
 
 export const MODALITY_COLORS: Record<Modality, string> = {
   RGB: '#3b82f6',
@@ -98,6 +114,10 @@ export const burners = (d: PlanDocument): BurnerObject[] => d.objects.filter(isB
 export const hoods = (d: PlanDocument): HoodObject[] => d.objects.filter(isHood);
 export const walls = (d: PlanDocument): WallObject[] => d.objects.filter(isWall);
 export const ceilings = (d: PlanDocument): CeilingObject[] => d.objects.filter(isCeiling);
+export const heatFluxSensors = (d: PlanDocument): HeatFluxSensorObject[] =>
+  d.objects.filter(isHeatFluxSensor);
+export const thermocouples = (d: PlanDocument): ThermocoupleObject[] =>
+  d.objects.filter(isThermocouple);
 
 export const findObject = (d: PlanDocument, id: string): PlanObject | undefined =>
   d.objects.find((o) => o.id === id);
@@ -153,12 +173,34 @@ export function footprintXY(o: PlanObject, xy: readonly [number, number]): [numb
 
 export const resolutionOf = (c: CameraObject): [number, number] => c.camera.resolution_px;
 
-/** fx = f * res_x / sensor_w, in pixels. */
+/**
+ * Zoom setting, as a multiplier on the effective focal length.
+ *
+ * Absent, null or non-positive all mean 1. A plan is someone else's file, and a
+ * zero here would take every derived quantity to infinity.
+ */
+export function zoomOf(c: CameraObject): number {
+  const z = c.camera.zoomFactor;
+  return typeof z === 'number' && Number.isFinite(z) && z > 0 ? z : 1;
+}
+
+/**
+ * The focal length the image is actually formed at: lens times zoom.
+ *
+ * Everything derived -- fx, fy, both fields of view, the frustum, the preview,
+ * the coverage verdict -- goes through here, so a zoomed camera is zoomed
+ * everywhere or nowhere. `focalLength_mm` stays the lens, because that is what a
+ * datasheet gives and what the operator screws onto the front.
+ */
+export const effectiveFocalLengthMm = (c: CameraObject): number =>
+  c.camera.focalLength_mm * zoomOf(c);
+
+/** fx = f_eff * res_x / sensor_w, in pixels. */
 export const fxOf = (c: CameraObject): number =>
-  (c.camera.focalLength_mm * c.camera.resolution_px[0]) / c.camera.sensor_mm[0];
+  (effectiveFocalLengthMm(c) * c.camera.resolution_px[0]) / c.camera.sensor_mm[0];
 
 export const fyOf = (c: CameraObject): number =>
-  (c.camera.focalLength_mm * c.camera.resolution_px[1]) / c.camera.sensor_mm[1];
+  (effectiveFocalLengthMm(c) * c.camera.resolution_px[1]) / c.camera.sensor_mm[1];
 
 /** Null principal point means the OpenCV image centre, ((w-1)/2, (h-1)/2). */
 export function principalPointOf(c: CameraObject): [number, number] {
@@ -169,10 +211,10 @@ export function principalPointOf(c: CameraObject): [number, number] {
 }
 
 export const hfovRadOf = (c: CameraObject): number =>
-  2 * Math.atan(c.camera.sensor_mm[0] / (2 * c.camera.focalLength_mm));
+  2 * Math.atan(c.camera.sensor_mm[0] / (2 * effectiveFocalLengthMm(c)));
 
 export const vfovRadOf = (c: CameraObject): number =>
-  2 * Math.atan(c.camera.sensor_mm[1] / (2 * c.camera.focalLength_mm));
+  2 * Math.atan(c.camera.sensor_mm[1] / (2 * effectiveFocalLengthMm(c)));
 
 export const hfovDegOf = (c: CameraObject): number => (hfovRadOf(c) * 180) / Math.PI;
 export const vfovDegOf = (c: CameraObject): number => (vfovRadOf(c) * 180) / Math.PI;
@@ -193,6 +235,20 @@ export const standoffHorizontalM = (c: CameraObject): number => {
 export const groundSampleDistanceM = (c: CameraObject, distanceM?: number): number =>
   (distanceM ?? standoffM(c)) / fxOf(c);
 
+/**
+ * Height of the visible strip at a distance, square to the axis.
+ *
+ * Derived from the PIXEL grid, not from `vfovRadOf`. The two differ by half a
+ * pixel per side, because the field of view spans the whole sensor while a pixel
+ * centre only reaches `(h-1)/2` from the principal point -- and `isPointVisible`
+ * judges pixel centres. A tenth of a percent, which never mattered while cameras
+ * were missing the flame by whole centimetres; it matters the moment one is
+ * marginal, because a readout that says the strip is taller than the flame while
+ * the verdict says the flame is clipped is a readout nobody can act on.
+ */
+export const verticalCoverageM = (c: CameraObject, distanceM?: number): number =>
+  ((c.camera.resolution_px[1] - 1) / fyOf(c)) * (distanceM ?? standoffM(c));
+
 /** The one colour literal the schema allows: `#rrggbb`. */
 export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 
@@ -205,11 +261,34 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * passed through, so a crafted `display.color` cannot escape its attribute. Doing it
  * here covers every consumer, because this is the only place the field is read.
  */
-export const cameraColor = (c: CameraObject): string => {
-  const raw = c.display?.color;
-  if (typeof raw === 'string' && HEX_COLOR.test(raw)) return raw;
-  return MODALITY_COLORS[c.camera.modality] || MODALITY_COLORS.other;
+export const cameraColor = (c: CameraObject): string => objectColor(c);
+
+/** Fallback colours for object types that have no modality to key off. Kept in
+ *  step with `COLORS` in web/src/scene/builders.ts so the 3D view, the outliner
+ *  and the printed drawing agree on what a gauge looks like. */
+export const TYPE_COLORS: Record<string, string> = {
+  heatFluxSensor: '#ef4444',
+  thermocouple: '#10b981',
 };
+
+/**
+ * True when an object's colour carries information — a camera's modality, an
+ * instrument's kind, or a colour the user set by hand. A wall has no such colour,
+ * and tinting it would say something about it that is not true.
+ */
+export const hasObjectColor = (o: PlanObject): boolean =>
+  isCamera(o)
+  || o.type in TYPE_COLORS
+  || (typeof o.display?.color === 'string' && HEX_COLOR.test(o.display.color));
+
+/** Any object's display colour, normalised. Same guarantees as above: this is the
+ *  only place `display.color` is read, so an untrusted value is neutralised once. */
+export function objectColor(o: PlanObject): string {
+  const raw = o.display?.color;
+  if (typeof raw === 'string' && HEX_COLOR.test(raw)) return raw;
+  if (isCamera(o)) return MODALITY_COLORS[o.camera.modality] || MODALITY_COLORS.other;
+  return TYPE_COLORS[o.type] ?? MODALITY_COLORS.other;
+}
 
 export const intrinsicsSourceOf = (c: CameraObject) => c.camera.intrinsicsSource ?? 'nominal';
 
@@ -333,6 +412,207 @@ export function plumeRadiusAtZ(b: BurnerObject, zAboveFloorM: number): number | 
   const d = burnerDiameterM(b);
   if (q === null || q <= 0 || d <= 0) return null;
   return plumeRadiusM(zAboveFloorM - fuelSurfaceZM(b), q, d);
+}
+
+/** Radiated fraction of the heat release. Fuel-dependent; 0.3 when unstated. */
+export const radiativeFractionOf = (b: BurnerObject): number => {
+  const f = b.fire?.radiativeFraction;
+  return typeof f === 'number' && Number.isFinite(f) && f > 0 && f <= 1
+    ? f
+    : DEFAULT_RADIATIVE_FRACTION;
+};
+
+/**
+ * Radius of the drawn mean flame cone at an absolute height.
+ *
+ * The cone tapers from the effective diameter at the fuel surface to a point at
+ * the mean tip -- the same shape `buildBurner` draws, so "this bead is in the
+ * flame" means the same thing in the readout as it looks like on screen.
+ */
+export function flameRadiusAtZ(b: BurnerObject, zAboveFloorM: number): number | null {
+  const tip = flameTipZM(b);
+  if (tip === null) return null;
+  const base = fuelSurfaceZM(b);
+  if (tip <= base) return null;
+  if (zAboveFloorM < base || zAboveFloorM > tip) return 0;
+  return (burnerDiameterM(b) / 2) * (1 - (zAboveFloorM - base) / (tip - base));
+}
+
+/**
+ * Where the point-source radiation model puts the fire: mid-flame, on the burner
+ * axis. Also the point a camera or a gauge means by "aim at the fire", which is
+ * why there is one function rather than two conventions.
+ */
+export function firePointSourceM(d: PlanDocument): Vec3 | null {
+  const b = primaryBurner(d);
+  if (!b) return null;
+  const tip = flameTipZM(b);
+  if (tip === null) return null;
+  const p = positionOf(b);
+  return [p[0], p[1], (fuelSurfaceZM(b) + tip) / 2];
+}
+
+// -- heat flux sensor ------------------------------------------------------
+
+export interface HeatFluxEstimate {
+  /** Slant distance from the sensing face to the mid-flame point source. */
+  distanceM: number;
+  /** Angle between the gauge's outward normal and the line to the fire. */
+  offAxisDeg: number;
+  /** Predicted incident flux, kW/m2. Zero when the gauge faces away. */
+  incidentKwM2: number;
+  facesFire: boolean;
+  /** False when the fire falls outside a view-limiting tube's acceptance cone. */
+  withinViewAngle: boolean;
+  /** True when the gauge is close enough that "point source" stops being true. */
+  nearField: boolean;
+  /** Fraction of full scale, or null when no range is recorded. */
+  fractionOfRange: number | null;
+}
+
+/** The gauge's outward normal: it looks down local -Z, exactly as a camera does. */
+export const gaugeNormal = (s: HeatFluxSensorObject): Vec3 => forwardOf(quatOf(s));
+
+export const gaugeRangeKwM2 = (s: HeatFluxSensorObject): number | null => {
+  const r = s.gauge?.range_kw_m2;
+  return typeof r === 'number' && Number.isFinite(r) && r > 0 ? r : null;
+};
+
+/** Full acceptance angle of the sensing face; 180° is an open hemisphere. */
+export const gaugeViewAngleDeg = (s: HeatFluxSensorObject): number => {
+  const v = s.gauge?.viewAngle_deg;
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= 180 ? v : 180;
+};
+
+/**
+ * What this gauge will read, by the point-source model.
+ *
+ * Null when there is no fire to radiate -- no burner, or no HRR -- rather than
+ * zero, because "nothing to compute" and "computed zero" are different answers
+ * and only one of them is a placement problem.
+ */
+export function heatFluxEstimate(
+  d: PlanDocument,
+  s: HeatFluxSensorObject,
+): HeatFluxEstimate | null {
+  const burner = primaryBurner(d);
+  const source = firePointSourceM(d);
+  if (!burner || !source) return null;
+  const q = hrrKwOf(burner);
+  if (q === null || q <= 0) return null;
+
+  const at = positionOf(s);
+  const delta = sub(source, at);
+  const distanceM = length(delta);
+  const range = gaugeRangeKwM2(s);
+
+  if (distanceM < 1e-9) {
+    // Sitting in the fire. There is no direction to the source, so there is no
+    // cosine either; say so rather than dividing by zero.
+    return {
+      distanceM: 0, offAxisDeg: 0, incidentKwM2: Number.POSITIVE_INFINITY,
+      facesFire: true, withinViewAngle: true, nearField: true,
+      fractionOfRange: range === null ? null : Number.POSITIVE_INFINITY,
+    };
+  }
+
+  const cosTheta = dot(gaugeNormal(s), normalize(delta));
+  const incidentKwM2 = pointSourceFluxKwM2(q, distanceM, cosTheta, radiativeFractionOf(burner));
+
+  return {
+    distanceM,
+    offAxisDeg: angleBetweenDeg(gaugeNormal(s), delta),
+    incidentKwM2,
+    facesFire: cosTheta > 0,
+    withinViewAngle: angleBetweenDeg(gaugeNormal(s), delta) <= gaugeViewAngleDeg(s) / 2,
+    nearField: distanceM < POINT_SOURCE_MIN_DIAMETERS * burnerDiameterM(burner),
+    fractionOfRange: range === null ? null : incidentKwM2 / range,
+  };
+}
+
+// -- thermocouple ----------------------------------------------------------
+
+/** Standard continuous-use upper limits, ASTM/ANSI, largest wire gauge. */
+export const TC_MAX_TEMPERATURE_C: Record<TcType, number> = {
+  K: 1260, J: 760, T: 370, E: 870, N: 1260, R: 1480, S: 1480, B: 1700,
+};
+
+export const tcTypeOf = (t: ThermocoupleObject): TcType => t.thermocouple?.tcType ?? 'K';
+
+export const tcMaxTemperatureC = (t: ThermocoupleObject): number => {
+  const explicit = t.thermocouple?.maxTemperature_C;
+  return typeof explicit === 'number' && Number.isFinite(explicit)
+    ? explicit
+    : TC_MAX_TEMPERATURE_C[tcTypeOf(t)];
+};
+
+/** Bead offsets along local +Z. Always at least one, so a rake and a single
+ *  thermocouple are the same object with a different list length. */
+export const beadOffsetsOf = (t: ThermocoupleObject): number[] => {
+  const raw = t.beadOffsets_m;
+  const clean = Array.isArray(raw) ? raw.filter((v) => typeof v === 'number' && Number.isFinite(v)) : [];
+  return clean.length > 0 ? clean : [0];
+};
+
+export interface BeadState {
+  index: number;
+  /** Offset along the rake, from the object origin. */
+  offsetM: number;
+  world: Vec3;
+  /** Horizontal distance from the burner axis. */
+  radialM: number;
+  /** Where it sits relative to the drawn fire. */
+  region: 'flame' | 'plume' | 'outside';
+  /**
+   * Predicted gas temperature, degrees Celsius, or null where no correlation
+   * applies. This is the PLUME CENTRELINE value: an upper bound for a bead that
+   * is inside the envelope but off the axis.
+   */
+  gasTemperatureC: number | null;
+}
+
+/**
+ * Each bead in world coordinates, and what the fire is doing there.
+ *
+ * The offsets are local, so they go through the object transform like every
+ * other vertex list in this format (CONVENTIONS.md section 5a) -- a rake leaned
+ * against a wall leans in the readout too.
+ */
+export function thermocoupleBeads(d: PlanDocument, t: ThermocoupleObject): BeadState[] {
+  const burner = primaryBurner(d);
+  const ambient = d.environment?.ambientTemperature_C ?? 20;
+  const bp = burner ? positionOf(burner) : null;
+  const tipZ = burner ? flameTipZM(burner) : null;
+  const q = burner ? hrrKwOf(burner) : null;
+
+  return beadOffsetsOf(t).map((offsetM, index) => {
+    const world = toWorld(t, [0, 0, offsetM]);
+    const radialM = bp ? Math.hypot(world[0] - bp[0], world[1] - bp[1]) : Number.NaN;
+
+    let region: BeadState['region'] = 'outside';
+    let gasTemperatureC: number | null = null;
+
+    if (burner && bp && tipZ !== null) {
+      const flameR = flameRadiusAtZ(burner, world[2]);
+      const plumeR = plumeRadiusAtZ(burner, world[2]);
+      if (world[2] <= tipZ && flameR !== null && radialM <= flameR) {
+        region = 'flame';
+      } else if (world[2] > fuelSurfaceZM(burner) && plumeR !== null && radialM <= plumeR) {
+        region = 'plume';
+        // Above the mean tip only: inside the flame's own height the plume
+        // correlation is not merely imprecise, it is the wrong correlation.
+        if (world[2] > tipZ && q !== null) {
+          const rise = plumeCentrelineRiseK(
+            world[2] - fuelSurfaceZM(burner), q, burnerDiameterM(burner),
+            radiativeFractionOf(burner),
+          );
+          if (rise !== null) gasTemperatureC = ambient + rise;
+        }
+      }
+    }
+
+    return { index, offsetM, world, radialM, region, gasTemperatureC };
+  });
 }
 
 // -- hood -----------------------------------------------------------------
@@ -526,9 +806,135 @@ export function ceilingChecks(d: PlanDocument): Issue[] {
   return out;
 }
 
+/**
+ * Representative mean temperature inside a flame, for the over-temperature test.
+ *
+ * A rule of thumb, not a correlation: hydrocarbon pool flames run roughly
+ * 800-1200 C. It is used only to answer "will this bead survive", which is a
+ * question about the letter type's limit and does not need a better number.
+ */
+export const FLAME_TEMPERATURE_C = 1000;
+
+/** Below 5% of full scale a gauge is reading in its own noise. */
+const LOW_SIGNAL_FRACTION = 0.05;
+
+/**
+ * Instrument placement.
+ *
+ * These are the same kind of finding as the hood checks: not style, but whether
+ * the measurement will mean anything. A gauge pointed at a wall, one that pins
+ * at full scale, and a type-T bead sitting in the flame are all mistakes that
+ * cost a test day, and all three are visible in the plan before anyone travels.
+ */
+export function instrumentChecks(d: PlanDocument): Issue[] {
+  const out: Issue[] = [];
+
+  for (const s of heatFluxSensors(d)) {
+    const e = heatFluxEstimate(d, s);
+    if (!e) continue;
+
+    // Standing on the point source itself. Everything below would report an
+    // unbounded flux, and "Infinity kW/m2" in a printed report is not a finding.
+    if (!Number.isFinite(e.incidentKwM2)) {
+      out.push(issue('error', 'gauge-in-fire',
+        'The gauge sits on the point source the model puts the fire at, so the ' +
+        'predicted flux is unbounded. Move it out of the flame.', s.id));
+      continue;
+    }
+
+    if (!e.facesFire) {
+      out.push(issue('error', 'gauge-facing-away',
+        `The gauge normal is ${e.offAxisDeg.toFixed(0)}° off the line to the fire, so the ` +
+        `sensing face is turned away from it and will see only background radiation.`, s.id));
+      continue;
+    }
+    if (!e.withinViewAngle) {
+      out.push(issue('warning', 'gauge-view-restricted',
+        `The fire is ${e.offAxisDeg.toFixed(0)}° off the gauge axis but the view-limiting ` +
+        `tube only accepts ±${(gaugeViewAngleDeg(s) / 2).toFixed(0)}° — the flame is outside ` +
+        `the acceptance cone.`, s.id));
+    }
+    if (e.nearField) {
+      out.push(issue('warning', 'gauge-near-field',
+        `The gauge is ${e.distanceM.toFixed(2)} m from a fire of effective diameter ` +
+        `${burnerDiameterM(primaryBurner(d)!).toFixed(2)} m. Closer than ` +
+        `${POINT_SOURCE_MIN_DIAMETERS} diameters the fire is plainly not a point source, so ` +
+        `the predicted flux is an order of magnitude, not a value to size a gauge on.`, s.id));
+    }
+
+    const range = gaugeRangeKwM2(s);
+    if (range !== null && e.fractionOfRange !== null) {
+      if (e.fractionOfRange > 1) {
+        out.push(issue('error', 'gauge-over-range',
+          `Predicted incident flux is ${e.incidentKwM2.toFixed(1)} kW/m² against a ` +
+          `${range} kW/m² gauge — it will pin at full scale and the reading is lost.`, s.id));
+      } else if (e.fractionOfRange < LOW_SIGNAL_FRACTION) {
+        out.push(issue('warning', 'gauge-low-signal',
+          `Predicted incident flux is ${e.incidentKwM2.toFixed(2)} kW/m², only ` +
+          `${(e.fractionOfRange * 100).toFixed(1)}% of the ${range} kW/m² range — move it in, ` +
+          `or fit a more sensitive gauge.`, s.id));
+      }
+    }
+  }
+
+  for (const t of thermocouples(d)) {
+    const beads = thermocoupleBeads(d, t);
+    const limit = tcMaxTemperatureC(t);
+    const type = tcTypeOf(t);
+
+    const inFlame = beads.filter((b) => b.region === 'flame');
+    if (inFlame.length > 0) {
+      const which = inFlame.length === beads.length
+        ? 'every bead'
+        : `${inFlame.length} of ${beads.length} beads`;
+      if (limit < FLAME_TEMPERATURE_C) {
+        out.push(issue('error', 'tc-over-temperature',
+          `${which} sits inside the mean flame envelope, where gas is roughly ` +
+          `${FLAME_TEMPERATURE_C} °C — past the ${limit} °C limit of a type ${type} ` +
+          `thermocouple.`, t.id));
+      } else {
+        out.push(issue('warning', 'tc-in-flame',
+          `${which} sits inside the mean flame envelope. Expect intermittent flame ` +
+          `temperatures rather than a plume reading, and significant radiation error on a ` +
+          `bare bead.`, t.id));
+      }
+    }
+
+    const hottest = beads.reduce<number | null>(
+      (acc, b) => (b.gasTemperatureC !== null && (acc === null || b.gasTemperatureC > acc)
+        ? b.gasTemperatureC : acc),
+      null,
+    );
+    if (hottest !== null && hottest > limit) {
+      out.push(issue('error', 'tc-over-temperature',
+        `Predicted plume centreline reaches ${hottest.toFixed(0)} °C at the hottest bead, past ` +
+        `the ${limit} °C limit of a type ${type} thermocouple.`, t.id));
+    }
+
+    if (beads.every((b) => b.region === 'outside') && firePointSourceM(d) !== null) {
+      out.push(issue('info', 'tc-outside-plume',
+        'No bead falls inside the flame or the plume envelope, so this rake will read close ' +
+        'to ambient.', t.id));
+    }
+  }
+
+  return out;
+}
+
 /** Semantic checks beyond what the schema can express. */
 export function checkPlan(d: PlanDocument): Issue[] {
   const out: Issue[] = [];
+
+  // A file whose label understates its contents. Only a hand edit or a broken
+  // writer produces one -- this writer derives the version -- but it matters: the
+  // label is what a consumer checks before deciding it can read the file.
+  const declared = String(d.version ?? '');
+  const effective = maxVersion(declared, requiredFormatVersion(d));
+  if (declared !== effective) {
+    out.push(issue('warning', 'version-understated',
+      `The file declares format ${declared || '(none)'} but uses ${effective} features; ` +
+      'saving will correct it.'));
+  }
 
   const seen = new Set<string>();
   for (const o of d.objects) {
@@ -547,8 +953,11 @@ export function checkPlan(d: PlanDocument): Issue[] {
           `rotation_quat has length ${n.toFixed(6)}, expected 1.`, o.id));
       }
     }
+    // Any object whose orientation records what it is pointed at, which since 1.1
+    // is heat flux gauges as well as cameras -- a gauge whose quaternion and target
+    // disagree is exactly as wrong, and for exactly the same reason.
     const target = o.transform?.aimTarget_m;
-    if (target && isCamera(o) && q) {
+    if (target && isAimable(o) && q) {
       const delta = sub(target, positionOf(o));
       if (length(delta) < 1e-9) {
         out.push(issue('warning', 'degenerate-aim', 'aimTarget_m coincides with the camera position.', o.id));
@@ -586,5 +995,5 @@ export function checkPlan(d: PlanDocument): Issue[] {
     }
   }
 
-  return out.concat(hoodChecks(d), ceilingChecks(d));
+  return out.concat(hoodChecks(d), ceilingChecks(d), instrumentChecks(d));
 }

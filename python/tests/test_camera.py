@@ -7,7 +7,10 @@ hand in the comments rather than by calling the code under test.
 
 from __future__ import annotations
 
+import io
+import json
 import math
+import os
 
 import numpy as np
 import pytest
@@ -65,6 +68,130 @@ def test_field_of_view_is_derived_not_stored():
 def test_explicit_principal_point_overrides_centre():
     cam = _camera_at([2.0, 0.0, 0.0], principalPoint_px=[510.0, 240.0])
     assert cam.principal_point == pytest.approx((510.0, 240.0))
+
+
+# -- zoom ----------------------------------------------------------------
+
+def test_zoom_defaults_to_one_and_is_not_stored():
+    cam = _camera_at([2.0, 0.0, 0.0])
+    assert cam.zoom_factor == pytest.approx(1.0)
+    assert cam.effective_focal_length_mm == pytest.approx(cam.focal_length_mm)
+    # 1x is the absence of a zoom rather than a value, so a plan that does not use
+    # the feature keeps declaring format 1.0.
+    assert "zoomFactor" not in cam.spec
+
+
+def test_zoom_halves_the_field_of_view_and_doubles_the_focal_length():
+    plain = _camera_at([2.0, 0.0, 0.0])
+    zoomed = _camera_at([2.0, 0.0, 0.0], zoomFactor=2.0)
+
+    assert zoomed.effective_focal_length_mm == pytest.approx(40.0)
+    assert zoomed.focal_length_mm == pytest.approx(20.0)  # the lens is unchanged
+    # hfov = 2 atan(10 / (2*40)) = 2 atan(0.125)
+    assert zoomed.hfov_deg == pytest.approx(2 * math.degrees(math.atan(0.125)))
+    assert math.tan(math.radians(zoomed.hfov_deg / 2)) == pytest.approx(
+        math.tan(math.radians(plain.hfov_deg / 2)) / 2
+    )
+
+
+def test_zoom_scales_the_intrinsic_matrix():
+    zoomed = _camera_at([2.0, 0.0, 0.0], zoomFactor=2.0)
+    assert zoomed.fx == pytest.approx(4000.0)
+    assert zoomed.fy == pytest.approx(4000.0)
+    # The principal point is a sensor property, not an optical one.
+    assert zoomed.principal_point == pytest.approx((499.5, 249.5))
+
+
+def test_zoom_improves_the_ground_sample_distance():
+    plain = _camera_at([2.0, 0.0, 0.0])
+    zoomed = _camera_at([2.0, 0.0, 0.0], zoomFactor=2.0)
+    assert zoomed.ground_sample_distance_m() == pytest.approx(
+        plain.ground_sample_distance_m() / 2
+    )
+
+
+def test_zoom_narrows_what_the_camera_can_see():
+    # A point at the edge of the unzoomed frame falls outside it at 2x. This is the
+    # whole reason zoom is geometry rather than an annotation.
+    plain = _camera_at([2.0, 0.0, 0.0], target=(0.0, 0.0, 0.0))
+    zoomed = _camera_at([2.0, 0.0, 0.0], target=(0.0, 0.0, 0.0), zoomFactor=2.0)
+    # Half the vertical field is atan(2.5/20) = 7.13 deg, which is 0.25 m of
+    # height at the 2 m standoff. A bead at 0.2 m is inside that and outside half
+    # of it.
+    edge = np.array([0.0, 0.0, 0.2])
+    assert plain.project(edge)[1] is True
+    assert zoomed.project(edge)[1] is False
+
+
+@pytest.mark.parametrize("bad", [0.0, -2.0, None, "2x"])
+def test_a_nonsense_zoom_falls_back_to_one_rather_than_to_infinity(bad):
+    # A plan is someone else's file, and a zero here would take every derived
+    # quantity -- fx, both fields of view, the frustum -- to infinity.
+    cam = _camera_at([2.0, 0.0, 0.0], zoomFactor=bad)
+    assert cam.zoom_factor == pytest.approx(1.0)
+    assert cam.fx == pytest.approx(2000.0)
+
+
+# -- shipped presets -----------------------------------------------------
+
+def _preset(preset_id):
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "presets", "cameras.json",
+    )
+    with io.open(path, encoding="utf-8") as fh:
+        library = json.load(fh)
+    return next(p for p in library["presets"] if p["id"] == preset_id)
+
+
+def _fov_deg(preset):
+    f = preset["focalLength_mm"]
+    return tuple(2 * math.degrees(math.atan(s / (2 * f))) for s in preset["sensor_mm"])
+
+
+def test_every_preset_has_a_sensor_and_a_positive_focal_length():
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "presets", "cameras.json",
+    )
+    with io.open(path, encoding="utf-8") as fh:
+        presets = json.load(fh)["presets"]
+    assert len({p["id"] for p in presets}) == len(presets)
+    for p in presets:
+        assert p["focalLength_mm"] > 0
+        assert all(s > 0 for s in p["sensor_mm"])
+        assert all(int(r) == r and r > 0 for r in p["resolution_px"])
+        assert p["intrinsicsSource"] in ("nominal", "datasheet", "calibrated")
+
+
+def test_the_a700_preset_reproduces_its_datasheet_field_of_view():
+    # FLIR publishes 24 x 18 deg and 0.66 mrad/pixel for the 24 deg lens. The
+    # sensor is 640 x 480 at the 12 um pitch the datasheet gives; the focal length
+    # is back-solved from the FOV, because the lens's nominal "17 mm" designation
+    # does not close against a 7.68 mm array. See docs/datasheets/README.md.
+    preset = _preset("flir-a700-24deg")
+    assert preset["resolution_px"] == [640, 480]
+    assert preset["sensor_mm"] == pytest.approx([640 * 0.012, 480 * 0.012])
+    h, v = _fov_deg(preset)
+    assert h == pytest.approx(24.0, abs=0.05)
+    assert v == pytest.approx(18.1, abs=0.05)
+    ifov_mrad = 0.012 / preset["focalLength_mm"] * 1000
+    assert ifov_mrad == pytest.approx(0.66, abs=0.01)
+    assert preset["intrinsicsSource"] == "datasheet"
+
+
+def test_the_a8303sc_preset_derives_its_sensor_from_the_detector_pitch():
+    # 1280 x 720 at 14 um, straight off the datasheet; the nominal 25 mm lens is
+    # used as printed because pitch and lens designation agree for this camera.
+    preset = _preset("flir-a8303sc-25mm")
+    assert preset["resolution_px"] == [1280, 720]
+    assert preset["sensor_mm"] == pytest.approx([1280 * 0.014, 720 * 0.014])
+    assert preset["focalLength_mm"] == pytest.approx(25.0)
+    h, v = _fov_deg(preset)
+    assert h == pytest.approx(39.4, abs=0.1)
+    assert v == pytest.approx(22.8, abs=0.1)
+    assert preset["spectralBand_um"] == [3.0, 5.0]
+    assert preset["intrinsicsSource"] == "datasheet"
 
 
 # -- extrinsics ----------------------------------------------------------

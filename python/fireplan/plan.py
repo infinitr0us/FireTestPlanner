@@ -11,18 +11,50 @@ from typing import Any, Dict, Iterator, List, Optional
 
 import numpy as np
 
-from . import serialize
+from . import correlations, serialize
 from ._math import normalize
-from .objects import Burner, Camera, Ceiling, Hood, PlanObject, Wall, wrap
+from .objects import (
+    Burner,
+    Camera,
+    Ceiling,
+    HeatFluxSensor,
+    Hood,
+    PlanObject,
+    Thermocouple,
+    Wall,
+    wrap,
+)
 
 FORMAT = "fire-test-plan"
+
+#: Baseline a new, empty plan declares. A plan states the LOWEST version that
+#: describes its own contents (serialize.required_version), so this is a floor
+#: rather than a stamp -- and a 1.0 plan stays openable in a 1.0 tool.
 VERSION = "1.0.0"
 
-_SCHEMA_PATH = os.path.join(
+#: Highest format version this build can write.
+VERSION_LATEST = "1.1.0"
+
+_SCHEMA_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "schema",
-    "fire-test-plan-1.0.0.schema.json",
 )
+
+#: One schema per format version, so a 1.0 file is judged by the 1.0 rules. A 1.0
+#: plan holding a camera with a zoomFactor really is invalid, and validating it
+#: against the 1.1 schema would hide exactly the mislabelling worth catching.
+_SCHEMA_FILES = {
+    "1.0.0": "fire-test-plan-1.0.0.schema.json",
+    "1.1.0": "fire-test-plan-1.1.0.schema.json",
+}
+
+#: Representative mean temperature inside a flame, for the over-temperature test.
+#: A rule of thumb, not a correlation: hydrocarbon pool flames run roughly
+#: 800-1200 C. It answers "will this bead survive", which does not need better.
+FLAME_TEMPERATURE_C = 1000.0
+
+#: Below 5% of full scale a heat flux gauge is reading in its own noise.
+_LOW_SIGNAL_FRACTION = 0.05
 
 
 class PlanError(Exception):
@@ -109,6 +141,10 @@ class Plan:
     def save(self, path, update_modified: bool = True) -> None:
         if update_modified:
             self.data.setdefault("meta", {})["modified"] = _utc_now_iso()
+        # The writer derives the declared version; adopt it in memory too, so a plan
+        # that has just been written does not go on reporting `version-understated`
+        # about a file where it is no longer true.
+        self.data["version"] = self.effective_version
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(self.dumps())
 
@@ -171,6 +207,14 @@ class Plan:
         return list(self._of_type("ceiling"))
 
     @property
+    def heat_flux_sensors(self) -> List[HeatFluxSensor]:
+        return list(self._of_type("heatFluxSensor"))
+
+    @property
+    def thermocouples(self) -> List[Thermocouple]:
+        return list(self._of_type("thermocouple"))
+
+    @property
     def burner(self) -> Burner:
         """The primary burner: the one at the origin, which by definition is the
         one the coordinate system was built around."""
@@ -187,11 +231,43 @@ class Plan:
 
     # -- validation ------------------------------------------------------
 
-    def validate_schema(self) -> None:
-        """Raise if the document violates the JSON Schema."""
+    @property
+    def format_version(self) -> str:
+        """The format version this file declares."""
+        return str(self.data.get("version") or VERSION)
+
+    @property
+    def effective_version(self) -> str:
+        """The version this plan will declare once written.
+
+        The declared version is derived, not authored: the writer emits the lowest
+        version that describes the contents, never lower than what the file already
+        said. A plan built in memory therefore still says "1.0.0" the moment after
+        a thermocouple is appended to it, and validating that against the 1.0 schema
+        would report a violation that saving is about to fix. This is the version to
+        judge it by; `check()` reports the disagreement separately, because a file
+        on disk whose label understates its contents is worth knowing about.
+        """
+        return serialize.effective_version(self.data)
+
+    def validate_schema(self, version: Optional[str] = None) -> None:
+        """Raise if the document violates the JSON Schema.
+
+        Judged against `effective_version` unless overridden. Pass an explicit
+        version to assert compatibility with a particular one -- `validate_schema(
+        "1.0.0")` is how you ask whether a plan would still open in a 1.0 tool.
+        """
         import jsonschema
 
-        with open(_SCHEMA_PATH, "r", encoding="utf-8") as fh:
+        wanted = version or self.effective_version
+        filename = _SCHEMA_FILES.get(wanted)
+        if filename is None:
+            raise PlanError(
+                "no schema for format version {!r}; this build knows {}".format(
+                    wanted, ", ".join(sorted(_SCHEMA_FILES))
+                )
+            )
+        with open(os.path.join(_SCHEMA_DIR, filename), "r", encoding="utf-8") as fh:
             schema = json.load(fh)
         validator = jsonschema.Draft202012Validator(schema)
         errors = sorted(validator.iter_errors(self.data), key=lambda e: list(e.absolute_path))
@@ -213,6 +289,16 @@ class Plan:
         issues: List[Issue] = []
         raws = self.data.get("objects", [])
 
+        # A file whose label understates its contents. Only a hand edit or a broken
+        # writer produces one -- this writer derives the version -- but it matters:
+        # the label is what a consumer checks before deciding it can read the file.
+        declared, effective = self.format_version, self.effective_version
+        if declared != effective:
+            issues.append(Issue(
+                "warning", "version-understated",
+                "the file declares format {} but uses {} features; saving will correct it"
+                .format(declared, effective)))
+
         seen = set()
         for raw in raws:
             oid = raw.get("id")
@@ -229,8 +315,12 @@ class Plan:
                         Issue("warning", "non-unit-quaternion",
                               "rotation_quat has length {:.6f}, expected 1".format(n), obj.id)
                     )
+            # Any object whose orientation records what it is pointed at, which
+            # since 1.1 is heat flux gauges as well as cameras -- a gauge whose
+            # quaternion and target disagree is exactly as wrong, and for exactly
+            # the same reason.
             target = obj.aim_target
-            if target is not None and isinstance(obj, Camera):
+            if target is not None and isinstance(obj, (Camera, HeatFluxSensor)):
                 delta = target - obj.position
                 if float(np.linalg.norm(delta)) < 1e-9:
                     issues.append(Issue("warning", "degenerate-aim",
@@ -269,6 +359,7 @@ class Plan:
 
         issues.extend(self.hood_checks())
         issues.extend(self.ceiling_checks())
+        issues.extend(self.instrument_checks())
         return issues
 
     # -- fire geometry ---------------------------------------------------
@@ -411,6 +502,234 @@ class Plan:
                 )
         return issues
 
+
+    # -- instruments -----------------------------------------------------
+
+    def fire_point_source(self) -> Optional[np.ndarray]:
+        """Mid-flame point on the burner axis, or None when there is no fire.
+
+        Where the point-source radiation model puts the emitter, and what a camera
+        or a gauge means by "aim at the fire" -- one function rather than two
+        conventions that could drift.
+        """
+        try:
+            burner = self.burner
+            if burner.hrr_kw is None:
+                return None
+            bp = burner.position
+            return np.array([bp[0], bp[1], burner.point_source_z_m()])
+        except (PlanError, ValueError):
+            return None
+
+    def heat_flux_estimate(self, sensor: HeatFluxSensor) -> Optional[Dict[str, Any]]:
+        """What a gauge will read, by the point-source model.
+
+        None when there is no fire to radiate -- no burner, or no HRR -- rather
+        than zero, because "nothing to compute" and "computed zero" are different
+        answers and only one of them is a placement problem. Mirror of
+        `heatFluxEstimate` in web/src/core/plan.ts.
+        """
+        source = self.fire_point_source()
+        if source is None:
+            return None
+        burner = self.burner
+        hrr = burner.hrr_kw
+
+        at = sensor.position
+        delta = source - at
+        distance = float(np.linalg.norm(delta))
+        rng = sensor.range_kw_m2
+
+        if distance < 1e-9:
+            # Sitting in the fire. There is no direction to the source, so there
+            # is no cosine either; say so rather than dividing by zero.
+            return {
+                "sensor_id": sensor.id,
+                "distance_m": 0.0,
+                "off_axis_deg": 0.0,
+                "incident_kw_m2": float("inf"),
+                "faces_fire": True,
+                "within_view_angle": True,
+                "near_field": True,
+                "fraction_of_range": None if rng is None else float("inf"),
+            }
+
+        normal = sensor.normal
+        cos_theta = float(np.dot(normal, delta / distance))
+        off_axis = math.degrees(math.acos(float(np.clip(cos_theta, -1.0, 1.0))))
+        incident = correlations.point_source_flux_kw_m2(
+            hrr, distance, cos_theta, burner.radiative_fraction
+        )
+
+        return {
+            "sensor_id": sensor.id,
+            "distance_m": distance,
+            "off_axis_deg": off_axis,
+            "incident_kw_m2": incident,
+            "faces_fire": cos_theta > 0.0,
+            "within_view_angle": off_axis <= sensor.view_angle_deg / 2.0,
+            "near_field": distance < correlations.POINT_SOURCE_MIN_DIAMETERS * burner.diameter_m,
+            "fraction_of_range": None if rng is None else incident / rng,
+        }
+
+    def thermocouple_beads(self, rake: Thermocouple) -> List[Dict[str, Any]]:
+        """Each bead in world coordinates, and what the fire is doing there.
+
+        `region` is one of "flame", "plume" or "outside". `gas_temperature_c` is
+        the PLUME CENTRELINE value and is given only above the mean flame tip and
+        inside the envelope -- inside the flame the plume correlation is not merely
+        imprecise, it is the wrong correlation, and off the axis it is an upper
+        bound. Mirror of `thermocoupleBeads` in web/src/core/plan.ts.
+        """
+        ambient = self.ambient_temperature_c
+        try:
+            burner = self.burner
+        except PlanError:
+            burner = None
+        has_fire = burner is not None and burner.hrr_kw is not None
+
+        out: List[Dict[str, Any]] = []
+        for index, (offset, world) in enumerate(
+            zip(rake.bead_offsets_m, rake.bead_positions)
+        ):
+            region = "outside"
+            gas_c = None
+            radial = float("nan")
+
+            if has_fire:
+                bp = burner.position
+                radial = float(math.hypot(world[0] - bp[0], world[1] - bp[1]))
+                tip = burner.flame_tip_z_m()
+                surface = burner.fuel_surface_z_m
+                if world[2] <= tip and radial <= burner.flame_radius_m(float(world[2])):
+                    region = "flame"
+                elif world[2] > surface and radial <= burner.plume_radius_m(float(world[2])):
+                    region = "plume"
+                    if world[2] > tip:
+                        rise = correlations.plume_centreline_rise_k(
+                            float(world[2]) - surface,
+                            burner.hrr_kw,
+                            burner.diameter_m,
+                            burner.radiative_fraction,
+                        )
+                        if rise is not None:
+                            gas_c = ambient + rise
+
+            out.append({
+                "index": index,
+                "offset_m": float(offset),
+                "world": np.asarray(world, dtype=float),
+                "height_m": float(world[2]),
+                "radial_m": radial,
+                "region": region,
+                "gas_temperature_c": gas_c,
+            })
+        return out
+
+    def instrument_checks(self) -> List[Issue]:
+        """Instrument placement.
+
+        The same kind of finding as the hood checks: not style, but whether the
+        measurement will mean anything. A gauge pointed at a wall, one that pins at
+        full scale, and a type-T bead sitting in the flame are all mistakes that
+        cost a test day, and all three are visible in the plan before anyone
+        travels. Mirror of `instrumentChecks` in web/src/core/plan.ts.
+        """
+        issues: List[Issue] = []
+
+        for sensor in self.heat_flux_sensors:
+            est = self.heat_flux_estimate(sensor)
+            if est is None:
+                continue
+
+            # Standing on the point source itself. Everything below would report an
+            # unbounded flux, and "inf kW/m2" in a printed report is not a finding.
+            if not math.isfinite(est["incident_kw_m2"]):
+                issues.append(Issue(
+                    "error", "gauge-in-fire",
+                    "the gauge sits on the fire's own point source, so the predicted flux "
+                    "is unbounded; move it out of the flame", sensor.id))
+                continue
+
+            if not est["faces_fire"]:
+                issues.append(Issue(
+                    "error", "gauge-facing-away",
+                    "the gauge normal is {:.0f} deg off the line to the fire, so the sensing "
+                    "face is turned away from it and will see only background radiation"
+                    .format(est["off_axis_deg"]), sensor.id))
+                continue
+
+            if not est["within_view_angle"]:
+                issues.append(Issue(
+                    "warning", "gauge-view-restricted",
+                    "the fire is {:.0f} deg off the gauge axis but the view-limiting tube only "
+                    "accepts +/-{:.0f} deg -- the flame is outside the acceptance cone"
+                    .format(est["off_axis_deg"], sensor.view_angle_deg / 2.0), sensor.id))
+
+            if est["near_field"]:
+                issues.append(Issue(
+                    "warning", "gauge-near-field",
+                    "the gauge is {:.2f} m from a fire of effective diameter {:.2f} m; closer "
+                    "than {:.0f} diameters the fire is plainly not a point source, so the "
+                    "predicted flux is an order of magnitude, not a value to size a gauge on"
+                    .format(est["distance_m"], self.burner.diameter_m,
+                            correlations.POINT_SOURCE_MIN_DIAMETERS), sensor.id))
+
+            fraction = est["fraction_of_range"]
+            if fraction is not None:
+                rng = sensor.range_kw_m2
+                if fraction > 1.0:
+                    issues.append(Issue(
+                        "error", "gauge-over-range",
+                        "predicted incident flux is {:.1f} kW/m2 against a {:g} kW/m2 gauge -- "
+                        "it will pin at full scale and the reading is lost"
+                        .format(est["incident_kw_m2"], rng), sensor.id))
+                elif fraction < _LOW_SIGNAL_FRACTION:
+                    issues.append(Issue(
+                        "warning", "gauge-low-signal",
+                        "predicted incident flux is {:.2f} kW/m2, only {:.1f}% of the {:g} kW/m2 "
+                        "range -- move it in, or fit a more sensitive gauge"
+                        .format(est["incident_kw_m2"], fraction * 100.0, rng), sensor.id))
+
+        for rake in self.thermocouples:
+            beads = self.thermocouple_beads(rake)
+            limit = rake.max_temperature_c
+            tc_type = rake.tc_type
+
+            in_flame = [b for b in beads if b["region"] == "flame"]
+            if in_flame:
+                which = ("every bead" if len(in_flame) == len(beads)
+                         else "{} of {} beads".format(len(in_flame), len(beads)))
+                if limit < FLAME_TEMPERATURE_C:
+                    issues.append(Issue(
+                        "error", "tc-over-temperature",
+                        "{} sits inside the mean flame envelope, where gas is roughly {:.0f} C "
+                        "-- past the {:.0f} C limit of a type {} thermocouple"
+                        .format(which, FLAME_TEMPERATURE_C, limit, tc_type), rake.id))
+                else:
+                    issues.append(Issue(
+                        "warning", "tc-in-flame",
+                        "{} sits inside the mean flame envelope; expect intermittent flame "
+                        "temperatures rather than a plume reading, and significant radiation "
+                        "error on a bare bead".format(which), rake.id))
+
+            temps = [b["gas_temperature_c"] for b in beads if b["gas_temperature_c"] is not None]
+            if temps and max(temps) > limit:
+                issues.append(Issue(
+                    "error", "tc-over-temperature",
+                    "predicted plume centreline reaches {:.0f} C at the hottest bead, past the "
+                    "{:.0f} C limit of a type {} thermocouple"
+                    .format(max(temps), limit, tc_type), rake.id))
+
+            if (all(b["region"] == "outside" for b in beads)
+                    and self.fire_point_source() is not None):
+                issues.append(Issue(
+                    "info", "tc-outside-plume",
+                    "no bead falls inside the flame or the plume envelope, so this rake will "
+                    "read close to ambient", rake.id))
+
+        return issues
+
     # -- camera framing --------------------------------------------------
 
     def framing(self, camera: Camera, samples: int = 24) -> Dict[str, Any]:
@@ -470,7 +789,7 @@ class Plan:
         """Emit a nerfstudio `transforms.json` skeleton.
 
         Poses are exact; `file_path` is a placeholder holding the camera id, because
-        format 1.0 reserves `recording` without defining it, so a plan does not yet
+        format 1.x reserves `recording` without defining it, so a plan does not yet
         know which footage each camera produced. Fill those in once that lands --
         the poses do not change.
         """
@@ -545,6 +864,26 @@ class Plan:
                 "id": cl.id, "name": cl.name, "category": "ceiling",
                 "detail": "{:.1f} m2 slab, soffit at {:.2f} m".format(cl.area_m2, cl.height_m),
                 "standoff_m": None, "height_m": round(cl.height_m, 3),
+                "hfov_deg": None, "intrinsics": None,
+            })
+        for hf in self.heat_flux_sensors:
+            rng = hf.range_kw_m2
+            rows.append({
+                "id": hf.id, "name": hf.name, "category": "heat flux",
+                "detail": "{}{}".format(
+                    hf.kind, "" if rng is None else ", 0-{:g} kW/m2".format(rng)),
+                "standoff_m": round(float(np.linalg.norm(hf.position[:2])), 3),
+                "height_m": round(float(hf.position[2]), 3),
+                "hfov_deg": round(hf.view_angle_deg, 1), "intrinsics": None,
+            })
+        for tc in self.thermocouples:
+            heights = [float(p[2]) for p in tc.bead_positions]
+            rows.append({
+                "id": tc.id, "name": tc.name, "category": "thermocouple",
+                "detail": "type {}, {} bead{}".format(
+                    tc.tc_type, len(heights), "s" if len(heights) != 1 else ""),
+                "standoff_m": round(float(np.linalg.norm(tc.position[:2])), 3),
+                "height_m": round(max(heights), 3),
                 "hfov_deg": None, "intrinsics": None,
             })
         return rows

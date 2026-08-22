@@ -10,8 +10,11 @@
  */
 
 import { lookAtQuat } from './math';
-import { isCamera } from './types';
-import type { CameraObject, PlanObject, Vec3 } from './types';
+import { isMounted } from './types';
+import type { CameraObject, HeatFluxSensorObject, PlanObject, Vec3 } from './types';
+
+/** Anything that records what it is pointed at. Cameras, and since 1.1 gauges. */
+export type AimableObject = CameraObject | HeatFluxSensorObject;
 
 const transformOf = (o: PlanObject): NonNullable<PlanObject['transform']> =>
   o.transform ?? (o.transform = { position_m: [0, 0, 0] });
@@ -39,20 +42,19 @@ export function setPosition(obj: PlanObject, position: Vec3): void {
     if (far) t.rotation_quat = lookAtQuat(position, target);
   }
 
-  // Advisory, but it is what the equipment table prints as tripod height.
-  if (isCamera(obj)) {
-    const cam = obj as CameraObject;
-    if (cam.mount) cam.mount.height_m = position[2];
-  }
+  // Advisory, but it is what the equipment table prints as tripod height. Every
+  // object that carries a mount block gets it, not just cameras: a gauge whose
+  // recorded mount height contradicts its own Z is a drawing waiting to be wrong.
+  if (isMounted(obj) && obj.mount) obj.mount.height_m = position[2];
 }
 
 /**
- * Point a camera at a world point and record that as its intent.
+ * Point a camera or a gauge at a world point and record that as its intent.
  *
  * The quaternion stays authoritative; the target is what lets a later move re-derive
  * it instead of silently disagreeing with it.
  */
-export function setAimTarget(cam: CameraObject, target: Vec3): void {
+export function setAimTarget(cam: AimableObject, target: Vec3): void {
   const t = transformOf(cam);
   t.aimTarget_m = [target[0], target[1], target[2]];
   t.rotation_quat = lookAtQuat(t.position_m, t.aimTarget_m);

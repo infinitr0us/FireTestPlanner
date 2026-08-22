@@ -7,6 +7,7 @@
  */
 
 import {
+  beadOffsetsOf,
   burnerDiameterM,
   burners,
   cameras,
@@ -16,14 +17,19 @@ import {
   flameTipZM,
   footprintXY,
   fuelSurfaceZM,
+  gaugeViewAngleDeg,
+  heatFluxSensors,
   hfovRadOf,
   hoodIntakeHeightM,
   hoodOpeningCornersXY,
   hoods,
+  objectColor,
   plumeRadiusAtZ,
   positionOf,
   quatOf,
   standoffHorizontalM,
+  thermocouples,
+  toWorld,
   walls,
 } from '../core/plan';
 import { forwardOf } from '../core/math';
@@ -122,6 +128,17 @@ function collectPoints(doc: PlanDocument, view: DrawingView): Vec3[] {
     const p = positionOf(cam);
     pts.push([p[0], p[1], p[2]], [p[0], p[1], 0]); // include the tripod foot
   }
+  for (const s of heatFluxSensors(doc)) {
+    const p = positionOf(s);
+    pts.push([p[0], p[1], p[2]], [p[0], p[1], 0]);
+  }
+  for (const tc of thermocouples(doc)) {
+    // Every bead, not the origin: a rake reaching to the ceiling would otherwise
+    // be scaled as though it were a point on the floor.
+    for (const offset of beadOffsetsOf(tc)) pts.push(toWorld(tc, [0, 0, offset]));
+    const p = positionOf(tc);
+    pts.push([p[0], p[1], 0]);
+  }
 
   if (view !== 'plan') pts.push([0, 0, 0]); // the ground line always shows
   return pts;
@@ -165,6 +182,28 @@ const text = (x: number, y: number, s: string, extra = ''): string =>
 
 const polygon = (points: Array<[number, number]>, extra: string): string =>
   `<polygon points="${points.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ')}" ${extra}/>`;
+
+/**
+ * Keeps co-located labels from overprinting into an unreadable smear.
+ *
+ * Instruments cluster: a gauge and a rake on the same wall are one point in plan,
+ * and a camera row is one point in elevation. Both views need the same treatment,
+ * so both use this rather than each growing its own copy.
+ */
+class LabelStacker {
+  private occupied = new Map<string, number>();
+
+  /** How many labels already sit near this point. Call once per label. */
+  claim(x: number, y: number): number {
+    const key = `${Math.round(x / 12)}:${Math.round(y / 12)}`;
+    const n = this.occupied.get(key) ?? 0;
+    this.occupied.set(key, n + 1);
+    return n;
+  }
+}
+
+/** One line of stacked-label clearance. */
+const LABEL_LINE_PX = 11;
 
 /**
  * An object label that stays inside the drawing.
@@ -217,6 +256,9 @@ function dimension(
 
 function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
   const out: string[] = [];
+  // Shared with drawInstrumentsPlan: a gauge on the wall behind a camera must not
+  // land its label on top of the camera's.
+  const labels = new LabelStacker();
 
   // Footprints go through footprintXY, so a rotated wall or slab is drawn in the
   // orientation the 3D view shows rather than its unrotated one.
@@ -277,12 +319,65 @@ function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
     const [ox, oy] = p.project([0, 0, 0]);
     out.push(dimension(ox, oy, cx, cy, formatLengthWithUnit(standoffHorizontalM(cam), unit)));
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${escapeXml(cameraColor(cam))}" stroke="#ffffff" stroke-width="1"/>`);
-    out.push(objectLabel(cx, cy - 9, displayName(cam)));
+    out.push(objectLabel(cx, cy - 9 - labels.claim(cx, cy) * LABEL_LINE_PX, displayName(cam)));
   }
+
+  out.push(drawInstrumentsPlan(doc, p, labels));
 
   const [ox, oy] = p.project([0, 0, 0]);
   out.push(line(ox - 10, oy, ox + 10, oy, COLORS.ink, 'stroke-width="0.8"'));
   out.push(line(ox, oy - 10, ox, oy + 10, COLORS.ink, 'stroke-width="0.8"'));
+
+  return out.join('\n');
+}
+
+/**
+ * Gauges and thermocouples in plan.
+ *
+ * A gauge gets its sight line drawn, for the same reason a camera gets its field
+ * of view: the direction is not decoration, it is a term in what the instrument
+ * reads, and a rig sheet that omits it cannot be checked on site.
+ */
+function drawInstrumentsPlan(doc: PlanDocument, p: Projector, labels: LabelStacker): string {
+  const out: string[] = [];
+
+  for (const s of heatFluxSensors(doc)) {
+    const origin = positionOf(s);
+    const fwd = forwardOf(quatOf(s));
+    const heading = Math.atan2(fwd[1], fwd[0]);
+    const color = escapeXml(objectColor(s));
+    const [cx, cy] = p.project(origin);
+    const reach = Math.max(Math.hypot(origin[0], origin[1]) * 0.6, 0.4);
+    const viewAngle = gaugeViewAngleDeg(s);
+    const arm = (a: number): [number, number] =>
+      p.project([origin[0] + Math.cos(a) * reach, origin[1] + Math.sin(a) * reach, origin[2]]);
+
+    if (viewAngle < 180) {
+      const half = ((viewAngle / 2) * Math.PI) / 180;
+      out.push(polygon([[cx, cy], arm(heading - half), arm(heading + half)],
+        `fill="${color}" fill-opacity="0.08" stroke="${color}" stroke-width="0.6" stroke-opacity="0.6"`));
+    } else {
+      const [ex, ey] = arm(heading);
+      out.push(line(cx, cy, ex, ey, color, 'stroke-width="0.8" stroke-dasharray="4 3"'));
+    }
+
+    out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${color}" stroke="#ffffff" stroke-width="1"/>`);
+    out.push(objectLabel(cx, cy - 9 - labels.claim(cx, cy) * LABEL_LINE_PX, displayName(s)));
+  }
+
+  for (const tc of thermocouples(doc)) {
+    const beads = beadOffsetsOf(tc);
+    // An upright rake stacks every bead on one point in plan, so the count is the
+    // only thing plan view can honestly say about it.
+    const [cx, cy] = p.project(positionOf(tc));
+    const color = escapeXml(objectColor(tc));
+    const arm = 4.5;
+    out.push(line(cx - arm, cy, cx + arm, cy, color, 'stroke-width="1.4"'));
+    out.push(line(cx, cy - arm, cx, cy + arm, color, 'stroke-width="1.4"'));
+    out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="2" fill="${color}"/>`);
+    out.push(objectLabel(cx, cy - 9 - labels.claim(cx, cy) * LABEL_LINE_PX,
+      beads.length > 1 ? `${displayName(tc)} (×${beads.length})` : displayName(tc)));
+  }
 
   return out.join('\n');
 }
@@ -384,9 +479,8 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
   }
 
   // A camera row is usually a line of tripods at one standoff, so in elevation
-  // several cameras land on the same spot. Stack their labels instead of letting
-  // them overprint into an unreadable smear.
-  const occupied = new Map<string, number>();
+  // several cameras land on the same spot.
+  const labels = new LabelStacker();
 
   for (const cam of cameras(doc)) {
     const origin = positionOf(cam);
@@ -396,16 +490,57 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
     const [cx, cy] = at(u, origin[2]);
     const [fx, fy] = at(u, 0);
 
-    const key = `${Math.round(cx / 12)}:${Math.round(cy / 12)}`;
-    const stacked = occupied.get(key) ?? 0;
-    occupied.set(key, stacked + 1);
+    const stacked = labels.claim(cx, cy);
 
     out.push(line(cx, cy, fx, fy, COLORS.faint, 'stroke-width="1" stroke-dasharray="3 3"'));
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${escapeXml(cameraColor(cam))}" stroke="#ffffff" stroke-width="1"/>`);
-    out.push(objectLabel(cx, cy - 9 - stacked * 11, displayName(cam)));
+    out.push(objectLabel(cx, cy - 9 - stacked * LABEL_LINE_PX, displayName(cam)));
     if (stacked === 0) {
       out.push(text(cx + 7, cy + 4, formatLengthWithUnit(origin[2], unit), 'class="dim-text"'));
     }
+  }
+
+  // Instruments, after the cameras so the same label-stacking map keeps them all
+  // apart -- a gauge and a tripod at the same standoff otherwise overprint.
+  for (const s of heatFluxSensors(doc)) {
+    const origin = positionOf(s);
+    const at = (uu: number, z: number): [number, number] =>
+      p.project(view === 'side' ? [0, uu, z] : [uu, 0, z]);
+    const [cx, cy] = at(lateral(origin), origin[2]);
+    const [fx, fy] = at(lateral(origin), 0);
+    const color = escapeXml(objectColor(s));
+
+    const stacked = labels.claim(cx, cy);
+
+    out.push(line(cx, cy, fx, fy, COLORS.faint, 'stroke-width="1" stroke-dasharray="3 3"'));
+    out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${color}" stroke="#ffffff" stroke-width="1"/>`);
+    out.push(objectLabel(cx, cy - 9 - stacked * LABEL_LINE_PX, displayName(s)));
+    if (stacked === 0) {
+      out.push(text(cx + 7, cy + 4, formatLengthWithUnit(origin[2], unit), 'class="dim-text"'));
+    }
+  }
+
+  for (const tc of thermocouples(doc)) {
+    const beads = beadOffsetsOf(tc).map((offset) => toWorld(tc, [0, 0, offset]));
+    const color = escapeXml(objectColor(tc));
+    const at = (w: Vec3): [number, number] =>
+      p.project(view === 'side' ? [0, w[1], w[2]] : [w[0], 0, w[2]]);
+
+    // Elevation is the view a rake is FOR: this is where a bead spacing against
+    // the flame tip and the hood is readable at a glance.
+    const zs = beads.map((b) => b[2]);
+    const lowest = beads[zs.indexOf(Math.min(...zs))];
+    const highest = beads[zs.indexOf(Math.max(...zs))];
+    const foot = at([lowest[0], lowest[1], 0]);
+    const top = at(highest);
+    out.push(line(top[0], top[1], foot[0], foot[1], color, 'stroke-width="1.2"'));
+
+    for (const bead of beads) {
+      const [bx, by] = at(bead);
+      out.push(`<circle cx="${bx.toFixed(2)}" cy="${by.toFixed(2)}" r="2.6" fill="${color}" stroke="#ffffff" stroke-width="0.7"/>`);
+    }
+    out.push(objectLabel(top[0], top[1] - 8 - labels.claim(top[0], top[1]) * LABEL_LINE_PX,
+      displayName(tc)));
   }
 
   return out.join('\n');

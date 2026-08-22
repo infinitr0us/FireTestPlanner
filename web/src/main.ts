@@ -60,6 +60,13 @@ const palette = new Palette(qs('#palette'), store, (armed) => {
   if (armed && measuring) toggleMeasure();
 });
 
+// The camera preset library is not part of the document, so adding or removing a
+// preset emits no store event. Both panels list it, so both repaint here.
+inspector.onPresetLibraryChange = () => {
+  palette.render();
+  inspector.render();
+};
+
 viewport.onMeasureChange = (count) => {
   measurementCount = count;
   renderToolbar();

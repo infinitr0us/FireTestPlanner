@@ -18,16 +18,26 @@ import {
   cameraColor,
   flameTipZM,
   framingOf,
+  gaugeRangeKwM2,
+  gaugeViewAngleDeg,
   groundSampleDistanceM,
+  heatFluxEstimate,
+  heatFluxSensors,
   hfovDegOf,
   hoodIntakeHeightM,
   hoods,
   intrinsicsSourceOf,
+  objectColor,
   positionOf,
   standoffHorizontalM,
   standoffM,
+  tcMaxTemperatureC,
+  tcTypeOf,
+  thermocoupleBeads,
+  thermocouples,
   vfovDegOf,
   walls,
+  zoomOf,
 } from '../core/plan';
 import { formatLength, formatLengthWithUnit } from '../core/units';
 import type { Issue, LengthUnit, PlanDocument } from '../core/types';
@@ -48,7 +58,8 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
       `<td><span class="swatch" style="background:${esc(cameraColor(cam))}"></span>${esc(displayName(cam))}</td>`,
       cell(cam.camera.modality),
       cell(`${cam.camera.resolution_px[0]}×${cam.camera.resolution_px[1]}`),
-      cell(`${hfovDegOf(cam).toFixed(1)}° × ${vfovDegOf(cam).toFixed(1)}°`),
+      cell(`${hfovDegOf(cam).toFixed(1)}° × ${vfovDegOf(cam).toFixed(1)}°`
+        + (zoomOf(cam) === 1 ? '' : ` at ${zoomOf(cam)}×`)),
       cell(formatLength(standoffHorizontalM(cam), unit), 'num'),
       cell(formatLength(positionOf(cam)[2], unit), 'num'),
       cell(intrinsicsSourceOf(cam)),
@@ -106,6 +117,39 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
     ].join('') + '</tr>');
   }
 
+  for (const s of heatFluxSensors(doc)) {
+    const range = gaugeRangeKwM2(s);
+    const e = heatFluxEstimate(doc, s);
+    const view = gaugeViewAngleDeg(s);
+    rows.push('<tr>' + [
+      `<td><span class="swatch" style="background:${esc(objectColor(s))}"></span>${esc(displayName(s))}</td>`,
+      cell('heat flux'),
+      cell(`${s.gauge?.kind ?? 'schmidt-boelter'}${range === null ? '' : `, 0–${range} kW/m²`}`),
+      cell(e === null ? `${view.toFixed(0)}° view`
+        : Number.isFinite(e.incidentKwM2) ? `predicted ${e.incidentKwM2.toFixed(2)} kW/m²`
+          : 'in the fire'),
+      cell(formatLength(standoffHorizontalM(s as never), unit), 'num'),
+      cell(formatLength(positionOf(s)[2], unit), 'num'),
+      cell('—'),
+    ].join('') + '</tr>');
+  }
+
+  for (const tc of thermocouples(doc)) {
+    const beads = thermocoupleBeads(doc, tc);
+    const heights = beads.map((b) => b.world[2]);
+    rows.push('<tr>' + [
+      `<td><span class="swatch" style="background:${esc(objectColor(tc))}"></span>${esc(displayName(tc))}</td>`,
+      cell('thermocouple'),
+      cell(`type ${tcTypeOf(tc)}, ${beads.length} bead${beads.length > 1 ? 's' : ''}`),
+      cell(beads.length > 1
+        ? `${formatLength(Math.min(...heights), unit)}–${formatLengthWithUnit(Math.max(...heights), unit)}`
+        : `to ${tcMaxTemperatureC(tc)} °C`),
+      cell(formatLength(Math.hypot(positionOf(tc)[0], positionOf(tc)[1]), unit), 'num'),
+      cell(formatLength(Math.max(...heights), unit), 'num'),
+      cell('—'),
+    ].join('') + '</tr>');
+  }
+
   if (rows.length === 0) return '<p class="empty">No objects in this plan.</p>';
 
   return `<table>
@@ -142,6 +186,89 @@ function coverageTable(doc: PlanDocument, unit: LengthUnit): string {
   </table>
   <p class="note">Coverage is computed against the Heskestad mean flame height and a 15° plume
   envelope. The intermittent flame tip reaches higher than the mean.</p>`;
+}
+
+/**
+ * What each instrument is predicted to see.
+ *
+ * The counterpart of the camera coverage table: a gauge that pins at full scale
+ * and a rake whose beads all sit outside the plume are the same class of mistake
+ * as a camera that clips the flame, and this is the page where they get caught.
+ */
+function instrumentTable(doc: PlanDocument, unit: LengthUnit): string {
+  const gauges = heatFluxSensors(doc);
+  const rakes = thermocouples(doc);
+  if (gauges.length === 0 && rakes.length === 0) return '';
+
+  const rows: string[] = [];
+
+  for (const s of gauges) {
+    const e = heatFluxEstimate(doc, s);
+    const swatch = `<td><span class="swatch" style="background:${esc(objectColor(s))}"></span>${esc(displayName(s))}</td>`;
+
+    if (!e) {
+      rows.push(`<tr>${swatch}${cell('heat flux')}${cell('—')}${cell('—')}${cell('—')}<td>needs an HRR</td></tr>`);
+      continue;
+    }
+    const frac = e.fractionOfRange;
+    const finite = Number.isFinite(e.incidentKwM2);
+    const usable = finite && e.facesFire && e.withinViewAngle
+      && (frac === null || (frac <= 1 && frac >= 0.05));
+    rows.push('<tr>' + swatch + [
+      cell('heat flux'),
+      cell(formatLength(e.distanceM, unit), 'num'),
+      cell(finite ? `${e.incidentKwM2.toFixed(2)} kW/m²` : 'unbounded', 'num'),
+      cell(frac === null || !Number.isFinite(frac) ? '—' : `${(frac * 100).toFixed(0)}%`, 'num'),
+    ].join('')
+      + `<td class="${usable ? 'ok' : 'bad'}">${
+        !finite ? 'in the fire'
+          : !e.facesFire ? 'faces away'
+            : !e.withinViewAngle ? 'outside view cone'
+              : frac !== null && frac > 1 ? 'over range'
+                : frac !== null && frac < 0.05 ? 'low signal'
+                  : e.nearField ? 'near field' : 'usable'
+      }</td></tr>`);
+  }
+
+  for (const tc of rakes) {
+    const beads = thermocoupleBeads(doc, tc);
+    const limit = tcMaxTemperatureC(tc);
+    const hottest = beads.reduce<number | null>(
+      (acc, b) => (b.gasTemperatureC !== null && (acc === null || b.gasTemperatureC > acc)
+        ? b.gasTemperatureC : acc),
+      null,
+    );
+    const inFire = beads.filter((b) => b.region !== 'outside').length;
+    const overTemp = hottest !== null && hottest > limit;
+    const swatch = `<td><span class="swatch" style="background:${esc(objectColor(tc))}"></span>${esc(displayName(tc))}</td>`;
+
+    rows.push('<tr>' + swatch + [
+      cell(`thermocouple, type ${tcTypeOf(tc)}`),
+      cell(formatLength(Math.hypot(positionOf(tc)[0], positionOf(tc)[1]), unit), 'num'),
+      cell(hottest === null ? '—' : `${hottest.toFixed(0)} °C`, 'num'),
+      cell(`${inFire}/${beads.length}`, 'num'),
+    ].join('')
+      // "Outside the plume" is neutral, not bad: a rake on a wall is there to read
+      // the wall, and `instrumentChecks` files that as info. The two must agree, or
+      // the drawing contradicts the checks list printed a page below it.
+      + `<td class="${overTemp ? 'bad' : inFire === 0 ? '' : 'ok'}">${
+        overTemp ? `over ${limit} °C limit`
+          : inFire === 0 ? 'outside the plume' : 'in the plume'
+      }</td></tr>`);
+  }
+
+  return `<h2>Instrument exposure</h2>
+  <table>
+    <thead><tr>${[
+      'Instrument', 'Type', `Distance / standoff (${unit})`, 'Predicted', 'Range / beads used', 'Verdict',
+    ].map(head).join('')}</tr></thead>
+    <tbody>${rows.join('')}</tbody>
+  </table>
+  <p class="note">Heat flux is a point-source estimate at mid-flame height,
+  q″ = χ_r·Q̇·cos θ / (4πr²), and assumes an unobstructed view — it does not account for the
+  walls in this plan. Thermocouple temperatures are the Heskestad plume centreline, quoted only
+  for beads above the mean flame tip and inside the plume envelope; a bead off the axis reads
+  lower. Both are for sizing and placement, not for calibration.</p>`;
 }
 
 function checksList(issues: Issue[]): string {
@@ -255,6 +382,8 @@ export function buildReportBody(doc: PlanDocument, unit: LengthUnit): string {
 
     <h2>Camera coverage</h2>
     ${coverageTable(doc, unit)}
+
+    ${instrumentTable(doc, unit)}
 
     <h2>Checks</h2>
     ${checksList(checkPlan(doc))}

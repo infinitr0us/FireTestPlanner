@@ -9,6 +9,7 @@
 import { newPlan } from '../core/plan';
 import { serializePlan } from '../core/serialize';
 import { parseAndValidatePlan } from '../core/validate';
+import { maxVersion, requiredFormatVersion } from '../core/types';
 import type { LengthUnit, PlanDocument, PlanObject } from '../core/types';
 
 const HISTORY_LIMIT = 100;
@@ -235,6 +236,10 @@ export class Store {
 
   serialize(): string {
     this.doc.meta = { ...(this.doc.meta ?? {}), modified: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z') };
+    // The writer derives the declared version from the contents; adopt it here too,
+    // so the checks panel stops reporting `version-understated` about a file where
+    // it is no longer true the moment the plan is saved.
+    this.doc.version = maxVersion(String(this.doc.version ?? ''), requiredFormatVersion(this.doc));
     return serializePlan(this.doc);
   }
 

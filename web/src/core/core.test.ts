@@ -379,8 +379,10 @@ describe('plan checks', () => {
     const flagged = checkPlan(fixture())
       .filter((i) => i.code === 'nominal-intrinsics')
       .map((i) => i.objectId);
-    expect(new Set(flagged)).toEqual(new Set(['cam-mwir', 'cam-gopro', 'cam-iphone']));
+    expect(new Set(flagged)).toEqual(new Set(['cam-gopro', 'cam-iphone']));
+    // Both IR cameras are seeded from a datasheet, so neither may be flagged.
     expect(flagged).not.toContain('cam-lwir-t650');
+    expect(flagged).not.toContain('cam-mwir');
   });
 
   it('flags a plan with no burner', () => {

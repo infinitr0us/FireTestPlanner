@@ -41,6 +41,20 @@ MODALITY_COLORS = {
     "other": "#94a3b8",
 }
 
+# Fallback colours for object types with no modality to key off. Mirror of
+# TYPE_COLORS in web/src/core/plan.ts.
+TYPE_COLORS = {
+    "heatFluxSensor": "#ef4444",
+    "thermocouple": "#10b981",
+}
+
+# Standard continuous-use upper limits, ASTM/ANSI, largest wire gauge. These are
+# what makes an over-temperature placement checkable from the letter type alone.
+TC_MAX_TEMPERATURE_C = {
+    "K": 1260.0, "J": 760.0, "T": 370.0, "E": 870.0,
+    "N": 1260.0, "R": 1480.0, "S": 1480.0, "B": 1700.0,
+}
+
 
 class PlanObject:
     """Base view. Subclasses add domain accessors; all share id/name/transform."""
@@ -116,6 +130,32 @@ class PlanObject:
         """A local footprint vertex `[x, y]` as a world `[x, y]`, dropping height."""
         return self.to_world([float(xy[0]), float(xy[1]), 0.0])[:2]
 
+    @property
+    def forward(self) -> np.ndarray:
+        """World-space direction this object faces: down its local -Z.
+
+        On the base class because since format 1.1 it is not only cameras that
+        point at things -- a heat flux gauge's normal is read exactly this way,
+        and it is the term that makes its reading mean something.
+        """
+        return -self.rotation_matrix[:, 2]
+
+    @property
+    def color(self) -> str:
+        """This object's display colour, normalised to `#rrggbb`.
+
+        A plan is someone else's file, and this value is exactly the kind of thing
+        that ends up interpolated into markup -- `equipment_table()` output pasted
+        into a report, a notebook rendering a swatch. Anything that is not the one
+        literal the schema allows falls back to a type colour rather than being
+        handed on. Mirror of `objectColor` in web/src/core/plan.ts, which guards
+        the editor's own SVG and HTML sinks.
+        """
+        raw = (self.raw.get("display") or {}).get("color")
+        if isinstance(raw, str) and _HEX_COLOR.match(raw):
+            return raw
+        return TYPE_COLORS.get(self.type, MODALITY_COLORS["other"])
+
     def __repr__(self) -> str:
         return "<{} {!r}>".format(type(self).__name__, self.id)
 
@@ -145,7 +185,31 @@ class Camera(PlanObject):
 
     @property
     def focal_length_mm(self) -> float:
+        """The lens. Never scaled by the zoom setting -- a 25 mm lens stays 25 mm."""
         return float(self.spec["focalLength_mm"])
+
+    @property
+    def zoom_factor(self) -> float:
+        """Zoom setting, as a multiplier on the effective focal length.
+
+        Absent, null or non-positive all mean 1. A plan is someone else's file, and
+        a zero here would take every derived quantity to infinity. Format 1.1.
+        """
+        z = self.spec.get("zoomFactor")
+        try:
+            z = float(z)
+        except (TypeError, ValueError):
+            return 1.0
+        return z if z > 0.0 and z == z and z != float("inf") else 1.0
+
+    @property
+    def effective_focal_length_mm(self) -> float:
+        """Lens times zoom -- the focal length the image is actually formed at.
+
+        Every derived quantity goes through here, so a zoomed camera is zoomed
+        everywhere or nowhere.
+        """
+        return self.focal_length_mm * self.zoom_factor
 
     @property
     def intrinsics_source(self) -> str:
@@ -172,18 +236,18 @@ class Camera(PlanObject):
 
     @property
     def recording(self) -> None:
-        """Reserved for the post-test record. Always None in format 1.0."""
+        """Reserved for the post-test record. Always None throughout format 1.x."""
         return self.raw.get("recording")
 
     # -- intrinsics ------------------------------------------------------
 
     @property
     def fx(self) -> float:
-        return self.focal_length_mm * self.resolution[0] / self.sensor_mm[0]
+        return self.effective_focal_length_mm * self.resolution[0] / self.sensor_mm[0]
 
     @property
     def fy(self) -> float:
-        return self.focal_length_mm * self.resolution[1] / self.sensor_mm[1]
+        return self.effective_focal_length_mm * self.resolution[1] / self.sensor_mm[1]
 
     @property
     def principal_point(self) -> Tuple[float, float]:
@@ -210,11 +274,11 @@ class Camera(PlanObject):
 
     @property
     def hfov_rad(self) -> float:
-        return 2.0 * math.atan(self.sensor_mm[0] / (2.0 * self.focal_length_mm))
+        return 2.0 * math.atan(self.sensor_mm[0] / (2.0 * self.effective_focal_length_mm))
 
     @property
     def vfov_rad(self) -> float:
-        return 2.0 * math.atan(self.sensor_mm[1] / (2.0 * self.focal_length_mm))
+        return 2.0 * math.atan(self.sensor_mm[1] / (2.0 * self.effective_focal_length_mm))
 
     @property
     def hfov_deg(self) -> float:
@@ -225,11 +289,6 @@ class Camera(PlanObject):
         return math.degrees(self.vfov_rad)
 
     # -- extrinsics ------------------------------------------------------
-
-    @property
-    def forward(self) -> np.ndarray:
-        """World-space view direction. The stored frame looks down local -Z."""
-        return -self.rotation_matrix[:, 2]
 
     @property
     def up(self) -> np.ndarray:
@@ -318,15 +377,7 @@ class Camera(PlanObject):
 
     @property
     def color(self) -> str:
-        """This camera's display colour, normalised to `#rrggbb`.
-
-        A plan is someone else's file, and this value is exactly the kind of thing
-        that ends up interpolated into markup -- `equipment_table()` output pasted
-        into a report, a notebook rendering a swatch. Anything that is not the one
-        literal the schema allows falls back to the modality colour rather than being
-        handed on. Mirror of `cameraColor` in web/src/core/plan.ts, which guards the
-        editor's own SVG and HTML sinks.
-        """
+        """This camera's display colour, keyed on modality. See PlanObject.color."""
         raw = (self.raw.get("display") or {}).get("color")
         if isinstance(raw, str) and _HEX_COLOR.match(raw):
             return raw
@@ -408,6 +459,40 @@ class Burner(PlanObject):
             self.diameter_m,
             **kwargs
         )
+
+    @property
+    def radiative_fraction(self) -> float:
+        """Fraction of the heat release emitted as radiation. Format 1.1.
+
+        Fuel-dependent and consequential: it is a linear term in what every heat
+        flux gauge in the plan is predicted to read. 0.3 when unstated.
+        """
+        raw = self.fire.get("radiativeFraction")
+        try:
+            f = float(raw)
+        except (TypeError, ValueError):
+            return correlations.DEFAULT_RADIATIVE_FRACTION
+        if not 0.0 < f <= 1.0:
+            return correlations.DEFAULT_RADIATIVE_FRACTION
+        return f
+
+    def flame_radius_m(self, z_above_floor_m: float) -> float:
+        """Radius of the mean flame cone at an absolute height above the floor.
+
+        Tapers from the effective diameter at the fuel surface to a point at the
+        mean tip -- the same cone the 3D editor draws, so "this bead is in the
+        flame" means the same thing in a notebook as it looks like on screen.
+        """
+        base = self.fuel_surface_z_m
+        tip = self.flame_tip_z_m()
+        if tip <= base or z_above_floor_m < base or z_above_floor_m > tip:
+            return 0.0
+        return (self.diameter_m / 2.0) * (1.0 - (z_above_floor_m - base) / (tip - base))
+
+    def point_source_z_m(self) -> float:
+        """Mid-flame height: where the point-source radiation model puts the fire,
+        and what a camera or a gauge means by "aim at the fire"."""
+        return (self.fuel_surface_z_m + self.flame_tip_z_m()) / 2.0
 
 
 class Hood(PlanObject):
@@ -524,6 +609,112 @@ class Ceiling(PlanObject):
         return inside
 
 
+class HeatFluxSensor(PlanObject):
+    """A heat flux gauge. Format 1.1.
+
+    Directional, on the camera convention: the sensing face looks down local -Z,
+    so `forward` (inherited) is its outward normal and `aim_target` records what
+    it was pointed at. `Plan.heat_flux_estimate` turns that into a number.
+    """
+
+    @property
+    def gauge(self) -> Dict[str, Any]:
+        return self.raw.get("gauge") or {}
+
+    @property
+    def kind(self) -> str:
+        return self.gauge.get("kind") or "schmidt-boelter"
+
+    @property
+    def range_kw_m2(self) -> Optional[float]:
+        """Full scale, or None when unrecorded -- which silences the range checks
+        rather than inventing a limit to test against."""
+        r = self.gauge.get("range_kw_m2")
+        if r is None:
+            return None
+        r = float(r)
+        return r if r > 0.0 else None
+
+    @property
+    def view_angle_deg(self) -> float:
+        """Full acceptance angle of the sensing face. 180 is an open hemisphere."""
+        raw = self.gauge.get("viewAngle_deg")
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            return 180.0
+        return v if 0.0 < v <= 180.0 else 180.0
+
+    @property
+    def water_cooled(self) -> Optional[bool]:
+        return self.gauge.get("waterCooled")
+
+    @property
+    def serial(self) -> Optional[str]:
+        return self.gauge.get("serial")
+
+    @property
+    def normal(self) -> np.ndarray:
+        """Outward normal of the sensing face. An alias for `forward`, spelled the
+        way a radiation calculation spells it."""
+        return self.forward
+
+
+class Thermocouple(PlanObject):
+    """One thermocouple, or a rake of them on a common support. Format 1.1.
+
+    A single bead is the one-element case of a tree, so both are this one class
+    and there is no second thing to keep in step.
+    """
+
+    @property
+    def spec(self) -> Dict[str, Any]:
+        return self.raw.get("thermocouple") or {}
+
+    @property
+    def tc_type(self) -> str:
+        return self.spec.get("tcType") or "K"
+
+    @property
+    def bead_diameter_mm(self) -> Optional[float]:
+        d = self.spec.get("beadDiameter_mm")
+        return None if d is None else float(d)
+
+    @property
+    def sheathed(self) -> Optional[bool]:
+        return self.spec.get("sheathed")
+
+    @property
+    def max_temperature_c(self) -> float:
+        """Upper limit: the recorded one, or the letter type's standard limit."""
+        explicit = self.spec.get("maxTemperature_C")
+        if explicit is not None:
+            return float(explicit)
+        return TC_MAX_TEMPERATURE_C.get(self.tc_type, TC_MAX_TEMPERATURE_C["K"])
+
+    @property
+    def bead_offsets_m(self) -> List[float]:
+        """Offsets along the rake, from the object origin. Always at least one."""
+        raw = self.raw.get("beadOffsets_m")
+        if not isinstance(raw, list):
+            return [0.0]
+        clean = [
+            float(v) for v in raw
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+        ]
+        return clean if clean else [0.0]
+
+    @property
+    def bead_positions(self) -> np.ndarray:
+        """Every bead in world coordinates, shape `(n, 3)`.
+
+        Offsets run along LOCAL +Z, so they go through the object transform like
+        every other vertex list in this format (CONVENTIONS section 5a) -- a rake
+        leaned against a wall leans here too.
+        """
+        return np.array([self.to_world([0.0, 0.0, z]) for z in self.bead_offsets_m])
+
+
 class UnknownObject(PlanObject):
     """An object type this version does not recognise.
 
@@ -537,6 +728,8 @@ TYPE_MAP = {
     "hood": Hood,
     "wall": Wall,
     "ceiling": Ceiling,
+    "heatFluxSensor": HeatFluxSensor,
+    "thermocouple": Thermocouple,
 }
 
 

@@ -16,6 +16,7 @@ import { FORMAT } from './types';
 
 const MODALITIES = ['RGB', 'LWIR', 'MWIR', 'SWIR', 'NIR', 'other'];
 const SHAPES = ['circle', 'square', 'rectangle'];
+const TC_TYPES = ['K', 'J', 'T', 'E', 'N', 'R', 'S', 'B'];
 
 const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
@@ -126,9 +127,14 @@ function validateByType(obj: PlanObject, err: Reporter): void {
         // Without this, every derived quantity is NaN and the frustum vanishes.
         err('bad-focal-length', `Camera "${id}" has no positive focalLength_mm.`, id);
       }
+      // Zero or negative would take the effective focal length to zero and every
+      // derived quantity with it, exactly as a bad focal length would.
+      if (cam.zoomFactor !== undefined && cam.zoomFactor !== null && !isPositive(cam.zoomFactor)) {
+        err('bad-zoom', `Camera "${id}" has a non-positive zoomFactor; omit it to mean 1×.`, id);
+      }
       if (raw.recording !== undefined && raw.recording !== null) {
         err('reserved-recording',
-          `Camera "${id}" populates "recording", which format 1.0 reserves and requires to be null.`, id);
+          `Camera "${id}" populates "recording", which format 1.x reserves and requires to be null.`, id);
       }
       break;
     }
@@ -174,6 +180,38 @@ function validateByType(obj: PlanObject, err: Reporter): void {
         err('bad-polygon', `Ceiling "${id}" needs a polygon_m of at least three [x, y] points.`, id);
       }
       if (!isPositive(raw.height_m)) err('bad-height', `Ceiling "${id}" needs a positive height_m.`, id);
+      break;
+    }
+
+    case 'heatFluxSensor': {
+      const g = raw.gauge as Record<string, unknown> | undefined;
+      if (g) {
+        if (g.range_kw_m2 !== undefined && g.range_kw_m2 !== null && !isPositive(g.range_kw_m2)) {
+          err('bad-range', `Heat flux gauge "${id}" has a non-positive range_kw_m2.`, id);
+        }
+        const view = g.viewAngle_deg;
+        if (view !== undefined && view !== null
+            && (!isPositive(view) || (view as number) > 180)) {
+          err('bad-view-angle',
+            `Heat flux gauge "${id}" has viewAngle_deg ${String(view)}; expected 0 to 180.`, id);
+        }
+      }
+      break;
+    }
+
+    case 'thermocouple': {
+      const offsets = raw.beadOffsets_m;
+      if (offsets !== undefined
+          && (!Array.isArray(offsets) || offsets.length === 0 || !offsets.every(isFiniteNumber))) {
+        err('bad-beads',
+          `Thermocouple "${id}" needs beadOffsets_m to be a non-empty list of numbers.`, id);
+      }
+      const tc = raw.thermocouple as Record<string, unknown> | undefined;
+      if (tc?.tcType !== undefined && tc.tcType !== null && !TC_TYPES.includes(String(tc.tcType))) {
+        err('bad-tc-type',
+          `Thermocouple "${id}" has tcType "${String(tc.tcType)}"; expected one of ${TC_TYPES.join(', ')}.`,
+          id);
+      }
       break;
     }
 

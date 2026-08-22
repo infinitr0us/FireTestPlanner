@@ -1,0 +1,771 @@
+/**
+ * Format 1.1: camera zoom, heat flux gauges, thermocouple rakes, the derived
+ * version stamp, and the user-editable preset library.
+ *
+ * The physics here is mirrored in python/tests/test_instruments.py. Where a value
+ * is pinned, the arithmetic is in a comment rather than obtained by calling the
+ * code under test -- these numbers are what a fire engineer sizes instruments on.
+ */
+
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { DEFAULT_RADIATIVE_FRACTION, plumeCentrelineRiseK, pointSourceFluxKwM2 } from './correlations';
+import { createHeatFluxSensor, createThermocouple } from './factory';
+import { forwardOf, lookAtQuat, upOf } from './math';
+import {
+  beadOffsetsOf,
+  cameras,
+  effectiveFocalLengthMm,
+  firePointSourceM,
+  fxOf,
+  gaugeRangeKwM2,
+  gaugeViewAngleDeg,
+  groundSampleDistanceM,
+  hfovDegOf,
+  heatFluxEstimate,
+  heatFluxSensors,
+  instrumentChecks,
+  isPointVisible,
+  newPlan,
+  objectColor,
+  parsePlan,
+  positionOf,
+  quatOf,
+  radiativeFractionOf,
+  tcMaxTemperatureC,
+  TC_MAX_TEMPERATURE_C,
+  standoffM,
+  thermocoupleBeads,
+  thermocouples,
+  verticalCoverageM,
+  vfovDegOf,
+  zoomOf,
+  checkPlan,
+} from './plan';
+import {
+  BUILTIN_CAMERA_PRESETS,
+  cameraPresets,
+  customCameraPresets,
+  deleteCustomPreset,
+  findPreset,
+  isCustomPreset,
+  presetFromCamera,
+  presetIdFromLabel,
+  presetsArePersistent,
+  resetCustomPresets,
+  saveCustomPreset,
+  specFromPreset,
+} from './presets';
+import { canonicalize, serializePlan } from './serialize';
+import { maxVersion, requiredFormatVersion } from './types';
+import type {
+  BurnerObject,
+  CameraObject,
+  HeatFluxSensorObject,
+  PlanDocument,
+  ThermocoupleObject,
+  Vec3,
+} from './types';
+import { validateStructure } from './validate';
+
+const FIXTURE_PATH = fileURLToPath(
+  new URL('../../../fixtures/pool-fire-camera-row.ftp.json', import.meta.url),
+);
+const FIXTURE_TEXT = readFileSync(FIXTURE_PATH, 'utf8');
+const fixture = (): PlanDocument => parsePlan(FIXTURE_TEXT);
+
+const codes = (doc: PlanDocument): Set<string> =>
+  new Set(instrumentChecks(doc).map((i) => i.code));
+
+/** A 1 ft heptane pan at the origin -- the reference fire, without the rig. */
+function firePlan(hrrKw = 130, radiativeFraction?: number): PlanDocument {
+  const doc = newPlan('instrument test');
+  const burner: BurnerObject = {
+    id: 'burner-main',
+    type: 'burner',
+    transform: { position_m: [0, 0, 0] },
+    footprint: { shape: 'square', size_m: [0.3048, 0.3048] },
+    rimHeight_m: 0.1,
+    fire: { fuel: 'n-heptane', hrr_kw: hrrKw, hrrCurve: null },
+  };
+  if (radiativeFraction !== undefined) burner.fire!.radiativeFraction = radiativeFraction;
+  doc.objects.push(burner);
+  return doc;
+}
+
+function addGauge(
+  doc: PlanDocument,
+  position: Vec3,
+  opts: { aim?: Vec3; range?: number | null; viewAngle?: number; id?: string } = {},
+): HeatFluxSensorObject {
+  const aim = opts.aim ?? (firePointSourceM(doc) as Vec3);
+  const gauge: HeatFluxSensorObject = {
+    id: opts.id ?? 'hf-1',
+    type: 'heatFluxSensor',
+    transform: {
+      position_m: position,
+      rotation_quat: lookAtQuat(position, aim),
+      aimTarget_m: aim,
+    },
+    gauge: {
+      range_kw_m2: opts.range === undefined ? 50 : opts.range,
+      viewAngle_deg: opts.viewAngle ?? 180,
+    },
+  };
+  doc.objects.push(gauge);
+  return gauge;
+}
+
+function addRake(
+  doc: PlanDocument,
+  position: Vec3,
+  offsets: number[],
+  opts: { tcType?: 'K' | 'J' | 'T'; id?: string } = {},
+): ThermocoupleObject {
+  const rake: ThermocoupleObject = {
+    id: opts.id ?? 'tc-1',
+    type: 'thermocouple',
+    transform: { position_m: position },
+    beadOffsets_m: offsets,
+    thermocouple: { tcType: opts.tcType ?? 'K' },
+  };
+  doc.objects.push(rake);
+  return rake;
+}
+
+const camera = (spec: Partial<CameraObject['camera']> = {}): CameraObject => ({
+  id: 'cam',
+  type: 'camera',
+  transform: { position_m: [-2, 0, 0], rotation_quat: lookAtQuat([-2, 0, 0], [0, 0, 0]) },
+  camera: {
+    modality: 'RGB',
+    resolution_px: [1000, 500],
+    sensor_mm: [10, 5],
+    focalLength_mm: 20,
+    ...spec,
+  },
+});
+
+// -- camera zoom ----------------------------------------------------------
+
+describe('camera zoom', () => {
+  it('defaults to 1x and is not stored', () => {
+    const cam = camera();
+    expect(zoomOf(cam)).toBe(1);
+    expect(effectiveFocalLengthMm(cam)).toBe(20);
+    // 1x is the absence of a zoom rather than a value, so a plan that does not use
+    // the feature keeps declaring format 1.0.
+    expect('zoomFactor' in cam.camera).toBe(false);
+  });
+
+  it('multiplies the effective focal length but leaves the lens alone', () => {
+    const cam = camera({ zoomFactor: 2 });
+    expect(effectiveFocalLengthMm(cam)).toBe(40);
+    expect(cam.camera.focalLength_mm).toBe(20);
+  });
+
+  it('halves both fields of view at 2x', () => {
+    const plain = camera();
+    const zoomed = camera({ zoomFactor: 2 });
+    // hfov = 2 atan(10 / (2*40)) = 2 atan(0.125)
+    expect(hfovDegOf(zoomed)).toBeCloseTo((2 * Math.atan(0.125) * 180) / Math.PI, 9);
+    expect(Math.tan((hfovDegOf(zoomed) * Math.PI) / 360))
+      .toBeCloseTo(Math.tan((hfovDegOf(plain) * Math.PI) / 360) / 2, 9);
+    expect(Math.tan((vfovDegOf(zoomed) * Math.PI) / 360))
+      .toBeCloseTo(Math.tan((vfovDegOf(plain) * Math.PI) / 360) / 2, 9);
+  });
+
+  it('scales fx and the ground sample distance', () => {
+    expect(fxOf(camera({ zoomFactor: 2 }))).toBeCloseTo(4000, 9);
+    expect(groundSampleDistanceM(camera({ zoomFactor: 2 })))
+      .toBeCloseTo(groundSampleDistanceM(camera()) / 2, 12);
+  });
+
+  it('narrows what the camera can actually see', () => {
+    // Half the vertical field is atan(2.5/20) = 7.13 deg, which is 0.25 m of height
+    // at the 2 m standoff. A point at 0.2 m is inside that and outside half of it.
+    const edge: Vec3 = [0, 0, 0.2];
+    expect(isPointVisible(camera(), edge)).toBe(true);
+    expect(isPointVisible(camera({ zoomFactor: 2 }), edge)).toBe(false);
+  });
+
+  it('reports a coverage the framing verdict agrees with', () => {
+    // The strip height and "is the flame tip in frame?" must not disagree. They
+    // would if coverage came from the field of view, which spans the whole sensor
+    // while `isPointVisible` judges pixel CENTRES -- half a pixel per side, which
+    // is invisible until a camera is marginal and then reads as a contradiction.
+    //
+    // Measured across the optical axis, which is what the figure means: the camera
+    // is tilted down at the fire, so this is not a vertical span in world Z.
+    const doc = fixture();
+    const cam = cameras(doc).find((c) => c.id === 'cam-mwir')!;
+    const covers = verticalCoverageM(cam);
+    const d = standoffM(cam);
+    const p = positionOf(cam);
+    const fwd = forwardOf(quatOf(cam));
+    const up = upOf(quatOf(cam));
+    const eps = 1e-4;
+    const at = (offset: number): Vec3 => [
+      p[0] + fwd[0] * d + up[0] * offset,
+      p[1] + fwd[1] * d + up[1] * offset,
+      p[2] + fwd[2] * d + up[2] * offset,
+    ];
+
+    for (const edge of [covers / 2, -covers / 2]) {
+      const inward = -Math.sign(edge) * eps;
+      expect(isPointVisible(cam, at(edge + inward))).toBe(true);
+      expect(isPointVisible(cam, at(edge - inward))).toBe(false);
+    }
+
+    // And it is genuinely narrower than the geometric field, not equal to it.
+    const geometric = 2 * Math.tan((vfovDegOf(cam) * Math.PI) / 360) * d;
+    expect(covers).toBeLessThan(geometric);
+    expect(covers).toBeGreaterThan(geometric * 0.99);
+  });
+
+  it.each([0, -2, Number.NaN, Number.POSITIVE_INFINITY, null])(
+    'falls back to 1x rather than infinity for %p',
+    (bad) => {
+      const cam = camera({ zoomFactor: bad as number | null });
+      expect(zoomOf(cam)).toBe(1);
+      expect(fxOf(cam)).toBeCloseTo(2000, 9);
+    },
+  );
+
+  it('rejects a non-positive zoom at the load boundary', () => {
+    const doc = newPlan('bad zoom');
+    doc.objects.push(camera({ zoomFactor: 0 }));
+    expect(validateStructure(doc).map((i) => i.code)).toContain('bad-zoom');
+  });
+
+  it('serialises the zoom next to the focal length it modifies', () => {
+    const doc = newPlan('zoomed');
+    doc.objects.push(camera({ zoomFactor: 2 }));
+    const keys = Object.keys(
+      (canonicalize(doc).objects as Array<Record<string, unknown>>)[0].camera as object,
+    );
+    expect(keys.indexOf('zoomFactor')).toBe(keys.indexOf('focalLength_mm') + 1);
+  });
+});
+
+// -- the point source -----------------------------------------------------
+
+describe('the fire as a point source', () => {
+  it('sits at mid-flame on the burner axis', () => {
+    const doc = firePlan();
+    const source = firePointSourceM(doc) as Vec3;
+    expect(source[0]).toBeCloseTo(0, 12);
+    expect(source[1]).toBeCloseTo(0, 12);
+    expect(source[2]).toBeGreaterThan(0.1);
+  });
+
+  it('is null without an HRR, rather than a guess', () => {
+    const doc = firePlan();
+    (doc.objects[0] as BurnerObject).fire!.hrr_kw = null;
+    expect(firePointSourceM(doc)).toBeNull();
+  });
+
+  it('defaults the radiative fraction, and refuses a nonsense one', () => {
+    expect(radiativeFractionOf(firePlan().objects[0] as BurnerObject))
+      .toBeCloseTo(DEFAULT_RADIATIVE_FRACTION, 12);
+    expect(radiativeFractionOf(firePlan(130, 1.5).objects[0] as BurnerObject))
+      .toBeCloseTo(DEFAULT_RADIATIVE_FRACTION, 12);
+    expect(radiativeFractionOf(firePlan(130, 0.35).objects[0] as BurnerObject))
+      .toBeCloseTo(0.35, 12);
+  });
+});
+
+// -- heat flux ------------------------------------------------------------
+
+describe('heat flux gauges', () => {
+  it('matches the point-source formula', () => {
+    // q" = X_r Q cos(theta) / (4 pi r^2), aimed square on so cos(theta) is 1.
+    const doc = firePlan(130, 0.35);
+    const z = (firePointSourceM(doc) as Vec3)[2];
+    const gauge = addGauge(doc, [2, 0, z]);
+    const est = heatFluxEstimate(doc, gauge)!;
+
+    expect(est.distanceM).toBeCloseTo(2, 9);
+    expect(est.offAxisDeg).toBeCloseTo(0, 6);
+    expect(est.incidentKwM2).toBeCloseTo((0.35 * 130) / (4 * Math.PI * 4), 9);
+  });
+
+  it('falls off as one over r squared', () => {
+    const doc = firePlan();
+    const z = (firePointSourceM(doc) as Vec3)[2];
+    const near = heatFluxEstimate(doc, addGauge(doc, [1, 0, z], { id: 'hf-near' }))!;
+    const far = heatFluxEstimate(doc, addGauge(doc, [2, 0, z], { id: 'hf-far' }))!;
+    expect(near.incidentKwM2).toBeCloseTo(4 * far.incidentKwM2, 9);
+  });
+
+  it('reads the cosine of a tilted gauge', () => {
+    const doc = firePlan();
+    const z = (firePointSourceM(doc) as Vec3)[2];
+    const square = heatFluxEstimate(doc, addGauge(doc, [2, 0, z], { id: 'hf-sq' }))!;
+
+    const tilted = firePlan();
+    const at: Vec3 = [2, 0, z];
+    const away: Vec3 = [at[0] - Math.cos(Math.PI / 3), at[1] + Math.sin(Math.PI / 3), at[2]];
+    const est = heatFluxEstimate(tilted, addGauge(tilted, at, { aim: away }))!;
+    expect(est.offAxisDeg).toBeCloseTo(60, 6);
+    expect(est.incidentKwM2).toBeCloseTo(0.5 * square.incidentKwM2, 9);
+  });
+
+  it('receives nothing when it faces away, rather than a negative flux', () => {
+    const doc = firePlan();
+    const z = (firePointSourceM(doc) as Vec3)[2];
+    const gauge = addGauge(doc, [2, 0, z], { aim: [4, 0, z] });
+    const est = heatFluxEstimate(doc, gauge)!;
+    expect(est.facesFire).toBe(false);
+    expect(est.incidentKwM2).toBe(0);
+    expect(codes(doc)).toContain('gauge-facing-away');
+  });
+
+  it('reports only the facing problem when a gauge is turned away', () => {
+    // A gauge pointed at the wall has one problem, and it is not its range.
+    const doc = firePlan();
+    const z = (firePointSourceM(doc) as Vec3)[2];
+    addGauge(doc, [2, 0, z], { aim: [4, 0, z], range: 0.001 });
+    expect([...codes(doc)]).toEqual(['gauge-facing-away']);
+  });
+
+  it('flags an over-range gauge as an error and a starved one as a warning', () => {
+    const hot = firePlan();
+    addGauge(hot, [0.8, 0, (firePointSourceM(hot) as Vec3)[2]], { range: 1 });
+    expect(codes(hot)).toContain('gauge-over-range');
+
+    const cold = firePlan();
+    addGauge(cold, [6, 0, (firePointSourceM(cold) as Vec3)[2]], { range: 50 });
+    expect(codes(cold)).toContain('gauge-low-signal');
+  });
+
+  it('reports a gauge standing in the fire, rather than an infinite flux', () => {
+    // Everything else would divide by a zero distance and print "Infinity kW/m²",
+    // which is not a finding anybody can act on.
+    const doc = firePlan();
+    const source = firePointSourceM(doc) as Vec3;
+    const gauge = addGauge(doc, source, { aim: [source[0] + 1, source[1], source[2]] });
+    expect(Number.isFinite(heatFluxEstimate(doc, gauge)!.incidentKwM2)).toBe(false);
+    expect([...codes(doc)]).toEqual(['gauge-in-fire']);
+  });
+
+  it('says nothing about range when none is recorded', () => {
+    const doc = firePlan();
+    const gauge = addGauge(doc, [0.8, 0, (firePointSourceM(doc) as Vec3)[2]], { range: null });
+    expect(gaugeRangeKwM2(gauge)).toBeNull();
+    expect(heatFluxEstimate(doc, gauge)!.fractionOfRange).toBeNull();
+    expect(codes(doc).has('gauge-over-range')).toBe(false);
+    expect(codes(doc).has('gauge-low-signal')).toBe(false);
+  });
+
+  it('flags a gauge inside two effective diameters as near field', () => {
+    // D_eff of a 1 ft square pan is 0.344 m, so two diameters is 0.69 m.
+    const doc = firePlan();
+    addGauge(doc, [0.4, 0, (firePointSourceM(doc) as Vec3)[2]], { range: 200 });
+    expect(heatFluxEstimate(doc, heatFluxSensors(doc)[0])!.nearField).toBe(true);
+    expect(codes(doc)).toContain('gauge-near-field');
+  });
+
+  it('flags a view tube that misses the flame, but never an open hemisphere', () => {
+    const build = (viewAngle: number): PlanDocument => {
+      const doc = firePlan();
+      const z = (firePointSourceM(doc) as Vec3)[2];
+      const at: Vec3 = [2, 0, z];
+      const away: Vec3 = [at[0] - Math.cos(Math.PI / 6), at[1] + Math.sin(Math.PI / 6), at[2]];
+      addGauge(doc, at, { aim: away, viewAngle });
+      return doc;
+    };
+    expect(codes(build(20))).toContain('gauge-view-restricted');
+    expect(codes(build(180)).has('gauge-view-restricted')).toBe(false);
+  });
+
+  it('defaults an absent or impossible view angle to an open hemisphere', () => {
+    const doc = firePlan();
+    const gauge = addGauge(doc, [2, 0, 0.5]);
+    gauge.gauge!.viewAngle_deg = null;
+    expect(gaugeViewAngleDeg(gauge)).toBe(180);
+    gauge.gauge!.viewAngle_deg = 400;
+    expect(gaugeViewAngleDeg(gauge)).toBe(180);
+  });
+
+  it('gives no estimate at all when there is no fire', () => {
+    const doc = firePlan();
+    (doc.objects[0] as BurnerObject).fire!.hrr_kw = null;
+    const gauge = addGauge(doc, [2, 0, 0.5], { aim: [0, 0, 0.5] });
+    expect(heatFluxEstimate(doc, gauge)).toBeNull();
+    expect([...codes(doc)]).toEqual([]);
+  });
+
+  it('gets the same aim-mismatch check a camera gets', () => {
+    // The quaternion is authoritative, so a stale target is a lie about what the
+    // gauge measures -- exactly as it is for a camera.
+    const doc = firePlan();
+    doc.objects.push({
+      id: 'hf-1',
+      type: 'heatFluxSensor',
+      transform: {
+        position_m: [2, 0, 0.7],
+        rotation_quat: [0, 0, 0, 1],
+        aimTarget_m: [0, 0, 0.7],
+      },
+    } as HeatFluxSensorObject);
+    expect(checkPlan(doc).map((i) => i.code)).toContain('aim-mismatch');
+  });
+
+  it('agrees with the standalone correlation', () => {
+    expect(pointSourceFluxKwM2(130, 2, 1, 0.35))
+      .toBeCloseTo((0.35 * 130) / (4 * Math.PI * 4), 12);
+    expect(pointSourceFluxKwM2(130, 2, -0.5, 0.35)).toBe(0);
+    expect(pointSourceFluxKwM2(0, 2, 1, 0.35)).toBe(0);
+  });
+});
+
+// -- thermocouples --------------------------------------------------------
+
+describe('thermocouple rakes', () => {
+  it('treats a bare thermocouple as a one-bead rake', () => {
+    const doc = firePlan();
+    const rake = addRake(doc, [1, 0, 0.5], [0]);
+    expect(beadOffsetsOf(rake)).toEqual([0]);
+    expect(thermocoupleBeads(doc, rake)[0].world).toEqual([1, 0, 0.5]);
+  });
+
+  it('defaults a missing or unusable offset list to a single bead', () => {
+    const doc = firePlan();
+    const rake = addRake(doc, [1, 0, 0.5], []);
+    expect(beadOffsetsOf(rake)).toEqual([0]);
+    rake.beadOffsets_m = undefined;
+    expect(beadOffsetsOf(rake)).toEqual([0]);
+  });
+
+  it('runs offsets along local +Z, through the object frame', () => {
+    // CONVENTIONS section 5a: vertex lists are local. 90 degrees about +Y takes
+    // local +Z onto world +X, so a rake laid on its side has horizontal beads.
+    const doc = firePlan();
+    const s = Math.SQRT1_2;
+    const rake = addRake(doc, [1, 0, 0.5], [1]);
+    rake.transform!.rotation_quat = [0, s, 0, s];
+    const [x, y, z] = thermocoupleBeads(doc, rake)[0].world;
+    expect(x).toBeCloseTo(2, 9);
+    expect(y).toBeCloseTo(0, 9);
+    expect(z).toBeCloseTo(0.5, 9);
+  });
+
+  it('places each bead in the flame, the plume, or neither', () => {
+    const doc = firePlan();
+    const tip = (firePointSourceM(doc) as Vec3)[2] * 2 - 0.1; // fuel surface + L_f
+    const rake = addRake(doc, [0, 0, 0], [0.3, tip + 0.5]);
+    const beads = thermocoupleBeads(doc, rake);
+    expect(beads[0].region).toBe('flame');
+    expect(beads[1].region).toBe('plume');
+
+    const aside = firePlan();
+    expect(thermocoupleBeads(aside, addRake(aside, [3, 0, 0], [1.5]))[0].region)
+      .toBe('outside');
+  });
+
+  it('quotes a temperature only where the plume correlation applies', () => {
+    const doc = firePlan();
+    const tip = (firePointSourceM(doc) as Vec3)[2] * 2 - 0.1;
+    const beads = thermocoupleBeads(doc, addRake(doc, [0, 0, 0], [0.3, tip + 0.5]));
+    // Inside the flame the plume correlation is not imprecise, it is the wrong
+    // correlation, so the honest answer is no answer.
+    expect(beads[0].gasTemperatureC).toBeNull();
+    expect(beads[1].gasTemperatureC).not.toBeNull();
+  });
+
+  it('cools with height and is measured from ambient', () => {
+    const doc = firePlan();
+    const tip = (firePointSourceM(doc) as Vec3)[2] * 2 - 0.1;
+    const temps = thermocoupleBeads(doc, addRake(doc, [0, 0, 0], [tip + 0.3, tip + 0.8, tip + 1.3]))
+      .map((b) => b.gasTemperatureC as number);
+    expect(temps[0]).toBeGreaterThan(temps[1]);
+    expect(temps[1]).toBeGreaterThan(temps[2]);
+
+    const warm = firePlan();
+    warm.environment!.ambientTemperature_C = 40;
+    const hot = thermocoupleBeads(warm, addRake(warm, [0, 0, 0], [tip + 0.3]))[0];
+    expect((hot.gasTemperatureC as number) - temps[0]).toBeCloseTo(20, 6);
+  });
+
+  it('reproduces the reference plume rake', () => {
+    // Qc = (1 - 0.35) * 130 = 84.5 kW; dT = 25 Qc^(2/3) (z - z0)^(-5/3) over 20 C.
+    // Mirrored in python/tests/test_instruments.py.
+    const doc = fixture();
+    const rake = thermocouples(doc).find((t) => t.id === 'tc-plume')!;
+    const temps = thermocoupleBeads(doc, rake).map((b) => b.gasTemperatureC as number);
+    expect(temps[0]).toBeCloseTo(344, 0);
+    expect(temps[1]).toBeCloseTo(247, 0);
+    expect(temps[2]).toBeCloseTo(190, 0);
+  });
+
+  it('agrees with the standalone correlation', () => {
+    expect(plumeCentrelineRiseK(-1, 130, 0.344)).toBeNull();
+    expect(plumeCentrelineRiseK(2, 0, 0.344)).toBeNull();
+    expect(plumeCentrelineRiseK(2, 130, 0.344, 1)).toBeNull(); // nothing convected
+  });
+
+  it('takes its limit from the letter type unless one is recorded', () => {
+    const doc = firePlan();
+    for (const [letter, limit] of Object.entries(TC_MAX_TEMPERATURE_C)) {
+      const rake = addRake(doc, [5, 0, 0], [0.5], { id: `tc-${letter}` });
+      rake.thermocouple = { tcType: letter as 'K' };
+      expect(tcMaxTemperatureC(rake)).toBe(limit);
+      rake.thermocouple.maxTemperature_C = 200;
+      expect(tcMaxTemperatureC(rake)).toBe(200);
+    }
+  });
+
+  it('errors on a bead the type cannot survive and warns on one it can', () => {
+    const fragile = firePlan();
+    addRake(fragile, [0, 0, 0], [0.3], { tcType: 'T' }); // limited to 370 C
+    expect(codes(fragile)).toContain('tc-over-temperature');
+
+    const rugged = firePlan();
+    addRake(rugged, [0, 0, 0], [0.3], { tcType: 'K' }); // good to 1260 C
+    expect(codes(rugged)).toContain('tc-in-flame');
+    expect(codes(rugged).has('tc-over-temperature')).toBe(false);
+  });
+
+  it('errors when the predicted plume passes the bead limit', () => {
+    const doc = firePlan(2000);
+    const tip = (firePointSourceM(doc) as Vec3)[2] * 2 - 0.1;
+    addRake(doc, [0, 0, 0], [tip + 0.05], { tcType: 'T' });
+    expect(codes(doc)).toContain('tc-over-temperature');
+  });
+
+  it('notes a rake that will read ambient, without calling it an error', () => {
+    const doc = fixture();
+    const found = instrumentChecks(doc).filter((i) => i.objectId === 'tc-east-wall');
+    expect(found.map((i) => [i.severity, i.code])).toEqual([['info', 'tc-outside-plume']]);
+  });
+
+  it('rejects an empty or non-numeric offset list at the load boundary', () => {
+    const doc = newPlan('bad rake');
+    doc.objects.push({
+      id: 'tc-1', type: 'thermocouple', beadOffsets_m: [],
+    } as unknown as ThermocoupleObject);
+    expect(validateStructure(doc).map((i) => i.code)).toContain('bad-beads');
+  });
+});
+
+// -- the reference plan ---------------------------------------------------
+
+describe('the reference plan', () => {
+  it('has no errors', () => {
+    expect(checkPlan(fixture()).filter((i) => i.severity === 'error')).toEqual([]);
+  });
+
+  it('reproduces the east-wall gauge being lost in its own noise', () => {
+    // 1.70 kW/m2 on a 50 kW/m2 scale -- the point the plan is there to make.
+    const doc = fixture();
+    const gauge = heatFluxSensors(doc).find((s) => s.id === 'hf-east')!;
+    const est = heatFluxEstimate(doc, gauge)!;
+    expect(est.incidentKwM2).toBeCloseTo(1.703, 3);
+    expect(est.fractionOfRange).toBeLessThan(0.05);
+    expect(instrumentChecks(doc).filter((i) => i.objectId === 'hf-east').map((i) => i.code))
+      .toEqual(['gauge-low-signal']);
+  });
+
+  it('leaves the correctly sized north-wall gauge alone', () => {
+    expect(instrumentChecks(fixture()).filter((i) => i.objectId === 'hf-north')).toEqual([]);
+  });
+
+  it('gives instruments a stable colour, and drops an untrusted one', () => {
+    const doc = fixture();
+    const gauge = heatFluxSensors(doc)[0];
+    expect(objectColor(gauge)).toBe('#ef4444');
+    gauge.display = { color: 'red; onload=alert(1)' };
+    expect(objectColor(gauge)).toBe('#ef4444');
+    gauge.display = { color: '#123abc' };
+    expect(objectColor(gauge)).toBe('#123abc');
+  });
+});
+
+// -- the declared format version ------------------------------------------
+
+describe('the declared format version', () => {
+  const versionOf = (doc: PlanDocument): string =>
+    JSON.parse(serializePlan(doc)).version as string;
+
+  it('stays at 1.0.0 for a plan that uses nothing newer', () => {
+    const doc = firePlan();
+    expect(requiredFormatVersion(doc)).toBe('1.0.0');
+    expect(versionOf(doc)).toBe('1.0.0');
+  });
+
+  it('rises to 1.1.0 for each thing that needs it', () => {
+    const withGauge = firePlan();
+    addGauge(withGauge, [2, 0, 0.7]);
+    expect(versionOf(withGauge)).toBe('1.1.0');
+
+    const withRake = firePlan();
+    addRake(withRake, [2, 0, 0], [0.5]);
+    expect(versionOf(withRake)).toBe('1.1.0');
+
+    const withZoom = newPlan('zoomed');
+    withZoom.objects.push(camera({ zoomFactor: 2 }));
+    expect(versionOf(withZoom)).toBe('1.1.0');
+
+    expect(versionOf(firePlan(130, 0.35))).toBe('1.1.0');
+  });
+
+  it('only ever goes up, and never past a version it does not know', () => {
+    const doc = firePlan();
+    doc.version = '2.3.4';
+    expect(versionOf(doc)).toBe('2.3.4');
+    expect(maxVersion('1.1.0', '1.0.0')).toBe('1.1.0');
+    expect(maxVersion('1.0.0', '1.1.0')).toBe('1.1.0');
+  });
+
+  it('reports a file whose label understates its contents', () => {
+    // Only a hand edit or a broken writer produces one, but the label is what a
+    // consumer checks before deciding it can read the file.
+    const doc = firePlan();
+    addRake(doc, [2, 0, 0], [0.5]);
+    doc.version = '1.0.0';
+    expect(checkPlan(doc).map((i) => i.code)).toContain('version-understated');
+  });
+
+  it('is 1.1.0 on the reference plan, and clean once saved', () => {
+    const doc = fixture();
+    expect(doc.version).toBe('1.1.0');
+    expect(checkPlan(doc).map((i) => i.code)).not.toContain('version-understated');
+  });
+});
+
+// -- the preset library ---------------------------------------------------
+
+describe('the camera preset library', () => {
+  beforeEach(() => resetCustomPresets());
+
+  it('ships the two FLIR presets with their datasheet intrinsics', () => {
+    // FLIR publishes 24 x 18 deg and 0.66 mrad/px for the A700's 24 deg lens; the
+    // sensor is 640 x 480 at the 12 um pitch the datasheet gives, and the focal
+    // length is back-solved from the FOV. See docs/datasheets/README.md.
+    const a700 = findPreset('flir-a700-24deg')!;
+    expect(a700.resolution_px).toEqual([640, 480]);
+    expect(a700.sensor_mm[0]).toBeCloseTo(640 * 0.012, 6);
+    expect(hfovDegOf({ camera: specFromPreset(a700) } as CameraObject)).toBeCloseTo(24, 1);
+    expect(vfovDegOf({ camera: specFromPreset(a700) } as CameraObject)).toBeCloseTo(18.1, 1);
+    expect(a700.intrinsicsSource).toBe('datasheet');
+
+    // 1280 x 720 at 14 um, straight off the datasheet; the nominal 25 mm lens is
+    // used as printed, because pitch and lens designation agree for this camera.
+    const a8303 = findPreset('flir-a8303sc-25mm')!;
+    expect(a8303.resolution_px).toEqual([1280, 720]);
+    expect(a8303.sensor_mm[0]).toBeCloseTo(1280 * 0.014, 6);
+    expect(a8303.focalLength_mm).toBe(25);
+    expect(hfovDegOf({ camera: specFromPreset(a8303) } as CameraObject)).toBeCloseTo(39.4, 1);
+    expect(a8303.spectralBand_um).toEqual([3, 5]);
+  });
+
+  it('keeps every shipped preset internally consistent', () => {
+    const ids = BUILTIN_CAMERA_PRESETS.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const p of BUILTIN_CAMERA_PRESETS) {
+      expect(p.focalLength_mm).toBeGreaterThan(0);
+      expect(p.sensor_mm.every((s) => s > 0)).toBe(true);
+      expect(p.resolution_px.every((r) => Number.isInteger(r) && r > 0)).toBe(true);
+    }
+  });
+
+  it('lifts a preset out of a camera that is already in a plan', () => {
+    // How a preset crosses machines without ever becoming a file: the intrinsics
+    // are already inline in every camera.
+    const cam = camera({ zoomFactor: 3, presetId: 'something-else' });
+    const preset = presetFromCamera(cam, 'My rig');
+    expect(preset.label).toBe('My rig');
+    expect(preset.sensor_mm).toEqual([10, 5]);
+    expect(preset.focalLength_mm).toBe(20);
+    // The lens belongs to the preset; the zoom belongs to the shot.
+    expect('zoomFactor' in preset).toBe(false);
+  });
+
+  it('adds a custom preset to the end of the library', () => {
+    const before = cameraPresets().length;
+    const saved = saveCustomPreset(presetFromCamera(camera(), 'My rig'));
+    expect(cameraPresets()).toHaveLength(before + 1);
+    expect(cameraPresets()[before].id).toBe(saved.id);
+    expect(isCustomPreset(saved.id)).toBe(true);
+    expect(customCameraPresets().map((p) => p.id)).toEqual([saved.id]);
+  });
+
+  it('replaces rather than duplicates when the same id is saved again', () => {
+    const first = saveCustomPreset(presetFromCamera(camera(), 'My rig'));
+    saveCustomPreset({ ...first, focalLength_mm: 35 });
+    expect(customCameraPresets()).toHaveLength(1);
+    expect(findPreset(first.id)!.focalLength_mm).toBe(35);
+  });
+
+  it('refuses to shadow a shipped preset', () => {
+    // Seeded presets are the ones backed by a datasheet in docs/datasheets/, and
+    // shadowing one would make intrinsicsSource "datasheet" uncheckable.
+    const builtin = BUILTIN_CAMERA_PRESETS[0];
+    const saved = saveCustomPreset(presetFromCamera(camera(), 'Mine', builtin.id));
+    expect(saved.id).not.toBe(builtin.id);
+    expect(findPreset(builtin.id)!.focalLength_mm).toBe(builtin.focalLength_mm);
+  });
+
+  it('makes unique, readable ids from labels', () => {
+    expect(presetIdFromLabel('FLIR A700 — 24° lens')).toBe('flir-a700-24-lens');
+    const first = saveCustomPreset(presetFromCamera(camera(), 'My rig'));
+    expect(presetIdFromLabel('My rig')).toBe(`${first.id}-2`);
+    expect(presetIdFromLabel('!!!')).toBe('camera');
+  });
+
+  it('deletes only custom presets, and says whether it did', () => {
+    const saved = saveCustomPreset(presetFromCamera(camera(), 'My rig'));
+    expect(deleteCustomPreset(saved.id)).toBe(true);
+    expect(deleteCustomPreset(saved.id)).toBe(false);
+    expect(deleteCustomPreset(BUILTIN_CAMERA_PRESETS[0].id)).toBe(false);
+    expect(cameraPresets().length).toBe(BUILTIN_CAMERA_PRESETS.length);
+  });
+
+  it('still works, in memory, where there is no storage to persist to', () => {
+    // Node has no localStorage, which is the same situation as a private window
+    // or a browser with site data disabled. A preset made there has to last the
+    // session rather than throwing.
+    expect(presetsArePersistent()).toBe(false);
+    const saved = saveCustomPreset(presetFromCamera(camera(), 'My rig'));
+    expect(findPreset(saved.id)).toBeDefined();
+  });
+
+  it('places a camera whose intrinsics are inline, not a reference', () => {
+    const preset = findPreset('flir-a700-24deg')!;
+    const spec = specFromPreset(preset);
+    expect(spec.presetId).toBe(preset.id);
+    spec.sensor_mm[0] = 99;
+    expect(preset.sensor_mm[0]).toBeCloseTo(7.68, 6); // the library is not aliased
+  });
+});
+
+// -- factories ------------------------------------------------------------
+
+describe('instrument factories', () => {
+  it('aims a new gauge at the fire', () => {
+    // Its orientation is a first-order term in what it reads, so a gauge dropped
+    // facing an arbitrary direction would report a number that means nothing.
+    const doc = firePlan();
+    const gauge = createHeatFluxSensor(doc, [2, 0, 0.5]);
+    doc.objects.push(gauge);
+    expect(gauge.transform!.aimTarget_m).toEqual(firePointSourceM(doc));
+    expect(heatFluxEstimate(doc, gauge)!.offAxisDeg).toBeCloseTo(0, 6);
+  });
+
+  it('creates a thermocouple as a single bead at the drop point', () => {
+    const doc = firePlan();
+    const rake = createThermocouple(doc, [1, 0, 0.5]);
+    expect(rake.beadOffsets_m).toEqual([0]);
+    expect(rake.thermocouple!.tcType).toBe('K');
+  });
+
+  it('gives new instruments unique ids', () => {
+    const doc = firePlan();
+    doc.objects.push(createHeatFluxSensor(doc));
+    doc.objects.push(createHeatFluxSensor(doc));
+    expect(doc.objects[1].id).not.toBe(doc.objects[2].id);
+  });
+});

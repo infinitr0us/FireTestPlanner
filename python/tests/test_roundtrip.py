@@ -379,3 +379,135 @@ def test_schema_rejects_a_circle_without_a_diameter():
     plan.add({"id": "b", "type": "burner", "footprint": {"shape": "circle", "size_m": [1, 1]}})
     with pytest.raises(PlanError, match="schema validation"):
         plan.validate_schema()
+
+
+# -- format version ------------------------------------------------------
+#
+# The declared version is DERIVED, not authored: a writer emits the lowest version
+# that describes the file's contents, and never lower than the file already said.
+# That is what lets a plan using nothing past 1.0 keep opening in a 1.0 tool.
+
+def test_a_plain_plan_still_declares_1_0():
+    plan = Plan.new("plain")
+    plan.add({
+        "id": "burner-main",
+        "type": "burner",
+        "transform": {"position_m": [0.0, 0.0, 0.0]},
+        "footprint": {"shape": "circle", "diameter_m": 0.3},
+        "fire": {"hrr_kw": 100.0, "hrrCurve": None},
+    })
+    assert plan.effective_version == "1.0.0"
+    assert json.loads(plan.dumps())["version"] == "1.0.0"
+    plan.validate_schema("1.0.0")
+
+
+@pytest.mark.parametrize("obj", [
+    {"id": "hf-1", "type": "heatFluxSensor", "transform": {"position_m": [1.0, 0.0, 0.5]}},
+    {"id": "tc-1", "type": "thermocouple", "transform": {"position_m": [1.0, 0.0, 0.5]}},
+])
+def test_a_1_1_object_type_promotes_the_declared_version(obj):
+    plan = Plan.new("promoted")
+    plan.add(obj)
+    assert plan.effective_version == "1.1.0"
+    assert json.loads(plan.dumps())["version"] == "1.1.0"
+
+
+def test_a_zoom_factor_promotes_the_declared_version():
+    plan = Plan.new("zoomed")
+    plan.add({
+        "id": "cam", "type": "camera",
+        "transform": {"position_m": [-2.0, 0.0, 1.0]},
+        "camera": {
+            "modality": "LWIR", "resolution_px": [640, 480],
+            "sensor_mm": [7.68, 5.76], "focalLength_mm": 18.07, "zoomFactor": 2.0,
+        },
+    })
+    assert plan.effective_version == "1.1.0"
+
+
+def test_a_radiative_fraction_promotes_the_declared_version():
+    plan = Plan.new("radiating")
+    plan.add({
+        "id": "burner-main", "type": "burner",
+        "transform": {"position_m": [0.0, 0.0, 0.0]},
+        "footprint": {"shape": "circle", "diameter_m": 0.3},
+        "fire": {"hrr_kw": 100.0, "radiativeFraction": 0.35, "hrrCurve": None},
+    })
+    assert plan.effective_version == "1.1.0"
+
+
+def test_the_declared_version_only_ever_goes_up():
+    # A file this build does not understand keeps its own label rather than being
+    # quietly downgraded to something this build can write.
+    plan = Plan.new("from the future")
+    plan.data["version"] = "2.3.4"
+    assert plan.effective_version == "2.3.4"
+    assert json.loads(plan.dumps())["version"] == "2.3.4"
+
+
+def test_saving_adopts_the_derived_version_in_memory(tmp_path):
+    # Otherwise a plan that has just been written goes on reporting a mislabel
+    # about a file where it is no longer true.
+    plan = Plan.new("promoted")
+    plan.add({"id": "tc-1", "type": "thermocouple",
+              "transform": {"position_m": [1.0, 0.0, 0.5]}})
+    assert plan.format_version == "1.0.0"
+    plan.save(tmp_path / "p.ftp.json")
+    assert plan.format_version == "1.1.0"
+    assert "version-understated" not in {i.code for i in plan.check()}
+
+
+def test_a_file_whose_label_understates_its_contents_is_reported():
+    # Only a hand edit or a broken writer produces one, but the label is what a
+    # consumer checks before deciding it can read the file.
+    plan = Plan.new("mislabelled")
+    plan.add({"id": "tc-1", "type": "thermocouple",
+              "transform": {"position_m": [1.0, 0.0, 0.5]}})
+    plan.data["version"] = "1.0.0"
+    assert "version-understated" in {i.code for i in plan.check()}
+
+
+def test_the_reference_plan_declares_1_1_and_says_why_it_cannot_be_1_0():
+    plan = Plan.load(CAMERA_ROW)
+    assert plan.format_version == "1.1.0"
+    plan.validate_schema()
+    with pytest.raises(PlanError) as excinfo:
+        plan.validate_schema("1.0.0")
+    assert "radiativeFraction" in str(excinfo.value)
+
+
+def test_an_unknown_format_version_is_refused_rather_than_guessed():
+    plan = Plan.load(CAMERA_ROW)
+    with pytest.raises(PlanError) as excinfo:
+        plan.validate_schema("9.9.9")
+    assert "no schema for format version" in str(excinfo.value)
+
+
+def test_both_shipped_schemas_are_loadable_and_distinct():
+    import glob
+
+    schemas = sorted(glob.glob(os.path.join(
+        os.path.dirname(FIXTURES), "schema", "fire-test-plan-*.schema.json")))
+    assert len(schemas) == 2
+    ids = []
+    for path in schemas:
+        with io.open(path, encoding="utf-8") as fh:
+            ids.append(json.load(fh)["$id"])
+    assert len(set(ids)) == 2
+
+
+def test_the_1_0_schema_was_not_edited_to_accept_1_1_content():
+    # The 1.0 schema is a historical record: if it silently grew the 1.1 fields,
+    # "this plan still opens in a 1.0 tool" would stop being a checkable claim.
+    plan = Plan.new("zoomed")
+    plan.add({
+        "id": "cam", "type": "camera",
+        "transform": {"position_m": [-2.0, 0.0, 1.0]},
+        "camera": {
+            "modality": "LWIR", "resolution_px": [640, 480],
+            "sensor_mm": [7.68, 5.76], "focalLength_mm": 18.07, "zoomFactor": 2.0,
+        },
+    })
+    with pytest.raises(PlanError):
+        plan.validate_schema("1.0.0")
+    plan.validate_schema("1.1.0")

@@ -1,6 +1,6 @@
 # Fire Test Plan 3D Visualization — Implementation Plan
 
-Status: **draft for discussion** (2026-08-15)
+Status: **Phase 1 complete; format 1.1 landed** (2026-08-22)
 Supersedes nothing; complements `ideas.md`.
 
 ---
@@ -12,9 +12,13 @@ Supersedes nothing; complements `ideas.md`.
 | Architecture | Shared TypeScript/Three.js core; two shells (single-file HTML, pywebview+PyInstaller exe) |
 | Units | SI internal (metres, kW, °C, radians in file / degrees in UI), imperial display toggle |
 | v1 objects | Cameras, burner + hood + duct, walls, ceilings |
+| v1.1 objects | Heat flux gauges, thermocouples (single bead or rake) |
+| Camera zoom | Stored beside the lens, not folded into it; multiplies the effective focal length |
+| Format versioning | One schema per version; a file declares the lowest version its contents need |
+| Preset library | Seeded from `presets/cameras.json`; user additions live in browser storage, never a sidecar file |
 | Building geometry | Simple composable components — walls and ceilings pieced together. Not detailed room layouts; the tool targets open bays and simple enclosures |
 | Planned vs as-built | Planned only. A layout that differs from the plan becomes a new file recording the true positions |
-| Deferred to v2 | Thermocouple trees, heat flux gauges, load cell, gas sampling |
+| Deferred to v2 | ~~Thermocouple trees, heat flux gauges~~ (done, 1.1); load cell, gas sampling |
 | Primary deliverable | The plan file itself, as an FSE ↔ data-scientist interchange format |
 | Secondary deliverable | Dimensioned plan + elevation drawing, and equipment table |
 | Origin | Burner centre at floor level = `(0,0,0)`, +Z up, right-handed |
@@ -186,8 +190,11 @@ Nearly free to compute, makes camera framing checks meaningful from day one, and
 occupies the exact slot the reconstructed flame object will later drop into.
 
 **Camera preset library.** Editable JSON, seeded with the instruments in the sketch —
-FLIR T650 LWIR (25° lens), GoPro (wide ~122°), iPhone, MW2R. Seeded values are marked
-provisional until verified against datasheets.
+FLIR T650 LWIR (25° lens), FLIR A8303sc MWIR (25 mm), FLIR A700 (24° lens), GoPro
+(wide ~122°), iPhone. The three FLIR entries are `datasheet`-grade, derived from the
+PDFs in `docs/datasheets/`; the two consumer cameras stay `nominal`. Since M9 the
+library is also extensible from the GUI, so a preset no longer has to ship with the
+tool to exist.
 
 ## 7. Milestones
 
@@ -202,25 +209,59 @@ provisional until verified against datasheets.
 | M6 | **Drawing** | Dimensioned plan + elevations, equipment list, coverage table, print to PDF | **done** |
 | M7 | **Desktop** | pywebview shell, native dialogs, recent files, PyInstaller exe | **done** — 9.8 MB exe |
 | M8 | **Flame** *(Phase 2)* | Import reconstructed 3D flame; time sequence playback | blocked on format decision |
+| M9 | **Instruments** | Format 1.1: camera zoom, heat flux gauges, thermocouple rakes, predicted exposure, user-added camera presets | **done** |
 
-Phase 1 is complete. 113 Python tests, 52 web tests.
+Phase 1 is complete. 225 Python tests, 148 web tests.
+
+### M9, from fire safety engineer feedback
+
+| Ask | How it landed |
+|---|---|
+| A zoom factor per camera | `camera.zoomFactor`, multiplying the effective focal length. Everything derived goes through it — frustum, preview, coverage, drawing. The lens stays the lens |
+| FLIR A8303sc and A700 presets | Seeded from the datasheets now in `docs/datasheets/`, both `intrinsicsSource: "datasheet"`. The A700's focal length is back-solved from its published 24° × 18° field, because FLIR's nominal "17 mm" does not close against a 12 µm 640 × 480 array — `docs/datasheets/README.md` shows the working |
+| Heat flux and thermocouple components | New object types, with predicted exposure rather than bare placement: incident flux by point source, bead-by-bead plume temperature, and checks for an over-range gauge, a starved one, one facing the wrong way, and a bead its wire cannot survive |
+| Walls and sensors in the example plan | The reference plan gained an L of walls, two gauges and two rakes. It now makes a second argument alongside the camera-framing one: the 50 kW/m² gauge everyone owns reads 3% of scale at 1.5 m from a 130 kW fire |
+| Add camera presets from the GUI, without a save file | **Yes, and no file was needed.** Presets live in `localStorage`, which the desktop shell's WebView persists per profile. Plans were already self-contained — every intrinsic is copied inline and `presetId` is a hint — so a preset can also be lifted straight back out of a plan someone sends you |
 
 ### What the reference layout demonstrates
 
 Loading `fixtures/pool-fire-camera-row.ftp.json` and selecting each camera shows the
 trade-off the tool exists to surface. At the sketch's 9 ft standoff:
 
-| Camera | Field of view | Plume in frame | Resolution at the fire |
-|---|---|---|---|
-| FLIR T650 LWIR | 24.9° × 18.8° | 72% — clips base *and* tip | 2.17 mm/px |
-| MWIR 640×512 | 21.7° × 17.5° | 71% — clips base *and* tip | 2.34 mm/px |
-| GoPro (wide) | 122° × 90.8° | 100% | 5.65 mm/px |
-| iPhone | 69.4° × 54.9° | 100% | 1.05 mm/px |
+| Camera | Field of view | Plume in frame | Clips base / tip by | Resolution at the fire |
+|---|---|---|---|---|
+| FLIR T650 LWIR | 24.9° × 18.8° | 72% | 131 mm / 209 mm | 2.17 mm/px |
+| FLIR A8303sc MWIR | 39.4° × 22.8° | 89% | 3 mm / 76 mm | 1.80 mm/px |
+| GoPro (wide) | 122° × 90.8° | 100% | — | 5.65 mm/px |
+| iPhone | 69.4° × 54.9° | 100% | — | 1.06 mm/px |
 
-An 18–19° vertical field at ~3.1 m covers barely a 1 m slice, and the flame is
-1.30 m tall. Backing the IR row out to about 4.5 m frames it completely — at the
-cost of resolution. That is a decision worth making before hauling gear to a site,
-and it is the whole argument for the frustum and preview being in v1.
+The flame is 1.30 m tall and **neither IR camera frames it** at 9 ft. The A8303sc's
+wider field does markedly better — 89% of the plume against 72% — and is still short.
+Backing the IR row out to about 4.5 m frames the whole plume for both, at 2.7 and
+3.3 mm/px. That is a decision worth making before hauling gear to a site, and it is
+the whole argument for the frustum and preview being in v1.
+
+The asymmetry between the two ends is worth noticing, because it is the reason this
+has to be answered by projecting rather than by arithmetic on a field-of-view angle.
+Both cameras stand at 1.5 m and look **down** at mid-flame, so the flame tip is nearly
+level with the lens and falls much further off-axis than its height above the pan
+suggests. A flat-plane estimate — vertical field angle × standoff, compared against
+flame height — makes the A8303sc look like it fits with millimetres to spare. It does
+not; it loses 76 mm of tip.
+
+The instruments added in M9 make the same kind of point about selection rather than
+placement:
+
+| Instrument | Predicted | Verdict |
+|---|---|---|
+| East wall gauge, 0–50 kW/m² at 1.46 m | 1.70 kW/m² | 3% of scale — lost in the gauge's own noise |
+| North wall gauge, 0–10 kW/m² at 1.96 m | 0.95 kW/m² | 9% of scale — usable |
+| Plume rake, 3 beads from 1.6 to 2.2 m | 344 / 247 / 190 °C | all in the plume, all well inside type K |
+| East wall rake, 4 beads to 2.1 m | — | outside the plume: a wall temperature, by design |
+
+Both gauges are pointed correctly and neither is over-range. The difference is
+entirely which one was brought, which is the commonest way to waste a test day and
+is invisible until someone works the arithmetic — or opens the plan.
 
 ### Known limitations
 
@@ -237,6 +278,20 @@ and it is the whole argument for the frustum and preview being in v1.
   `js_api` bound to this page the WebView2 message channel never came up; see
   `python/shell/README.md`. The HTTP bridge is also the right shape for Phase 2.
 - **Measurements are not saved.** The measure tool is a ruler, not an annotation.
+- **The heat flux model assumes an unobstructed view.** It is a point source at
+  mid-flame height and knows nothing about the walls in the plan, so a gauge behind
+  one still reads a full flux. Shape factors and shadowing are out of scope. It is
+  also far-field only: inside two effective diameters it is an order of magnitude,
+  and says so.
+- **Plume temperatures are centreline values**, quoted only above the mean flame tip.
+  A bead inside the envelope but off the axis reads lower than the figure shown, and
+  nothing here corrects a bare bead for radiation error or thermal lag.
+- **Digital zoom flatters the resolution readout.** The field of view is right at any
+  zoom, but a digital zoom crops and interpolates, so mm/px describes the output
+  pixels rather than detail the detector resolved. The inspector says so above 1×.
+- **Custom camera presets live in browser storage.** That is what keeps them off the
+  disk as a sidecar file, and it also means clearing site data clears them. Plans are
+  unaffected either way: every intrinsic is written into the camera itself.
 - **Wall openings do not appear in the exported elevations.** The 3D view cuts doors
   and windows out of a wall; the drawing renders the wall as a solid rectangle. Worth
   knowing before a drawing is handed to someone who will build from it.
@@ -261,5 +316,17 @@ Not schema-affecting; can be answered during M4 / M3 respectively:
 3. **Enclosure realism** — do tests ever need a ceiling/roof and openings, or is it
    typically a hood in a large open lab bay? Determines how much wall/enclosure
    machinery M4 actually needs.
-4. **What is MW2R?** A mid-wave IR camera? Needed to seed its preset with real
-   intrinsics rather than a placeholder.
+4. ~~**What is MW2R?**~~ **Settled in practice.** The sketch's mid-wave camera is
+   taken to be the FLIR A8303sc, which is the MWIR body this lab expects to use. The
+   generic `mwir-640-25mm` placeholder has been removed rather than left in the
+   library as a second, `nominal`-grade way to say the same thing.
+
+Raised by M9 and worth settling before the next format bump:
+
+5. **Should a heat flux gauge record what it is aimed at, or what it is mounted to?**
+   It currently records an aim target like a camera. A gauge flush in a wall is really
+   "normal to this surface", and re-aiming it when the burner moves is wrong for that
+   case in a way it is not wrong for a tripod.
+6. **Do plume temperatures need an off-axis correction?** The Gaussian half-width is
+   already implied by the 15° envelope; using it to scale the centreline value would
+   make a wall-adjacent rake's prediction meaningful rather than absent.

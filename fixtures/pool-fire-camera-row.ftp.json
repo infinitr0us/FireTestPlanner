@@ -1,14 +1,14 @@
 {
   "format": "fire-test-plan",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "meta": {
     "title": "Pool fire — 4-camera row under calorimeter hood",
     "testId": "EX-001",
     "siteName": "Fire test bay",
     "created": "2026-08-15T00:00:00Z",
     "modified": "2026-08-15T00:00:00Z",
-    "revision": "A",
-    "notes": "Reference fixture reconstructed from the hand sketch in example.jpg. The camera row sits 9 ft back from the pan centre in X and is spread in Y, so each camera's radial standoff is a little over 9 ft. Note the framing consequence: an 18-19 degree vertical field at a ~3.1 m slant range covers barely a 1 m slice, so both IR cameras clip the 1.30 m flame at BOTH ends -- they miss the base as well as the tip, catching only about 70 percent of the plume. The two wide RGB cameras cover it entirely. Backing the IR row out to about 4.5 m frames the whole flame."
+    "revision": "B",
+    "notes": "Reference fixture reconstructed from the hand sketch in example.jpg, with a wall corner and instrumentation added. The camera row sits 9 ft back from the pan centre in X and is spread in Y, so each camera's radial standoff is a little over 9 ft. Note the framing consequence: NEITHER IR camera frames the 1.30 m flame at 9 ft, though they miss by different amounts. The T650's 18.8 degree vertical field clips the flame base by 131 mm and the tip by 209 mm, catching 72 percent of the plume. The A8303sc's wider 22.8 degree field does much better and is still short: it clips the base by only 3 mm but the tip by 76 mm, for 89 percent. The asymmetry is perspective, not aim -- both cameras stand at 1.5 m and look DOWN at mid-flame, so the flame tip is nearly level with the lens and falls much further off-axis than a flat-plane estimate suggests. Backing the IR row out to about 4.5 m frames the whole plume for both, at 2.7 and 3.3 mm/px. The two wide RGB cameras cover it entirely from where they are. The gauges make the same kind of point about instrument selection: at 1.5 m from a 130 kW fire the east-wall gauge sees under 2 kW/m2, which is 3 percent of a 50 kW/m2 gauge and lost in its noise, while the 10 kW/m2 gauge further away on the north wall reads usefully. Bringing the gauges you own rather than the gauges the fire calls for is the commonest way to waste a test day."
   },
   "units": {
     "length": "m",
@@ -46,6 +46,7 @@
       "fire": {
         "fuel": "n-heptane",
         "hrr_kw": 130,
+        "radiativeFraction": 0.35,
         "hrrCurve": null
       }
     },
@@ -65,9 +66,41 @@
       }
     },
     {
+      "id": "wall-east",
+      "type": "wall",
+      "name": "East wall",
+      "transform": {
+        "position_m": [0, 0, 0]
+      },
+      "polyline_m": [
+        [1.5, -2],
+        [1.5, 2]
+      ],
+      "height_m": 2.4,
+      "thickness_m": 0.1,
+      "baseHeight_m": 0,
+      "openings": []
+    },
+    {
+      "id": "wall-north",
+      "type": "wall",
+      "name": "North wall",
+      "transform": {
+        "position_m": [0, 0, 0]
+      },
+      "polyline_m": [
+        [1.5, 2],
+        [-2, 2]
+      ],
+      "height_m": 2.4,
+      "thickness_m": 0.1,
+      "baseHeight_m": 0,
+      "openings": []
+    },
+    {
       "id": "cam-mwir",
       "type": "camera",
-      "name": "MWIR",
+      "name": "FLIR A8303sc MWIR",
       "transform": {
         "position_m": [-2.7432, -0.75, 1.5],
         "rotation_quat": [0.485146, -0.370311, -0.480632, 0.629679],
@@ -75,13 +108,13 @@
       },
       "camera": {
         "modality": "MWIR",
-        "presetId": "mwir-640-25mm",
-        "resolution_px": [640, 512],
-        "sensor_mm": [9.6, 7.68],
+        "presetId": "flir-a8303sc-25mm",
+        "resolution_px": [1280, 720],
+        "sensor_mm": [17.92, 10.08],
         "focalLength_mm": 25,
         "principalPoint_px": null,
         "distortion": null,
-        "intrinsicsSource": "nominal",
+        "intrinsicsSource": "datasheet",
         "spectralBand_um": [3, 5],
         "framerate_hz": 60
       },
@@ -171,6 +204,86 @@
         "height_m": 1.2
       },
       "recording": null
+    },
+    {
+      "id": "hf-east",
+      "type": "heatFluxSensor",
+      "name": "East wall gauge",
+      "transform": {
+        "position_m": [1.45, 0, 0.9],
+        "rotation_quat": [0.473219, 0.473219, 0.525417, 0.525417],
+        "aimTarget_m": [0, 0, 0.748004]
+      },
+      "gauge": {
+        "kind": "schmidt-boelter",
+        "range_kw_m2": 50,
+        "viewAngle_deg": 180,
+        "waterCooled": true,
+        "serial": null
+      },
+      "mount": {
+        "type": "wall",
+        "height_m": 0.9
+      }
+    },
+    {
+      "id": "hf-north",
+      "type": "heatFluxSensor",
+      "name": "North wall gauge",
+      "transform": {
+        "position_m": [0, 1.95, 0.9],
+        "rotation_quat": [0, 0.679076, 0.734068, 0],
+        "aimTarget_m": [0, 0, 0.748004]
+      },
+      "gauge": {
+        "kind": "schmidt-boelter",
+        "range_kw_m2": 10,
+        "viewAngle_deg": 180,
+        "waterCooled": true,
+        "serial": null
+      },
+      "mount": {
+        "type": "wall",
+        "height_m": 0.9
+      }
+    },
+    {
+      "id": "tc-east-wall",
+      "type": "thermocouple",
+      "name": "East wall rake",
+      "transform": {
+        "position_m": [1.45, 0, 0]
+      },
+      "beadOffsets_m": [0.3, 0.9, 1.5, 2.1],
+      "thermocouple": {
+        "tcType": "K",
+        "beadDiameter_mm": 1.5,
+        "sheathed": true,
+        "maxTemperature_C": null
+      },
+      "mount": {
+        "type": "wall",
+        "height_m": 0
+      }
+    },
+    {
+      "id": "tc-plume",
+      "type": "thermocouple",
+      "name": "Plume rake",
+      "transform": {
+        "position_m": [0.25, 0, 0]
+      },
+      "beadOffsets_m": [1.6, 1.9, 2.2],
+      "thermocouple": {
+        "tcType": "K",
+        "beadDiameter_mm": 1.5,
+        "sheathed": true,
+        "maxTemperature_C": null
+      },
+      "mount": {
+        "type": "floor",
+        "height_m": 0
+      }
     }
   ]
 }

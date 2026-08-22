@@ -4,12 +4,15 @@ import {
   createBurner,
   createCamera,
   createCeiling,
+  createHeatFluxSensor,
   createHood,
+  createThermocouple,
   createWall,
   defaultCameraPosition,
 } from '../core/factory';
-import { checkPlan, displayName, cameraColor, isCamera } from '../core/plan';
-import { CAMERA_PRESETS } from '../core/presets';
+import { checkPlan, displayName, hasObjectColor, objectColor } from '../core/plan';
+import { isMounted } from '../core/types';
+import { cameraPresets, isCustomPreset, presetsArePersistent } from '../core/presets';
 import { setPosition } from '../core/transform';
 import type { Issue, PlanObject, Vec3 } from '../core/types';
 import type { Store } from '../state/store';
@@ -21,6 +24,8 @@ const TYPE_ICON: Record<string, string> = {
   hood: '⌂',
   wall: '▬',
   ceiling: '▭',
+  heatFluxSensor: '◉',
+  thermocouple: '⋮',
 };
 
 export class Palette {
@@ -43,11 +48,15 @@ export class Palette {
       this.tile('⌂', 'Hood', () => createHood(this.store.document)),
       this.tile('▬', 'Wall', () => createWall(this.store.document)),
       this.tile('▭', 'Ceiling', () => createCeiling(this.store.document)),
+      this.tile('◉', 'Heat flux', () => createHeatFluxSensor(this.store.document),
+        'Gauge, aimed at the fire on drop. Its inspector predicts what it will read.'),
+      this.tile('⋮', 'Thermocouple', () => createThermocouple(this.store.document),
+        'One bead on drop; add more in the inspector to make it a rake.'),
     ]));
 
     this.root.append(h('h3', { class: 'panel__section' }, ['Cameras']));
     this.root.append(
-      h('div', { class: 'palette__list' }, CAMERA_PRESETS.map((preset) =>
+      h('div', { class: 'palette__list' }, cameraPresets().map((preset) =>
         h('button', {
           class: 'palette__row',
           type: 'button',
@@ -57,6 +66,9 @@ export class Palette {
         }, [
           h('span', { class: 'palette__swatch', style: { background: modalityColor(preset.modality) } }),
           h('span', { class: 'palette__row-label' }, [preset.label]),
+          isCustomPreset(preset.id)
+            ? h('span', { class: 'palette__badge', title: 'Your own preset. Delete it from a camera that uses it.' }, ['mine'])
+            : null,
           preset.intrinsicsSource === 'nominal'
             ? h('span', { class: 'palette__badge', title: 'Placeholder intrinsics — not reconstruction-grade' }, ['nom'])
             : null,
@@ -64,15 +76,25 @@ export class Palette {
       ),
     );
 
+    // Where new presets come from. Stated here because the action lives in the
+    // inspector, which is the only place the optics being saved are visible.
+    this.root.append(h('p', { class: 'panel__hint' }, [
+      'A camera this list does not have: place the nearest one, correct its optics in the '
+      + 'inspector, then Save as preset. It joins this list',
+      presetsArePersistent() ? ' and survives a restart.' : ' for this session only — this '
+        + 'browser is not storing site data, so it will not survive a restart.',
+    ]));
+
     this.root.append(h('p', { class: 'panel__hint' }, [
       'Click an item, then click in the viewport to place it. Press Esc to cancel.',
     ]));
   }
 
-  private tile(icon: string, label: string, make: () => PlanObject): HTMLElement {
+  private tile(icon: string, label: string, make: () => PlanObject, title?: string): HTMLElement {
     return h('button', {
       class: 'palette__tile',
       type: 'button',
+      title: title ?? '',
       onclick: () => this.arm(make),
     }, [h('span', { class: 'palette__icon' }, [icon]), h('span', {}, [label])]);
   }
@@ -92,11 +114,11 @@ export class Palette {
     if (!this.pending) return;
     const obj = this.pending();
     const t = obj.transform ?? (obj.transform = { position_m: [0, 0, 0] });
-    // Cameras keep the tripod height they were created with; ground objects drop
-    // to the floor. setPosition re-derives the orientation for the actual drop
-    // point, so a camera lands aimed at the fire rather than at wherever the
-    // factory's default position happened to face.
-    setPosition(obj, [at[0], at[1], isCamera(obj) ? t.position_m[2] : at[2]]);
+    // Instruments on stands keep the height they were created with; things that
+    // sit on the floor drop to the pick point. setPosition re-derives the
+    // orientation for the actual drop point, so a camera or a gauge lands aimed at
+    // the fire rather than at wherever the factory's default position faced.
+    setPosition(obj, [at[0], at[1], isMounted(obj) ? t.position_m[2] : at[2]]);
     this.store.addObject(obj);
     this.cancel();
   }
@@ -134,7 +156,7 @@ export class Outliner {
         }, [
           h('span', {
             class: 'outliner__icon',
-            style: { color: isCamera(obj) ? cameraColor(obj) : undefined },
+            style: { color: hasObjectColor(obj) ? objectColor(obj) : undefined },
           }, [TYPE_ICON[obj.type] ?? '◇']),
           h('span', { class: 'outliner__name' }, [displayName(obj)]),
           obj.display?.visible === false ? h('span', { class: 'outliner__flag' }, ['hidden']) : null,

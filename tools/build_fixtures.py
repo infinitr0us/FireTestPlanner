@@ -58,8 +58,58 @@ def camera(obj_id, name, preset_id, position, mount_type="tripod"):
     }
 
 
+def heat_flux_sensor(obj_id, name, position, aim, range_kw_m2, mount_type="wall"):
+    """A gauge aimed at the fire.
+
+    Aimed rather than axis-aligned because the orientation is not decoration: the
+    cos(theta) it contributes is a first-order term in what the gauge reads, so a
+    gauge facing an arbitrary direction would report a number that means nothing.
+    """
+    q = look_at_quat(position, aim)
+    return {
+        "id": obj_id,
+        "type": "heatFluxSensor",
+        "name": name,
+        "transform": {
+            "position_m": [float(v) for v in position],
+            "rotation_quat": [float(v) for v in q],
+            "aimTarget_m": [float(v) for v in aim],
+        },
+        "gauge": {
+            "kind": "schmidt-boelter",
+            "range_kw_m2": float(range_kw_m2),
+            "viewAngle_deg": 180.0,
+            "waterCooled": True,
+            "serial": None,
+        },
+        "mount": {"type": mount_type, "height_m": round(float(position[2]), 4)},
+    }
+
+
+def thermocouple(obj_id, name, position, bead_offsets, mount_type="wall", tc_type="K"):
+    """A rake. A single bead is the one-element case, so there is one object type."""
+    return {
+        "id": obj_id,
+        "type": "thermocouple",
+        "name": name,
+        "transform": {"position_m": [float(v) for v in position]},
+        "beadOffsets_m": [float(v) for v in bead_offsets],
+        "thermocouple": {
+            "tcType": tc_type,
+            "beadDiameter_mm": 1.5,
+            "sheathed": True,
+            "maxTemperature_C": None,
+        },
+        "mount": {"type": mount_type, "height_m": round(float(position[2]), 4)},
+    }
+
+
 def build_camera_row() -> Plan:
     """The layout in example.jpg: a four-camera row at 9 ft, pan under a hood.
+
+    Extended past the sketch with a wall corner and the instrumentation that
+    normally goes with it, so the reference plan exercises every object type the
+    format defines and every check the tool runs.
 
     Dimensions are an interpretation of the sketch, not a transcription -- the
     handwriting is ambiguous in places. They are meant to be edited.
@@ -68,16 +118,27 @@ def build_camera_row() -> Plan:
     plan.meta.update({
         "testId": "EX-001",
         "siteName": "Fire test bay",
-        "revision": "A",
+        "revision": "B",
         "notes": (
-            "Reference fixture reconstructed from the hand sketch in example.jpg. "
+            "Reference fixture reconstructed from the hand sketch in example.jpg, with a "
+            "wall corner and instrumentation added. "
             "The camera row sits 9 ft back from the pan centre in X and is spread in Y, "
             "so each camera's radial standoff is a little over 9 ft. "
-            "Note the framing consequence: an 18-19 degree vertical field at a ~3.1 m "
-            "slant range covers barely a 1 m slice, so both IR cameras clip the 1.30 m "
-            "flame at BOTH ends -- they miss the base as well as the tip, catching only "
-            "about 70 percent of the plume. The two wide RGB cameras cover it entirely. "
-            "Backing the IR row out to about 4.5 m frames the whole flame."
+            "Note the framing consequence: NEITHER IR camera frames the 1.30 m flame at "
+            "9 ft, though they miss by different amounts. The T650's 18.8 degree vertical "
+            "field clips the flame base by 131 mm and the tip by 209 mm, catching 72 percent "
+            "of the plume. The A8303sc's wider 22.8 degree field does much better and is "
+            "still short: it clips the base by only 3 mm but the tip by 76 mm, for 89 "
+            "percent. The asymmetry is perspective, not aim -- both cameras stand at 1.5 m "
+            "and look DOWN at mid-flame, so the flame tip is nearly level with the lens and "
+            "falls much further off-axis than a flat-plane estimate suggests. Backing the IR "
+            "row out to about 4.5 m frames the whole plume for both, at 2.7 and 3.3 mm/px. "
+            "The two wide RGB cameras cover it entirely from where they are. "
+            "The gauges make the same kind of point about instrument selection: at 1.5 m "
+            "from a 130 kW fire the east-wall gauge sees under 2 kW/m2, which is 3 percent "
+            "of a 50 kW/m2 gauge and lost in its noise, while the 10 kW/m2 gauge further "
+            "away on the north wall reads usefully. Bringing the gauges you own rather than "
+            "the gauges the fire calls for is the commonest way to waste a test day."
         ),
     })
     plan.data["units"]["display"] = {"length": "ft", "angle": "deg"}
@@ -89,7 +150,8 @@ def build_camera_row() -> Plan:
     })
 
     # 1 ft square heptane pan. 130 kW is the steady HRR for this area from the
-    # standard mass-loss correlation, not a guess.
+    # standard mass-loss correlation, not a guess. 0.35 radiated is heptane's
+    # figure rather than the 0.3 default, and it is what the gauges are sized on.
     plan.add({
         "id": "burner-main",
         "type": "burner",
@@ -97,7 +159,12 @@ def build_camera_row() -> Plan:
         "transform": {"position_m": [0.0, 0.0, 0.0]},
         "footprint": {"shape": "square", "size_m": [FT, FT]},
         "rimHeight_m": 0.10,
-        "fire": {"fuel": "n-heptane", "hrr_kw": 130.0, "hrrCurve": None},
+        "fire": {
+            "fuel": "n-heptane",
+            "hrr_kw": 130.0,
+            "radiativeFraction": 0.35,
+            "hrrCurve": None,
+        },
     })
 
     # 8 ft square opening at 9 ft, with a 1 ft skirt.
@@ -112,11 +179,56 @@ def build_camera_row() -> Plan:
         "duct": {"diameter_m": 0.6, "length_m": 2.0},
     })
 
+    # An L of walls on the far side of the pan from the cameras, so they read as a
+    # backdrop rather than an obstruction. Clear of the hood footprint (+/-1.22 m)
+    # as well, so the canopy is not resting on them.
+    EAST_X, NORTH_Y, WALL_T = 1.5, 2.0, 0.10
+    plan.add({
+        "id": "wall-east",
+        "type": "wall",
+        "name": "East wall",
+        "transform": {"position_m": [0.0, 0.0, 0.0]},
+        "polyline_m": [[EAST_X, -2.0], [EAST_X, NORTH_Y]],
+        "height_m": 2.4,
+        "thickness_m": WALL_T,
+        "baseHeight_m": 0.0,
+        "openings": [],
+    })
+    plan.add({
+        "id": "wall-north",
+        "type": "wall",
+        "name": "North wall",
+        "transform": {"position_m": [0.0, 0.0, 0.0]},
+        "polyline_m": [[EAST_X, NORTH_Y], [-2.0, NORTH_Y]],
+        "height_m": 2.4,
+        "thickness_m": WALL_T,
+        "baseHeight_m": 0.0,
+        "openings": [],
+    })
+
     row_x = -9 * FT
-    plan.add(camera("cam-mwir", "MWIR", "mwir-640-25mm", [row_x, -0.75, 1.50]))
+    plan.add(camera("cam-mwir", "FLIR A8303sc MWIR", "flir-a8303sc-25mm", [row_x, -0.75, 1.50]))
     plan.add(camera("cam-lwir-t650", "FLIR T650 LWIR", "flir-t650sc-25deg", [row_x, -0.25, 1.50]))
     plan.add(camera("cam-gopro", "GoPro", "gopro-hero-wide", [row_x, 0.25, 1.20]))
     plan.add(camera("cam-iphone", "iPhone", "iphone-main-26mm", [row_x, 0.75, 1.20]))
+
+    # Gauges sit on the inner face of each wall, half a thickness proud of the
+    # centreline, and are aimed at the point source the model actually uses --
+    # taken from the plan rather than written down twice.
+    fire = plan.fire_point_source()
+    east_face = EAST_X - WALL_T / 2
+    north_face = NORTH_Y - WALL_T / 2
+    plan.add(heat_flux_sensor(
+        "hf-east", "East wall gauge", [east_face, 0.0, 0.90], fire, range_kw_m2=50.0))
+    plan.add(heat_flux_sensor(
+        "hf-north", "North wall gauge", [0.0, north_face, 0.90], fire, range_kw_m2=10.0))
+
+    # One rake up the east wall for the near-wall gas temperature, and one in the
+    # plume, offset just far enough off the axis to stay out of the flame cone.
+    plan.add(thermocouple(
+        "tc-east-wall", "East wall rake", [east_face, 0.0, 0.0], [0.3, 0.9, 1.5, 2.1]))
+    plan.add(thermocouple(
+        "tc-plume", "Plume rake", [0.25, 0.0, 0.0], [1.6, 1.9, 2.2], mount_type="floor"))
 
     return plan
 

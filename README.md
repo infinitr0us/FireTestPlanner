@@ -9,9 +9,10 @@ a data scientist reads the same file as a camera rig description. Everything els
 here serves that handoff.
 
 ```
-schema/      fire-test-plan-1.0.0.schema.json — normative
+schema/      fire-test-plan-1.0.0 / -1.1.0 .schema.json — normative, one per version
 CONVENTIONS.md                                — frames, units, correlations
 presets/     camera preset library (shared by the editor and the fixture builder)
+docs/datasheets/  manufacturer PDFs behind the datasheet-grade presets
 fixtures/    reference plans
 python/      fireplan — reader, validator, exporters
 python/shell/  desktop shell (pywebview + PyInstaller)
@@ -29,7 +30,28 @@ npm run dev                 # editor at localhost:5173
 
 Click **Example** to load the reference plan reconstructed from `example.jpg`, then
 click a camera in the object list. The coverage panel and the picture-in-picture
-preview show what that lens will actually get.
+preview show what that lens will actually get. Select **East wall gauge** for the
+same argument about instruments: at 1.5 m from a 130 kW fire it sees 1.7 kW/m², which
+is 3% of a 50 kW/m² gauge and lost in its noise, while the 10 kW/m² gauge further away
+on the north wall reads usefully.
+
+### What you can put in a plan
+
+Cameras, a burner, a calorimeter hood, walls, ceilings, **heat flux gauges** and
+**thermocouples** (one bead, or a rake of them on one support). Cameras carry a zoom
+factor as well as a lens, and every instrument is checked against the fire it is
+pointed at rather than merely placed.
+
+### Cameras this build has never heard of
+
+The preset list is seeded from `presets/cameras.json` — including the FLIR A700 and
+A8303sc, derived from the datasheets in `docs/datasheets/`. For anything else: place
+the nearest camera, correct its optics in the inspector, then **Save as preset**. It
+joins the list and persists in the browser (and in the desktop app's WebView profile),
+with **no file to keep beside your plans**. That works because `presetId` is only a
+hint: every intrinsic is copied inline into the camera, so a plan is fully specified
+on a machine whose preset library is empty — and opening someone else's plan offers to
+adopt the preset it names.
 
 ```bash
 npm run build               # -> dist/index.html, one self-contained file
@@ -92,7 +114,12 @@ cam.intrinsics_source       # 'nominal' | 'datasheet' | 'calibrated'
 
 p.to_nerfstudio("transforms.json")
 p.framing(cam)              # does this camera actually frame the flame?
-p.check()                   # hood capture, aim consistency, plan hygiene
+p.check()                   # hood capture, instrument placement, plan hygiene
+
+gauge = p.heat_flux_sensors[0]
+p.heat_flux_estimate(gauge)          # predicted incident kW/m2, and whether it is usable
+p.thermocouple_beads(p.thermocouples[0])   # each bead: flame / plume / outside, and its
+                                           # predicted plume-centreline temperature
 ```
 
 Before reconstructing from a plan, check `intrinsics_source`. `nominal` means the
@@ -113,10 +140,12 @@ definitions in [CONVENTIONS.md](CONVENTIONS.md) section 3.
 ## Tests
 
 ```bash
-python -m pytest python/tests -q     # 113 tests, no GUI needed
-cd web && npm test                   # 52 tests
+python -m pytest python/tests -q     # 225 tests, no GUI needed
+cd web && npm test                   # 148 tests
 ```
 
 The web suite asserts that the TypeScript writer reproduces the Python-written
 fixture byte for byte. A plan saved from the editor and the same plan saved from
-`fireplan` must be the same file, or every handoff shows up as a spurious diff.
+`fireplan` must be the same file, or every handoff shows up as a spurious diff. The
+instrument models are pinned against hand-derived values in both languages, so the
+number the tool prints stays the number the correlation gives.

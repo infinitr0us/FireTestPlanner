@@ -7,7 +7,7 @@
  * against the committed fixture.
  */
 
-import type { PlanDocument } from './types';
+import { maxVersion, requiredFormatVersion, type PlanDocument } from './types';
 
 /** 1 um -- finer than any tape measure on a test site, coarse enough to kill float noise. */
 const FLOAT_DECIMALS = 6;
@@ -22,15 +22,17 @@ const ENV = ['floorSize_m', 'ceilingHeight_m', 'ambientTemperature_C', 'notes'];
 const TRANSFORM = ['position_m', 'rotation_quat', 'aimTarget_m'];
 const DISPLAY = ['color', 'visible', 'locked'];
 const CAMERA_SPEC = [
-  'modality', 'presetId', 'resolution_px', 'sensor_mm', 'focalLength_mm',
+  'modality', 'presetId', 'resolution_px', 'sensor_mm', 'focalLength_mm', 'zoomFactor',
   'principalPoint_px', 'distortion', 'intrinsicsSource', 'spectralBand_um', 'framerate_hz',
 ];
 const DISTORTION = ['model', 'coefficients'];
 const MOUNT = ['type', 'height_m'];
 const FOOTPRINT = ['shape', 'diameter_m', 'size_m'];
-const FIRE = ['fuel', 'hrr_kw', 'hrrCurve'];
+const FIRE = ['fuel', 'hrr_kw', 'radiativeFraction', 'hrrCurve'];
 const DUCT = ['diameter_m', 'length_m'];
 const OPENING = ['id', 'offset_m', 'width_m', 'height_m', 'sillHeight_m'];
+const GAUGE = ['kind', 'range_kw_m2', 'viewAngle_deg', 'waterCooled', 'serial'];
+const THERMOCOUPLE = ['tcType', 'beadDiameter_mm', 'sheathed', 'maxTemperature_C'];
 
 const OBJECT_ORDER: Record<string, string[]> = {
   camera: ['id', 'type', 'name', 'transform', 'camera', 'mount', 'recording', 'display', 'notes'],
@@ -38,6 +40,8 @@ const OBJECT_ORDER: Record<string, string[]> = {
   hood: ['id', 'type', 'name', 'transform', 'opening_m', 'height_m', 'skirtDepth_m', 'duct', 'display', 'notes'],
   wall: ['id', 'type', 'name', 'transform', 'polyline_m', 'height_m', 'thickness_m', 'baseHeight_m', 'openings', 'display', 'notes'],
   ceiling: ['id', 'type', 'name', 'transform', 'polygon_m', 'height_m', 'thickness_m', 'display', 'notes'],
+  heatFluxSensor: ['id', 'type', 'name', 'transform', 'gauge', 'mount', 'display', 'notes'],
+  thermocouple: ['id', 'type', 'name', 'transform', 'beadOffsets_m', 'thermocouple', 'mount', 'display', 'notes'],
 };
 
 type Json = unknown;
@@ -104,6 +108,16 @@ function canonObject(raw: Obj): Obj {
       }
       break;
     }
+    case 'heatFluxSensor': {
+      if ('gauge' in o) o.gauge = orderIfObject(o.gauge, GAUGE);
+      if ('mount' in o) o.mount = orderIfObject(o.mount, MOUNT);
+      break;
+    }
+    case 'thermocouple': {
+      if ('thermocouple' in o) o.thermocouple = orderIfObject(o.thermocouple, THERMOCOUPLE);
+      if ('mount' in o) o.mount = orderIfObject(o.mount, MOUNT);
+      break;
+    }
     default:
       break;
   }
@@ -134,6 +148,14 @@ function canonUnknownObject(raw: Obj): Obj {
 
 export function canonicalize(data: PlanDocument): Obj {
   const d: Obj = { ...(data as unknown as Obj) };
+
+  // The declared version tracks what the file actually contains, and only ever
+  // upward. A plan that uses nothing past 1.0 keeps saying 1.0.0, so it still
+  // opens in a build that predates 1.1; the moment it grows a sensor or a zoom
+  // factor it says so, rather than claiming a compatibility it no longer has.
+  // A version this build does not recognise is left alone, not downgraded.
+  d.version = maxVersion(String(d.version ?? ''), requiredFormatVersion(data));
+
   if ('meta' in d) d.meta = orderIfObject(d.meta, META);
   if (isPlainObject(d.units)) {
     const units = order(d.units, UNITS);

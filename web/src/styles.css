@@ -113,6 +113,11 @@ body.is-measuring .viewport { cursor: cell; }
 .panel__count { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-faint); }
 .panel__empty, .panel__hint { color: var(--text-faint); font-size: 12px; margin: 8px 0; }
 .panel__actions { display: flex; gap: 6px; margin: 10px 0; flex-wrap: wrap; }
+/* The inline 'name this preset' form. Boxed so it reads as one step rather
+   than as three more fields in the optics list it sits under. */
+.preset-name { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; margin: 4px 0 10px; background: var(--bg-raised); }
+.preset-name .panel__actions { margin-bottom: 0; }
+.preset-name .panel__hint { margin-bottom: 0; }
 .panel__code {
   background: var(--bg-input);
   border: 1px solid var(--border);

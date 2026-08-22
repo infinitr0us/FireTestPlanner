@@ -33,15 +33,17 @@ _ENV = ["floorSize_m", "ceilingHeight_m", "ambientTemperature_C", "notes"]
 _TRANSFORM = ["position_m", "rotation_quat", "aimTarget_m"]
 _DISPLAY = ["color", "visible", "locked"]
 _CAMERA_SPEC = [
-    "modality", "presetId", "resolution_px", "sensor_mm", "focalLength_mm",
+    "modality", "presetId", "resolution_px", "sensor_mm", "focalLength_mm", "zoomFactor",
     "principalPoint_px", "distortion", "intrinsicsSource", "spectralBand_um", "framerate_hz",
 ]
 _DISTORTION = ["model", "coefficients"]
 _MOUNT = ["type", "height_m"]
 _FOOTPRINT = ["shape", "diameter_m", "size_m"]
-_FIRE = ["fuel", "hrr_kw", "hrrCurve"]
+_FIRE = ["fuel", "hrr_kw", "radiativeFraction", "hrrCurve"]
 _DUCT = ["diameter_m", "length_m"]
 _OPENING = ["id", "offset_m", "width_m", "height_m", "sillHeight_m"]
+_GAUGE = ["kind", "range_kw_m2", "viewAngle_deg", "waterCooled", "serial"]
+_THERMOCOUPLE = ["tcType", "beadDiameter_mm", "sheathed", "maxTemperature_C"]
 
 _OBJECT_ORDER = {
     "camera": ["id", "type", "name", "transform", "camera", "mount", "recording", "display", "notes"],
@@ -49,7 +51,59 @@ _OBJECT_ORDER = {
     "hood": ["id", "type", "name", "transform", "opening_m", "height_m", "skirtDepth_m", "duct", "display", "notes"],
     "wall": ["id", "type", "name", "transform", "polyline_m", "height_m", "thickness_m", "baseHeight_m", "openings", "display", "notes"],
     "ceiling": ["id", "type", "name", "transform", "polygon_m", "height_m", "thickness_m", "display", "notes"],
+    "heatFluxSensor": ["id", "type", "name", "transform", "gauge", "mount", "display", "notes"],
+    "thermocouple": ["id", "type", "name", "transform", "beadOffsets_m", "thermocouple", "mount", "display", "notes"],
 }
+
+#: Object types introduced after format 1.0, and therefore version-bumping.
+_TYPES_1_1 = ("heatFluxSensor", "thermocouple")
+
+#: Baseline, and the highest this build writes. Mirror of FORMAT_VERSIONS in
+#: web/src/core/types.ts.
+_VERSION_MIN = "1.0.0"
+_VERSION_LATEST = "1.1.0"
+
+
+def _version_tuple(version: str) -> Tuple[int, ...]:
+    try:
+        return tuple(int(part) for part in str(version).split("."))
+    except (TypeError, ValueError):
+        return ()
+
+
+def required_version(data: Dict[str, Any]) -> str:
+    """The lowest format version that can describe this document.
+
+    A plan that uses nothing beyond 1.0 keeps saying "1.0.0", so it still opens --
+    and still validates -- in a build that predates 1.1. The moment it grows a zoom
+    factor, a radiative fraction or a sensor, it says 1.1.0 and means it. Mirror of
+    `requiredFormatVersion` in web/src/core/types.ts.
+    """
+    for obj in data.get("objects", []) or []:
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("type") in _TYPES_1_1:
+            return _VERSION_LATEST
+        if obj.get("type") == "camera":
+            spec = obj.get("camera")
+            if isinstance(spec, dict) and spec.get("zoomFactor") is not None:
+                return _VERSION_LATEST
+        if obj.get("type") == "burner":
+            fire = obj.get("fire")
+            if isinstance(fire, dict) and fire.get("radiativeFraction") is not None:
+                return _VERSION_LATEST
+    return _VERSION_MIN
+
+
+def effective_version(data: Dict[str, Any]) -> str:
+    """The version to write: whichever of declared and required is higher.
+
+    Only ever upward, and a version this build does not recognise is left alone
+    rather than downgraded -- a 2.0 file re-saved here keeps saying 2.0.
+    """
+    declared = str(data.get("version") or "")
+    needed = required_version(data)
+    return declared if _version_tuple(declared) >= _version_tuple(needed) else needed
 
 
 def _round_floats(value: Any) -> Any:
@@ -115,6 +169,16 @@ def _canon_object(obj: Dict[str, Any]) -> Dict[str, Any]:
     elif kind == "wall":
         if isinstance(o.get("openings"), list):
             o["openings"] = [_canon_sub(x, _OPENING) for x in o["openings"]]
+    elif kind == "heatFluxSensor":
+        if "gauge" in o:
+            o["gauge"] = _canon_sub(o["gauge"], _GAUGE)
+        if "mount" in o:
+            o["mount"] = _canon_sub(o["mount"], _MOUNT)
+    elif kind == "thermocouple":
+        if "thermocouple" in o:
+            o["thermocouple"] = _canon_sub(o["thermocouple"], _THERMOCOUPLE)
+        if "mount" in o:
+            o["mount"] = _canon_sub(o["mount"], _MOUNT)
 
     return _round_floats(_order(o, _OBJECT_ORDER[kind]))
 
@@ -141,6 +205,13 @@ def _canon_unknown_object(obj: Dict[str, Any]) -> Dict[str, Any]:
 def canonicalize(data: Dict[str, Any]) -> Dict[str, Any]:
     """Return the plan with canonical key order and rounded floats."""
     d = dict(data)
+
+    # The declared version tracks what the file actually contains, and only ever
+    # upward. A plan that uses nothing past 1.0 keeps saying 1.0.0, so it still
+    # opens in a build that predates 1.1; the moment it grows a sensor or a zoom
+    # factor it says so, rather than claiming a compatibility it no longer has.
+    d["version"] = effective_version(data)
+
     if "meta" in d:
         d["meta"] = _canon_sub(d["meta"], _META)
     if "units" in d:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 
 import numpy as np
@@ -341,10 +342,12 @@ def test_a_non_unit_quaternion_warns():
 def test_nominal_intrinsics_are_flagged_for_the_data_scientist():
     plan = Plan.load(CAMERA_ROW)
     flagged = {i.object_id for i in plan.check() if i.code == "nominal-intrinsics"}
-    assert flagged == {"cam-mwir", "cam-gopro", "cam-iphone"}
-    # The T650 is marked `datasheet`, so it must not be flagged.
-    assert "cam-lwir-t650" not in flagged
-    assert plan.cameras["cam-lwir-t650"].is_reconstruction_ready is False
+    assert flagged == {"cam-gopro", "cam-iphone"}
+    # Both IR cameras are seeded from a datasheet, so neither may be flagged --
+    # and `datasheet` is still not good enough to reconstruct from.
+    for cid in ("cam-lwir-t650", "cam-mwir"):
+        assert cid not in flagged
+        assert plan.cameras[cid].is_reconstruction_ready is False
 
 
 def test_a_burner_away_from_the_origin_warns():
@@ -380,21 +383,55 @@ def test_the_primary_burner_is_the_one_at_the_origin():
 
 # -- framing -------------------------------------------------------------
 
-def test_narrow_ir_optics_cannot_frame_the_flame_at_nine_feet():
+def test_narrow_lwir_optics_cannot_frame_the_flame_at_nine_feet():
     """The finding the reference layout exists to demonstrate.
 
-    An 18-19 degree vertical field at a ~3.1 m slant range covers barely a 1 m
-    slice, so both IR cameras clip the 1.30 m flame at BOTH ends -- they miss the
-    base as well as the tip. The two wide RGB cameras cover the whole plume.
+    The T650's 18.8 degree vertical field at a ~3.1 m slant range covers only about
+    1.04 m, so it clips the 1.30 m flame at BOTH ends -- it misses the base as well
+    as the tip, by about 130 mm each.
     """
     plan = Plan.load(CAMERA_ROW)
+    report = plan.framing(plan.cameras["cam-lwir-t650"])
+    assert report["flame_base_visible"] is False
+    assert report["flame_tip_visible"] is False
+    assert 0.5 < report["plume_fraction_visible"] < 0.85
 
-    for cid in ("cam-lwir-t650", "cam-mwir"):
-        report = plan.framing(plan.cameras[cid])
-        assert report["flame_base_visible"] is False, cid
-        assert report["flame_tip_visible"] is False, cid
-        assert 0.5 < report["plume_fraction_visible"] < 0.85, cid
 
+def test_the_mwir_camera_does_better_and_still_clips_the_flame():
+    """The other half of the finding.
+
+    The A8303sc's wider 22.8 degree field catches 89 percent of the plume against
+    the T650's 72, and still misses both ends. Worth pinning because a flat-plane
+    estimate -- vertical field angle times standoff, compared against flame height
+    -- says it fits with millimetres to spare, and that estimate is wrong: the
+    camera looks DOWN at mid-flame from 1.5 m, so the tip sits nearly level with the
+    lens and falls much further off-axis than its height above the pan suggests.
+    Only projecting gets this right, which is why `framing` projects.
+    """
+    plan = Plan.load(CAMERA_ROW)
+    cam = plan.cameras["cam-mwir"]
+
+    report = plan.framing(cam)
+    assert report["flame_base_visible"] is False
+    assert report["flame_tip_visible"] is False
+    # Far more of the plume than the T650 gets, and still not all of it.
+    assert 0.85 < report["plume_fraction_visible"] < 0.95
+
+    # The flat-plane estimate that would have said otherwise.
+    covered_m = 2 * math.tan(cam.vfov_rad / 2) * cam.standoff_m
+    flame_m = plan.burner.flame_tip_z_m() - plan.burner.fuel_surface_z_m
+    assert covered_m == pytest.approx(flame_m, abs=0.01)   # "it fits" -- but it does not
+
+    # What it actually costs, at the top of the flame: tens of millimetres.
+    uv, _ = cam.project(np.array([0.0, 0.0, plan.burner.flame_tip_z_m()]))
+    tip_v = float(uv[1])
+    assert tip_v < 0.0                                     # above the top pixel row
+    missed_mm = -tip_v / cam.fy * cam.standoff_m * 1000.0
+    assert 50.0 < missed_mm < 100.0, missed_mm
+
+
+def test_the_wide_rgb_cameras_cover_the_whole_plume_from_where_they_are():
+    plan = Plan.load(CAMERA_ROW)
     for cid in ("cam-gopro", "cam-iphone"):
         report = plan.framing(plan.cameras[cid])
         assert report["flame_base_visible"] is True, cid
@@ -404,7 +441,7 @@ def test_narrow_ir_optics_cannot_frame_the_flame_at_nine_feet():
 
 def test_backing_the_ir_cameras_off_fixes_the_framing():
     """And the fix the report implies actually works -- otherwise the check is only
-    half useful."""
+    half useful. Both IR cameras frame the whole plume at 4.5 m, with margin."""
     plan = Plan.load(CAMERA_ROW)
     for cid, y in (("cam-lwir-t650", -0.25), ("cam-mwir", -0.75)):
         cam = plan.cameras[cid]
@@ -413,6 +450,7 @@ def test_backing_the_ir_cameras_off_fixes_the_framing():
         report = plan.framing(cam)
         assert report["flame_base_visible"] is True, cid
         assert report["flame_tip_visible"] is True, cid
+        assert report["plume_fraction_visible"] == pytest.approx(1.0), cid
 
 
 def test_framing_reports_standoff_both_ways():
@@ -466,8 +504,11 @@ def test_camera_poses_round_trip_through_both_conventions():
 def test_equipment_table_covers_every_object():
     plan = Plan.load(CAMERA_ROW)
     rows = plan.equipment_table()
-    assert {r["id"] for r in rows} == {
-        "burner-main", "hood-main", "cam-mwir", "cam-lwir-t650", "cam-gopro", "cam-iphone",
+    # Every object in the plan, of every type -- an object the table cannot
+    # describe is one that quietly disappears from the sheet taken to site.
+    assert {r["id"] for r in rows} == {o["id"] for o in plan.data["objects"]}
+    assert {r["category"] for r in rows} == {
+        "burner", "hood", "wall", "camera", "heat flux", "thermocouple",
     }
     gopro = next(r for r in rows if r["id"] == "cam-gopro")
     assert gopro["standoff_m"] == pytest.approx(2.755, abs=1e-3)

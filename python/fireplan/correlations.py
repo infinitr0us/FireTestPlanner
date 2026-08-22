@@ -9,6 +9,15 @@ import math
 
 DEFAULT_PLUME_HALF_ANGLE_RAD = math.radians(15.0)
 
+#: Radiated fraction of the heat release when the burner does not state one. Fuel
+#: dependent -- roughly 0.35 for heptane, 0.2 for methanol -- hence the override.
+DEFAULT_RADIATIVE_FRACTION = 0.3
+
+#: How many effective diameters away the point-source model starts to be
+#: believable. Closer than this the fire is plainly not a point, and the estimate
+#: is an order of magnitude rather than a number to size a gauge on.
+POINT_SOURCE_MIN_DIAMETERS = 2.0
+
 
 def effective_diameter_m(area_m2: float) -> float:
     """Diameter of the circle with the same burning area.
@@ -63,3 +72,54 @@ def plume_radius_m(
     """
     z0 = virtual_origin_m(hrr_kw, diameter_m)
     return max(0.0, math.tan(half_angle_rad) * (height_m - z0))
+
+
+def point_source_flux_kw_m2(
+    hrr_kw: float,
+    distance_m: float,
+    cos_theta: float = 1.0,
+    radiative_fraction: float = DEFAULT_RADIATIVE_FRACTION,
+) -> float:
+    """Point-source radiation: q" = X_r * Q * cos(theta) / (4 pi r^2), in kW/m2.
+
+    The whole fire is collapsed to one isotropic emitter at mid-flame height. That
+    is the standard first-order estimate and it is what a gauge placement is sized
+    with, but it only holds in the far field -- see POINT_SOURCE_MIN_DIAMETERS.
+
+    `cos_theta` is between the gauge's outward normal and the line to the fire. A
+    gauge facing away receives nothing, and is reported as nothing rather than as
+    a negative flux. Mirror of `pointSourceFluxKwM2` in web/src/core/correlations.ts.
+    """
+    if hrr_kw <= 0.0 or distance_m <= 0.0 or cos_theta <= 0.0:
+        return 0.0
+    return radiative_fraction * hrr_kw * cos_theta / (4.0 * math.pi * distance_m ** 2)
+
+
+def plume_centreline_rise_k(
+    height_m: float,
+    hrr_kw: float,
+    diameter_m: float,
+    radiative_fraction: float = DEFAULT_RADIATIVE_FRACTION,
+):
+    """Heskestad plume centreline temperature rise above ambient, in kelvin.
+
+        dT = 25.0 * Qc^(2/3) * (z - z0)^(-5/3)
+
+    where `Qc` is the CONVECTIVE heat release, taken as the part not radiated away.
+    The 25.0 is not a fitted constant: it is 9.1 * (T_inf / (g cp^2 rho_inf^2))^(1/3)
+    evaluated for air at 20 C.
+
+    Valid in the plume only -- above the mean flame tip, on the axis. Callers check
+    that themselves; this returns a number for any `height_m` above the virtual
+    origin, and it would be a badly wrong number inside the flame. None when there
+    is no plume to speak of.
+    """
+    if hrr_kw <= 0.0:
+        return None
+    above = height_m - virtual_origin_m(hrr_kw, diameter_m)
+    if above <= 0.0:
+        return None
+    convective_kw = max(0.0, 1.0 - radiative_fraction) * hrr_kw
+    if convective_kw <= 0.0:
+        return None
+    return 25.0 * convective_kw ** (2.0 / 3.0) * above ** (-5.0 / 3.0)

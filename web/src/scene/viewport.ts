@@ -14,6 +14,7 @@ import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 
 import {
   aspectOf,
+  beadOffsetsOf,
   burnerDiameterM,
   cameras as planCameras,
   displayName,
@@ -26,6 +27,7 @@ import {
   positionOf,
   quatOf,
   standoffHorizontalM,
+  toWorld,
   vfovRadOf,
 } from '../core/plan';
 import { setPosition, setRotation } from '../core/transform';
@@ -37,6 +39,7 @@ import type {
   CeilingObject,
   HoodObject,
   PlanObject,
+  ThermocoupleObject,
   WallObject,
 } from '../core/types';
 import { isOrthoMode, type Store } from '../state/store';
@@ -46,8 +49,10 @@ import {
   buildBurner,
   buildCamera,
   buildCeiling,
+  buildHeatFluxSensor,
   buildHood,
   buildStandoffDimension,
+  buildThermocouple,
   buildWall,
 } from './builders';
 
@@ -558,6 +563,14 @@ export class Viewport {
           const [x, y] = footprintXY(slab, v);
           box.expandByPoint(new THREE.Vector3(x, y, slab.height_m));
         }
+      } else if (obj.type === 'thermocouple') {
+        // A rake reaches well above its origin, so Fit has to see the top bead
+        // or a ceiling-height tree gets framed as a point on the floor.
+        const tc = obj as ThermocoupleObject;
+        for (const offset of beadOffsetsOf(tc)) {
+          const w = toWorld(tc, [0, 0, offset]);
+          box.expandByPoint(new THREE.Vector3(w[0], w[1], w[2]));
+        }
       }
     }
 
@@ -638,6 +651,10 @@ export class Viewport {
         return this.isPlanMode ? null : buildCeiling(obj as never);
       case 'camera':
         return buildCamera(obj as never, this.options.showFrustums);
+      case 'heatFluxSensor':
+        return buildHeatFluxSensor(obj as never);
+      case 'thermocouple':
+        return buildThermocouple(obj as never);
       default:
         // Unknown types still get a placeholder so they can be selected, inspected
         // and deleted rather than being invisible in a plan that clearly has them.

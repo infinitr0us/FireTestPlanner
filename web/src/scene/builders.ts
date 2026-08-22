@@ -13,11 +13,13 @@
 import * as THREE from 'three';
 
 import {
+  beadOffsetsOf,
   burnerDiameterM,
   burnerFlameHeightM,
   burnerVirtualOriginM,
   cameraColor,
   fuelSurfaceZM,
+  gaugeViewAngleDeg,
   hfovRadOf,
   hoodIntakeHeightM,
   plumeRadiusAtZ,
@@ -32,8 +34,10 @@ import type {
   BurnerObject,
   CameraObject,
   CeilingObject,
+  HeatFluxSensorObject,
   HoodObject,
   PlanObject,
+  ThermocoupleObject,
   WallObject,
 } from '../core/types';
 import { makeLabel } from './labels';
@@ -48,6 +52,9 @@ export const COLORS = {
   wall: 0x94a3b8,
   ceiling: 0xcbd5e1,
   cameraBody: 0x334155,
+  heatFlux: 0xef4444,
+  thermocouple: 0x10b981,
+  instrumentBody: 0x334155,
 };
 
 /** Layer 1 holds editor-only furniture (grid, gizmo, dimensions) so the camera
@@ -396,6 +403,152 @@ export function buildCeiling(c: CeilingObject): THREE.Group {
   );
   const label = makeLabel(displayName(c), 'object');
   label.position.set(centroid[0], centroid[1], c.height_m + thickness + 0.15);
+  group.add(label);
+
+  return group;
+}
+
+// -- instruments ----------------------------------------------------------
+
+/**
+ * Heat flux gauge: barrel, sensing face, and the direction it looks.
+ *
+ * Drawn on the camera convention — the face points down local -Z — because that
+ * is how the file stores it and how `heatFluxEstimate` reads it. The aim ray is
+ * the gauge's equivalent of a frustum: the whole question about a gauge is what
+ * it is pointed at, and cos(theta) is a first-order term in what it will read.
+ */
+export function buildHeatFluxSensor(s: HeatFluxSensorObject): THREE.Group {
+  const group = new THREE.Group();
+  applyTransform(group, s);
+
+  const face = new THREE.Color(COLORS.heatFlux);
+  const bodyLength = 0.09;
+  const radius = 0.022;
+
+  // Barrel behind the face, so the object origin IS the sensing surface: that is
+  // the point every distance in the estimate is measured from.
+  const barrel = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius, radius, bodyLength, 20),
+    new THREE.MeshStandardMaterial({ color: COLORS.instrumentBody, metalness: 0.6, roughness: 0.4 }),
+  );
+  barrel.rotation.x = Math.PI / 2;
+  barrel.position.z = bodyLength / 2;
+  group.add(barrel);
+
+  const disc = new THREE.Mesh(
+    new THREE.CircleGeometry(radius * 0.95, 20),
+    new THREE.MeshBasicMaterial({ color: face, side: THREE.DoubleSide }),
+  );
+  disc.position.z = -0.001; // just proud of the barrel end, so it is never z-fought
+  group.add(disc);
+
+  // A water-cooled gauge has hoses; two short stubs read as "plumbed" at a glance
+  // and distinguish it from a bare thermopile without needing a label.
+  if (s.gauge?.waterCooled) {
+    for (const side of [-1, 1]) {
+      const hose = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.006, 0.006, 0.07, 8),
+        new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.8 }),
+      );
+      hose.rotation.z = Math.PI / 2;
+      hose.position.set(side * 0.035, 0, bodyLength * 0.9);
+      group.add(hose);
+    }
+  }
+
+  group.add(buildGaugeAim(s, face));
+
+  const label = makeLabel(displayName(s), 'object', `#${face.getHexString()}`);
+  label.position.set(0, 0.1, 0);
+  group.add(label);
+
+  return group;
+}
+
+/** Acceptance cone for a view-limited gauge, or a plain sight line for an open
+ *  hemispherical one — where a cone would claim a restriction that is not there. */
+function buildGaugeAim(s: HeatFluxSensorObject, color: THREE.Color): THREE.Object3D {
+  const group = new THREE.Group();
+  const reach = 0.6;
+  const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.8 });
+  const viewAngle = gaugeViewAngleDeg(s);
+
+  if (viewAngle >= 180) {
+    const sight = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(0, 0, -reach),
+      ]),
+      material,
+    );
+    group.add(sight);
+  } else {
+    const r = Math.tan(((viewAngle / 2) * Math.PI) / 180) * reach;
+    const rim: THREE.Vector3[] = [];
+    for (let i = 0; i <= 32; i += 1) {
+      const t = (i / 32) * Math.PI * 2;
+      rim.push(new THREE.Vector3(Math.cos(t) * r, Math.sin(t) * r, -reach));
+    }
+    group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(rim), material));
+
+    const spokes: THREE.Vector3[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const t = (i / 4) * Math.PI * 2;
+      spokes.push(
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(Math.cos(t) * r, Math.sin(t) * r, -reach),
+      );
+    }
+    group.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(spokes), material));
+  }
+
+  setEditorLayer(group);
+  return group;
+}
+
+/**
+ * Thermocouple rake: a support rod with a bead at each offset.
+ *
+ * One bead is the same object as twelve, so this draws both. Offsets run along
+ * local +Z, which puts them through the group transform and means a leaning rake
+ * leans here exactly as it does in the readout.
+ */
+export function buildThermocouple(t: ThermocoupleObject): THREE.Group {
+  const group = new THREE.Group();
+  applyTransform(group, t);
+
+  const color = new THREE.Color(COLORS.thermocouple);
+  const offsets = beadOffsetsOf(t);
+  const lo = Math.min(0, ...offsets);
+  const hi = Math.max(0, ...offsets);
+
+  // Support rod only where there is something to support. A single bead sitting
+  // at the origin gets no rod, because there is no rake -- just a thermocouple.
+  if (hi - lo > 1e-6) {
+    const rod = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.008, 0.008, hi - lo, 10),
+      new THREE.MeshStandardMaterial({ color: COLORS.instrumentBody, metalness: 0.5, roughness: 0.6 }),
+    );
+    rod.rotation.x = Math.PI / 2;
+    rod.position.z = (hi + lo) / 2;
+    group.add(rod);
+  }
+
+  const beadMaterial = new THREE.MeshStandardMaterial({
+    color,
+    emissive: color.clone().multiplyScalar(0.35),
+    roughness: 0.4,
+  });
+  const beadRadius = Math.max((t.thermocouple?.beadDiameter_mm ?? 1.5) / 1000, 0.008) * 2.5;
+  for (const offset of offsets) {
+    const bead = new THREE.Mesh(new THREE.SphereGeometry(beadRadius, 12, 10), beadMaterial);
+    bead.position.z = offset;
+    group.add(bead);
+  }
+
+  const label = makeLabel(displayName(t), 'object', `#${color.getHexString()}`);
+  label.position.set(0, 0.08, hi + 0.08);
   group.add(label);
 
   return group;

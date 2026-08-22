@@ -11,7 +11,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { parsePlan } from '../core/plan';
-import type { PlanDocument } from '../core/types';
+import type { CameraObject, PlanDocument } from '../core/types';
+import { buildViewSvg, escapeXml } from './drawing';
 import { PRINT_CSS, REPORT_CSS, buildReportBody, buildReportHtml } from './report';
 
 const FIXTURE_PATH = fileURLToPath(new URL('../../../fixtures/pool-fire-camera-row.ftp.json', import.meta.url));
@@ -64,5 +65,74 @@ describe('report stylesheet', () => {
     expect(html).toContain('<!doctype html>');
     expect(html).toContain(REPORT_CSS);
     expect(html).toContain('class="report"');
+  });
+});
+
+describe('report content', () => {
+  it('lists every object in the plan, of every type', () => {
+    // An object the equipment table cannot describe is one that quietly vanishes
+    // from the sheet somebody takes to site.
+    const doc = fixture();
+    const body = buildReportBody(doc, 'm');
+    for (const obj of doc.objects) {
+      expect(body).toContain(escapeXml(obj.name ?? obj.id));
+    }
+    for (const label of ['heat flux', 'thermocouple', 'wall']) {
+      expect(body).toContain(`<td>${label}</td>`);
+    }
+  });
+
+  it('gives instruments their own exposure table', () => {
+    const body = buildReportBody(fixture(), 'm');
+    expect(body).toContain('Instrument exposure');
+    // The east-wall gauge is the plan's teaching case: 1.70 kW/m2 on a 50 kW/m2
+    // scale, which the table has to call out rather than merely print.
+    expect(body).toContain('1.70 kW/m²');
+    expect(body).toContain('low signal');
+  });
+
+  it('omits the exposure table entirely when there are no instruments', () => {
+    const doc = fixture();
+    doc.objects = doc.objects.filter(
+      (o) => o.type !== 'heatFluxSensor' && o.type !== 'thermocouple',
+    );
+    expect(buildReportBody(doc, 'm')).not.toContain('Instrument exposure');
+  });
+
+  it('says the zoom where it quotes the field of view', () => {
+    const doc = fixture();
+    const cam = doc.objects.find((o) => o.type === 'camera') as CameraObject;
+    expect(buildReportBody(doc, 'm')).not.toContain('at 2×');
+    cam.camera.zoomFactor = 2;
+    expect(buildReportBody(doc, 'm')).toContain('at 2×');
+  });
+
+  it('draws instrument symbols in the plan and the elevations', () => {
+    const doc = fixture();
+    for (const view of ['plan', 'front', 'side'] as const) {
+      const svg = buildViewSvg(doc, view, 'm');
+      // The gauge and rake colours, which is how each reads as itself on paper.
+      expect(svg).toContain('#ef4444');
+      expect(svg).toContain('#10b981');
+      expect(svg).toContain('East wall gauge');
+      expect(svg).toContain('Plume rake');
+    }
+  });
+
+  it('shows the bead count in plan, where a rake stacks onto one point', () => {
+    expect(buildViewSvg(fixture(), 'plan', 'm')).toContain('Plume rake (×3)');
+  });
+
+  it('stacks the labels of instruments that share a point in plan', () => {
+    // The east-wall gauge and the east-wall rake are the same XY, so without
+    // stacking their names print on top of each other and neither is readable.
+    const doc = fixture();
+    const svg = buildViewSvg(doc, 'plan', 'm');
+    const yOf = (name: string): number => {
+      // The rake's label carries its bead count, so match the name as a prefix.
+      const tag = svg.split('\n').find((l) => l.includes(`>${name}`));
+      return Number(/ y="(-?[0-9.]+)"/.exec(tag as string)![1]);
+    };
+    expect(Math.abs(yOf('East wall gauge') - yOf('East wall rake'))).toBeGreaterThan(6);
   });
 });
