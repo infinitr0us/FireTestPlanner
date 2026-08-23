@@ -15,7 +15,7 @@ Supersedes nothing; complements `ideas.md`.
 | v1.1 objects | Heat flux gauges, thermocouples (single bead or rake) |
 | Camera zoom | Stored beside the lens, not folded into it; multiplies the effective focal length |
 | Format versioning | One schema per version; a file declares the lowest version its contents need |
-| Preset library | Seeded from `presets/cameras.json`; user additions live in browser storage, never a sidecar file |
+| Preset library | Seeded from `presets/cameras.json`; user additions live in the desktop shell's settings file (browser storage in a plain tab), never a sidecar file |
 | Building geometry | Simple composable components — walls and ceilings pieced together. Not detailed room layouts; the tool targets open bays and simple enclosures |
 | Planned vs as-built | Planned only. A layout that differs from the plan becomes a new file recording the true positions |
 | Deferred to v2 | ~~Thermocouple trees, heat flux gauges~~ (done, 1.1); load cell, gas sampling |
@@ -218,10 +218,10 @@ Phase 1 is complete. 225 Python tests, 148 web tests.
 | Ask | How it landed |
 |---|---|
 | A zoom factor per camera | `camera.zoomFactor`, multiplying the effective focal length. Everything derived goes through it — frustum, preview, coverage, drawing. The lens stays the lens |
-| FLIR A8303sc and A700 presets | Seeded from the datasheets now in `docs/datasheets/`, both `intrinsicsSource: "datasheet"`. The A700's focal length is back-solved from its published 24° × 18° field, because FLIR's nominal "17 mm" does not close against a 12 µm 640 × 480 array — `docs/datasheets/README.md` shows the working |
+| FLIR A8303sc and A700 presets | Seeded from the datasheets now in `docs/datasheets/`, both `intrinsicsSource: "datasheet"`. The A700's focal length is back-solved from the 24° lens designation, because the A-series sheet names lenses by angle and prints no focal length — `docs/datasheets/README.md` maps every stored field to a printed value or to its derivation |
 | Heat flux and thermocouple components | New object types, with predicted exposure rather than bare placement: incident flux by point source, bead-by-bead plume temperature, and checks for an over-range gauge, a starved one, one facing the wrong way, and a bead its wire cannot survive |
 | Walls and sensors in the example plan | The reference plan gained an L of walls, two gauges and two rakes. It now makes a second argument alongside the camera-framing one: the 50 kW/m² gauge everyone owns reads 3% of scale at 1.5 m from a 130 kW fire |
-| Add camera presets from the GUI, without a save file | **Yes, and no file was needed.** Presets live in `localStorage`, which the desktop shell's WebView persists per profile. Plans were already self-contained — every intrinsic is copied inline and `presetId` is a hint — so a preset can also be lifted straight back out of a plan someone sends you |
+| Add camera presets from the GUI, without a save file | **Yes, and no sidecar file was needed.** The desktop shell keeps the library in its own per-profile `settings.json`; a browser tab uses `localStorage`. (`localStorage` alone did not work for the desktop build: the shell binds a fresh loopback port on every launch, and browser storage is scoped to the origin, so each launch saw an empty library.) Plans were already self-contained — every intrinsic is copied inline and `presetId` is a hint — so a preset can also be lifted straight back out of a plan someone sends you |
 
 ### What the reference layout demonstrates
 
@@ -289,9 +289,11 @@ is invisible until someone works the arithmetic — or opens the plan.
 - **Digital zoom flatters the resolution readout.** The field of view is right at any
   zoom, but a digital zoom crops and interpolates, so mm/px describes the output
   pixels rather than detail the detector resolved. The inspector says so above 1×.
-- **Custom camera presets live in browser storage.** That is what keeps them off the
-  disk as a sidecar file, and it also means clearing site data clears them. Plans are
-  unaffected either way: every intrinsic is written into the camera itself.
+- **Custom camera presets are not a portable file.** The desktop app keeps them in its
+  own settings file and a browser tab keeps them in site data, so they follow the
+  machine rather than the plan, and clearing site data clears a browser's copy. Plans
+  are unaffected either way: every intrinsic is written into the camera itself, and the
+  inspector says so when the library has nowhere durable to be stored.
 - **Wall openings do not appear in the exported elevations.** The 3D view cuts doors
   and windows out of a wall; the drawing renders the wall as a solid rectangle. Worth
   knowing before a drawing is handed to someone who will build from it.

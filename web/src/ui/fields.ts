@@ -117,7 +117,9 @@ export function checkboxField(value: boolean, onChange: (v: boolean) => void): H
   });
 }
 
-export function readout(label: string, value: string, tone?: 'good' | 'bad' | 'muted'): HTMLElement {
+export type ReadoutTone = 'good' | 'warn' | 'bad' | 'muted';
+
+export function readout(label: string, value: string, tone?: ReadoutTone): HTMLElement {
   return h('div', { class: `readout${tone ? ` readout--${tone}` : ''}` }, [
     h('span', { class: 'readout__label' }, [label]),
     h('span', { class: 'readout__value' }, [value]),

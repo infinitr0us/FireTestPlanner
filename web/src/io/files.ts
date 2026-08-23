@@ -15,6 +15,11 @@ export interface ShellBridge {
   saveHtml(html: string, suggestedName: string): Promise<string | null>;
   recentFiles(): Promise<string[]>;
   openRecent(path: string): Promise<{ path: string; text: string } | null>;
+  /** The user's camera preset library, kept in the shell's per-profile settings
+   *  rather than in browser storage -- see `presets.ts` for why. */
+  loadPresets(): Promise<unknown[]>;
+  /** Replace the library. Resolves to true only when the write reached the disk. */
+  savePresets(presets: unknown[]): Promise<boolean>;
 }
 
 /** What the shell's save routes answer: a destination, a reason, or null for cancel. */
@@ -78,6 +83,9 @@ export function connectShell(onReady: () => void): void {
     saveHtml: (html, name) => call<SaveResult>('/api/save-html', { html, name }).then(unwrapSave),
     recentFiles: () => call<string[]>('/api/recent').then((r) => r ?? []),
     openRecent: (path) => call<{ path: string; text: string } | null>('/api/open-recent', { path }),
+    loadPresets: () => call<unknown[]>('/api/presets').then((r) => (Array.isArray(r) ? r : [])),
+    savePresets: (presets) =>
+      call<{ saved?: boolean }>('/api/presets', { presets }).then((r) => Boolean(r?.saved)),
   };
   onReady();
 }

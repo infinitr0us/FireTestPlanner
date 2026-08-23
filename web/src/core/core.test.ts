@@ -714,6 +714,61 @@ describe('structural validation', () => {
     }))).toEqual([]);
   });
 
+  it('rejects a radiative fraction outside the range the physics uses', () => {
+    // Not merely a schema range. `radiativeFractionOf` substitutes 0.3 for
+    // anything outside it, so a file that loads with 1.5 in it has every heat flux
+    // in the plan computed from a number other than the one on screen and on disk,
+    // with nothing said about it.
+    for (const bad of [1.5, 0, -0.2, 'a third']) {
+      expect(codesOf(withObject({
+        id: 'b', type: 'burner',
+        footprint: { shape: 'circle', diameter_m: 0.3 },
+        fire: { hrr_kw: 100, radiativeFraction: bad },
+      }))).toContain('bad-radiative-fraction');
+    }
+    // Absent and null both mean "use the default", and the endpoints are legal.
+    for (const ok of [undefined, null, 0.35, 1]) {
+      expect(codesOf(withObject({
+        id: 'b', type: 'burner',
+        footprint: { shape: 'circle', diameter_m: 0.3 },
+        fire: { hrr_kw: 100, radiativeFraction: ok },
+      }))).not.toContain('bad-radiative-fraction');
+    }
+  });
+
+  it('rejects a mount type the schema does not have, per object kind', () => {
+    // The camera and instrument mount enums differ deliberately: an instrument can
+    // sit on the floor, and a format 1.0 camera could not say so.
+    expect(codesOf(withObject({
+      id: 'hf', type: 'heatFluxSensor', mount: { type: 'trapeze' },
+    }))).toContain('bad-mount-type');
+    expect(codesOf(withObject({
+      id: 'cam', type: 'camera',
+      camera: { modality: 'RGB', resolution_px: [640, 480], sensor_mm: [6, 4.5], focalLength_mm: 4 },
+      mount: { type: 'floor' },
+    }))).toContain('bad-mount-type');
+
+    expect(codesOf(withObject({
+      id: 'hf2', type: 'heatFluxSensor', mount: { type: 'floor', height_m: 0 },
+    }))).not.toContain('bad-mount-type');
+  });
+
+  it('rejects a gauge kind and a bead diameter the schema would reject', () => {
+    expect(codesOf(withObject({
+      id: 'hf', type: 'heatFluxSensor', gauge: { kind: 'acme-2000' },
+    }))).toContain('bad-gauge-kind');
+    expect(codesOf(withObject({
+      id: 'tc', type: 'thermocouple', thermocouple: { beadDiameter_mm: -1 },
+    }))).toContain('bad-bead-diameter');
+
+    expect(validateStructure(withObject({
+      id: 'hf2', type: 'heatFluxSensor', gauge: { kind: 'gardon', waterCooled: true },
+    }))).toEqual([]);
+    expect(validateStructure(withObject({
+      id: 'tc2', type: 'thermocouple', thermocouple: { tcType: 'T', beadDiameter_mm: 1.5 },
+    }))).toEqual([]);
+  });
+
   it('summarises errors for a dialog without dumping all of them', () => {
     const doc = newPlan('many');
     for (let i = 0; i < 20; i += 1) {

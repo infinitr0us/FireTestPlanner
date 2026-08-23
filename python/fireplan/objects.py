@@ -96,8 +96,19 @@ class PlanObject:
 
     @property
     def rotation_matrix(self) -> np.ndarray:
-        """Object-to-world rotation, in the stored (OpenGL-style) local frame."""
-        return quat_to_matrix(self.quaternion)
+        """Object-to-world rotation, in the stored (OpenGL-style) local frame.
+
+        A zero-length quaternion is schema-legal -- the schema says "unit" in prose,
+        and prose is not a constraint -- but `quat_to_matrix` throws on one, which
+        would cost the caller every check in the plan over a single degenerate
+        object. `quaternion` still returns the raw value, so `Plan.check()` reports
+        it as `non-unit-quaternion`; here it falls back to the identity. Mirror of
+        `quatOf` in web/src/core/plan.ts.
+        """
+        q = self.quaternion
+        if not np.all(np.isfinite(q)) or float(np.linalg.norm(q)) == 0.0:
+            return np.eye(3)
+        return quat_to_matrix(q)
 
     @property
     def aim_target(self) -> Optional[np.ndarray]:
@@ -476,16 +487,24 @@ class Burner(PlanObject):
             return correlations.DEFAULT_RADIATIVE_FRACTION
         return f
 
-    def flame_radius_m(self, z_above_floor_m: float) -> float:
+    def flame_radius_m(self, z_above_floor_m: float) -> Optional[float]:
         """Radius of the mean flame cone at an absolute height above the floor.
 
         Tapers from the effective diameter at the fuel surface to a point at the
         mean tip -- the same cone the 3D editor draws, so "this bead is in the
         flame" means the same thing in a notebook as it looks like on screen.
+
+        None when there is no cone at all (a flame height that clamps to zero),
+        which is a different answer from a cone of zero radius: collapsing the two
+        made an on-axis bead "in the flame" of a fire that has no flame, and put
+        this engine's verdict at odds with the editor's on the same file. Mirror of
+        `flameRadiusAtZ` in web/src/core/plan.ts.
         """
         base = self.fuel_surface_z_m
         tip = self.flame_tip_z_m()
-        if tip <= base or z_above_floor_m < base or z_above_floor_m > tip:
+        if tip <= base:
+            return None
+        if z_above_floor_m < base or z_above_floor_m > tip:
             return 0.0
         return (self.diameter_m / 2.0) * (1.0 - (z_above_floor_m - base) / (tip - base))
 

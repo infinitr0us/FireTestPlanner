@@ -403,3 +403,12 @@ Three consequences, and all three are the point:
 A file whose label understates its contents is a hand edit or a broken writer.
 `check()` reports it as `version-understated` rather than refusing the file, and
 saving corrects it.
+
+**A 1.1-only key that is present but `null` is dropped on write.** `required` reads
+null as absent, which is right — null and absent mean the same thing to every reader
+of this format — but the 1.0 schema closes `camera.camera` and `burner.fire` with
+`additionalProperties: false`, so it rejects the *key*, whatever its value. Keeping
+one would have produced a file declaring `1.0.0` that fails the 1.0 schema, which is
+the version invariant defeating itself. Both writers strip `zoomFactor` and
+`radiativeFraction` when null, matching the inspector, which deletes them at their
+defaults for the same reason.

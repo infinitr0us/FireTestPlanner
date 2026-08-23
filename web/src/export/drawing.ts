@@ -205,12 +205,35 @@ class LabelStacker {
 /** One line of stacked-label clearance. */
 const LABEL_LINE_PX = 11;
 
+/** Highest baseline that still prints in full. Above it the ascenders are cut by
+ *  the viewBox edge; at a negative baseline the label is not on the page at all. */
+const LABEL_MIN_Y = 11;
+
 /**
- * An object label that stays inside the drawing.
+ * Baseline for the n-th label claimed at a point.
+ *
+ * Stacking upward is right in the middle of a drawing and wrong at the top of one.
+ * Six co-located instruments on a north wall -- a gauge-and-rake row plus cameras,
+ * which is a rig, not a contrivance -- put the last names above y = 0, outside the
+ * viewBox, so a name went missing from the printed sheet with nothing to show it
+ * had. Once the stack would leave the page the remainder grows downward from the
+ * marker instead. The two halves cannot collide: one is above the point, the other
+ * below it.
+ */
+function stackedLabelY(y: number, n: number, gap: number): number {
+  const fits = Math.max(0, Math.floor((y - gap - LABEL_MIN_Y) / LABEL_LINE_PX) + 1);
+  return n < fits
+    ? y - gap - n * LABEL_LINE_PX
+    : y + gap + LABEL_LINE_PX * (n - fits + 1);
+}
+
+/**
+ * An object label that stays inside the drawing horizontally.
  *
  * Names like "FLIR T650 LWIR" are wider than the margin, so a label anchored the
  * wrong way against an edge is simply clipped away. Flip the anchor near either
- * edge rather than losing the text.
+ * edge rather than losing the text. The vertical half of "inside the drawing" is
+ * `stackedLabelY`'s, since only the caller knows how deep the stack is.
  */
 function objectLabel(x: number, y: number, s: string): string {
   const estimated = s.length * 5.4;
@@ -319,7 +342,7 @@ function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
     const [ox, oy] = p.project([0, 0, 0]);
     out.push(dimension(ox, oy, cx, cy, formatLengthWithUnit(standoffHorizontalM(cam), unit)));
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${escapeXml(cameraColor(cam))}" stroke="#ffffff" stroke-width="1"/>`);
-    out.push(objectLabel(cx, cy - 9 - labels.claim(cx, cy) * LABEL_LINE_PX, displayName(cam)));
+    out.push(objectLabel(cx, stackedLabelY(cy, labels.claim(cx, cy), 9), displayName(cam)));
   }
 
   out.push(drawInstrumentsPlan(doc, p, labels));
@@ -362,7 +385,7 @@ function drawInstrumentsPlan(doc: PlanDocument, p: Projector, labels: LabelStack
     }
 
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${color}" stroke="#ffffff" stroke-width="1"/>`);
-    out.push(objectLabel(cx, cy - 9 - labels.claim(cx, cy) * LABEL_LINE_PX, displayName(s)));
+    out.push(objectLabel(cx, stackedLabelY(cy, labels.claim(cx, cy), 9), displayName(s)));
   }
 
   for (const tc of thermocouples(doc)) {
@@ -375,7 +398,7 @@ function drawInstrumentsPlan(doc: PlanDocument, p: Projector, labels: LabelStack
     out.push(line(cx - arm, cy, cx + arm, cy, color, 'stroke-width="1.4"'));
     out.push(line(cx, cy - arm, cx, cy + arm, color, 'stroke-width="1.4"'));
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="2" fill="${color}"/>`);
-    out.push(objectLabel(cx, cy - 9 - labels.claim(cx, cy) * LABEL_LINE_PX,
+    out.push(objectLabel(cx, stackedLabelY(cy, labels.claim(cx, cy), 9),
       beads.length > 1 ? `${displayName(tc)} (×${beads.length})` : displayName(tc)));
   }
 
@@ -494,7 +517,7 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
 
     out.push(line(cx, cy, fx, fy, COLORS.faint, 'stroke-width="1" stroke-dasharray="3 3"'));
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${escapeXml(cameraColor(cam))}" stroke="#ffffff" stroke-width="1"/>`);
-    out.push(objectLabel(cx, cy - 9 - stacked * LABEL_LINE_PX, displayName(cam)));
+    out.push(objectLabel(cx, stackedLabelY(cy, stacked, 9), displayName(cam)));
     if (stacked === 0) {
       out.push(text(cx + 7, cy + 4, formatLengthWithUnit(origin[2], unit), 'class="dim-text"'));
     }
@@ -514,7 +537,7 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
 
     out.push(line(cx, cy, fx, fy, COLORS.faint, 'stroke-width="1" stroke-dasharray="3 3"'));
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${color}" stroke="#ffffff" stroke-width="1"/>`);
-    out.push(objectLabel(cx, cy - 9 - stacked * LABEL_LINE_PX, displayName(s)));
+    out.push(objectLabel(cx, stackedLabelY(cy, stacked, 9), displayName(s)));
     if (stacked === 0) {
       out.push(text(cx + 7, cy + 4, formatLengthWithUnit(origin[2], unit), 'class="dim-text"'));
     }
@@ -539,7 +562,7 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
       const [bx, by] = at(bead);
       out.push(`<circle cx="${bx.toFixed(2)}" cy="${by.toFixed(2)}" r="2.6" fill="${color}" stroke="#ffffff" stroke-width="0.7"/>`);
     }
-    out.push(objectLabel(top[0], top[1] - 8 - labels.claim(top[0], top[1]) * LABEL_LINE_PX,
+    out.push(objectLabel(top[0], stackedLabelY(top[1], labels.claim(top[0], top[1]), 8),
       displayName(tc)));
   }
 

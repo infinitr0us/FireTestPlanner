@@ -436,6 +436,48 @@ def test_a_radiative_fraction_promotes_the_declared_version():
     assert plan.effective_version == "1.1.0"
 
 
+@pytest.mark.parametrize("obj, block, key", [
+    ({"id": "cam", "type": "camera",
+      "transform": {"position_m": [-2.0, 0.0, 1.0]},
+      "camera": {"modality": "LWIR", "resolution_px": [640, 480],
+                 "sensor_mm": [7.68, 5.76], "focalLength_mm": 18.07, "zoomFactor": None}},
+     "camera", "zoomFactor"),
+    ({"id": "burner-main", "type": "burner",
+      "transform": {"position_m": [0.0, 0.0, 0.0]},
+      "footprint": {"shape": "circle", "diameter_m": 0.3},
+      "fire": {"hrr_kw": 100.0, "radiativeFraction": None, "hrrCurve": None}},
+     "fire", "radiativeFraction"),
+])
+def test_an_explicit_null_1_1_key_is_dropped_rather_than_defeating_the_version(obj, block, key):
+    """Null and absent mean the same thing to the version derivation -- but not to
+    the 1.0 schema, which closes these objects and rejects the KEY whatever its
+    value.
+
+    Kept, the key made this writer emit a file declaring 1.0.0 that its own
+    validator then refused. The 1.1 schema's own advice is that writers omit it.
+    Mirrored in web/src/core/instruments.test.ts.
+    """
+    plan = Plan.new("explicit null")
+    plan.add(obj)
+    assert plan.effective_version == "1.0.0"
+
+    written = json.loads(plan.dumps())
+    assert written["version"] == "1.0.0"
+    assert key not in written["objects"][0][block]
+    Plan(written).validate_schema("1.0.0")  # the writer's own output must pass
+
+
+def test_a_two_part_declared_version_is_left_alone_as_the_web_leaves_it():
+    """`("1", "0")` sorts below `(1, 0, 0)` without padding, so this engine rewrote
+    a "1.0" label that the web writer left untouched. Such a file is invalid to both
+    validators, but byte parity between the two writers is not conditional on the
+    input being valid."""
+    plan = Plan.new("two part")
+    plan.data["version"] = "1.0"
+    assert plan.effective_version == "1.0"
+    assert json.loads(plan.dumps())["version"] == "1.0"
+
+
 def test_the_declared_version_only_ever_goes_up():
     # A file this build does not understand keeps its own label rather than being
     # quietly downgraded to something this build can write.

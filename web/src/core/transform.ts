@@ -52,12 +52,23 @@ export function setPosition(obj: PlanObject, position: Vec3): void {
  * Point a camera or a gauge at a world point and record that as its intent.
  *
  * The quaternion stays authoritative; the target is what lets a later move re-derive
- * it instead of silently disagreeing with it.
+ * it instead of silently disagreeing with it. Returns false, having changed nothing,
+ * when the target is the object's own position.
  */
-export function setAimTarget(cam: AimableObject, target: Vec3): void {
+export function setAimTarget(cam: AimableObject, target: Vec3): boolean {
   const t = transformOf(cam);
+  const p = t.position_m;
+  // The same guard `setPosition` carries, and for a sharper reason: since 1.1 an
+  // instrument standing on the point source is a modelled state, not a mishap
+  // (`gauge-in-fire`), and "Aim at fire" on one of those asks for the direction
+  // from a point to itself. `lookAtQuat` throws on that -- and it was being called
+  // AFTER `aimTarget_m` had been written, so the exception escaped the click
+  // handler leaving a document aimed at its own position and the user told
+  // nothing. Refuse the whole edit instead; the caller reports it.
+  if (Math.hypot(target[0] - p[0], target[1] - p[1], target[2] - p[2]) < 1e-9) return false;
   t.aimTarget_m = [target[0], target[1], target[2]];
   t.rotation_quat = lookAtQuat(t.position_m, t.aimTarget_m);
+  return true;
 }
 
 /**

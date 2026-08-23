@@ -17,6 +17,11 @@ import { FORMAT } from './types';
 const MODALITIES = ['RGB', 'LWIR', 'MWIR', 'SWIR', 'NIR', 'other'];
 const SHAPES = ['circle', 'square', 'rectangle'];
 const TC_TYPES = ['K', 'J', 'T', 'E', 'N', 'R', 'S', 'B'];
+const MOUNT_TYPES = ['tripod', 'pole', 'ceiling', 'wall', 'handheld', 'other'];
+/** Instruments can sit on the floor. A camera in format 1.0 could not say so, and
+ *  the 1.1 schema still keeps the two enums apart, so this check does too. */
+const INSTRUMENT_MOUNT_TYPES = [...MOUNT_TYPES, 'floor'];
+const GAUGE_KINDS = ['schmidt-boelter', 'gardon', 'thermopile', 'other'];
 
 const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
@@ -27,6 +32,9 @@ const isPositive = (v: unknown): boolean => isFiniteNumber(v) && v > 0;
 
 const isPairList = (v: unknown, minPairs: number): boolean =>
   Array.isArray(v) && v.length >= minPairs && v.every((p) => isNumberArray(p, 2));
+
+/** An optional field: absent and null are both "unstated" throughout this format. */
+const isStated = (v: unknown): boolean => v !== undefined && v !== null;
 
 export function validateStructure(doc: PlanDocument): Issue[] {
   const out: Issue[] = [];
@@ -102,6 +110,19 @@ export function validateStructure(doc: PlanDocument): Issue[] {
 
 type Reporter = (code: string, message: string, objectId?: string) => void;
 
+/** `mount.type` for whichever enum this object's type is held to. Advisory data,
+ *  but it is printed on the equipment table and it is closed in the schema, so a
+ *  value that would fail `fireplan.validate_schema()` fails here too. */
+function checkMount(
+  raw: Record<string, unknown>, allowed: string[], id: string, err: Reporter,
+): void {
+  const mount = raw.mount as Record<string, unknown> | undefined;
+  if (mount && isStated(mount.type) && !allowed.includes(String(mount.type))) {
+    err('bad-mount-type',
+      `Object "${id}" has mount.type "${String(mount.type)}"; expected one of ${allowed.join(', ')}.`, id);
+  }
+}
+
 function validateByType(obj: PlanObject, err: Reporter): void {
   const id = obj.id;
   const raw = obj as unknown as Record<string, unknown>;
@@ -136,6 +157,7 @@ function validateByType(obj: PlanObject, err: Reporter): void {
         err('reserved-recording',
           `Camera "${id}" populates "recording", which format 1.x reserves and requires to be null.`, id);
       }
+      checkMount(raw, MOUNT_TYPES, id, err);
       break;
     }
 
@@ -153,8 +175,18 @@ function validateByType(obj: PlanObject, err: Reporter): void {
         err('bad-size', `Burner "${id}" needs a size_m of two positive numbers.`, id);
       }
       const fire = raw.fire as Record<string, unknown> | undefined;
-      if (fire?.hrr_kw !== undefined && fire.hrr_kw !== null && !isPositive(fire.hrr_kw)) {
+      if (isStated(fire?.hrr_kw) && !isPositive(fire!.hrr_kw)) {
         err('bad-hrr', `Burner "${id}" has a non-positive hrr_kw.`, id);
+      }
+      // Not merely a schema range. `radiativeFractionOf` substitutes the 0.3
+      // default for anything outside it, so an out-of-range value that loads is a
+      // plan whose every predicted heat flux is computed from a number other than
+      // the one stored in the file and shown in the inspector.
+      const rf = fire?.radiativeFraction;
+      if (isStated(rf) && !(isFiniteNumber(rf) && rf > 0 && rf <= 1)) {
+        err('bad-radiative-fraction',
+          `Burner "${id}" has radiativeFraction ${JSON.stringify(rf)}; expected a number ` +
+          'greater than 0 and at most 1.', id);
       }
       break;
     }
@@ -186,16 +218,20 @@ function validateByType(obj: PlanObject, err: Reporter): void {
     case 'heatFluxSensor': {
       const g = raw.gauge as Record<string, unknown> | undefined;
       if (g) {
-        if (g.range_kw_m2 !== undefined && g.range_kw_m2 !== null && !isPositive(g.range_kw_m2)) {
+        if (isStated(g.range_kw_m2) && !isPositive(g.range_kw_m2)) {
           err('bad-range', `Heat flux gauge "${id}" has a non-positive range_kw_m2.`, id);
         }
         const view = g.viewAngle_deg;
-        if (view !== undefined && view !== null
-            && (!isPositive(view) || (view as number) > 180)) {
+        if (isStated(view) && (!isPositive(view) || (view as number) > 180)) {
           err('bad-view-angle',
             `Heat flux gauge "${id}" has viewAngle_deg ${String(view)}; expected 0 to 180.`, id);
         }
+        if (isStated(g.kind) && !GAUGE_KINDS.includes(String(g.kind))) {
+          err('bad-gauge-kind',
+            `Heat flux gauge "${id}" has kind "${String(g.kind)}"; expected one of ${GAUGE_KINDS.join(', ')}.`, id);
+        }
       }
+      checkMount(raw, INSTRUMENT_MOUNT_TYPES, id, err);
       break;
     }
 
@@ -207,11 +243,16 @@ function validateByType(obj: PlanObject, err: Reporter): void {
           `Thermocouple "${id}" needs beadOffsets_m to be a non-empty list of numbers.`, id);
       }
       const tc = raw.thermocouple as Record<string, unknown> | undefined;
-      if (tc?.tcType !== undefined && tc.tcType !== null && !TC_TYPES.includes(String(tc.tcType))) {
+      if (isStated(tc?.tcType) && !TC_TYPES.includes(String(tc!.tcType))) {
         err('bad-tc-type',
-          `Thermocouple "${id}" has tcType "${String(tc.tcType)}"; expected one of ${TC_TYPES.join(', ')}.`,
+          `Thermocouple "${id}" has tcType "${String(tc!.tcType)}"; expected one of ${TC_TYPES.join(', ')}.`,
           id);
       }
+      if (isStated(tc?.beadDiameter_mm) && !isPositive(tc!.beadDiameter_mm)) {
+        err('bad-bead-diameter',
+          `Thermocouple "${id}" has a non-positive beadDiameter_mm.`, id);
+      }
+      checkMount(raw, INSTRUMENT_MOUNT_TYPES, id, err);
       break;
     }
 

@@ -95,8 +95,35 @@ body.is-measuring .viewport { cursor: cell; }
 .panel--left { border-right: 1px solid var(--border); }
 .panel--right { border-left: 1px solid var(--border); padding: 0 12px 24px; }
 
-.panel__block { padding: 4px 12px 12px; border-bottom: 1px solid var(--border); }
-.panel__block--grow { flex: 1; min-height: 90px; }
+/*
+   The left rail's three sections, and the overflow model that keeps them apart.
+
+   A flex column shrinks its children to make them fit, but shrinking a box does
+   not clip what is inside it: with twelve objects in the plan the Outliner was
+   handed a short box and its rows carried on painting straight down across the
+   Checks cards below, interleaving the two and covering each other's click
+   targets. The parent's own `overflow-y` does not help -- it scrolls the rail, it
+   does not contain one section against the next.
+
+   So: every section holds its natural height and refuses to shrink, except the
+   Outliner, which is the elastic one and scrolls its own contents. Checks carries
+   the test-validity findings, and it stays where the user last saw it however long
+   the object list grows. When even the fixed sections do not fit -- a short window,
+   a long checks list -- the rail itself scrolls, which is the escape hatch rather
+   than the everyday case.
+*/
+.panel__block { padding: 4px 12px 12px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+/* An explicit `min-height` is what lets this box be shorter than its content at
+   all -- a flex item defaults to `min-height: auto`, which floors it at the content
+   and puts the overflow straight back.
+
+   The floor is the height the section actually gets in the packaged window, not a
+   safety net: the Palette above it is tall enough (six tiles, the camera list and
+   two hints) to leave nothing spare, so `flex-grow` never gets a say and this
+   number IS the list. 90 px left room for three rows, which is a slot rather than
+   an outliner. When the floor pushes the rail past its own height the rail scrolls,
+   which is the trade being made for a list you can work in. */
+.panel__block--grow { flex: 1 1 0; min-height: 225px; overflow-y: auto; }
 .panel__block:last-child { border-bottom: 0; }
 
 .panel__section {
@@ -319,6 +346,10 @@ body.is-measuring .viewport { cursor: cell; }
 .readout__label { color: var(--text-dim); }
 .readout__value { font-family: var(--mono); font-size: 11px; text-align: right; }
 .readout--good .readout__value { color: var(--good); }
+/* Amber, not red: an order-of-magnitude estimate or a bead in the flame is a
+   caveat on the number, not a failed placement. Same three-way split the report's
+   verdict column and the Checks list use. */
+.readout--warn .readout__value { color: var(--warn); }
 .readout--bad .readout__value { color: var(--bad); }
 .readout--muted .readout__value { color: var(--text-faint); }
 .readout__note {

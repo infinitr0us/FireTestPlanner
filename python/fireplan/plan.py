@@ -320,11 +320,18 @@ class Plan:
             # quaternion and target disagree is exactly as wrong, and for exactly
             # the same reason.
             target = obj.aim_target
-            if target is not None and isinstance(obj, (Camera, HeatFluxSensor)):
+            # `rotation_quat` has to be present, as the web requires: without one
+            # `forward` is the identity orientation, and warning that a stored
+            # quaternion disagrees with the target is a claim about a quaternion
+            # that is not in the file.
+            if (target is not None
+                    and isinstance(obj, (Camera, HeatFluxSensor))
+                    and "rotation_quat" in t):
                 delta = target - obj.position
                 if float(np.linalg.norm(delta)) < 1e-9:
                     issues.append(Issue("warning", "degenerate-aim",
-                                        "aimTarget_m coincides with the camera position", obj.id))
+                                        "aimTarget_m coincides with the object's own position",
+                                        obj.id))
                 else:
                     cos = float(np.clip(np.dot(normalize(delta), obj.forward), -1.0, 1.0))
                     off = math.degrees(math.acos(cos))
@@ -584,9 +591,18 @@ class Plan:
         ambient = self.ambient_temperature_c
         try:
             burner = self.burner
-        except PlanError:
+            tip = burner.flame_tip_z_m()
+        except (PlanError, ValueError):
+            # No burner, no HRR, a non-positive HRR, or a zero-area footprint. Every
+            # one of them means "no flame geometry to place a bead against", and none
+            # of them should cost the caller the whole check list: `check()` is
+            # documented for a plan mid-edit, and `fire_point_source` has swallowed
+            # exactly these for the gauge path since 1.1. Testing `hrr_kw is not
+            # None` was not the same test -- an hrr_kw of 0 passed it and then raised
+            # out of the correlation.
             burner = None
-        has_fire = burner is not None and burner.hrr_kw is not None
+            tip = None
+        has_fire = burner is not None and tip is not None
 
         out: List[Dict[str, Any]] = []
         for index, (offset, world) in enumerate(
@@ -599,9 +615,16 @@ class Plan:
             if has_fire:
                 bp = burner.position
                 radial = float(math.hypot(world[0] - bp[0], world[1] - bp[1]))
-                tip = burner.flame_tip_z_m()
                 surface = burner.fuel_surface_z_m
-                if world[2] <= tip and radial <= burner.flame_radius_m(float(world[2])):
+                flame_r = burner.flame_radius_m(float(world[2]))
+                # Both bounds are load-bearing. `flame_radius_m` reports 0.0 outside
+                # the cone's own height band, so without the lower bound a bead
+                # exactly on the burner axis -- the default placement of a rake with
+                # no transform -- satisfies `radial <= 0` at any depth below the pan
+                # and is called "flame".
+                if (flame_r is not None
+                        and surface <= world[2] <= tip
+                        and radial <= flame_r):
                     region = "flame"
                 elif world[2] > surface and radial <= burner.plume_radius_m(float(world[2])):
                     region = "plume"

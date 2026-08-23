@@ -10,13 +10,21 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { parsePlan } from '../core/plan';
+import { checkPlan, firePointSourceM, parsePlan, positionOf } from '../core/plan';
+import { lookAtQuat } from '../core/math';
 import type { CameraObject, PlanDocument } from '../core/types';
 import { buildViewSvg, escapeXml } from './drawing';
 import { PRINT_CSS, REPORT_CSS, buildReportBody, buildReportHtml } from './report';
 
 const FIXTURE_PATH = fileURLToPath(new URL('../../../fixtures/pool-fire-camera-row.ftp.json', import.meta.url));
 const fixture = (): PlanDocument => parsePlan(readFileSync(FIXTURE_PATH, 'utf8'));
+
+/** The exposure table's row for one instrument. Scoped to that table: the same
+ *  name also appears in the drawing labels and in the equipment list above it. */
+const rowFor = (body: string, name: string): string =>
+  body.slice(body.indexOf('<h2>Instrument exposure</h2>'))
+    .split('<tr>')
+    .find((r) => r.includes(`>${escapeXml(name)}<`)) as string;
 
 /** Every selector in a flat (no at-rule) stylesheet, one per comma-separated part. */
 function selectorsOf(css: string): string[] {
@@ -105,6 +113,83 @@ describe('report content', () => {
     expect(buildReportBody(doc, 'm')).not.toContain('at 2×');
     cam.camera.zoomFactor = 2;
     expect(buildReportBody(doc, 'm')).toContain('at 2×');
+  });
+
+  it('never prints a green verdict the checks list is calling an error', () => {
+    // The exposure table is read on its own, a page above the checks list, so a
+    // green cell contradicting a red finding is a safety statement rather than a
+    // styling bug. A type-T bead in the flame was printed as `ok`, "in the plume".
+    const doc = fixture();
+    const burner = doc.objects.find((o) => o.type === 'burner')!;
+    const source = firePointSourceM(doc)!;
+    doc.objects.push({
+      id: 'tc-flame', name: 'Flame rake', type: 'thermocouple',
+      transform: { position_m: [positionOf(burner)[0], positionOf(burner)[1], source[2]] },
+      beadOffsets_m: [0],
+      thermocouple: { tcType: 'T' },
+    } as never);
+
+    const row = rowFor(buildReportBody(doc, 'm'), 'Flame rake');
+    expect(row).toContain('class="bad"');
+    expect(row).not.toContain('in the plume');
+    expect(checkPlan(doc).some((i) => i.objectId === 'tc-flame' && i.severity === 'error'))
+      .toBe(true);
+  });
+
+  it('prints a near-field estimate as a caveat rather than as usable', () => {
+    // `gauge-near-field` says the figure is an order of magnitude, "not a value to
+    // size a gauge on"; the table printed it in the same green as a good placement.
+    const doc = fixture();
+    const source = firePointSourceM(doc)!;
+    doc.objects.push({
+      id: 'hf-close', name: 'Close gauge', type: 'heatFluxSensor',
+      transform: {
+        position_m: [source[0] + 0.4, source[1], source[2]],
+        rotation_quat: lookAtQuat([source[0] + 0.4, source[1], source[2]], source),
+      },
+      gauge: { range_kw_m2: 100, viewAngle_deg: 180 },
+    } as never);
+
+    const row = rowFor(buildReportBody(doc, 'm'), 'Close gauge');
+    expect(row).toContain('class="warn"');
+    expect(row).toContain('near field');
+    expect(REPORT_CSS).toContain('.report td.warn');
+  });
+
+  it('keeps a deep stack of labels on the page at the top edge', () => {
+    // Labels only ever stacked upward, so five or six co-located objects at the
+    // top of the drawing pushed the last names past y = 0 -- outside the viewBox,
+    // and off the printed sheet with nothing to show they had gone.
+    const doc = fixture();
+    const north = Math.max(...doc.objects
+      .filter((o) => o.transform)
+      .map((o) => positionOf(o)[1]));
+    for (let i = 0; i < 6; i += 1) {
+      doc.objects.push({
+        id: `hf-stack-${i}`, name: `Stacked gauge ${i}`, type: 'heatFluxSensor',
+        transform: { position_m: [0, north, 0.5] },
+        gauge: { range_kw_m2: 50 },
+      } as never);
+    }
+
+    const svg = buildViewSvg(doc, 'plan', 'm');
+    const height = Number(/viewBox="0 0 [0-9.]+ ([0-9.]+)"/.exec(svg)![1]);
+    const baselines = [...svg.matchAll(/ y="(-?[0-9.]+)"/g)].map((m) => Number(m[1]));
+    // Guard the guard: this only tests the top edge if the stack actually reaches
+    // it. Six labels at 11 px is 66 px of stack, and the plan margin is 56 px.
+    expect(Math.min(...baselines)).toBeLessThan(56);
+    expect(baselines.length).toBeGreaterThan(6);
+    expect(Math.min(...baselines)).toBeGreaterThanOrEqual(0);
+    expect(Math.max(...baselines)).toBeLessThanOrEqual(height);
+
+    // Every stacked name still reaches the sheet, and none of them overprint.
+    const ys = new Set<number>();
+    for (let i = 0; i < 6; i += 1) {
+      const line = svg.split('\n').find((l) => l.includes(`>Stacked gauge ${i}<`));
+      expect(line).toBeDefined();
+      ys.add(Number(/ y="(-?[0-9.]+)"/.exec(line as string)![1]));
+    }
+    expect(ys.size).toBe(6);
   });
 
   it('draws instrument symbols in the plan and the elevations', () => {

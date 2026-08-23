@@ -77,6 +77,23 @@ function order(d: Obj, keys: string[]): Obj {
 const orderIfObject = (v: Json, keys: string[]): Json =>
   isPlainObject(v) ? order(v, keys) : v;
 
+/**
+ * Drop a 1.1-only key that is present but null.
+ *
+ * Null and absent mean the same thing to every reader of this format, and the
+ * version derivation agrees -- a null `zoomFactor` does not make a file 1.1. But
+ * the 1.0 schema closes `camera.camera` and `burner.fire` with
+ * `additionalProperties: false`, so it rejects the KEY, whatever its value. Left
+ * in place, a hand-edited or third-party plan carrying an explicit null round-trips
+ * through this writer into a file that declares 1.0.0 and fails its own validator.
+ * The 1.1 schema's own advice is that writers omit it; the inspector already
+ * deletes it at its default. Mirror of `_drop_null_1_1` in
+ * python/fireplan/serialize.py.
+ */
+function dropNull1_1(block: Obj, key: string): void {
+  if (block[key] === null) delete block[key];
+}
+
 function canonObject(raw: Obj): Obj {
   const o: Obj = { ...raw };
 
@@ -88,6 +105,7 @@ function canonObject(raw: Obj): Obj {
       if (isPlainObject(o.camera)) {
         const spec = order(o.camera, CAMERA_SPEC);
         if (isPlainObject(spec.distortion)) spec.distortion = order(spec.distortion, DISTORTION);
+        dropNull1_1(spec, 'zoomFactor');
         o.camera = spec;
       }
       if ('mount' in o) o.mount = orderIfObject(o.mount, MOUNT);
@@ -95,7 +113,11 @@ function canonObject(raw: Obj): Obj {
     }
     case 'burner': {
       if ('footprint' in o) o.footprint = orderIfObject(o.footprint, FOOTPRINT);
-      if ('fire' in o) o.fire = orderIfObject(o.fire, FIRE);
+      if ('fire' in o) {
+        const fire = orderIfObject(o.fire, FIRE);
+        if (isPlainObject(fire)) dropNull1_1(fire, 'radiativeFraction');
+        o.fire = fire;
+      }
       break;
     }
     case 'hood': {

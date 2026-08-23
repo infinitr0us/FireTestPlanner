@@ -288,7 +288,7 @@
         },
 
         "recording": {
-          "description": "RESERVED for a future post-test record (which footage this camera produced, clock sync, checksums). Format 1.0 writers MUST emit null. Reserving the key keeps 1.0 files forward-compatible without a version bump.",
+          "description": "RESERVED for a future post-test record (which footage this camera produced, clock sync, checksums). Writers MUST emit null. Reserving the key keeps files forward-compatible without a version bump.",
           "type": "null"
         }
       }

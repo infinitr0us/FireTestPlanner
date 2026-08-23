@@ -19,6 +19,7 @@ import {
   flameTipZM,
   framingOf,
   gaugeRangeKwM2,
+  gaugeVerdict,
   gaugeViewAngleDeg,
   groundSampleDistanceM,
   heatFluxEstimate,
@@ -34,6 +35,7 @@ import {
   tcMaxTemperatureC,
   tcTypeOf,
   thermocoupleBeads,
+  thermocoupleVerdict,
   thermocouples,
   vfovDegOf,
   walls,
@@ -212,35 +214,33 @@ function instrumentTable(doc: PlanDocument, unit: LengthUnit): string {
     }
     const frac = e.fractionOfRange;
     const finite = Number.isFinite(e.incidentKwM2);
-    const usable = finite && e.facesFire && e.withinViewAngle
-      && (frac === null || (frac <= 1 && frac >= 0.05));
+    // Word and colour from one classifier, shared with Checks and the inspector.
+    // Deriving them separately is how "near field" -- a figure the checks list
+    // says must not size a gauge -- came to be printed in green.
+    const verdict = gaugeVerdict(doc, s)!;
     rows.push('<tr>' + swatch + [
       cell('heat flux'),
       cell(formatLength(e.distanceM, unit), 'num'),
       cell(finite ? `${e.incidentKwM2.toFixed(2)} kW/m²` : 'unbounded', 'num'),
       cell(frac === null || !Number.isFinite(frac) ? '—' : `${(frac * 100).toFixed(0)}%`, 'num'),
     ].join('')
-      + `<td class="${usable ? 'ok' : 'bad'}">${
-        !finite ? 'in the fire'
-          : !e.facesFire ? 'faces away'
-            : !e.withinViewAngle ? 'outside view cone'
-              : frac !== null && frac > 1 ? 'over range'
-                : frac !== null && frac < 0.05 ? 'low signal'
-                  : e.nearField ? 'near field' : 'usable'
-      }</td></tr>`);
+      + `<td class="${verdict.status}">${esc(verdict.label)}</td></tr>`);
   }
 
   for (const tc of rakes) {
     const beads = thermocoupleBeads(doc, tc);
-    const limit = tcMaxTemperatureC(tc);
     const hottest = beads.reduce<number | null>(
       (acc, b) => (b.gasTemperatureC !== null && (acc === null || b.gasTemperatureC > acc)
         ? b.gasTemperatureC : acc),
       null,
     );
     const inFire = beads.filter((b) => b.region !== 'outside').length;
-    const overTemp = hottest !== null && hottest > limit;
     const swatch = `<td><span class="swatch" style="background:${esc(objectColor(tc))}"></span>${esc(displayName(tc))}</td>`;
+    // The rake reads as its worst bead. "Outside the plume" stays neutral rather
+    // than bad -- a rake on a wall is there to read the wall, and
+    // `instrumentChecks` files that as info -- but a bead in the flame is no
+    // longer described as being in the plume, nor coloured as if it were fine.
+    const verdict = thermocoupleVerdict(doc, tc);
 
     rows.push('<tr>' + swatch + [
       cell(`thermocouple, type ${tcTypeOf(tc)}`),
@@ -248,13 +248,7 @@ function instrumentTable(doc: PlanDocument, unit: LengthUnit): string {
       cell(hottest === null ? '—' : `${hottest.toFixed(0)} °C`, 'num'),
       cell(`${inFire}/${beads.length}`, 'num'),
     ].join('')
-      // "Outside the plume" is neutral, not bad: a rake on a wall is there to read
-      // the wall, and `instrumentChecks` files that as info. The two must agree, or
-      // the drawing contradicts the checks list printed a page below it.
-      + `<td class="${overTemp ? 'bad' : inFire === 0 ? '' : 'ok'}">${
-        overTemp ? `over ${limit} °C limit`
-          : inFire === 0 ? 'outside the plume' : 'in the plume'
-      }</td></tr>`);
+      + `<td class="${verdict.status}">${esc(verdict.label)}</td></tr>`);
   }
 
   return `<h2>Instrument exposure</h2>
@@ -312,7 +306,9 @@ const REPORT_CSS = `
   .report td { padding: 5px 7px; border-bottom: 1px solid #eef2f7; }
   .report td.num { text-align: right; font-family: "Cascadia Mono", Consolas, monospace; }
   .report td.ok { color: #047857; font-weight: 600; }
+  .report td.warn { color: #b45309; font-weight: 600; }
   .report td.bad { color: #b91c1c; font-weight: 600; }
+  .report td.muted { color: #64748b; }
   .report .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
   .report .checks { list-style: none; padding: 0; margin: 0; }
   .report .checks li { padding: 5px 9px; border-left: 3px solid #cbd5e1; background: #f8fafc; margin-bottom: 4px; }

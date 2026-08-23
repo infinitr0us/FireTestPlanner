@@ -138,7 +138,20 @@ export function nextId(d: PlanDocument, prefix: string): string {
 }
 
 export const positionOf = (o: PlanObject): Vec3 => o.transform?.position_m ?? [0, 0, 0];
-export const quatOf = (o: PlanObject): Quat => o.transform?.rotation_quat ?? IDENTITY_QUAT;
+/**
+ * The object's orientation, always usable.
+ *
+ * A zero-length quaternion is schema-legal -- the schema says "unit" in prose, and
+ * prose is not a constraint -- but every frame helper throws on one, which would
+ * cost the user the entire checks list over a single degenerate object. The raw
+ * value is still what `checkPlan` reads to report `non-unit-quaternion`, so the
+ * data problem is named; here it falls back to the identity so the rest of the
+ * plan can still be computed.
+ */
+export const quatOf = (o: PlanObject): Quat => {
+  const q = o.transform?.rotation_quat;
+  return q && Math.hypot(q[0], q[1], q[2], q[3]) > 0 ? q : IDENTITY_QUAT;
+};
 export const displayName = (o: PlanObject): string => o.name || o.id;
 
 // -- object frames --------------------------------------------------------
@@ -595,7 +608,12 @@ export function thermocoupleBeads(d: PlanDocument, t: ThermocoupleObject): BeadS
     if (burner && bp && tipZ !== null) {
       const flameR = flameRadiusAtZ(burner, world[2]);
       const plumeR = plumeRadiusAtZ(burner, world[2]);
-      if (world[2] <= tipZ && flameR !== null && radialM <= flameR) {
+      // Both bounds are load-bearing. `flameRadiusAtZ` reports 0 outside the cone's
+      // own height band rather than null, so without the lower bound a bead exactly
+      // on the burner axis -- the default placement of a rake with no transform --
+      // satisfies `radialM <= 0` at any depth below the pan and is called `flame`.
+      if (world[2] >= fuelSurfaceZM(burner) && world[2] <= tipZ
+          && flameR !== null && radialM <= flameR) {
         region = 'flame';
       } else if (world[2] > fuelSurfaceZM(burner) && plumeR !== null && radialM <= plumeR) {
         region = 'plume';
@@ -816,7 +834,79 @@ export function ceilingChecks(d: PlanDocument): Issue[] {
 export const FLAME_TEMPERATURE_C = 1000;
 
 /** Below 5% of full scale a gauge is reading in its own noise. */
-const LOW_SIGNAL_FRACTION = 0.05;
+export const LOW_SIGNAL_FRACTION = 0.05;
+
+// -- instrument verdicts ---------------------------------------------------
+
+/**
+ * How an instrument placement reads at a glance.
+ *
+ * `muted` is not a lesser `ok`: a rake deliberately outside the plume is neither
+ * good nor bad, and colouring it green would be a claim nobody made.
+ */
+export type InstrumentStatus = 'ok' | 'warn' | 'bad' | 'muted';
+
+export interface InstrumentVerdict {
+  status: InstrumentStatus;
+  /** Short phrase for a table cell or a readout, not a sentence. */
+  label: string;
+}
+
+const STATUS_RANK: Record<InstrumentStatus, number> = { bad: 0, warn: 1, ok: 2, muted: 3 };
+
+/**
+ * The single place an instrument placement is judged.
+ *
+ * Three surfaces say this -- the Checks list, the inspector readout and the
+ * report's exposure table -- and each used to decide for itself. They disagreed:
+ * a type-T bead sitting in the flame was an error in Checks and green in the
+ * other two, and a near-field gauge was a warning in Checks and green in the
+ * report. A printed table is read on its own, a page away from the checks list,
+ * so a green cell contradicting a red finding is a safety statement, not a
+ * styling bug. One classifier, and `instruments.test.ts` asserts that its status
+ * matches the worst severity `instrumentChecks` files for the same object.
+ */
+export function gaugeVerdict(d: PlanDocument, s: HeatFluxSensorObject): InstrumentVerdict | null {
+  const e = heatFluxEstimate(d, s);
+  if (!e) return null;
+  const frac = e.fractionOfRange;
+
+  // Errors first, then warnings, in the order `instrumentChecks` files them.
+  if (!Number.isFinite(e.incidentKwM2)) return { status: 'bad', label: 'in the fire' };
+  if (!e.facesFire) return { status: 'bad', label: 'faces away' };
+  if (frac !== null && frac > 1) return { status: 'bad', label: 'over range' };
+  if (!e.withinViewAngle) return { status: 'warn', label: 'outside view cone' };
+  if (frac !== null && frac < LOW_SIGNAL_FRACTION) return { status: 'warn', label: 'low signal' };
+  // The number is still printed, but it is an order of magnitude. Green would say
+  // "size the gauge on this", which is the one thing `gauge-near-field` forbids.
+  if (e.nearField) return { status: 'warn', label: 'near field' };
+  return { status: 'ok', label: 'usable' };
+}
+
+/** One bead. The flame branch never falls through to the plume wording: a bead in
+ *  the flame has no plume temperature, and calling it "in the plume" was how the
+ *  report described an over-temperature bead as if it were a good one. */
+export function beadVerdict(b: BeadState, limitC: number): InstrumentVerdict {
+  if (b.region === 'flame') {
+    return limitC < FLAME_TEMPERATURE_C
+      ? { status: 'bad', label: `in the flame, past the ${limitC} °C limit` }
+      : { status: 'warn', label: 'in the flame' };
+  }
+  if (b.region === 'plume') {
+    return b.gasTemperatureC !== null && b.gasTemperatureC > limitC
+      ? { status: 'bad', label: `in the plume, past the ${limitC} °C limit` }
+      : { status: 'ok', label: 'in the plume' };
+  }
+  return { status: 'muted', label: 'outside the plume' };
+}
+
+/** The rake as a whole: its worst bead, which is the one that ends the test. */
+export function thermocoupleVerdict(d: PlanDocument, t: ThermocoupleObject): InstrumentVerdict {
+  const limit = tcMaxTemperatureC(t);
+  return thermocoupleBeads(d, t)
+    .map((b) => beadVerdict(b, limit))
+    .reduce((worst, v) => (STATUS_RANK[v.status] < STATUS_RANK[worst.status] ? v : worst));
+}
 
 /**
  * Instrument placement.
@@ -960,9 +1050,12 @@ export function checkPlan(d: PlanDocument): Issue[] {
     if (target && isAimable(o) && q) {
       const delta = sub(target, positionOf(o));
       if (length(delta) < 1e-9) {
-        out.push(issue('warning', 'degenerate-aim', 'aimTarget_m coincides with the camera position.', o.id));
+        out.push(issue('warning', 'degenerate-aim',
+          "aimTarget_m coincides with the object's own position.", o.id));
       } else {
-        const off = angleBetweenDeg(delta, forwardOf(q));
+        // `quatOf`, not the raw `q`: a zero-length quaternion is reported above and
+        // must not also throw out of the check that follows it.
+        const off = angleBetweenDeg(delta, forwardOf(quatOf(o)));
         if (off > 0.1) {
           out.push(issue('warning', 'aim-mismatch',
             `rotation_quat points ${off.toFixed(2)}° away from aimTarget_m; the quaternion is authoritative.`,

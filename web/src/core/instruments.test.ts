@@ -14,13 +14,18 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_RADIATIVE_FRACTION, plumeCentrelineRiseK, pointSourceFluxKwM2 } from './correlations';
 import { createHeatFluxSensor, createThermocouple } from './factory';
 import { forwardOf, lookAtQuat, upOf } from './math';
+import { setAimTarget } from './transform';
 import {
   beadOffsetsOf,
+  beadVerdict,
   cameras,
   effectiveFocalLengthMm,
   firePointSourceM,
+  flameRadiusAtZ,
+  fuelSurfaceZM,
   fxOf,
   gaugeRangeKwM2,
+  gaugeVerdict,
   gaugeViewAngleDeg,
   groundSampleDistanceM,
   hfovDegOf,
@@ -38,13 +43,17 @@ import {
   TC_MAX_TEMPERATURE_C,
   standoffM,
   thermocoupleBeads,
+  thermocoupleVerdict,
   thermocouples,
   verticalCoverageM,
   vfovDegOf,
   zoomOf,
   checkPlan,
 } from './plan';
+import type { CameraPreset } from './presets';
 import {
+  adoptShellPresets,
+  applyPresetToSpec,
   BUILTIN_CAMERA_PRESETS,
   cameraPresets,
   customCameraPresets,
@@ -78,6 +87,18 @@ const fixture = (): PlanDocument => parsePlan(FIXTURE_TEXT);
 
 const codes = (doc: PlanDocument): Set<string> =>
   new Set(instrumentChecks(doc).map((i) => i.code));
+
+/** A plan holding one camera placed from `preset` -- what the app writes to disk
+ *  after the user picks it, and therefore what the load boundary later sees. */
+const planWithCameraFrom = (preset: CameraPreset): PlanDocument => {
+  const doc = newPlan('placed from a preset');
+  doc.objects.push({
+    id: 'cam', type: 'camera',
+    transform: { position_m: [-2, 0, 1] },
+    camera: specFromPreset(preset),
+  });
+  return doc;
+};
 
 /** A 1 ft heptane pan at the origin -- the reference fire, without the rig. */
 function firePlan(hrrKw = 130, radiativeFraction?: number): PlanDocument {
@@ -553,6 +574,192 @@ describe('thermocouple rakes', () => {
 
 // -- the reference plan ---------------------------------------------------
 
+// -- one verdict, three surfaces -----------------------------------------
+
+describe('instrument verdicts', () => {
+  /** The worst thing `instrumentChecks` says about one object. The verdict has to
+   *  agree with it, or a printed table contradicts the checks list a page below. */
+  const worstSeverity = (doc: PlanDocument, id: string): 'error' | 'warning' | 'ok' => {
+    const mine = instrumentChecks(doc).filter((i) => i.objectId === id);
+    if (mine.some((i) => i.severity === 'error')) return 'error';
+    if (mine.some((i) => i.severity === 'warning')) return 'warning';
+    return 'ok';
+  };
+  const EXPECTED = { bad: 'error', warn: 'warning', ok: 'ok', muted: 'ok' } as const;
+
+  it('never calls a bead in the flame "in the plume"', () => {
+    // The report said exactly that, in green, about a bead the checks list was
+    // simultaneously calling an over-temperature error.
+    const doc = firePlan();
+    const rake = addRake(doc, [0, 0, 0], [0.3], { tcType: 'T' });
+    const bead = thermocoupleBeads(doc, rake)[0];
+    expect(bead.region).toBe('flame');
+
+    const verdict = beadVerdict(bead, tcMaxTemperatureC(rake));
+    expect(verdict.status).toBe('bad');
+    expect(verdict.label).toContain('in the flame');
+    expect(verdict.label).not.toContain('plume');
+    expect(thermocoupleVerdict(doc, rake)).toEqual(verdict);
+  });
+
+  it('warns rather than failing a bead whose wire survives the flame', () => {
+    const doc = firePlan();
+    const rake = addRake(doc, [0, 0, 0], [0.3], { tcType: 'K' }); // good to 1260 C
+    expect(thermocoupleVerdict(doc, rake).status).toBe('warn');
+  });
+
+  it('leaves a rake outside the plume neutral rather than green', () => {
+    // `instrumentChecks` files it as info: a rake on a wall is there to read the
+    // wall. Colouring it "good" would be a claim nobody made.
+    const doc = firePlan();
+    const rake = addRake(doc, [3, 0, 0], [1.5]);
+    expect(thermocoupleVerdict(doc, rake)).toEqual({ status: 'muted', label: 'outside the plume' });
+  });
+
+  it('reads the rake as its worst bead', () => {
+    const doc = firePlan();
+    const tip = (firePointSourceM(doc) as Vec3)[2] * 2 - 0.1;
+    const rake = addRake(doc, [0, 0, 0], [tip + 0.5, 0.3], { tcType: 'T' });
+    expect(thermocoupleVerdict(doc, rake).status).toBe('bad');
+  });
+
+  it('does not call a near-field estimate usable', () => {
+    // `gauge-near-field` says the figure is an order of magnitude, "not a value to
+    // size a gauge on" -- and the report printed it in green.
+    const doc = firePlan();
+    const gauge = addGauge(doc, [0.4, 0, 0.2], { range: 100 });
+    expect(heatFluxEstimate(doc, gauge)!.nearField).toBe(true);
+    expect(gaugeVerdict(doc, gauge)).toEqual({ status: 'warn', label: 'near field' });
+  });
+
+  it('has no verdict where there is no fire to have one about', () => {
+    const doc = newPlan('no fire');
+    const gauge = createHeatFluxSensor(doc, [1, 0, 0.5]);
+    doc.objects.push(gauge);
+    expect(gaugeVerdict(doc, gauge)).toBeNull();
+  });
+
+  it('agrees with the worst finding the checks list files, case by case', () => {
+    const cases: Array<[string, () => PlanDocument]> = [
+      ['usable gauge', () => { const d = firePlan(); addGauge(d, [1.2, 0, 0.3], { range: 5 }); return d; }],
+      ['over range', () => { const d = firePlan(); addGauge(d, [0.8, 0, 0.3], { range: 0.5 }); return d; }],
+      ['low signal', () => { const d = firePlan(); addGauge(d, [4, 0, 0.3], { range: 50 }); return d; }],
+      ['near field', () => { const d = firePlan(); addGauge(d, [0.4, 0, 0.2], { range: 100 }); return d; }],
+      ['facing away', () => { const d = firePlan(); addGauge(d, [2, 0, 0.3], { aim: [9, 0, 0.3] }); return d; }],
+      ['view tube', () => { const d = firePlan(); addGauge(d, [2, 0, 0.3], { aim: [2, 0, 9], viewAngle: 20 }); return d; }],
+      ['in the fire', () => {
+        const d = firePlan();
+        const g = addGauge(d, [1, 0, 0.3]);
+        g.transform!.position_m = firePointSourceM(d) as Vec3;
+        return d;
+      }],
+    ];
+    for (const [name, build] of cases) {
+      const doc = build();
+      const gauge = heatFluxSensors(doc)[0];
+      const verdict = gaugeVerdict(doc, gauge)!;
+      expect([name, EXPECTED[verdict.status]]).toEqual([name, worstSeverity(doc, gauge.id)]);
+    }
+  });
+
+  it('agrees with the checks list for thermocouples too', () => {
+    const tip = (firePointSourceM(firePlan()) as Vec3)[2] * 2 - 0.1;
+    const cases: Array<[string, () => PlanDocument]> = [
+      ['plume', () => { const d = firePlan(); addRake(d, [0, 0, 0], [tip + 0.5]); return d; }],
+      ['flame, type K', () => { const d = firePlan(); addRake(d, [0, 0, 0], [0.3]); return d; }],
+      ['flame, type T', () => { const d = firePlan(); addRake(d, [0, 0, 0], [0.3], { tcType: 'T' }); return d; }],
+      ['outside', () => { const d = firePlan(); addRake(d, [3, 0, 0], [1.5]); return d; }],
+      ['plume over limit', () => {
+        const d = firePlan(); addRake(d, [0, 0, 0], [tip + 0.1], { tcType: 'T' }); return d;
+      }],
+    ];
+    for (const [name, build] of cases) {
+      const doc = build();
+      const rake = thermocouples(doc)[0];
+      const verdict = thermocoupleVerdict(doc, rake);
+      expect([name, EXPECTED[verdict.status]]).toEqual([name, worstSeverity(doc, rake.id)]);
+    }
+  });
+});
+
+// -- degenerate input the loader accepts ----------------------------------
+
+describe('input the schema allows but the maths cannot use', () => {
+  it('places a bead below the fuel surface outside the flame, not inside it', () => {
+    // `flameRadiusAtZ` reports 0 outside the cone height band, so a test of only
+    // the upper bound reduced to `radialM <= 0` -- true exactly on the burner axis,
+    // where a rake with no transform sits by default. A bead in the concrete drew
+    // an over-temperature ERROR. Mirrored in python/tests/test_instruments.py.
+    const doc = firePlan(); // rimHeight_m 0.1, so the fuel surface is at z = 0.1
+    const rake = addRake(doc, [0, 0, 0], [0.05, -1], { tcType: 'T' });
+    expect(thermocoupleBeads(doc, rake).map((b) => b.region)).toEqual(['outside', 'outside']);
+    expect(codes(doc)).not.toContain('tc-over-temperature');
+
+    // Inclusive: a bead resting exactly on the fuel surface is in the flame.
+    const onIt = firePlan();
+    expect(thermocoupleBeads(onIt, addRake(onIt, [0, 0, 0], [0.1]))[0].region).toBe('flame');
+  });
+
+  it('gives a flame that clamps to zero height no flame region at all', () => {
+    // 1 kW on a 0.3 m pan: Heskestad L_f clamps to 0, the tip is the fuel surface,
+    // and there is no cone. Python collapsed that into "a cone of zero radius" and
+    // reported an ERROR where this engine reported info -- opposite verdicts from
+    // the two engines on the same file.
+    const doc = firePlan(1);
+    const burner = doc.objects[0] as BurnerObject;
+    expect(flameRadiusAtZ(burner, fuelSurfaceZM(burner))).toBeNull();
+
+    const rake = addRake(doc, [0, 0, 0], [0, 0.05], { tcType: 'T' });
+    expect(thermocoupleBeads(doc, rake).map((b) => b.region)).toEqual(['outside', 'outside']);
+    expect(instrumentChecks(doc).map((i) => [i.severity, i.code]))
+      .toEqual([['info', 'tc-outside-plume']]);
+  });
+
+  it('survives a zero-length quaternion instead of losing every finding to it', () => {
+    // Four numbers is all the schema asks for; "unit" is prose. `quatToColumns`
+    // throws on a zero-length one, and `checkPlan` reached it through both new
+    // instrument types -- so one hand-edited object cost the user the whole checks
+    // list, including the finding that named the bad data.
+    const doc = firePlan();
+    const gauge = addGauge(doc, [1, 0, 0.5]);
+    gauge.transform!.rotation_quat = [0, 0, 0, 0];
+    const rake = addRake(doc, [1, 0, 0.5], [0]);
+    rake.transform!.rotation_quat = [0, 0, 0, 0];
+
+    expect(validateStructure(doc)).toEqual([]); // the loader accepts it, so the maths must
+    const found = checkPlan(doc).map((i) => i.code);
+    expect(found).toContain('non-unit-quaternion');
+    expect(heatFluxEstimate(doc, gauge)).not.toBeNull();
+    expect(thermocoupleBeads(doc, rake)[0].world).toEqual([1, 0, 0.5]);
+  });
+
+  it('refuses an aim at the object own position rather than half-applying one', () => {
+    // Since 1.1 a gauge standing on the point source is a modelled state
+    // (`gauge-in-fire`), so "Aim at fire" on one asks for the direction from a
+    // point to itself. `lookAtQuat` threw -- after `aimTarget_m` had been written.
+    const doc = firePlan();
+    const source = firePointSourceM(doc) as Vec3;
+    const gauge = addGauge(doc, [1, 0, 0.3]);
+    gauge.transform!.position_m = source;
+    const before = JSON.stringify(gauge.transform);
+
+    expect(setAimTarget(gauge, source)).toBe(false);
+    expect(JSON.stringify(gauge.transform)).toBe(before);
+
+    // A real target still works, and still records the intent.
+    expect(setAimTarget(gauge, [3, 0, 0.5])).toBe(true);
+    expect(gauge.transform!.aimTarget_m).toEqual([3, 0, 0.5]);
+  });
+
+  it('names the object, not "the camera", when a gauge aims at itself', () => {
+    const doc = firePlan();
+    const gauge = addGauge(doc, [1, 0, 0.5]);
+    gauge.transform!.aimTarget_m = [1, 0, 0.5];
+    const issue = checkPlan(doc).find((i) => i.code === 'degenerate-aim')!;
+    expect(issue.message).not.toContain('camera');
+  });
+});
+
 describe('the reference plan', () => {
   it('has no errors', () => {
     expect(checkPlan(fixture()).filter((i) => i.severity === 'error')).toEqual([]);
@@ -620,6 +827,34 @@ describe('the declared format version', () => {
     expect(maxVersion('1.0.0', '1.1.0')).toBe('1.1.0');
   });
 
+  it('drops an explicit-null 1.1 key rather than emitting a file it would reject', () => {
+    // Null and absent are the same thing to the version derivation -- but not to
+    // the 1.0 schema, which closes these objects and rejects the KEY whatever its
+    // value. Kept, the key made this writer emit a 1.0.0 file that fails 1.0.
+    // Mirrored in python/tests/test_roundtrip.py.
+    const zoomed = newPlan('explicit null zoom');
+    zoomed.objects.push(camera({ zoomFactor: null as unknown as number }));
+    expect(requiredFormatVersion(zoomed)).toBe('1.0.0');
+    const writtenCam = JSON.parse(serializePlan(zoomed));
+    expect(writtenCam.version).toBe('1.0.0');
+    expect('zoomFactor' in writtenCam.objects[0].camera).toBe(false);
+
+    const radiating = firePlan();
+    (radiating.objects[0] as BurnerObject).fire!.radiativeFraction = null as unknown as number;
+    expect(requiredFormatVersion(radiating)).toBe('1.0.0');
+    const writtenBurner = JSON.parse(serializePlan(radiating));
+    expect(writtenBurner.version).toBe('1.0.0');
+    expect('radiativeFraction' in writtenBurner.objects[0].fire).toBe(false);
+  });
+
+  it('leaves a real 1.1 value alone while dropping the null one', () => {
+    const doc = newPlan('one of each');
+    doc.objects.push(camera({ zoomFactor: 2 }));
+    const written = JSON.parse(serializePlan(doc));
+    expect(written.objects[0].camera.zoomFactor).toBe(2);
+    expect(written.version).toBe('1.1.0');
+  });
+
   it('reports a file whose label understates its contents', () => {
     // Only a hand edit or a broken writer produces one, but the label is what a
     // consumer checks before deciding it can read the file.
@@ -642,9 +877,10 @@ describe('the camera preset library', () => {
   beforeEach(() => resetCustomPresets());
 
   it('ships the two FLIR presets with their datasheet intrinsics', () => {
-    // FLIR publishes 24 x 18 deg and 0.66 mrad/px for the A700's 24 deg lens; the
-    // sensor is 640 x 480 at the 12 um pitch the datasheet gives, and the focal
-    // length is back-solved from the FOV. See docs/datasheets/README.md.
+    // The A-series sheet designates this lens by angle -- "Included Lenses: 24 deg"
+    // -- and prints no focal length, so the preset back-solves one from the 640 x
+    // 480 array at 12 um pitch. 24.0 x 18.1 deg is what that reproduces; both are
+    // derived rather than printed. See docs/datasheets/README.md.
     const a700 = findPreset('flir-a700-24deg')!;
     expect(a700.resolution_px).toEqual([640, 480]);
     expect(a700.sensor_mm[0]).toBeCloseTo(640 * 0.012, 6);
@@ -652,8 +888,9 @@ describe('the camera preset library', () => {
     expect(vfovDegOf({ camera: specFromPreset(a700) } as CameraObject)).toBeCloseTo(18.1, 1);
     expect(a700.intrinsicsSource).toBe('datasheet');
 
-    // 1280 x 720 at 14 um, straight off the datasheet; the nominal 25 mm lens is
-    // used as printed, because pitch and lens designation agree for this camera.
+    // 1280 x 720 at 14 um, straight off the datasheet, and the 25 mm lens is used
+    // as printed -- this sheet designates lenses by focal length, so nothing needs
+    // back-solving. The field of view is the derived half.
     const a8303 = findPreset('flir-a8303sc-25mm')!;
     expect(a8303.resolution_px).toEqual([1280, 720]);
     expect(a8303.sensor_mm[0]).toBeCloseTo(1280 * 0.014, 6);
@@ -733,6 +970,79 @@ describe('the camera preset library', () => {
     expect(findPreset(saved.id)).toBeDefined();
   });
 
+  it('keeps the zoom when the lens is swapped', () => {
+    // "The lens belongs to the preset, the zoom setting belongs to the shot."
+    // Replacing the whole spec took the shot with it -- silently, and on a plan
+    // where zoom was the only 1.1 feature the next save relabelled the file 1.0.0.
+    const cam = camera({ zoomFactor: 2, focalLength_mm: 20 });
+    const preset = findPreset('flir-a700-24deg')!;
+    cam.camera = applyPresetToSpec(cam.camera, preset);
+
+    expect(cam.camera.zoomFactor).toBe(2);
+    expect(cam.camera.focalLength_mm).toBe(preset.focalLength_mm);
+    expect(cam.camera.presetId).toBe(preset.id);
+
+    // An unzoomed camera stays unzoomed rather than gaining an explicit 1.
+    const plain = camera();
+    plain.camera = applyPresetToSpec(plain.camera, preset);
+    expect('zoomFactor' in plain.camera).toBe(false);
+  });
+
+  it('drops a stored preset whose enums are not ones it would have written', () => {
+    // `coerce` exists to stop a hand-edited entry reaching the intrinsics maths,
+    // but it cast `modality` and `intrinsicsSource` instead of checking them -- so
+    // a bogus value survived, was placed into a camera, and was written into the
+    // plan, after which the app refused to open its own file.
+    adoptShellPresets([
+      {
+        id: 'hand-edited', label: 'Hand edited', modality: 'GAMMA',
+        intrinsicsSource: 'lab-grade', resolution_px: [640, 480],
+        sensor_mm: [7.68, 5.76], focalLength_mm: 18,
+      },
+    ], async () => true);
+
+    const [stored] = customCameraPresets();
+    expect(stored.modality).toBe('other');
+    expect(stored.intrinsicsSource).toBe('nominal');
+    expect(validateStructure(planWithCameraFrom(stored))).toEqual([]);
+  });
+
+  it('takes its library from the desktop shell rather than browser storage', () => {
+    // The shell binds a fresh loopback port on every launch, and localStorage is
+    // scoped to the origin -- so a library kept there was in a namespace the next
+    // launch could not see, while the UI promised it would survive a restart.
+    const writes: unknown[][] = [];
+    adoptShellPresets(
+      [{ id: 'from-disk', label: 'From disk', modality: 'LWIR', resolution_px: [640, 480], sensor_mm: [7.68, 5.76], focalLength_mm: 18 }],
+      async (presets) => { writes.push(presets); return true; },
+    );
+
+    expect(customCameraPresets().map((p) => p.id)).toEqual(['from-disk']);
+    expect(cameraPresets()).toHaveLength(BUILTIN_CAMERA_PRESETS.length + 1);
+
+    saveCustomPreset(presetFromCamera(camera(), 'My rig'));
+    expect(writes).toHaveLength(1);
+    expect((writes[0] as Array<{ id: string }>).map((p) => p.id)).toEqual(['from-disk', 'my-rig']);
+  });
+
+  it('says a preset is persistent only once a write has actually landed', async () => {
+    // The old answer was "does a place to write exist", which is true of a browser
+    // that hands out localStorage and then rejects every setItem -- and was true
+    // of the desktop build that lost the library on the next launch.
+    let ok = true;
+    adoptShellPresets([], async () => ok);
+    expect(presetsArePersistent()).toBe(true); // nothing written yet: the store is real
+
+    saveCustomPreset(presetFromCamera(camera(), 'My rig'));
+    await Promise.resolve();
+    expect(presetsArePersistent()).toBe(true);
+
+    ok = false;
+    saveCustomPreset(presetFromCamera(camera(), 'Another'));
+    await Promise.resolve();
+    expect(presetsArePersistent()).toBe(false);
+  });
+
   it('places a camera whose intrinsics are inline, not a reference', () => {
     const preset = findPreset('flir-a700-24deg')!;
     const spec = specFromPreset(preset);
@@ -760,6 +1070,21 @@ describe('instrument factories', () => {
     const rake = createThermocouple(doc, [1, 0, 0.5]);
     expect(rake.beadOffsets_m).toEqual([0]);
     expect(rake.thermocouple!.tcType).toBe('K');
+  });
+
+  it('records a mount height that agrees with where the object actually is', () => {
+    // `setPosition` rewrites mount.height_m on every move because "a gauge whose
+    // recorded mount height contradicts its own Z is a drawing waiting to be
+    // wrong". A thermocouple was created 0.5 m up and recorded at 0, so every
+    // newly dropped one was born contradicting itself and stayed that way until
+    // first dragged -- into shared files, since nothing reads the field yet.
+    const doc = firePlan();
+    for (const obj of [createThermocouple(doc, [1, 0, 0.5]),
+      createHeatFluxSensor(doc, [2, 0, 0.8])]) {
+      expect(obj.mount!.height_m).toBe(positionOf(obj)[2]);
+    }
+    expect(createThermocouple(doc).mount!.height_m)
+      .toBe(positionOf(createThermocouple(doc))[2]);
   });
 
   it('gives new instruments unique ids', () => {

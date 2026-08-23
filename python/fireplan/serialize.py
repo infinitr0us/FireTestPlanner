@@ -65,10 +65,19 @@ _VERSION_LATEST = "1.1.0"
 
 
 def _version_tuple(version: str) -> Tuple[int, ...]:
+    """Three components, zero-padded, so comparison means the same thing here as in
+    the web writer.
+
+    Without the padding `("1", "0")` sorts below `(1, 0, 0)` and a plan declaring
+    "1.0" is rewritten to "1.0.0" by this engine while the web writer leaves it
+    alone -- a byte-parity crack, even if such a file is invalid to both validators.
+    Mirror of `compareVersions` in web/src/core/types.ts.
+    """
     try:
-        return tuple(int(part) for part in str(version).split("."))
+        parts = tuple(int(part) for part in str(version).split("."))
     except (TypeError, ValueError):
         return ()
+    return (parts + (0, 0, 0))[:3]
 
 
 def required_version(data: Dict[str, Any]) -> str:
@@ -142,6 +151,22 @@ def _canon_sub(d: Any, keys: List[str]) -> Any:
     return _order(d, keys) if isinstance(d, dict) else d
 
 
+def _drop_null_1_1(block: Any, key: str) -> Any:
+    """Drop a 1.1-only key that is present but null.
+
+    Null and absent mean the same thing to every reader of this format, and
+    `required_version` agrees -- a null zoomFactor does not make a file 1.1. But the
+    1.0 schema closes `camera.camera` and `burner.fire` with
+    `additionalProperties: false`, so it rejects the KEY, whatever its value. Left
+    in place, a hand-edited or third-party plan carrying an explicit null round-trips
+    through this writer into a file that declares 1.0.0 and fails its own validator.
+    Mirror of `dropNull1_1` in web/src/core/serialize.ts.
+    """
+    if isinstance(block, dict) and block.get(key, False) is None:
+        block.pop(key)
+    return block
+
+
 def _canon_object(obj: Dict[str, Any]) -> Dict[str, Any]:
     o = dict(obj)
 
@@ -155,14 +180,14 @@ def _canon_object(obj: Dict[str, Any]) -> Dict[str, Any]:
         spec = _order(o["camera"], _CAMERA_SPEC)
         if isinstance(spec.get("distortion"), dict):
             spec["distortion"] = _order(spec["distortion"], _DISTORTION)
-        o["camera"] = spec
+        o["camera"] = _drop_null_1_1(spec, "zoomFactor")
         if "mount" in o:
             o["mount"] = _canon_sub(o["mount"], _MOUNT)
     elif kind == "burner":
         if "footprint" in o:
             o["footprint"] = _canon_sub(o["footprint"], _FOOTPRINT)
         if "fire" in o:
-            o["fire"] = _canon_sub(o["fire"], _FIRE)
+            o["fire"] = _drop_null_1_1(_canon_sub(o["fire"], _FIRE), "radiativeFraction")
     elif kind == "hood":
         if isinstance(o.get("duct"), dict):
             o["duct"] = _order(o["duct"], _DUCT)

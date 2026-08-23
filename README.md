@@ -47,8 +47,8 @@ pointed at rather than merely placed.
 The preset list is seeded from `presets/cameras.json` — including the FLIR A700 and
 A8303sc, derived from the datasheets in `docs/datasheets/`. For anything else: place
 the nearest camera, correct its optics in the inspector, then **Save as preset**. It
-joins the list and persists in the browser (and in the desktop app's WebView profile),
-with **no file to keep beside your plans**. That works because `presetId` is only a
+joins the list and persists — in the desktop app's settings file, or in site data in a
+browser tab — with **no file to keep beside your plans**. That works because `presetId` is only a
 hint: every intrinsic is copied inline into the camera, so a plan is fully specified
 on a machine whose preset library is empty — and opening someone else's plan offers to
 adopt the preset it names.

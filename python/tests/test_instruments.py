@@ -341,6 +341,43 @@ def test_a_bead_in_the_flame_gets_no_plume_temperature():
     assert beads[0]["gas_temperature_c"] is None
 
 
+def test_a_bead_below_the_fuel_surface_is_not_in_the_flame():
+    """The cone starts at the fuel surface, and so must the region test.
+
+    `flame_radius_m` reports 0.0 outside the cone's own height band, so a test of
+    only the upper bound reduced to `radial <= 0` below the pan -- true exactly on
+    the burner axis, which is where a rake with no transform sits by default. The
+    result was a severity-error over-temperature finding for a bead in the
+    concrete. Mirrored in web/src/core/instruments.test.ts.
+    """
+    plan = _fire_plan()  # rimHeight_m 0.1, so the fuel surface is at z = 0.1
+    beads = plan.thermocouple_beads(_rake(plan, [0.0, 0.0, 0.0], [0.05, -1.0], tc_type="T"))
+    assert [b["region"] for b in beads] == ["outside", "outside"]
+    assert "tc-over-temperature" not in codes(plan.instrument_checks())
+
+    # The bound is inclusive: a bead resting exactly on the fuel surface is in it.
+    plan = _fire_plan()
+    assert plan.thermocouple_beads(_rake(plan, [0.0, 0.0, 0.0], [0.1]))[0]["region"] == "flame"
+
+
+def test_a_flame_that_clamps_to_zero_height_has_no_flame_region():
+    """A 1 kW fire on a 0.3 m pan: Heskestad's L_f clamps to 0, so the tip is the
+    fuel surface and there is no cone.
+
+    `flame_radius_m` returning 0.0 for that case collapsed "no flame" into "a flame
+    of zero radius", and an on-axis bead came out `flame` -- an ERROR here against
+    the editor's `info` on the same file, which is exactly the divergence the paired
+    suites exist to catch. Mirrored in web/src/core/instruments.test.ts.
+    """
+    plan = _fire_plan(hrr_kw=1.0)
+    assert plan.burner.flame_height_m() == 0.0
+    assert plan.burner.flame_radius_m(plan.burner.fuel_surface_z_m) is None
+
+    beads = plan.thermocouple_beads(_rake(plan, [0.0, 0.0, 0.0], [0.0, 0.05], tc_type="T"))
+    assert [b["region"] for b in beads] == ["outside", "outside"]
+    assert [(i.severity, i.code) for i in plan.instrument_checks()]         == [("info", "tc-outside-plume")]
+
+
 def test_a_bead_well_off_to_the_side_is_outside_the_plume():
     plan = _fire_plan()
     beads = plan.thermocouple_beads(_rake(plan, [3.0, 0.0, 0.0], [1.5]))
@@ -422,6 +459,53 @@ def test_a_rake_entirely_outside_the_plume_is_reported_as_info_only():
     plan = Plan.load(CAMERA_ROW)
     issues = [i for i in plan.instrument_checks() if i.object_id == "tc-east-wall"]
     assert [(i.severity, i.code) for i in issues] == [("info", "tc-outside-plume")]
+
+
+def test_a_burner_with_no_usable_flame_geometry_does_not_kill_the_checks():
+    """`check()` is documented for a plan mid-edit, and one malformed burner used to
+    take the whole check list down with a raw ValueError out of the correlation.
+
+    The gauge path has swallowed exactly these since 1.1 (`fire_point_source`); the
+    thermocouple path tested `hrr_kw is not None`, which an hrr_kw of 0 passes.
+    """
+    for fire in ({"hrr_kw": 0.0}, {"hrr_kw": -5.0}, {"hrr_kw": None}):
+        plan = _fire_plan()
+        plan.burner.raw["fire"] = dict(fire)
+        _rake(plan, [0.0, 0.0, 0.5], [0.0])
+        beads = plan.thermocouple_beads(plan.thermocouples[0])
+        assert beads[0]["region"] == "outside"
+        plan.check()  # must not raise
+
+    # A footprint with no area is the other way in.
+    plan = _fire_plan()
+    plan.burner.raw["footprint"] = {"shape": "square", "size_m": [0.0, 0.0]}
+    _rake(plan, [0.0, 0.0, 0.5], [0.0])
+    plan.check()
+
+
+def test_a_degenerate_quaternion_does_not_take_the_checks_down_with_it():
+    """Four numbers is all the schema asks for; "unit" is prose. Every frame helper
+    throws on a zero-length one, so a single hand-edited object used to cost the
+    caller every finding in the plan -- including the one naming the bad data."""
+    plan = _fire_plan()
+    _gauge(plan, [1.0, 0.0, 0.5])
+    plan.heat_flux_sensors[0].raw["transform"]["rotation_quat"] = [0.0, 0.0, 0.0, 0.0]
+    _rake(plan, [1.0, 0.0, 0.5], [0.0])
+    plan.thermocouples[0].raw["transform"]["rotation_quat"] = [0.0, 0.0, 0.0, 0.0]
+
+    found = codes(plan.check())
+    assert "non-unit-quaternion" in found  # the data problem is still named
+    assert plan.heat_flux_estimate(plan.heat_flux_sensors[0]) is not None
+
+
+def test_an_aim_target_without_a_quaternion_is_not_a_mismatch():
+    """`forward` falls back to the identity orientation where no quaternion is
+    stored, and warning that a stored quaternion disagrees with the target is a
+    claim about a quaternion that is not in the file. The web stays silent here."""
+    plan = _fire_plan()
+    _gauge(plan, [1.0, 0.0, 0.5])
+    del plan.heat_flux_sensors[0].raw["transform"]["rotation_quat"]
+    assert "aim-mismatch" not in codes(plan.check())
 
 
 def test_instrument_checks_stay_silent_with_no_instruments():

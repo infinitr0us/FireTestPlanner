@@ -3,6 +3,7 @@
 import examplePlan from '../../fixtures/pool-fire-camera-row.ftp.json';
 
 import { newPlan } from './core/plan';
+import { adoptShellPresets } from './core/presets';
 import type { LengthUnit, PlanDocument } from './core/types';
 import { parseAndValidatePlan } from './core/validate';
 import {
@@ -410,6 +411,25 @@ if (sharedPlanAdopted) {
 connectShell(() => {
   document.body.classList.add('is-desktop');
   renderToolbar();
+
+  // The custom preset library comes from the shell's settings file, not from
+  // browser storage: this page's origin carries a fresh loopback port on every
+  // launch, and `localStorage` is scoped to the origin, so the library the user
+  // built last time was in a namespace this launch cannot see. Adopted before the
+  // first save can happen, and the two panels that list presets repaint once it
+  // lands.
+  const bridge = shell();
+  if (bridge) {
+    void bridge.loadPresets().then((stored) => {
+      adoptShellPresets(stored, (presets) => bridge.savePresets(presets));
+      palette.render();
+      inspector.render();
+    }, () => {
+      // An unreachable shell route is not worth failing the boot over; the
+      // in-memory library still works for the session and says so.
+    });
+  }
+
   void announceReady({
     title: document.title,
     toolbarButtons: document.querySelectorAll('#toolbar button').length,

@@ -12,6 +12,7 @@ import { defaultAimTarget } from '../core/factory';
 import { setAimTarget, setPosition, type AimableObject } from '../core/transform';
 import {
   beadOffsetsOf,
+  beadVerdict,
   burnerDiameterM,
   burnerFlameHeightM,
   ceilingAreaM2,
@@ -22,6 +23,7 @@ import {
   fxOf,
   fyOf,
   gaugeRangeKwM2,
+  gaugeVerdict,
   gaugeViewAngleDeg,
   groundSampleDistanceM,
   heatFluxEstimate,
@@ -35,6 +37,7 @@ import {
   isHood,
   isThermocouple,
   isWall,
+  LOW_SIGNAL_FRACTION,
   plumeRadiusAtZ,
   positionOf,
   primaryBurner,
@@ -49,8 +52,10 @@ import {
   verticalCoverageM,
   vfovDegOf,
   zoomOf,
+  type InstrumentStatus,
 } from '../core/plan';
 import {
+  applyPresetToSpec,
   cameraPresets,
   deleteCustomPreset,
   focalLengthForHfov,
@@ -58,7 +63,6 @@ import {
   presetFromCamera,
   presetsArePersistent,
   saveCustomPreset,
-  specFromPreset,
 } from '../core/presets';
 import { formatLength, formatLengthWithUnit } from '../core/units';
 import type {
@@ -85,6 +89,7 @@ import {
   lengthField,
   numberField,
   readout,
+  type ReadoutTone,
   row,
   sectionTitle,
   selectField,
@@ -96,6 +101,12 @@ import {
  *  panel title is uppercased by CSS, and "HEATFLUXSENSOR" is not a phrase. */
 const TYPE_LABEL: Record<string, string> = {
   heatFluxSensor: 'heat flux gauge',
+};
+
+/** One classifier, two vocabularies: `readout` has said `good` since 1.0, and the
+ *  report says `ok` because that is its CSS class. This is the whole difference. */
+const TONE: Record<InstrumentStatus, ReadoutTone> = {
+  ok: 'good', warn: 'warn', bad: 'bad', muted: 'muted',
 };
 
 export class Inspector {
@@ -293,6 +304,25 @@ export class Inspector {
   private renderAim(obj: AimableObject, unit: LengthUnit, handRotatedHint: string): void {
     const target = obj.transform?.aimTarget_m ?? null;
 
+    // Since 1.1 a gauge can legitimately stand on the point the model puts the
+    // fire at -- `gauge-in-fire` says so in as many words -- and there is no
+    // direction from a point to itself. `setAimTarget` refuses that edit rather
+    // than throwing halfway through it, so the button has to say why it is off
+    // instead of looking like it does nothing.
+    const fire = defaultAimTarget(this.store.document);
+    const here = positionOf(obj);
+    const onTheFire =
+      Math.hypot(fire[0] - here[0], fire[1] - here[1], fire[2] - here[2]) < 1e-9;
+    const aimAtFire = button('Aim at fire', () =>
+      this.patch(obj.id, 'Aim at fire', (o) => {
+        setAimTarget(o as AimableObject, defaultAimTarget(this.store.document));
+      }));
+    if (onTheFire) {
+      aimAtFire.disabled = true;
+      aimAtFire.title = 'This sits on the point the model puts the fire at, so there is no '
+        + 'direction to aim along. Move it out of the flame first.';
+    }
+
     this.root.append(sectionTitle('Aim'));
     this.root.append(
       row(`Aim target (${unit})`,
@@ -303,12 +333,7 @@ export class Inspector {
             setAimTarget(o as AimableObject, next);
           })),
         target ? 'Advisory; the stored quaternion is authoritative' : handRotatedHint),
-      h('div', { class: 'panel__actions' }, [
-        button('Aim at fire', () =>
-          this.patch(obj.id, 'Aim at fire', (o) => {
-            setAimTarget(o as AimableObject, defaultAimTarget(this.store.document));
-          })),
-      ]),
+      h('div', { class: 'panel__actions' }, [aimAtFire]),
     );
   }
 
@@ -360,12 +385,16 @@ export class Inspector {
         numberField(zoomOf(cam), (v) =>
           this.patch(cam.id, 'Set zoom', (o) => {
             const c = (o as CameraObject).camera;
-            const z = Math.max(0.01, v);
             // 1x is the absence of a zoom rather than a value. Omitting it keeps a
             // plan that does not use the feature declaring format 1.0, so it still
             // opens in a build that predates zoom.
-            if (Math.abs(z - 1) < 1e-9) delete c.zoomFactor;
-            else c.zoomFactor = z;
+            //
+            // A typed 0 or a negative gets the same treatment, because that is what
+            // `zoomOf` already says they mean. Clamping them to 0.01 instead wrote a
+            // ~171 degree field of view into the file and bumped it to 1.1.0 -- the
+            // `min` attribute does not stop a typed value.
+            if (!(v > 0) || Math.abs(v - 1) < 1e-9) delete c.zoomFactor;
+            else c.zoomFactor = v;
           }), { step: 0.5, min: 0.01 }),
         'Multiplies the effective focal length: 2× halves both fields of view'),
       row('Horizontal FOV (°)',
@@ -443,7 +472,8 @@ export class Inspector {
           const preset = library.find((p) => p.id === id);
           if (!preset) return;
           this.patch(cam.id, 'Apply preset', (o) => {
-            (o as CameraObject).camera = specFromPreset(preset);
+            const c = o as CameraObject;
+            c.camera = applyPresetToSpec(c.camera, preset);
           });
         }),
         'Intrinsics are copied inline, so the plan stays self-contained'),
@@ -484,7 +514,7 @@ export class Inspector {
 
     return h('div', { class: 'preset-name' }, [
       row('Preset name', input,
-        'Saved to your library in this browser, not to a file beside the plan'),
+        'Saved to your preset library, not to a file beside the plan'),
       h('div', { class: 'panel__actions' }, [
         button('Save preset', () => this.commitPreset(cam, input.value)),
       ]),
@@ -493,9 +523,9 @@ export class Inspector {
         + 'rate — but not the zoom, which belongs to the shot rather than to the camera.',
         presetsArePersistent()
           ? ''
-          : ' This browser is not storing site data, so the preset will last only for this '
-            + 'session. The plan itself is unaffected: every intrinsic is written into the '
-            + 'camera.',
+          : ' The library has nowhere to be stored that outlives this session, so the preset '
+            + 'will last only until the app closes. The plan itself is unaffected: every '
+            + 'intrinsic is written into the camera.',
       ]),
     ]);
   }
@@ -937,10 +967,18 @@ export class Inspector {
       const burner = primaryBurner(doc);
       const range = gaugeRangeKwM2(s);
 
+      const verdict = gaugeVerdict(doc, s);
       items.push(
+        // The same call the report's exposure table and the Checks list use, so a
+        // green readout here can no longer contradict a warning printed there.
+        readout('Verdict', verdict ? verdict.label : '—',
+          verdict ? TONE[verdict.status] : undefined),
         readout('Distance to mid-flame', formatLengthWithUnit(estimate.distanceM, unit)),
+        // A gauge turned away from the fire is an error; a view tube that misses it
+        // is a warning. `instrumentChecks` has always said so, and one tone for both
+        // was the same disagreement the Verdict line above exists to end.
         readout('Off the gauge axis', `${estimate.offAxisDeg.toFixed(0)}°`,
-          estimate.facesFire && estimate.withinViewAngle ? 'good' : 'bad'),
+          !estimate.facesFire ? 'bad' : estimate.withinViewAngle ? 'good' : 'warn'),
         readout('Predicted incident flux',
           Number.isFinite(estimate.incidentKwM2)
             ? `${estimate.incidentKwM2.toFixed(2)} kW/m²`
@@ -950,9 +988,11 @@ export class Inspector {
 
       if (range !== null && estimate.fractionOfRange !== null) {
         const frac = estimate.fractionOfRange;
+        // Over range is an error -- the reading is lost. Low signal is a warning:
+        // the gauge still reads, just badly. Same split as the checks list.
         items.push(readout('Fraction of range',
           Number.isFinite(frac) ? `${(frac * 100).toFixed(1)}% of ${range} kW/m²` : 'over range',
-          frac > 1 || frac < 0.05 ? 'bad' : 'good'));
+          frac > 1 ? 'bad' : frac < LOW_SIGNAL_FRACTION ? 'warn' : 'good'));
       }
 
       items.push(readout('Radiative fraction used',
@@ -1066,22 +1106,18 @@ export class Inspector {
     if (!burner || flameTipZM(burner) === null) {
       items.push(readout('Fire region', 'needs a burner with an HRR', 'muted'));
     } else {
-      const REGION_LABEL = {
-        flame: 'in the flame',
-        plume: 'in the plume',
-        outside: 'outside the plume',
-      } as const;
-
       for (const bead of beads) {
-        const where = REGION_LABEL[bead.region];
+        // `beadVerdict`, not "is there a plume temperature": a bead inside the
+        // flame envelope has no plume temperature by design, so the old test fell
+        // through to green for exactly the placement Checks calls an error.
+        const verdict = beadVerdict(bead, limit);
         const temp = bead.gasTemperatureC === null
-          ? '—'
-          : `${bead.gasTemperatureC.toFixed(0)} °C`;
-        const hot = bead.gasTemperatureC !== null && bead.gasTemperatureC > limit;
+          ? ''
+          : `, ${bead.gasTemperatureC.toFixed(0)} °C`;
         items.push(readout(
           `Bead ${bead.index + 1} at ${formatLengthWithUnit(bead.world[2], unit)}`,
-          `${where}${bead.gasTemperatureC === null ? '' : `, ${temp}`}`,
-          hot ? 'bad' : bead.region === 'outside' ? 'muted' : 'good',
+          `${verdict.label}${temp}`,
+          TONE[verdict.status],
         ));
       }
 

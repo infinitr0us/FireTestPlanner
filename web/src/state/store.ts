@@ -239,8 +239,16 @@ export class Store {
     // The writer derives the declared version from the contents; adopt it here too,
     // so the checks panel stops reporting `version-understated` about a file where
     // it is no longer true the moment the plan is saved.
-    this.doc.version = maxVersion(String(this.doc.version ?? ''), requiredFormatVersion(this.doc));
-    return serializePlan(this.doc);
+    const version = maxVersion(String(this.doc.version ?? ''), requiredFormatVersion(this.doc));
+    const bumped = version !== this.doc.version;
+    this.doc.version = version;
+    const text = serializePlan(this.doc);
+    // Only the 'document' event re-renders the checks panel, and this method used
+    // to change the document without emitting one -- so `version-understated`
+    // stayed on screen after the save that made it untrue, which is exactly what
+    // the comment above promised would not happen.
+    if (bumped) this.emit('document');
+    return text;
   }
 
   markSaved(fileName?: string): void {

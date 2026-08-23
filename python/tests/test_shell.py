@@ -91,6 +91,53 @@ def test_settings_survive_a_restart(plan_file):
     assert shell_app.Shell().recent_files() == [plan_file]
 
 
+# -- camera preset library -----------------------------------------------
+
+def test_the_preset_library_survives_a_restart():
+    """The whole reason it is here rather than in the page's localStorage.
+
+    Browser storage is scoped to the origin, and this shell binds a fresh loopback
+    port on every launch -- so a library kept there was in a namespace the next
+    launch could not see, while the UI promised it would survive.
+    """
+    first = shell_app.Shell()
+    assert first.camera_presets() == []
+    assert first.save_camera_presets([{"id": "my-rig", "focalLength_mm": 35}]) == {"saved": True}
+
+    assert shell_app.Shell().camera_presets() == [{"id": "my-rig", "focalLength_mm": 35}]
+
+
+def test_saving_presets_reports_whether_the_write_landed(monkeypatch):
+    """The page words "survives a restart" from this answer, so it has to be one."""
+    shell = shell_app.Shell()
+
+    def refuse(*args, **kwargs):
+        raise OSError("read-only volume")
+
+    monkeypatch.setattr(shell_app, "open", refuse, raising=False)
+    result = shell.save_camera_presets([{"id": "my-rig"}])
+    assert result["saved"] is False
+    assert "read-only" in result["error"]
+
+
+def test_a_preset_payload_that_is_not_a_list_is_refused():
+    shell = shell_app.Shell()
+    assert shell.save_camera_presets({"id": "not-a-list"})["saved"] is False
+    assert shell.camera_presets() == []
+
+
+def test_junk_entries_are_dropped_rather_than_stored():
+    shell = shell_app.Shell()
+    shell.save_camera_presets([{"id": "ok"}, "a string", None, 7])
+    assert shell.camera_presets() == [{"id": "ok"}]
+
+
+def test_a_corrupt_preset_list_reads_back_as_empty():
+    shell = shell_app.Shell()
+    shell._settings["cameraPresets"] = "not a list at all"
+    assert shell.camera_presets() == []
+
+
 def test_corrupt_settings_do_not_stop_the_app_starting():
     with open(shell_app.settings_path(), "w", encoding="utf-8") as fh:
         fh.write("{ this is not json")
@@ -291,6 +338,17 @@ def test_recent_is_served_over_the_api(server, plan_file):
     status, payload = request(base, "/api/recent", "test-token")
     assert status == 200
     assert payload == [plan_file]
+
+
+def test_presets_round_trip_through_the_api(server):
+    _, _, base, _ = server
+    status, payload = request(base, "/api/presets", "test-token")
+    assert (status, payload) == (200, [])
+
+    _, saved = request(base, "/api/presets", "test-token", {"presets": [{"id": "my-rig"}]})
+    assert saved == {"saved": True}
+    _, payload = request(base, "/api/presets", "test-token")
+    assert payload == [{"id": "my-rig"}]
 
 
 def test_open_recent_reads_through_the_api(server, plan_file):

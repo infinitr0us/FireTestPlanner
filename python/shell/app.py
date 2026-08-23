@@ -121,12 +121,20 @@ class Shell:
             # A corrupt or absent settings file must never stop the app opening.
             return {}
 
-    def _save_settings(self) -> None:
+    def _save_settings(self) -> Optional[str]:
+        """Write the settings file. None on success, or the reason it failed.
+
+        Most callers ignore the answer -- a lost "recent files" entry is not worth
+        a dialog -- but the preset library reports it, because the page words its
+        own UI from whether the write actually landed rather than from the mere
+        existence of somewhere to write to.
+        """
         try:
             with open(settings_path(), "w", encoding="utf-8") as fh:
                 json.dump(self._settings, fh, indent=2)
-        except OSError:
-            pass
+        except OSError as exc:
+            return str(exc)
+        return None
 
     def _remember(self, path: str) -> None:
         recent: List[str] = [p for p in self._settings.get("recent", []) if p != path]
@@ -137,6 +145,38 @@ class Shell:
     def recent_files(self) -> List[str]:
         """Recent paths that still exist, so the list never offers a dead file."""
         return [p for p in self._settings.get("recent", []) if os.path.isfile(p)]
+
+    # -- camera preset library -----------------------------------------
+
+    def camera_presets(self) -> List[Dict[str, Any]]:
+        """The user's own camera presets, as the page last wrote them.
+
+        The library lives here rather than in the page's `localStorage` because
+        browser storage is scoped to the ORIGIN, and this shell asks the OS for a
+        free loopback port on every launch -- so every launch was a different
+        origin and therefore a different, empty storage namespace. The user built a
+        library that vanished on the next start while the UI promised it would not.
+        `settings.json` is already per-profile and already survives a restart.
+
+        The page validates every entry on the way in (`coerce` in
+        web/src/core/presets.ts), so nothing here needs to understand a preset --
+        only that it is a list of objects.
+        """
+        stored = self._settings.get("cameraPresets")
+        return [p for p in stored if isinstance(p, dict)] if isinstance(stored, list) else []
+
+    def save_camera_presets(self, presets: Any) -> Dict[str, Any]:
+        """Replace the library. Reports whether the write reached the disk.
+
+        The page words its own UI from this answer instead of from "storage exists",
+        which is the difference between telling the user their preset will survive a
+        restart and knowing that it will.
+        """
+        if not isinstance(presets, list):
+            return {"saved": False, "error": "presets must be a list"}
+        self._settings["cameraPresets"] = [p for p in presets if isinstance(p, dict)]
+        failure = self._save_settings()
+        return {"saved": False, "error": failure} if failure else {"saved": True}
 
     def queue_plan(self, path: str) -> None:
         self._queued_plan = path
@@ -347,6 +387,8 @@ class Handler(SimpleHTTPRequestHandler):
                 ))
             elif route == "/api/save-html":
                 self._send_json(self.shell.save_html(body.get("html", ""), body.get("name", "page.html")))
+            elif route == "/api/presets":
+                self._send_json(self.shell.save_camera_presets(body.get("presets")))
             else:
                 self._send_json({"error": "unknown route"}, 404)
         except Exception as exc:  # noqa: BLE001 - never take the server down
@@ -360,6 +402,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json({"error": "bad token"}, 403)
             elif route == "/api/recent":
                 self._send_json(self.shell.recent_files())
+            elif route == "/api/presets":
+                self._send_json(self.shell.camera_presets())
             else:
                 self._send_json({"error": "unknown route"}, 404)
             return

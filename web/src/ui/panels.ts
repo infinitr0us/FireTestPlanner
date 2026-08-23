@@ -81,8 +81,8 @@ export class Palette {
     this.root.append(h('p', { class: 'panel__hint' }, [
       'A camera this list does not have: place the nearest one, correct its optics in the '
       + 'inspector, then Save as preset. It joins this list',
-      presetsArePersistent() ? ' and survives a restart.' : ' for this session only — this '
-        + 'browser is not storing site data, so it will not survive a restart.',
+      presetsArePersistent() ? ' and survives a restart.' : ' for this session only — the '
+        + 'last attempt to store the library did not land, so it will not survive a restart.',
     ]));
 
     this.root.append(h('p', { class: 'panel__hint' }, [

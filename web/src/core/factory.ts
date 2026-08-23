@@ -141,7 +141,11 @@ export function createThermocouple(
       sheathed: true,
       maxTemperature_C: null,
     },
-    mount: { type: 'pole', height_m: 0 },
+    // `position[2]`, not 0: `setPosition` rewrites this on every move because "a
+    // gauge whose recorded mount height contradicts its own Z is a drawing waiting
+    // to be wrong", and a thermocouple created 0.5 m up and recorded at 0 was born
+    // wrong and stayed that way until first dragged.
+    mount: { type: 'pole', height_m: position[2] },
   };
 }
 
