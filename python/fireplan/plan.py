@@ -19,6 +19,7 @@ from .objects import (
     Ceiling,
     HeatFluxSensor,
     Hood,
+    Obstruction,
     PlanObject,
     Thermocouple,
     Wall,
@@ -33,7 +34,7 @@ FORMAT = "fire-test-plan"
 VERSION = "1.0.0"
 
 #: Highest format version this build can write.
-VERSION_LATEST = "1.1.0"
+VERSION_LATEST = "1.2.0"
 
 _SCHEMA_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -46,6 +47,7 @@ _SCHEMA_DIR = os.path.join(
 _SCHEMA_FILES = {
     "1.0.0": "fire-test-plan-1.0.0.schema.json",
     "1.1.0": "fire-test-plan-1.1.0.schema.json",
+    "1.2.0": "fire-test-plan-1.2.0.schema.json",
 }
 
 #: Representative mean temperature inside a flame, for the over-temperature test.
@@ -127,6 +129,25 @@ class Plan:
             return cls(json.loads(text))
         except json.JSONDecodeError as exc:
             raise PlanError("invalid JSON: {}".format(exc)) from exc
+
+    @classmethod
+    def from_fds(cls, path, options=None) -> "Plan":
+        """Build a plan from an FDS input file.
+
+        The plan only. `fireplan.fds.load` returns the same plan wrapped in a full
+        account of the conversion -- what was skipped, which heat-release surface was
+        taken to be the burner, where the origin went -- and the editor's import
+        preview is built on that. This is the one-liner for a notebook.
+
+            >>> Plan.from_fds("fixtures/fds/IR401_0.fds")
+
+        The import re-origins onto the burner centre at floor level, as this format
+        requires, and records the shift in `meta.source.originOffset_m` so the source
+        file's own coordinates stay recoverable.
+        """
+        from . import fds  # deferred: fds imports Plan
+
+        return fds.load(path, options).plan
 
     @classmethod
     def load(cls, path) -> "Plan":
@@ -213,6 +234,10 @@ class Plan:
     @property
     def thermocouples(self) -> List[Thermocouple]:
         return list(self._of_type("thermocouple"))
+
+    @property
+    def obstructions(self) -> List[Obstruction]:
+        return list(self._of_type("obstruction"))
 
     @property
     def burner(self) -> Burner:

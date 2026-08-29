@@ -24,7 +24,8 @@ from typing import Any, Dict, List, Tuple
 FLOAT_DECIMALS = 6
 
 _TOP = ["format", "version", "meta", "units", "coordinateSystem", "environment", "objects"]
-_META = ["title", "testId", "author", "organization", "siteName", "created", "modified", "revision", "notes"]
+_META = ["title", "testId", "author", "organization", "siteName", "created", "modified", "revision", "notes", "source"]
+_SOURCE = ["tool", "file", "chid", "importedAt", "originOffset_m"]
 _UNITS = ["length", "angle", "power", "temperature", "display"]
 _UNITS_DISPLAY = ["length", "angle"]
 _COORD = ["convention", "origin", "northAzimuth_rad"]
@@ -53,15 +54,22 @@ _OBJECT_ORDER = {
     "ceiling": ["id", "type", "name", "transform", "polygon_m", "height_m", "thickness_m", "display", "notes"],
     "heatFluxSensor": ["id", "type", "name", "transform", "gauge", "mount", "display", "notes"],
     "thermocouple": ["id", "type", "name", "transform", "beadOffsets_m", "thermocouple", "mount", "display", "notes"],
+    "obstruction": ["id", "type", "name", "transform", "size_m", "display", "notes"],
 }
 
 #: Object types introduced after format 1.0, and therefore version-bumping.
 _TYPES_1_1 = ("heatFluxSensor", "thermocouple")
 
+#: And after 1.1. `meta.source` is deliberately NOT in any of these lists: `meta` is
+#: open in every 1.x schema, so a plan imported from FDS that holds nothing past 1.0
+#: keeps declaring 1.0.0 and still opens in a 1.0 tool. Provenance is not a feature a
+#: reader has to understand in order to read the file correctly.
+_TYPES_1_2 = ("obstruction",)
+
 #: Baseline, and the highest this build writes. Mirror of FORMAT_VERSIONS in
 #: web/src/core/types.ts.
 _VERSION_MIN = "1.0.0"
-_VERSION_LATEST = "1.1.0"
+_VERSION_LATEST = "1.2.0"
 
 
 def _version_tuple(version: str) -> Tuple[int, ...]:
@@ -88,20 +96,24 @@ def required_version(data: Dict[str, Any]) -> str:
     factor, a radiative fraction or a sensor, it says 1.1.0 and means it. Mirror of
     `requiredFormatVersion` in web/src/core/types.ts.
     """
+    needed = _VERSION_MIN
     for obj in data.get("objects", []) or []:
         if not isinstance(obj, dict):
             continue
-        if obj.get("type") in _TYPES_1_1:
-            return _VERSION_LATEST
-        if obj.get("type") == "camera":
+        kind = obj.get("type")
+        if kind in _TYPES_1_2:
+            return "1.2.0"  # the highest tier there is; nothing can raise it further
+        if kind in _TYPES_1_1:
+            needed = "1.1.0"
+        elif kind == "camera":
             spec = obj.get("camera")
             if isinstance(spec, dict) and spec.get("zoomFactor") is not None:
-                return _VERSION_LATEST
-        if obj.get("type") == "burner":
+                needed = "1.1.0"
+        elif kind == "burner":
             fire = obj.get("fire")
             if isinstance(fire, dict) and fire.get("radiativeFraction") is not None:
-                return _VERSION_LATEST
-    return _VERSION_MIN
+                needed = "1.1.0"
+    return needed
 
 
 def effective_version(data: Dict[str, Any]) -> str:
@@ -238,7 +250,10 @@ def canonicalize(data: Dict[str, Any]) -> Dict[str, Any]:
     d["version"] = effective_version(data)
 
     if "meta" in d:
-        d["meta"] = _canon_sub(d["meta"], _META)
+        meta = _canon_sub(d["meta"], _META)
+        if isinstance(meta, dict) and isinstance(meta.get("source"), dict):
+            meta["source"] = _order(meta["source"], _SOURCE)
+        d["meta"] = meta
     if "units" in d:
         units = _order(d["units"], _UNITS)
         if isinstance(units.get("display"), dict):

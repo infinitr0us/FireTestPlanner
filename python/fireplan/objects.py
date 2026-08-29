@@ -734,6 +734,66 @@ class Thermocouple(PlanObject):
         return np.array([self.to_world([0.0, 0.0, z]) for z in self.bead_offsets_m])
 
 
+class Obstruction(PlanObject):
+    """A rectangular solid -- furniture, equipment, blockwork. Format 1.2.
+
+    The object origin is the CENTRE OF THE BASE, so the box spans +/- half its x
+    and y extents and rises from 0 to its z extent. That is unlike a wall, whose
+    height above the floor lives in `baseHeight_m`, and the reason is that a wall's
+    geometry is a polyline with no z of its own while a box has an origin to put the
+    height in. It also makes the rotate gizmo do the obvious thing: yaw about the
+    box's own vertical axis.
+    """
+
+    @property
+    def size_m(self) -> np.ndarray:
+        return np.asarray(self.raw["size_m"], dtype=float)
+
+    @property
+    def height_m(self) -> float:
+        return float(self.size_m[2])
+
+    @property
+    def base_z_m(self) -> float:
+        """Underside above the floor. Just the transform's z."""
+        return float(self.position[2])
+
+    @property
+    def top_z_m(self) -> float:
+        return self.base_z_m + self.height_m
+
+    @property
+    def footprint_local(self) -> np.ndarray:
+        """The four base corners in the object's LOCAL frame, counter-clockwise."""
+        hx, hy = self.size_m[0] / 2.0, self.size_m[1] / 2.0
+        return np.array([[-hx, -hy], [hx, -hy], [hx, hy], [-hx, hy]], dtype=float)
+
+    @property
+    def footprint_world(self) -> np.ndarray:
+        """The same four corners in world XY, through the full object transform."""
+        return np.array([self.footprint_xy(c) for c in self.footprint_local], dtype=float)
+
+    @property
+    def volume_m3(self) -> float:
+        return float(np.prod(self.size_m))
+
+    def bounds_xb(self) -> List[float]:
+        """`[x0, x1, y0, y1, z0, z1]` in world coordinates -- the FDS `XB` ordering.
+
+        Exact for an unrotated box, which is every box an FDS import produces, since
+        an `&OBST` is axis-aligned by definition. A yawed box reports the axis-aligned
+        bounds of its footprint, which is a bounding box rather than the box itself;
+        the editor only offers XB entry while the object is axis-aligned, for exactly
+        that reason.
+        """
+        f = self.footprint_world
+        return [
+            float(f[:, 0].min()), float(f[:, 0].max()),
+            float(f[:, 1].min()), float(f[:, 1].max()),
+            self.base_z_m, self.top_z_m,
+        ]
+
+
 class UnknownObject(PlanObject):
     """An object type this version does not recognise.
 
@@ -749,6 +809,7 @@ TYPE_MAP = {
     "ceiling": Ceiling,
     "heatFluxSensor": HeatFluxSensor,
     "thermocouple": Thermocouple,
+    "obstruction": Obstruction,
 }
 
 

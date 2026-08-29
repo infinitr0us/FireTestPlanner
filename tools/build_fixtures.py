@@ -16,6 +16,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "python"))
 
 from fireplan import Plan  # noqa: E402
+from fireplan import fds  # noqa: E402
 from fireplan._math import look_at_quat  # noqa: E402
 
 FT = 0.3048
@@ -276,6 +277,23 @@ def build_forward_compat():
     return plan
 
 
+def build_fds_import() -> Plan:
+    """The sample FDS input, converted.
+
+    Committed as a fixture because it is the readable form of the mapping: every
+    rule in `fireplan.fds` shows up here as a wall, an opening or a rake, and a
+    change to any of them shows up as a diff a reviewer can judge. It is also the
+    reference the TypeScript importer is held against.
+    """
+    result = fds.load(
+        os.path.join(ROOT, "fixtures", "fds", "IR401_0.fds"),
+        fds.ImportOptions(imported_at="2026-08-15T00:00:00Z"),
+    )
+    for issue in result.issues:
+        print("  " + str(issue))
+    return result.plan
+
+
 def main() -> None:
     out_dir = os.path.join(ROOT, "fixtures")
     os.makedirs(out_dir, exist_ok=True)
@@ -283,6 +301,7 @@ def main() -> None:
     for name, plan in [
         ("pool-fire-camera-row.ftp.json", build_camera_row()),
         ("forward-compat.ftp.json", build_forward_compat()),
+        (os.path.join("fds", "IR401_0.ftp.json"), build_fds_import()),
     ]:
         plan.validate_schema()
         # Fixed timestamps: a rebuild that changes nothing should produce no diff.

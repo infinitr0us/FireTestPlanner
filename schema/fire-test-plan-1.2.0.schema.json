@@ -1,0 +1,619 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/infinitr0us/FireTestPlanner/main/schema/fire-test-plan-1.2.0.schema.json",
+  "title": "Fire Test Plan",
+  "description": "Interchange format for fire test layouts, shared between fire safety engineers and data scientists. Lengths are metres, angles radians, power kilowatts, temperature degrees Celsius. See CONVENTIONS.md for the coordinate and camera frame definitions. 1.1 adds camera.zoomFactor, burner.fire.radiativeFraction, and the heatFluxSensor and thermocouple object types. 1.2 adds the obstruction object type. Everything an earlier version accepts, this one accepts unchanged.",
+  "type": "object",
+  "required": ["format", "version", "units", "coordinateSystem", "objects"],
+  "additionalProperties": false,
+
+  "properties": {
+    "format": { "const": "fire-test-plan" },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version of the FILE FORMAT, not of the plan content. A writer declares the LOWEST version that describes the file's actual contents, so a plan using nothing beyond 1.0 still says \"1.0.0\" and still opens in a 1.0 tool."
+    },
+
+    "meta": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "title": { "type": "string" },
+        "testId": { "type": ["string", "null"] },
+        "author": { "type": ["string", "null"] },
+        "organization": { "type": ["string", "null"] },
+        "siteName": { "type": ["string", "null"] },
+        "created": { "type": ["string", "null"], "format": "date-time" },
+        "modified": { "type": ["string", "null"], "format": "date-time" },
+        "revision": {
+          "type": ["string", "null"],
+          "description": "Free-text revision marker. Plans are revised by editing into a NEW file rather than storing planned-vs-as-built in one file, so this plus git history is the audit trail."
+        },
+        "notes": { "type": ["string", "null"] },
+        "source": {
+          "type": ["object", "null"],
+          "additionalProperties": true,
+          "description": "NEW IN 1.2, but NOT version-bumping: `meta` is open in every 1.x schema, so a plan imported from elsewhere that uses no 1.1 or 1.2 features still declares the version its CONTENTS need. Provenance of a plan that was converted rather than authored -- what it came from, and how to get back to that tool's coordinates.",
+          "properties": {
+            "tool": { "type": "string", "description": "The tool the plan was converted from, e.g. \"FDS\"." },
+            "file": { "type": ["string", "null"], "description": "Name of the source file, for the human reading the plan. Not a path to resolve." },
+            "chid": { "type": ["string", "null"], "description": "FDS job identifier from &HEAD, when the source was an FDS input file." },
+            "importedAt": { "type": ["string", "null"], "format": "date-time" },
+            "originOffset_m": {
+              "$ref": "#/$defs/vec3",
+              "description": "Position of the PLAN origin in the source tool's coordinates, so `source_xyz = plan_xyz + originOffset_m`. This format's origin is the burner centre at floor level and a source file's is arbitrary, so an import always re-origins; keeping the offset is what lets a reader show the numbers the source file actually contains."
+            }
+          }
+        }
+      }
+    },
+
+    "units": {
+      "type": "object",
+      "required": ["length", "angle", "power", "temperature"],
+      "additionalProperties": false,
+      "description": "Canonical units of the stored numbers. These are FIXED for format 1.x; the field exists so a reader can assert rather than assume.",
+      "properties": {
+        "length": { "const": "m" },
+        "angle": { "const": "rad" },
+        "power": { "const": "kW" },
+        "temperature": { "const": "C" },
+        "display": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "UI preference only. Never affects stored values.",
+          "properties": {
+            "length": { "enum": ["m", "cm", "mm", "ft", "in"] },
+            "angle": { "enum": ["deg", "rad"] }
+          }
+        }
+      }
+    },
+
+    "coordinateSystem": {
+      "type": "object",
+      "required": ["convention", "origin"],
+      "additionalProperties": false,
+      "properties": {
+        "convention": {
+          "const": "Z-up-right-handed",
+          "description": "World frame: +X and +Y horizontal, +Z vertically up, right-handed."
+        },
+        "origin": {
+          "const": "burner-center-floor",
+          "description": "World origin is the centre of the primary burner, at floor level. Camera standoff is therefore norm(position)."
+        },
+        "northAzimuth_rad": {
+          "type": ["number", "null"],
+          "description": "Compass bearing of the +Y axis, if the site orientation matters. Null when unknown or irrelevant."
+        }
+      }
+    },
+
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "floorSize_m": {
+          "$ref": "#/$defs/vec2",
+          "description": "Extent of the drawn floor plane, centred on the origin. Visual only."
+        },
+        "ceilingHeight_m": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0,
+          "description": "Null for an open / very large bay."
+        },
+        "ambientTemperature_C": {
+          "type": ["number", "null"],
+          "description": "Used by plume correlations. Defaults to 20 when null."
+        },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+
+    "objects": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/object" }
+    }
+  },
+
+  "$defs": {
+    "vec2": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "vec3": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "quat": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 4,
+      "maxItems": 4,
+      "description": "Unit quaternion in XYZW order (Three.js ordering)."
+    },
+    "res2": {
+      "type": "array",
+      "items": { "type": "integer", "exclusiveMinimum": 0 },
+      "minItems": 2,
+      "maxItems": 2
+    },
+
+    "transform": {
+      "type": "object",
+      "required": ["position_m"],
+      "additionalProperties": false,
+      "properties": {
+        "position_m": { "$ref": "#/$defs/vec3" },
+        "rotation_quat": {
+          "$ref": "#/$defs/quat",
+          "description": "AUTHORITATIVE orientation, camera-to-world / object-to-world. Stored in the OpenGL-style local frame: object looks down local -Z with local +Y up. Defaults to identity when absent."
+        },
+        "aimTarget_m": {
+          "oneOf": [{ "$ref": "#/$defs/vec3" }, { "type": "null" }],
+          "description": "Authoring intent ('point at the flame base'). Advisory: rotation_quat is what a consumer reads. A writer MUST keep the two consistent; a reader MAY warn when they disagree."
+        }
+      }
+    },
+
+    "display": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Presentation overrides. Ignoring this block entirely must never change the meaning of the plan.",
+      "properties": {
+        "color": { "type": ["string", "null"], "pattern": "^#[0-9a-fA-F]{6}$" },
+        "visible": { "type": "boolean", "default": true },
+        "locked": { "type": "boolean", "default": false }
+      }
+    },
+
+    "objectCommon": {
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique within the plan. Stable across revisions so diffs are meaningful."
+        },
+        "type": { "type": "string" },
+        "name": { "type": ["string", "null"] },
+        "transform": { "$ref": "#/$defs/transform" },
+        "display": { "$ref": "#/$defs/display" },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+
+    "footprint": {
+      "type": "object",
+      "required": ["shape"],
+      "additionalProperties": false,
+      "properties": {
+        "shape": { "enum": ["circle", "square", "rectangle"] },
+        "diameter_m": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "size_m": {
+          "oneOf": [{ "$ref": "#/$defs/vec2" }, { "type": "null" }]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "shape": { "const": "circle" } }, "required": ["shape"] },
+          "then": { "required": ["diameter_m"] }
+        },
+        {
+          "if": { "properties": { "shape": { "enum": ["square", "rectangle"] } }, "required": ["shape"] },
+          "then": { "required": ["size_m"] }
+        }
+      ]
+    },
+
+    "camera": {
+      "allOf": [{ "$ref": "#/$defs/objectCommon" }],
+      "type": "object",
+      "required": ["id", "type", "camera"],
+      "additionalProperties": false,
+      "properties": {
+        "id": true, "type": { "const": "camera" }, "name": true,
+        "transform": true, "display": true, "notes": true,
+
+        "camera": {
+          "type": "object",
+          "required": ["modality", "resolution_px", "sensor_mm", "focalLength_mm"],
+          "additionalProperties": false,
+          "properties": {
+            "modality": {
+              "enum": ["RGB", "LWIR", "MWIR", "SWIR", "NIR", "other"],
+              "description": "Drives frustum colour in the viewer and grouping in the equipment table."
+            },
+            "presetId": {
+              "type": ["string", "null"],
+              "description": "Hint only. All intrinsics are stored inline, so a plan opened without the preset library is still fully specified."
+            },
+            "resolution_px": { "$ref": "#/$defs/res2" },
+            "sensor_mm": {
+              "$ref": "#/$defs/vec2",
+              "description": "Active sensor width and height. With focalLength_mm this is the AUTHORITATIVE intrinsic pair; field of view is derived, never stored, so the two can never disagree."
+            },
+            "focalLength_mm": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "The LENS. Not scaled by zoomFactor -- a 25 mm lens stays 25 mm however the camera is zoomed."
+            },
+            "zoomFactor": {
+              "type": ["number", "null"],
+              "exclusiveMinimum": 0,
+              "default": 1,
+              "description": "NEW IN 1.1. Zoom setting, as a multiplier on the effective focal length: 2 halves both fields of view. Absent or null means 1, and a writer SHOULD omit it rather than write 1. Applies to optical and digital zoom alike, because both narrow the field by the same factor -- but a digital zoom crops and interpolates, so the extra pixels it appears to buy are not real detail.",
+              "$comment": "Deliberately NOT folded into focalLength_mm. A datasheet gives the lens, an operator gives the zoom, and a plan that had already multiplied them together could not tell a reader which 50 mm it meant."
+            },
+            "principalPoint_px": {
+              "oneOf": [{ "$ref": "#/$defs/vec2" }, { "type": "null" }],
+              "description": "Null means the exact image centre, ((w-1)/2, (h-1)/2)."
+            },
+            "distortion": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["model", "coefficients"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "model": { "const": "opencv" },
+                    "coefficients": {
+                      "type": "array",
+                      "items": { "type": "number" },
+                      "minItems": 4,
+                      "maxItems": 5,
+                      "description": "k1, k2, p1, p2 [, k3] in OpenCV order."
+                    }
+                  }
+                },
+                { "type": "null" }
+              ],
+              "description": "Null means an ideal pinhole was assumed. Populate after a real calibration."
+            },
+            "intrinsicsSource": {
+              "enum": ["nominal", "datasheet", "calibrated"],
+              "default": "nominal",
+              "description": "How much to trust the intrinsics. 'nominal' is a plausible placeholder, 'datasheet' is from the manufacturer, 'calibrated' came from an actual calibration of this unit."
+            },
+            "spectralBand_um": {
+              "oneOf": [{ "$ref": "#/$defs/vec2" }, { "type": "null" }],
+              "description": "Low and high wavelength, e.g. [7.5, 14.0] for LWIR, [3.0, 5.0] for MWIR."
+            },
+            "framerate_hz": { "type": ["number", "null"], "exclusiveMinimum": 0 }
+          }
+        },
+
+        "mount": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": { "enum": ["tripod", "pole", "ceiling", "wall", "handheld", "other"] },
+            "height_m": {
+              "type": ["number", "null"],
+              "description": "Mount height above floor. Advisory; transform.position_m[2] is authoritative."
+            }
+          }
+        },
+
+        "recording": {
+          "description": "RESERVED for a future post-test record (which footage this camera produced, clock sync, checksums). Writers MUST emit null. Reserving the key keeps files forward-compatible without a version bump.",
+          "type": "null"
+        }
+      }
+    },
+
+    "burner": {
+      "allOf": [{ "$ref": "#/$defs/objectCommon" }],
+      "type": "object",
+      "required": ["id", "type", "footprint"],
+      "additionalProperties": false,
+      "properties": {
+        "id": true, "type": { "const": "burner" }, "name": true,
+        "transform": true, "display": true, "notes": true,
+
+        "footprint": { "$ref": "#/$defs/footprint" },
+        "rimHeight_m": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Height of the pan rim / fuel surface above the object origin."
+        },
+        "fire": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "fuel": { "type": ["string", "null"] },
+            "hrr_kw": {
+              "type": ["number", "null"],
+              "exclusiveMinimum": 0,
+              "description": "Steady or peak heat release rate, used by the flame-height and plume correlations."
+            },
+            "radiativeFraction": {
+              "type": ["number", "null"],
+              "exclusiveMinimum": 0,
+              "maximum": 1,
+              "default": 0.3,
+              "description": "NEW IN 1.1. Fraction of the heat release emitted as radiation, used by the point-source model that predicts what a heat flux gauge will read. Strongly fuel-dependent -- roughly 0.35 for heptane, 0.2 for methanol, 0.4 for a sooty pool fire. Absent or null means 0.3."
+            },
+            "hrrCurve": {
+              "description": "RESERVED for a time-varying HRR series. Writers MUST emit null.",
+              "type": "null"
+            }
+          }
+        }
+      }
+    },
+
+    "hood": {
+      "allOf": [{ "$ref": "#/$defs/objectCommon" }],
+      "type": "object",
+      "required": ["id", "type", "opening_m", "height_m"],
+      "additionalProperties": false,
+      "properties": {
+        "id": true, "type": { "const": "hood" }, "name": true,
+        "transform": true, "display": true, "notes": true,
+
+        "opening_m": {
+          "$ref": "#/$defs/vec2",
+          "description": "Width and depth of the rectangular collection opening."
+        },
+        "height_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Height of the opening plane above the floor. Compared against flame height and plume width for the capture checks."
+        },
+        "skirtDepth_m": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Vertical skirt hanging below the opening plane, if any."
+        },
+        "duct": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["diameter_m"],
+              "additionalProperties": false,
+              "properties": {
+                "diameter_m": { "type": "number", "exclusiveMinimum": 0 },
+                "length_m": { "type": ["number", "null"], "exclusiveMinimum": 0 }
+              }
+            },
+            { "type": "null" }
+          ],
+          "description": "Exhaust duct rising from the canopy apex. Geometry is indicative only."
+        }
+      }
+    },
+
+    "wall": {
+      "allOf": [{ "$ref": "#/$defs/objectCommon" }],
+      "type": "object",
+      "required": ["id", "type", "polyline_m", "height_m"],
+      "additionalProperties": false,
+      "properties": {
+        "id": true, "type": { "const": "wall" }, "name": true,
+        "transform": true, "display": true, "notes": true,
+
+        "polyline_m": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/vec2" },
+          "minItems": 2,
+          "description": "Plan-view centreline of the wall run, in world XY."
+        },
+        "height_m": { "type": "number", "exclusiveMinimum": 0 },
+        "thickness_m": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "baseHeight_m": {
+          "type": ["number", "null"],
+          "description": "Bottom of the wall above the floor. Null or 0 means floor-standing."
+        },
+        "openings": {
+          "type": "array",
+          "description": "Doors and windows, positioned along the polyline by arc length from its start.",
+          "items": {
+            "type": "object",
+            "required": ["offset_m", "width_m", "height_m"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": ["string", "null"] },
+              "offset_m": { "type": "number", "minimum": 0 },
+              "width_m": { "type": "number", "exclusiveMinimum": 0 },
+              "height_m": { "type": "number", "exclusiveMinimum": 0 },
+              "sillHeight_m": { "type": ["number", "null"], "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+
+    "ceiling": {
+      "allOf": [{ "$ref": "#/$defs/objectCommon" }],
+      "type": "object",
+      "required": ["id", "type", "polygon_m", "height_m"],
+      "additionalProperties": false,
+      "description": "A horizontal slab. Together with walls this covers the building geometry a fire test needs: the tool targets open bays and simple enclosures, not detailed room layouts.",
+      "properties": {
+        "id": true, "type": { "const": "ceiling" }, "name": true,
+        "transform": true, "display": true, "notes": true,
+
+        "polygon_m": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/vec2" },
+          "minItems": 3,
+          "description": "Plan-view outline in world XY. Assumed closed; do not repeat the first point."
+        },
+        "height_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Height of the UNDERSIDE above the floor. This is the surface a flame impinges on, so it is the one measured."
+        },
+        "thickness_m": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0,
+          "description": "Slab thickness, extruded upward from the underside."
+        }
+      }
+    },
+
+    "instrumentMount": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Where an instrument is fixed. Advisory throughout: transform.position_m is authoritative.",
+      "properties": {
+        "type": { "enum": ["tripod", "pole", "ceiling", "wall", "floor", "handheld", "other"] },
+        "height_m": { "type": ["number", "null"], "description": "Mount height above the floor." }
+      }
+    },
+
+    "heatFluxSensor": {
+      "allOf": [{ "$ref": "#/$defs/objectCommon" }],
+      "type": "object",
+      "required": ["id", "type"],
+      "additionalProperties": false,
+      "description": "NEW IN 1.1. A heat flux gauge. Directional, and it uses the camera frame to say so: it looks down its local -Z, so transform.rotation_quat gives the sensing face's outward normal and aimTarget_m records what it was aimed at. Reusing the camera convention is deliberate -- one frame definition, one look-at helper, one aim-mismatch check.",
+      "properties": {
+        "id": true, "type": { "const": "heatFluxSensor" }, "name": true,
+        "transform": true, "display": true, "notes": true,
+
+        "gauge": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": ["schmidt-boelter", "gardon", "thermopile", "other"],
+              "default": "schmidt-boelter",
+              "description": "Documentation only; it does not change the predicted incident flux."
+            },
+            "range_kw_m2": {
+              "type": ["number", "null"],
+              "exclusiveMinimum": 0,
+              "description": "Full-scale range. This is what makes an over-range gauge, or one placed so far out that it reads in the bottom few percent of scale, a thing you can catch before the test rather than after it."
+            },
+            "viewAngle_deg": {
+              "type": ["number", "null"],
+              "exclusiveMinimum": 0,
+              "maximum": 180,
+              "default": 180,
+              "description": "Full acceptance angle of the sensing face. 180 is an unrestricted hemispherical view; anything narrower means a view-limiting tube is fitted, and the fire has to fall inside it."
+            },
+            "waterCooled": { "type": ["boolean", "null"] },
+            "serial": { "type": ["string", "null"] }
+          }
+        },
+        "mount": { "$ref": "#/$defs/instrumentMount" }
+      }
+    },
+
+    "thermocouple": {
+      "allOf": [{ "$ref": "#/$defs/objectCommon" }],
+      "type": "object",
+      "required": ["id", "type"],
+      "additionalProperties": false,
+      "description": "NEW IN 1.1. One thermocouple, or a rake of them on a common support. A single bead is the one-element case of a tree, so both are the same object type and there is no second thing to keep in step.",
+      "properties": {
+        "id": true, "type": { "const": "thermocouple" }, "name": true,
+        "transform": true, "display": true, "notes": true,
+
+        "beadOffsets_m": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 1,
+          "description": "Bead positions along the object's LOCAL +Z, measured from the object origin -- vertical for an upright rake, which is the usual case. A plain single-point thermocouple is [0]. Local, so like every other vertex list in this format it goes through the object's full transform."
+        },
+        "thermocouple": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tcType": {
+              "enum": ["K", "J", "T", "E", "N", "R", "S", "B"],
+              "default": "K",
+              "description": "IEC/ANSI letter designation. Sets the default upper limit, which is what makes an over-temperature placement checkable."
+            },
+            "beadDiameter_mm": {
+              "type": ["number", "null"],
+              "exclusiveMinimum": 0,
+              "description": "Bead or sheath diameter. Drives radiation error and thermal lag, which this format records but does not correct for."
+            },
+            "sheathed": { "type": ["boolean", "null"] },
+            "maxTemperature_C": {
+              "type": ["number", "null"],
+              "description": "Upper continuous-use limit. Absent or null means the letter type's standard limit."
+            }
+          }
+        },
+        "mount": { "$ref": "#/$defs/instrumentMount" }
+      }
+    },
+
+    "obstruction": {
+      "allOf": [{ "$ref": "#/$defs/objectCommon" }],
+      "type": "object",
+      "required": ["id", "type", "size_m"],
+      "additionalProperties": false,
+      "description": "NEW IN 1.2. A rectangular solid: the furniture, equipment and blockwork that is neither a wall nor a slab. Deliberately a box and nothing more -- this format targets open bays and simple enclosures, and an obstruction exists so that what stands between a camera or a gauge and the fire is visible in the plan, not so that the room can be modelled in detail.",
+      "properties": {
+        "id": true, "type": { "const": "obstruction" }, "name": true,
+        "transform": true, "display": true, "notes": true,
+
+        "size_m": {
+          "$ref": "#/$defs/vec3",
+          "description": "Extent along the object's LOCAL x, y and z. The origin is the CENTRE OF THE BASE, so the box spans [-x/2, +x/2] and [-y/2, +y/2] and rises from 0 to z. Unlike a wall's baseHeight_m, the height above the floor is simply the transform's z -- a box has an origin to put there, a polyline does not."
+        }
+      }
+    },
+
+    "unknown": {
+      "description": "Any object type this version does not recognise. Preserved verbatim on load and re-emitted unchanged on save, so a newer plan opened in an older tool does not silently lose objects.",
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "type": "string" }
+      }
+    },
+
+    "object": {
+      "type": "object",
+      "required": ["id", "type"],
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "camera" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/camera" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "burner" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/burner" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "hood" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/hood" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "wall" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/wall" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "ceiling" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/ceiling" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "heatFluxSensor" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/heatFluxSensor" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "thermocouple" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/thermocouple" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "obstruction" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/obstruction" }
+        }
+      ]
+    }
+  }
+}

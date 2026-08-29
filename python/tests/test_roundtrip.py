@@ -525,17 +525,23 @@ def test_an_unknown_format_version_is_refused_rather_than_guessed():
     assert "no schema for format version" in str(excinfo.value)
 
 
-def test_both_shipped_schemas_are_loadable_and_distinct():
+def test_every_shipped_schema_is_loadable_and_distinct():
+    # One file per version, each with its own $id: that is what makes
+    # `validate_schema("1.0.0")` mean "would this still open in a 1.0 tool?" rather
+    # than "is this valid under whatever schema shipped last".
     import glob
+
+    from fireplan.plan import _SCHEMA_FILES
 
     schemas = sorted(glob.glob(os.path.join(
         os.path.dirname(FIXTURES), "schema", "fire-test-plan-*.schema.json")))
-    assert len(schemas) == 2
+    assert len(schemas) == len(_SCHEMA_FILES)
+    assert {os.path.basename(p) for p in schemas} == set(_SCHEMA_FILES.values())
     ids = []
     for path in schemas:
         with io.open(path, encoding="utf-8") as fh:
             ids.append(json.load(fh)["$id"])
-    assert len(set(ids)) == 2
+    assert len(set(ids)) == len(schemas)
 
 
 def test_the_1_0_schema_was_not_edited_to_accept_1_1_content():
