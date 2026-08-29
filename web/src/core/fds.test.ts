@@ -231,6 +231,19 @@ describe('importing the sample', () => {
       .toBe('UPHOLSTERY');
   });
 
+  it('does not move the instruments when geometry is skipped', () => {
+    // `geometry: false` means "do not emit walls", not "do not read them". The
+    // obstructions are what locate the fire and the floor, and therefore the origin.
+    const full = sample();
+    const devicesOnly = fdsToPlan(SAMPLE_TEXT, 'IR401_0.fds', { geometry: false });
+    near(devicesOnly.originM, full.originM);
+    expect(devicesOnly.counts.wall).toBeUndefined();
+    near(
+      byId(devicesOnly, 'hf-hf-1').transform!.position_m,
+      byId(full, 'hf-hf-1').transform!.position_m,
+    );
+  });
+
   it('can leave the rakes ungrouped', () => {
     expect(fdsToPlan(SAMPLE_TEXT, null, { groupRakes: false }).counts.thermocouple).toBe(44);
   });

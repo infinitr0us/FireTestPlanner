@@ -336,6 +336,24 @@ def test_quantities_with_no_counterpart_are_reported_not_imported():
     assert velocity.mapped_to is None and velocity.count == 1
 
 
+def test_skipping_geometry_does_not_move_the_instruments(sample):
+    """`geometry=False` means "do not emit walls", not "do not read them".
+
+    The obstructions are what locate the fire and the floor, and therefore the
+    origin. A reader that skips them entirely still finds the burner but loses the
+    floor, and every instrument in the plan lands at the wrong height.
+    """
+    devices_only = fds.load(SAMPLE, fds.ImportOptions(geometry=False))
+    assert devices_only.origin_m == pytest.approx(sample.origin_m)
+    assert "wall" not in devices_only.counts
+    assert devices_only.counts["heatFluxSensor"] == 23
+
+    gauge = next(o for o in devices_only.plan.data["objects"] if o["id"] == "hf-hf-1")
+    reference = by_id(sample, "hf-hf-1")
+    assert gauge["transform"]["position_m"] == pytest.approx(
+        reference["transform"]["position_m"])
+
+
 def test_the_device_map_can_be_overridden():
     text = "&DEVC ID='t', QUANTITY='THERMOCOUPLE', XYZ=1,1,1 /\n"
     result = fds.to_plan(text, options=fds.ImportOptions(

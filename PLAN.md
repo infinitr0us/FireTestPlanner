@@ -1,6 +1,6 @@
 # Fire Test Plan 3D Visualization — Implementation Plan
 
-Status: **Phase 1 complete; format 1.1 landed** (2026-08-22)
+Status: **Phase 1 complete; format 1.2 and the FDS bridge landed** (2026-08-29)
 Supersedes nothing; complements `ideas.md`.
 
 ---
@@ -13,6 +13,9 @@ Supersedes nothing; complements `ideas.md`.
 | Units | SI internal (metres, kW, °C, radians in file / degrees in UI), imperial display toggle |
 | v1 objects | Cameras, burner + hood + duct, walls, ceilings |
 | v1.1 objects | Heat flux gauges, thermocouples (single bead or rake) |
+| v1.2 objects | Obstructions — the box that is neither wall nor slab |
+| FDS bridge | Import only for now, shaped so an exporter is a straightforward addition. Reader is ours: fdsreader parses simulation OUTPUT and cannot open a `.fds` input |
+| FDS coordinates | Plan is always re-origined onto the burner; the shift is kept in `meta.source.originOffset_m` so the source file's own numbers stay recoverable |
 | Camera zoom | Stored beside the lens, not folded into it; multiplies the effective focal length |
 | Format versioning | One schema per version; a file declares the lowest version its contents need |
 | Preset library | Seeded from `presets/cameras.json`; user additions live in the desktop shell's settings file (browser storage in a plain tab), never a sidecar file |
@@ -210,8 +213,9 @@ tool to exist.
 | M7 | **Desktop** | pywebview shell, native dialogs, recent files, PyInstaller exe | **done** — 9.8 MB exe |
 | M8 | **Flame** *(Phase 2)* | Import reconstructed 3D flame; time sequence playback | blocked on format decision |
 | M9 | **Instruments** | Format 1.1: camera zoom, heat flux gauges, thermocouple rakes, predicted exposure, user-added camera presets | **done** |
+| M10 | **FDS bridge** | Namelist reader, FDS → plan import with a preview, format 1.2 obstructions, FDS-style coordinate entry | **done** |
 
-Phase 1 is complete. 225 Python tests, 148 web tests.
+Phase 1 is complete. 287 Python tests, 210 web tests.
 
 ### M9, from fire safety engineer feedback
 
@@ -222,6 +226,48 @@ Phase 1 is complete. 225 Python tests, 148 web tests.
 | Heat flux and thermocouple components | New object types, with predicted exposure rather than bare placement: incident flux by point source, bead-by-bead plume temperature, and checks for an over-range gauge, a starved one, one facing the wrong way, and a bead its wire cannot survive |
 | Walls and sensors in the example plan | The reference plan gained an L of walls, two gauges and two rakes. It now makes a second argument alongside the camera-framing one: the 50 kW/m² gauge everyone owns reads 3% of scale at 1.5 m from a 130 kW fire |
 | Add camera presets from the GUI, without a save file | **Yes, and no sidecar file was needed.** The desktop shell keeps the library in its own per-profile `settings.json`; a browser tab uses `localStorage`. (`localStorage` alone did not work for the desktop build: the shell binds a fresh loopback port on every launch, and browser storage is scoped to the origin, so each launch saw an empty library.) Plans were already self-contained — every intrinsic is copied inline and `presetId` is a hint — so a preset can also be lifted straight back out of a plan someone sends you |
+
+### M10, from the same fire safety engineers
+
+Two asks, one file. They live in FDS, and both were about meeting them there.
+
+| Ask | How it landed |
+|---|---|
+| Read a test plan out of an FDS input | The whole overlap: geometry, the fire, and the devices that correspond to instruments someone has to mount. Their sample case converts to 4 walls with a door, a ceiling, a 300 kW burner and 25 instruments, with no manual fixing |
+| Use their open-source reader, `fdsreader` | **Not usable, and it is worth knowing why.** It reads simulation *output* through the `.smv` file FDS writes after a run; it cannot open a `.fds` input at all. So the reader is ours — about 250 lines, and no numpy in the exe |
+| Create an object the way FDS does | A **Fields / FDS** switch in the inspector: `XB` for a box, `XYZ` + `IOR` for a device, in the source file's own coordinates. Plus a paste box that turns one `&OBST` or `&DEVC` into an object, through the importer's own converter |
+| — | Format 1.2's `obstruction`: an FDS model is full of boxes that are neither wall nor slab, and this format had nowhere to put them |
+
+**Three syntax rules decide whether the reader works, and their sample exercises all
+three.** A record ends at the first `/` *outside a string* — their `&HEAD` title
+contains `34.2x1000/300=114s`, so a naive reader truncates the first record in the
+file. Parameters separate on commas *or* whitespace — their `&SURF`, `&MATL` and
+`&PROP` records use newlines and no commas, so a comma-splitter silently loses
+`HRRPUA` and the thermocouple `DIAMETER`. And a line without a leading `&` is a
+comment — their `REAC` carrying `RADIATIVE_FRACTION=0.29` is one, and reading it
+would have changed every predicted heat flux in the plan.
+
+**The origin is the interesting part.** This format's origin is the burner centre at
+floor level; an FDS file's is wherever the author put it. The import re-origins and
+records the shift in `meta.source.originOffset_m`, which costs no version bump
+(`meta` is open in every 1.x schema) and is what lets the inspector show an engineer
+the same six numbers their `.fds` contains. The floor is the top of the lowest
+horizontal slab, not the bottom of the mesh — in their case those differ by 200 mm,
+and taking the mesh would have left the burner floating.
+
+**What the import immediately tells you about their case**, from the plan's own
+checks rather than from anything FDS-specific:
+
+| Finding | Why it matters |
+|---|---|
+| Mean flame tip at 2.17 m under a 2.4 m ceiling | 0.23 m of clearance; the intermittent tip is in the ceiling jet |
+| Nine of 23 gauges inside two effective diameters | The point-source model is an order of magnitude there, not a number to size a gauge on |
+| Two of 22 beads on each rake inside the flame envelope | Flame temperatures and radiation error, not a plume reading |
+| 23 gauges with no full-scale range | FDS reports a flux at a point and has no gauge; the range has to be chosen |
+
+The last one is the shape of the whole import: nothing is guessed that the file does
+not say. No radiative fraction, no gauge range — and everything not imported is named
+in the report rather than dropped quietly.
 
 ### What the reference layout demonstrates
 
@@ -297,6 +343,23 @@ is invisible until someone works the arithmetic — or opens the plan.
 - **Wall openings do not appear in the exported elevations.** The 3D view cuts doors
   and windows out of a wall; the drawing renders the wall as a solid rectangle. Worth
   knowing before a drawing is handed to someone who will build from it.
+- **The FDS import classifies by shape, not by intent.** A box is a wall, a slab or an
+  obstruction by aspect ratio (CONVENTIONS §9). A 0.4 m kerb reads as a low wall and a
+  deep beam reads as a slab; both are defensible and neither is what the author meant.
+  The import preview lists what it made, and the Fields view fixes anything it got
+  wrong.
+- **A burning lining is a note, not a property.** FDS models routinely put `HRRPUA` on
+  a wall surface. That surface is imported as a wall with the fact in its `notes`,
+  because this format has one fire and it is the burner. Nothing checks it.
+- **Only vertical device runs group into rakes.** A rake's beads lie along its local
+  +Z, so a horizontal row would have to be a rotated object — and a rotated rake reads
+  correctly in the 3D view but not in the elevations. A horizontal row arrives as one
+  object per `&DEVC`.
+- **A gauge imported from FDS has no range**, so the over-range and low-signal checks
+  stay quiet on it until one is set. That is deliberate — see CONVENTIONS §9 — and the
+  import says so, but a plan taken straight from an import has not had those verdicts.
+- **The import is one-way.** A plan cannot yet emit `&OBST` / `&DEVC` back. The mapping
+  is written so an exporter is an addition rather than a rewrite, but it is not there.
 - **Pitch and roll are honoured in the 3D view only** — checks, plan view and
   elevations all read a tilted wall, hood or ceiling as if it were upright. Yaw is
   handled consistently everywhere. See CONVENTIONS §5a.
@@ -332,3 +395,18 @@ Raised by M9 and worth settling before the next format bump:
 6. **Do plume temperatures need an off-axis correction?** The Gaussian half-width is
    already implied by the 15° envelope; using it to scale the centreline value would
    make a wall-adjacent rake's prediction meaningful rather than absent.
+
+Raised by M10:
+
+7. **Should a plan be able to write FDS?** The engineers design the layout here and
+   run the simulation there, so a `&OBST` / `&DEVC` skeleton would close the loop.
+   Deferred deliberately: an exporter has to decide mesh, resolution and surfaces,
+   none of which this format holds, and guessing them produces an input that runs and
+   is wrong.
+8. **Does a burning surface deserve a field?** `HRRPUA` on a wall lining is a real
+   planning fact — it decides where a gauge survives — and it currently lives in
+   `notes`, where nothing can check it. A `combustible` block on `wall`, `ceiling` and
+   `obstruction` would be the 1.3 shape.
+9. **Should the import read `&MESH` resolution into the plan?** Cell size decides what
+   a simulation can resolve, and a plan built to compare against one might want to say
+   so. Against: it is a property of the simulation, not of the test.

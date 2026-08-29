@@ -1,14 +1,20 @@
 # Conventions
 
-Normative reference for `fire-test-plan` formats 1.0.0 and 1.1.0. If code and this
-document disagree, this document is wrong and should be fixed — but check the tests
-first, because they encode these rules directly.
+Normative reference for `fire-test-plan` formats 1.0.0, 1.1.0 and 1.2.0. If code and
+this document disagree, this document is wrong and should be fixed — but check the
+tests first, because they encode these rules directly.
 
 **What 1.1 added**, all of it additive: `camera.zoomFactor`, `burner.fire.
 radiativeFraction`, and the `heatFluxSensor` and `thermocouple` object types.
 Nothing 1.0 allowed became invalid, and a 1.1 plan opened in a 1.0 tool keeps its
-sensors through the unknown-object path in section 6. Which version a file declares
-is *derived*, not authored — see section 8.
+sensors through the unknown-object path in section 6.
+
+**What 1.2 added**: one object type, `obstruction` — the box that is neither wall nor
+slab. `meta.source` is documented in the 1.2 schema but is *not* a 1.2 feature and
+does not bump anything: `meta` is open in every 1.x schema, so a plan imported from
+FDS that holds nothing past 1.0 still declares 1.0.0. Section 9 covers the import.
+
+Which version a file declares is *derived*, not authored — see section 8.
 
 ---
 
@@ -250,6 +256,18 @@ full transform. One helper does it everywhere: `toWorld`/`footprintXY` in
 A rotation that shows in the 3D view but not in the printed plan, or in the plan but
 not in the containment check, is the failure mode this rule exists to prevent.
 
+### An obstruction's origin (1.2)
+
+An `obstruction` is a box, and its origin is the **centre of its base**: it spans
+`±size_m[0]/2` and `±size_m[1]/2` in its own axes and rises from 0 to `size_m[2]`.
+
+That is deliberately unlike a wall, whose height above the floor lives in
+`baseHeight_m`. A wall's geometry is a polyline with no z of its own, so it needs
+somewhere to put one; a box already has an origin. Two things follow, and both are
+the point: dragging a box along the floor keeps it on the floor, and the rotate
+gizmo yaws it about its own vertical axis rather than swinging it around a point in
+the air.
+
 **Yaw is the case that is honoured everywhere. Pitch and roll are 3D-only.** Nothing
 stops the rotate gizmo tilting a wall, hood or ceiling, and the 3D view renders the
 tilt faithfully — but `footprintXY` drops z, so the checks and the plan view see the
@@ -385,10 +403,16 @@ than the file already said:
 version = max(declared, required(contents))
 ```
 
-`required` is 1.1.0 if the plan holds a `heatFluxSensor`, a `thermocouple`, a camera
-with a `zoomFactor` or a burner with a `radiativeFraction`; otherwise 1.0.0. It is
-`requiredFormatVersion` in `web/src/core/types.ts`, mirrored by `required_version` in
+`required` is 1.2.0 if the plan holds an `obstruction`; failing that, 1.1.0 if it
+holds a `heatFluxSensor`, a `thermocouple`, a camera with a `zoomFactor` or a burner
+with a `radiativeFraction`; otherwise 1.0.0. It is `requiredFormatVersion` in
+`web/src/core/types.ts`, mirrored by `required_version` in
 `python/fireplan/serialize.py`.
+
+`meta.source` is in none of those tiers, and that is not an oversight. `meta` is open
+(`additionalProperties: true`) in every 1.x schema, so provenance costs no version
+bump — an imported plan that uses nothing past 1.0 still declares 1.0.0 and still
+opens in a 1.0 tool, carrying its origin offset along untouched.
 
 Three consequences, and all three are the point:
 
@@ -412,3 +436,88 @@ one would have produced a file declaring `1.0.0` that fails the 1.0 schema, whic
 the version invariant defeating itself. Both writers strip `zoomFactor` and
 `radiativeFraction` when null, matching the inspector, which deletes them at their
 defaults for the same reason.
+
+---
+
+## 9. Reading FDS input (1.2)
+
+An FDS input describes a simulation; a plan describes what will be built and where
+the instruments go. The overlap is real but partial, and the importer is about the
+overlap only. `python/fireplan/fds.py` and `web/src/core/fds.ts` are mirrors, and
+`fixtures/fds/IR401_0.ftp.json` is the golden fixture both are held to **byte for
+byte** — two importers that agree about the syntax but not about which box is a wall
+would hand a fire safety engineer and a data scientist two different rooms from one
+file.
+
+**fdsreader is not usable for this.** The library reads simulation *output*, driven
+by the `.smv` file FDS writes after a run; it cannot open a `.fds` input at all.
+Everything an import needs is in the input, before any simulation runs.
+
+### The syntax rules that matter
+
+Three of them, and the sample input in `fixtures/fds/` exercises all three:
+
+- **A record ends at the first `/` outside a string.** The sample's `&HEAD` title
+  contains `34.2x1000/300=114s`, so a reader that stops at the first `/` truncates
+  the very first record in the file.
+- **Parameters separate on commas *or* whitespace.** Its `&SURF`, `&MATL` and
+  `&PROP` records use newlines and no commas, so a comma-splitter silently loses
+  `HRRPUA` and a thermocouple's `DIAMETER`.
+- **A line without a leading `&` is a comment.** That is how an FDS line gets
+  disabled, and the sample does it to a `REAC` carrying `RADIATIVE_FRACTION=0.29`.
+  Reading it would change every predicted heat flux in the plan.
+
+### What maps
+
+| FDS | → | plan |
+|---|---|---|
+| `&OBST` thin in x or y, tall in z | | `wall` on its centreline |
+| `&OBST` thin in z, above the floor | | `ceiling`, soffit at `z1` |
+| `&OBST` thin in z, lowest | | **the floor** — the `z = 0` plane, not an object |
+| anything else | | `obstruction` |
+| a face whose `SURF` has `HRRPUA` or `MLRPUA` | | `burner`, `hrr_kw = rate × area × max(RAMP F)` |
+| `&HOLE` ∩ a wall | | a wall `opening`, by arc length along the polyline |
+| `&DEVC` + a heat-flux quantity, `IOR` | | `heatFluxSensor`, `IOR` as the outward normal |
+| `&DEVC` + a temperature quantity | | `thermocouple`; a vertical run at one XY is one rake |
+| `&HEAD`, `&REAC`, `&TIME`, `&MISC`, `&MESH` | | title, fuel, notes, ambient, floor extent |
+
+Classification is by aspect ratio: a box is a slab when its height is at most
+`SLAB_ASPECT` (0.5) of its smaller plan dimension, and a wall when its thin plan
+dimension is at most `WALL_ASPECT` (0.5) of both its length and its height.
+
+`&MULT` is expanded and `&CATF` includes are read, because a split input with a
+geometry file and a devices file is the normal shape for anything past a demo.
+
+### The origin moves, and the move is recorded
+
+This format's origin is the burner centre at floor level (section 1); an FDS file's
+is arbitrary. So an import always translates, and writes the shift to
+`meta.source.originOffset_m` — **the position of the plan origin in the source
+file's coordinates**, so `source_xyz = plan_xyz + originOffset_m`.
+
+The floor is the **top face of the lowest horizontal slab**, not the bottom of the
+mesh. The distinction is not academic: the sample's meshes start at `z = −0.2` while
+its floor slab's top is at `z = 0`, so taking the mesh would put every height in the
+plan 200 mm out and leave the burner floating. A burner's own pan is excluded from
+that search, or a model with no floor slab would put the floor at the top of the
+burner.
+
+That offset is what the inspector's **Fields / FDS** switch is built on: it shows a
+box as `XB` and a device as `XYZ` + `IOR`, in the source file's own coordinates, so
+the six numbers can be compared against the `.fds` line for line. A wall on a
+diagonal, a wall with three points, a non-rectangular slab, a circular pan and
+anything yawed have no `XB`; those show the bounding box read-only, with the reason,
+rather than being quietly squared off.
+
+### Nothing is guessed that the file does not say
+
+`RADIATIVE_FRACTION` is imported only when `&REAC` states it — never defaulted to
+FDS's own default, because a wrong radiative fraction silently changes every
+predicted heat flux in the plan. A gauge's full scale is left null, because FDS
+reports a flux at a point and has no gauge to over-range; inventing 50 kW/m² would
+make every over-range and low-signal verdict a fiction. The import says so, as a
+`fds-gauge-range` warning.
+
+Everything not imported is reported by name rather than dropped quietly. An import
+that loses half a model is worse than one that refuses, so this one neither loses nor
+refuses: it converts, and then says what it did.

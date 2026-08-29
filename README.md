@@ -9,11 +9,11 @@ a data scientist reads the same file as a camera rig description. Everything els
 here serves that handoff.
 
 ```
-schema/      fire-test-plan-1.0.0 / -1.1.0 .schema.json — normative, one per version
+schema/      fire-test-plan-1.0.0 / -1.1.0 / -1.2.0 .schema.json — normative, one per version
 CONVENTIONS.md                                — frames, units, correlations
 presets/     camera preset library (shared by the editor and the fixture builder)
 docs/datasheets/  manufacturer PDFs behind the datasheet-grade presets
-fixtures/    reference plans
+fixtures/    reference plans, and fixtures/fds/ — a real FDS case and its conversion
 python/      fireplan — reader, validator, exporters
 python/shell/  desktop shell (pywebview + PyInstaller)
 web/         the 3D editor
@@ -37,10 +37,35 @@ on the north wall reads usefully.
 
 ### What you can put in a plan
 
-Cameras, a burner, a calorimeter hood, walls, ceilings, **heat flux gauges** and
-**thermocouples** (one bead, or a rake of them on one support). Cameras carry a zoom
-factor as well as a lens, and every instrument is checked against the fire it is
-pointed at rather than merely placed.
+Cameras, a burner, a calorimeter hood, walls, ceilings, **obstructions** (the box that
+is neither), **heat flux gauges** and **thermocouples** (one bead, or a rake of them on
+one support). Cameras carry a zoom factor as well as a lens, and every instrument is
+checked against the fire it is pointed at rather than merely placed.
+
+### Starting from an FDS model
+
+**Import FDS…** builds a plan from a `.fds` input: walls, ceilings, boxes, the burner
+and its heat release, doorways from `&HOLE`, and the `&DEVC`s that correspond to
+instruments someone has to mount. It previews what it will make and what it will skip
+before anything is adopted.
+
+```bash
+python -c "from fireplan import Plan; Plan.from_fds('fixtures/fds/IR401_0.fds')"
+```
+
+The sample case in `fixtures/fds/` converts to 4 walls with a door, a ceiling, a
+300 kW burner and 25 instruments — and the plan's own checks immediately report that
+the flame tip comes within 0.23 m of the ceiling and that nine gauges sit inside the
+near field, which is the point of importing it here rather than reading it there.
+
+The origin moves: this format measures everything from the burner centre at floor
+level, so an import re-origins and keeps the shift in `meta.source.originOffset_m`.
+The inspector's **Fields / FDS** switch uses it to show a wall as the `XB` the source
+file actually contains, and accepts one typed back. **From FDS** in the palette turns
+a single pasted `&OBST` or `&DEVC` into an object.
+
+`fdsreader`, the obvious library, does not help here: it reads simulation *output*
+through the `.smv` file and cannot open a `.fds` input. The reader is ours, and small.
 
 ### Cameras this build has never heard of
 
@@ -140,12 +165,15 @@ definitions in [CONVENTIONS.md](CONVENTIONS.md) section 3.
 ## Tests
 
 ```bash
-python -m pytest python/tests -q     # 225 tests, no GUI needed
-cd web && npm test                   # 148 tests
+python -m pytest python/tests -q     # 287 tests, no GUI needed
+cd web && npm test                   # 210 tests
 ```
 
 The web suite asserts that the TypeScript writer reproduces the Python-written
-fixture byte for byte. A plan saved from the editor and the same plan saved from
+fixture byte for byte, and that the TypeScript FDS importer reproduces the
+Python-written conversion of `fixtures/fds/IR401_0.fds` the same way — two importers
+that agree about the syntax but not about which box is a wall would hand an engineer
+and a data scientist two different rooms from one file. A plan saved from the editor and the same plan saved from
 `fireplan` must be the same file, or every handoff shows up as a spurious diff. The
 instrument models are pinned against hand-derived values in both languages, so the
 number the tool prints stays the number the correlation gives.

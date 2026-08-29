@@ -767,12 +767,14 @@ def to_plan(text: str, filename: Optional[str] = None,
 
     # -- the fire --------------------------------------------------------
     reac = (by_group.get("REAC") or [None])[0]
-    obst_boxes = _boxes(records, "OBST", mults) if opts.geometry else []
+    # Always read, even when geometry is not being imported: the obstructions are
+    # what locate the fire and the floor, and therefore the origin. Skipping the read
+    # would move every instrument in the plan.
+    obst_boxes = _boxes(records, "OBST", mults)
     vent_boxes = [b for b in _boxes(records, "VENT", mults)
                   if not _is_domain_vent(b, domain)]
     heat_of_combustion = reac.number("HEAT_OF_COMBUSTION") if reac else None
-    faces = _fire_faces(obst_boxes if opts.geometry else _boxes(records, "OBST", mults),
-                        vent_boxes, surfs, peaks, heat_of_combustion)
+    faces = _fire_faces(obst_boxes, vent_boxes, surfs, peaks, heat_of_combustion)
     burner = _pick_burner(faces, opts.burner_surf)
     candidates = sorted({f.surf for f in faces})
 
