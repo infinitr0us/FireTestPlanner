@@ -35,6 +35,7 @@ import {
   isCeiling,
   isHeatFluxSensor,
   isHood,
+  isObstruction,
   isThermocouple,
   isWall,
   maxVersion,
@@ -46,6 +47,7 @@ import {
   type HoodObject,
   type Issue,
   type Modality,
+  type ObstructionObject,
   type PlanDocument,
   type PlanObject,
   type Quat,
@@ -58,7 +60,8 @@ import {
 // Re-exported so callers get the whole plan vocabulary from one module rather than
 // having to know that narrowing helpers live next door in types.ts.
 export {
-  isAimable, isBurner, isCamera, isCeiling, isHeatFluxSensor, isHood, isThermocouple, isWall,
+  isAimable, isBurner, isCamera, isCeiling, isHeatFluxSensor, isHood, isObstruction,
+  isThermocouple, isWall,
 } from './types';
 
 export const MODALITY_COLORS: Record<Modality, string> = {
@@ -119,6 +122,9 @@ export const heatFluxSensors = (d: PlanDocument): HeatFluxSensorObject[] =>
 export const thermocouples = (d: PlanDocument): ThermocoupleObject[] =>
   d.objects.filter(isThermocouple);
 
+export const obstructions = (d: PlanDocument): ObstructionObject[] =>
+  d.objects.filter(isObstruction);
+
 export const findObject = (d: PlanDocument, id: string): PlanObject | undefined =>
   d.objects.find((o) => o.id === id);
 
@@ -177,6 +183,20 @@ export function toLocal(o: PlanObject, world: Vec3): Vec3 {
 }
 
 /** A local footprint vertex `[x, y]` as a world `[x, y]`, dropping height. */
+/**
+ * The four base corners of an obstruction, in world XY.
+ *
+ * The box's extents are local, so they go through the object transform like every
+ * other vertex list in this format -- a yawed box is drawn yawed in the plan view,
+ * not as its unrotated self. Counter-clockwise, so the polygon closes the way the
+ * ceiling outline does.
+ */
+export function obstructionCornersXY(o: ObstructionObject): Array<[number, number]> {
+  const [hx, hy] = [o.size_m[0] / 2, o.size_m[1] / 2];
+  return ([[-hx, -hy], [hx, -hy], [hx, hy], [-hx, hy]] as Array<[number, number]>)
+    .map((c) => footprintXY(o, c));
+}
+
 export function footprintXY(o: PlanObject, xy: readonly [number, number]): [number, number] {
   const w = toWorld(o, [xy[0], xy[1], 0]);
   return [w[0], w[1]];

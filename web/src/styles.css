@@ -420,3 +420,141 @@ body.is-measuring .viewport { cursor: cell; }
 .panel::-webkit-scrollbar-track { background: transparent; }
 .panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
 .panel::-webkit-scrollbar-thumb:hover { background: #34446e; }
+
+/* Segmented switch in a section heading: Fields | FDS. It sits at the right of the
+   heading because it changes what the whole section means, not one value in it. */
+.seg {
+  display: inline-flex;
+  gap: 1px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--border);
+}
+
+.seg__btn {
+  appearance: none;
+  border: 0;
+  padding: 2px 8px;
+  font: 10px/1.6 var(--font);
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--text-dim);
+  background: var(--bg-raised);
+  cursor: pointer;
+}
+
+.seg__btn:hover { color: var(--text); }
+
+.seg__btn--active {
+  color: var(--bg);
+  background: var(--accent);
+}
+
+/* -- import preview ------------------------------------------------------ */
+
+.import {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: min(78vh, 640px);
+}
+
+.import__intro { margin: 0; color: var(--text-dim); font-size: 12px; }
+
+.import__counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.import__chip {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  font-size: 12px;
+}
+
+.import__chip b { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+.import__scroll {
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+}
+
+.import__table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.import__table th, .import__table td {
+  padding: 5px 9px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.import__table th { color: var(--text-faint); font-weight: 600; }
+.import__table tr:last-child td { border-bottom: 0; }
+.import__table td.import__num { text-align: right; font-variant-numeric: tabular-nums; }
+.import__table td.import__skip { color: var(--text-faint); }
+
+.import__issues { margin: 0; padding: 0; list-style: none; font-size: 12px; }
+.import__issue {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.import__issue:last-child { border-bottom: 0; }
+.import__issue code {
+  flex: none;
+  font: 11px/1.5 var(--mono);
+  color: var(--text-faint);
+}
+.import__issue--warning code { color: var(--warn); }
+.import__issue--error code { color: var(--bad); }
+
+.import__actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* -- modal --------------------------------------------------------------- */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(2 6 23 / 72%);
+}
+
+.modal__panel {
+  width: min(760px, 100%);
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 45%);
+}
+
+.modal__title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* -- create from FDS text ------------------------------------------------ */
+
+.fdspaste { display: flex; flex-direction: column; gap: 6px; }
+
+.fdspaste__input {
+  width: 100%;
+  min-height: 54px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--text);
+  font: 11px/1.5 var(--mono);
+  resize: vertical;
+}
+
+.fdspaste__error { margin: 0; color: var(--bad); font-size: 11px; white-space: pre-wrap; }

@@ -385,3 +385,52 @@ def test_dialog_routes_are_inert_without_a_window(server):
 
 def test_free_port_returns_a_usable_port():
     assert 1024 < shell_app.free_port() <= 65535
+
+
+# -- FDS import ------------------------------------------------------------
+
+def test_reading_an_fds_file_returns_its_path_and_text(tmp_path):
+    fds = tmp_path / "case.fds"
+    fds.write_text("&HEAD CHID='case' /\n&TAIL /\n", encoding="utf-8")
+
+    shell = shell_app.Shell()
+    result = shell.read_fds(str(fds))
+
+    assert result["path"] == str(fds)
+    assert "CHID" in result["text"]
+
+
+def test_reading_an_fds_file_does_not_adopt_it_as_the_document(tmp_path):
+    """An FDS input is a source, not the plan.
+
+    Remembering it as a recent file, or making it the window's current document,
+    would point Save at the simulation input -- and a plan written over someone's
+    FDS model is not a mistake they can undo. `read_plan` deliberately does both of
+    those things; this deliberately does neither.
+    """
+    fds = tmp_path / "case.fds"
+    fds.write_text("&HEAD CHID='case' /\n&TAIL /\n", encoding="utf-8")
+
+    shell = shell_app.Shell()
+    shell.read_fds(str(fds))
+
+    assert shell.current_path is None
+    assert str(fds) not in shell.recent_files()
+
+
+def test_an_unreadable_fds_file_reports_the_reason_rather_than_vanishing(tmp_path):
+    shell = shell_app.Shell()
+    result = shell.read_fds(str(tmp_path / "does-not-exist.fds"))
+    assert result is not None and "error" in result
+
+
+def test_an_fds_file_with_a_stray_byte_still_reads(tmp_path):
+    # FDS inputs come off machines with every locale setting there is, and a bad
+    # byte in a comment is not a reason to refuse a model whose geometry is fine.
+    fds = tmp_path / "latin.fds"
+    fds.write_bytes(b"A caf\xe9 note\n&HEAD CHID='case' /\n&TAIL /\n")
+
+    result = shell_app.Shell().read_fds(str(fds))
+    assert "CHID" in result["text"]
+
+

@@ -8,6 +8,9 @@
 
 export interface ShellBridge {
   openPlan(): Promise<{ path: string; text: string } | null>;
+  /** Pick an FDS input and read it. The conversion happens in the shared core, so
+   *  this is only the native dialog a browser tab cannot open. */
+  openFds(): Promise<{ path: string; text: string } | null>;
   /** `saveAs` forces a destination dialog; otherwise the shell writes back to the
    *  file it opened, if the page is still showing that document.
    *  Resolves to null when the user cancels, and REJECTS when the write fails. */
@@ -78,6 +81,7 @@ export function connectShell(onReady: () => void): void {
 
   bridge = {
     openPlan: () => call<{ path: string; text: string } | null>('/api/open', {}).then((r) => r ?? null),
+    openFds: () => call<{ path: string; text: string } | null>('/api/open-fds', {}).then((r) => r ?? null),
     savePlan: (text, name, saveAs) =>
       call<SaveResult>('/api/save', { text, name, saveAs }).then(unwrapSave),
     saveHtml: (html, name) => call<SaveResult>('/api/save-html', { html, name }).then(unwrapSave),
@@ -155,17 +159,30 @@ export async function savePlanText(
   return suggestedName;
 }
 
-export async function openPlanText(): Promise<{ name: string; text: string } | null> {
+/**
+ * Pick a file and read its text.
+ *
+ * Shared by Open and Import FDS, which differ only in the filter and in what the
+ * caller does with the text -- so the shell branch, the browser branch and the
+ * cancel-never-settles caveat exist once.
+ */
+async function pickText(
+  accept: string,
+  viaShell: (b: ShellBridge) => Promise<{ path: string; text: string } | null>,
+  fallbackName: string,
+): Promise<{ name: string; text: string } | null> {
   const bridge = shell();
   if (bridge) {
-    const result = await bridge.openPlan();
-    return result ? { name: result.path.split(/[\\/]/).pop() ?? 'plan.ftp.json', text: result.text } : null;
+    const result = await viaShell(bridge);
+    return result
+      ? { name: result.path.split(/[\\/]/).pop() ?? fallbackName, text: result.text }
+      : null;
   }
 
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.json,.ftp.json,application/json';
+    input.accept = accept;
     input.addEventListener('change', () => {
       const file = input.files?.[0];
       if (!file) {
@@ -180,6 +197,13 @@ export async function openPlanText(): Promise<{ name: string; text: string } | n
     input.click();
   });
 }
+
+/** An FDS input file's text. The conversion is `fdsToPlan`, in the shared core. */
+export const openFdsText = (): Promise<{ name: string; text: string } | null> =>
+  pickText('.fds,text/plain', (b) => b.openFds(), 'model.fds');
+
+export const openPlanText = (): Promise<{ name: string; text: string } | null> =>
+  pickText('.json,.ftp.json,application/json', (b) => b.openPlan(), 'plan.ftp.json');
 
 /**
  * A single self-contained HTML file with the plan baked in.

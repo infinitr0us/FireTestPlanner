@@ -609,10 +609,11 @@ def _surface_note(rec: Record, surfs: Dict[str, Record]) -> Optional[str]:
     burning = [x for x in named
                if surfs.get(x) is not None
                and (surfs[x].number("HRRPUA") or surfs[x].number("MLRPUA"))]
-    note = "FDS SURF " + ", ".join(repr(str(x)) for x in named)
+    quoted = lambda names: ", ".join("'" + str(x) + "'" for x in names)  # noqa: E731
+    note = "FDS SURF " + quoted(named)
     if burning:
         note += " -- {} release{} heat, so this surface burns".format(
-            ", ".join(repr(str(x)) for x in burning), "" if len(burning) > 1 else "s")
+            quoted(burning), "" if len(burning) > 1 else "s")
     return note
 
 

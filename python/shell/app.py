@@ -42,6 +42,9 @@ from urllib.parse import urlparse
 APP_NAME = "Fire Test Plan Editor"
 RECENT_LIMIT = 10
 PLAN_FILTER = ("Fire test plan (*.ftp.json;*.json)", "All files (*.*)")
+#: An FDS input is read, never written: the import converts it into a plan, and the
+#: plan is what gets saved. So there is no matching save filter.
+FDS_FILTER = ("FDS input (*.fds)", "All files (*.*)")
 HTML_FILTER = ("Web page (*.html)", "All files (*.*)")
 MAX_BODY_BYTES = 256 * 1024 * 1024  # a plan with an embedded viewer can be large
 
@@ -193,6 +196,43 @@ class Shell:
             directory=self._last_directory(),
         )
         return self.read_plan(result[0]) if result else None
+
+    def open_fds(self) -> Optional[Dict[str, str]]:
+        """Pick an FDS input file and hand back its text.
+
+        Deliberately just a read. The conversion lives in the shared core so the
+        browser build imports the same way and the two cannot drift, and the shell's
+        job is the one thing a browser tab genuinely cannot do: a native file dialog
+        with the right filter.
+
+        The path is NOT remembered as a recent file and does not become the window's
+        current document -- an import produces an unsaved plan, and pointing Save at
+        the .fds it came from would overwrite the simulation input.
+        """
+        if self.window is None:
+            return None
+        import webview
+
+        result = self.window.create_file_dialog(
+            webview.OPEN_DIALOG, allow_multiple=False, file_types=FDS_FILTER,
+            directory=self._last_directory(),
+        )
+        return self.read_fds(result[0]) if result else None
+
+    def read_fds(self, path: str) -> Optional[Dict[str, str]]:
+        """An FDS input file's text, or the reason it could not be read.
+
+        `errors="replace"` rather than a strict decode: FDS inputs come off machines
+        with every locale setting there is, and a stray byte in a comment is not a
+        reason to refuse a model whose geometry is perfectly readable.
+        """
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError as exc:
+            report("could not read {}: {}".format(path, exc))
+            return {"error": str(exc)}
+        return {"path": path, "text": text}
 
     def read_plan(self, path: str) -> Optional[Dict[str, str]]:
         try:
@@ -377,6 +417,8 @@ class Handler(SimpleHTTPRequestHandler):
                     self.on_ready(self.shell)
             elif route == "/api/open":
                 self._send_json(self.shell.open_plan())
+            elif route == "/api/open-fds":
+                self._send_json(self.shell.open_fds())
             elif route == "/api/open-recent":
                 self._send_json(self.shell.read_plan(str(body.get("path", ""))))
             elif route == "/api/save":

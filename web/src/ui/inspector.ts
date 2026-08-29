@@ -9,6 +9,16 @@
 
 import { DEFAULT_RADIATIVE_FRACTION, POINT_SOURCE_MIN_DIAMETERS } from '../core/correlations';
 import { defaultAimTarget } from '../core/factory';
+import {
+  applyXbToObject,
+  fdsFrame,
+  hasXbView,
+  hasXyzView,
+  iorLabel,
+  normalForIor,
+  xbOfObject,
+  xyzOfObject,
+} from '../core/fdsview';
 import { setAimTarget, setPosition, type AimableObject } from '../core/transform';
 import {
   beadOffsetsOf,
@@ -35,6 +45,7 @@ import {
   isCeiling,
   isHeatFluxSensor,
   isHood,
+  isObstruction,
   isThermocouple,
   isWall,
   LOW_SIGNAL_FRACTION,
@@ -75,6 +86,7 @@ import type {
   IntrinsicsSource,
   LengthUnit,
   Modality,
+  ObstructionObject,
   PlanObject,
   TcType,
   ThermocoupleObject,
@@ -102,6 +114,12 @@ import {
 const TYPE_LABEL: Record<string, string> = {
   heatFluxSensor: 'heat flux gauge',
 };
+
+/** Which coordinate vocabulary the Position section is showing.
+ *
+ *  Sticky across selections on purpose: someone working from an FDS input wants
+ *  every object in FDS coordinates, not to re-choose per object. */
+type CoordMode = 'fields' | 'fds';
 
 /** One classifier, two vocabularies: `readout` has said `good` since 1.0, and the
  *  report says `ok` because that is its CSS class. This is the whole difference. */
@@ -131,6 +149,9 @@ export class Inspector {
    * rather than silently re-pointing it at another camera's optics.
    */
   private pendingPreset: { cameraId: string; name: string } | null = null;
+
+  /** Fields, or the FDS spelling of the same geometry. See `core/fdsview.ts`. */
+  private coordMode: CoordMode = 'fields';
 
   constructor(
     private root: HTMLElement,
@@ -207,6 +228,7 @@ export class Inspector {
     else if (isCeiling(obj)) this.renderCeiling(obj, unit);
     else if (isHeatFluxSensor(obj)) this.renderHeatFluxSensor(obj, unit);
     else if (isThermocouple(obj)) this.renderThermocouple(obj, unit);
+    else if (isObstruction(obj)) this.renderObstruction(obj, unit);
     else this.renderUnknown(obj);
 
     this.root.append(sectionTitle('Display'));
@@ -234,8 +256,15 @@ export class Inspector {
   // -- shared ------------------------------------------------------------
 
   private renderTransform(obj: PlanObject, unit: LengthUnit): void {
+    const canFds = hasXbView(obj) || hasXyzView(obj);
+    this.root.append(sectionTitle('Position', canFds ? this.coordToggle() : undefined));
+
+    if (canFds && this.coordMode === 'fds') {
+      this.renderFdsCoords(obj, unit);
+      return;
+    }
+
     const p = positionOf(obj);
-    this.root.append(sectionTitle('Position'));
     this.root.append(
       row(
         `Position (${unit})`,
@@ -251,6 +280,146 @@ export class Inspector {
         'Measured from the burner centre at floor level',
       ),
     );
+  }
+
+  /** The Fields / FDS switch, in the section heading rather than as a row: it
+   *  changes what the whole section means, not one value in it. */
+  private coordToggle(): HTMLElement {
+    const pick = (mode: CoordMode, label: string, title: string): HTMLElement =>
+      h('button', {
+        class: `seg__btn${this.coordMode === mode ? ' seg__btn--active' : ''}`,
+        type: 'button',
+        title,
+        onclick: () => { this.coordMode = mode; this.render(); },
+      }, [label]);
+
+    return h('span', { class: 'seg' }, [
+      pick('fields', 'Fields', 'Position, size and height as this format stores them'),
+      pick('fds', 'FDS', 'The same geometry as FDS spells it: XB for a box, XYZ and IOR for a device'),
+    ]);
+  }
+
+  /**
+   * Geometry in FDS's own parameterisation.
+   *
+   * The numbers are in the SOURCE file's coordinates when the plan was imported
+   * from one, so they can be compared against the `.fds` line by line. A plan that
+   * was authored here has no offset to apply and the panel says so, rather than
+   * implying the numbers would match a file somewhere.
+   */
+  private renderFdsCoords(obj: PlanObject, unit: LengthUnit): void {
+    const frame = fdsFrame(this.store.document);
+
+    if (hasXyzView(obj)) {
+      this.renderFdsDevice(obj, unit, frame.offset);
+    } else {
+      this.renderFdsBox(obj, unit, frame.offset);
+    }
+
+    this.root.append(h('p', { class: 'panel__hint' }, [
+      frame.fromImport
+        ? `In ${frame.file ?? 'the source file'}'s coordinates — the plan origin sits at `
+          + `(${frame.offset.map((v) => formatLength(v, unit)).join(', ')}) there, `
+          + 'so these are the numbers that file contains.'
+        : 'In plan coordinates. This plan was not imported from FDS, so there is no source '
+          + 'file to match — the numbers are FDS-shaped, not FDS-sourced.',
+    ]));
+  }
+
+  private renderFdsBox(obj: PlanObject, unit: LengthUnit, offset: Vec3): void {
+    const view = xbOfObject(obj, offset);
+    if (!view) {
+      this.root.append(h('p', { class: 'panel__hint' }, ['This object has no XB.']));
+      return;
+    }
+
+    const labels = ['X1', 'X2', 'Y1', 'Y2', 'Z1', 'Z2'];
+    const rows: HTMLElement[] = [];
+    for (let axis = 0; axis < 3; axis += 1) {
+      const lo = axis * 2;
+      rows.push(row(
+        `XB ${labels[lo]} ${labels[lo + 1]} (${unit})`,
+        view.editable
+          ? vecField(
+            [view.xb[lo], view.xb[lo + 1]], unit, [labels[lo], labels[lo + 1]],
+            (index, metres) => this.patch(obj.id, 'Set XB', (o) => {
+              // Re-read rather than closing over the rendered box: two edits in a
+              // row would otherwise write the second onto a stale first.
+              const current = xbOfObject(o, offset);
+              if (!current) return;
+              const next = [...current.xb] as typeof current.xb;
+              next[lo + index] = metres;
+              applyXbToObject(o, next, offset);
+            }),
+          )
+          : h('span', { class: 'field__static' }, [
+            `${formatLength(view.xb[lo], unit)}, ${formatLength(view.xb[lo + 1], unit)}`,
+          ]),
+      ));
+    }
+    this.root.append(...rows);
+
+    if (!view.editable) {
+      this.root.append(h('p', { class: 'panel__hint' }, [
+        `Read-only: ${view.why}. Edit it in the Fields view, or square it off there first.`,
+      ]));
+    }
+  }
+
+  private renderFdsDevice(obj: PlanObject, unit: LengthUnit, offset: Vec3): void {
+    const view = xyzOfObject(obj, offset);
+    if (!view) return;
+
+    this.root.append(row(
+      `XYZ (${unit})`,
+      vecField(view.xyz, unit, ['X', 'Y', 'Z'], (index, metres) =>
+        this.patch(obj.id, 'Set XYZ', (o) => {
+          const next = [...positionOf(o)] as Vec3;
+          next[index] = metres - offset[index];
+          setPosition(o, next);
+        })),
+      "A device's position, as &DEVC writes it",
+    ));
+
+    if (!view.aimable) {
+      // A thermocouple bead has no facing, and FDS does not give one an IOR either.
+      this.root.append(h('p', { class: 'panel__hint' }, [
+        'A thermocouple has no IOR: a bead has no facing. Its beads run up the rake '
+        + 'from this point.',
+      ]));
+      return;
+    }
+
+    this.root.append(row(
+      'IOR',
+      selectField(String(view.ior ?? ''), [
+        { value: '', label: view.ior === null ? 'off-axis (aimed)' : '— none —' },
+        { value: '1', label: '1 — faces +X' },
+        { value: '-1', label: '−1 — faces −X' },
+        { value: '2', label: '2 — faces +Y' },
+        { value: '-2', label: '−2 — faces −Y' },
+        { value: '3', label: '3 — faces +Z (floor-mounted, looking up)' },
+        { value: '-3', label: '−3 — faces −Z (ceiling-mounted, looking down)' },
+      ], (raw) => {
+        const ior = Number(raw);
+        const normal = raw === '' ? null : normalForIor(ior);
+        if (!normal) return; // '— none —' keeps whatever aim the gauge already has
+        this.patch(obj.id, 'Set IOR', (o) => {
+          const p = positionOf(o);
+          // IOR is the direction the MOUNTING SURFACE faces, which is exactly this
+          // format's outward normal for a gauge -- so setting one is an aim at a
+          // point one metre out along that axis, and the two stay consistent.
+          setAimTarget(o as AimableObject,
+            [p[0] + normal[0], p[1] + normal[1], p[2] + normal[2]]);
+        });
+      }),
+      'Index of orientation: the axis the gauge\'s mounting surface faces',
+    ));
+
+    this.root.append(h('div', { class: 'readouts' }, [
+      readout('Facing', iorLabel(view.ior),
+        view.ior === null ? 'muted' : 'good'),
+    ]));
   }
 
   private renderPlanProperties(): void {
@@ -834,6 +1003,39 @@ export class Inspector {
       })));
     }
     this.root.append(h('div', { class: 'panel__actions' }, actions));
+  }
+
+  // -- obstruction -------------------------------------------------------
+
+  /**
+   * A box. Format 1.2.
+   *
+   * The size fields are the extents, and the transform's Z is the height the base
+   * stands at -- there is no separate base height, because unlike a wall's polyline
+   * a box has an origin to put it in. The readout says where the top ends up, since
+   * that is the number you are checking when you ask whether a camera sees over it.
+   */
+  private renderObstruction(box: ObstructionObject, unit: LengthUnit): void {
+    this.root.append(sectionTitle('Obstruction'));
+
+    const set = (index: number, metres: number): void =>
+      this.patch(box.id, 'Resize obstruction', (o) => {
+        const size = [...(o as ObstructionObject).size_m] as Vec3;
+        size[index] = Math.max(0.01, metres);
+        (o as ObstructionObject).size_m = size;
+      });
+
+    this.root.append(
+      row(`Size (${unit})`,
+        vecField(box.size_m, unit, ['X', 'Y', 'Z'], set),
+        'Extents along the object\'s own axes. The origin is the centre of the base'),
+    );
+
+    const z = positionOf(box)[2];
+    this.root.append(h('div', { class: 'readouts' }, [
+      readout('Top of box', formatLengthWithUnit(z + box.size_m[2], unit)),
+      readout('Footprint', `${(box.size_m[0] * box.size_m[1]).toFixed(2)} m²`),
+    ]));
   }
 
   // -- ceiling -----------------------------------------------------------

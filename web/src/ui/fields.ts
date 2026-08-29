@@ -12,8 +12,10 @@ export function row(label: string, control: HTMLElement, hint?: string): HTMLEle
   ]);
 }
 
-export function sectionTitle(text: string): HTMLElement {
-  return h('h3', { class: 'panel__section' }, [text]);
+/** A section heading, optionally with a control on the right -- for a switch that
+ *  changes what the whole section means rather than one value inside it. */
+export function sectionTitle(text: string, aside?: HTMLElement): HTMLElement {
+  return h('h3', { class: 'panel__section' }, aside ? [text, aside] : [text]);
 }
 
 export function textField(value: string, onChange: (v: string) => void): HTMLInputElement {

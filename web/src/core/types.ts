@@ -16,9 +16,9 @@ export const FORMAT = 'fire-test-plan';
  * newest this build can write -- see `requiredFormatVersion`. So `FORMAT_VERSION`
  * is the floor a new plan starts at, and `FORMAT_VERSION_LATEST` is the ceiling.
  */
-export const FORMAT_VERSIONS = ['1.0.0', '1.1.0'] as const;
+export const FORMAT_VERSIONS = ['1.0.0', '1.1.0', '1.2.0'] as const;
 export const FORMAT_VERSION = '1.0.0';
-export const FORMAT_VERSION_LATEST = '1.1.0';
+export const FORMAT_VERSION_LATEST = '1.2.0';
 
 export type Vec2 = [number, number];
 export type Vec3 = [number, number, number];
@@ -180,6 +180,27 @@ export interface ThermocoupleObject extends BaseObject {
   mount?: InstrumentMount;
 }
 
+/**
+ * A rectangular solid: the furniture, equipment and blockwork that is neither a wall
+ * nor a slab. Format 1.2.
+ *
+ * Deliberately a box and nothing more. This format targets open bays and simple
+ * enclosures, and an obstruction exists so that what stands between a camera or a
+ * gauge and the fire is visible in the plan -- not so the room can be modelled.
+ */
+export interface ObstructionObject extends BaseObject {
+  type: 'obstruction';
+  /**
+   * Extent along the object's LOCAL x, y and z. The origin is the CENTRE OF THE
+   * BASE, so the box spans [-x/2, +x/2] and [-y/2, +y/2] and rises from 0 to z.
+   *
+   * Unlike a wall's `baseHeight_m`, the height above the floor is simply the
+   * transform's z: a box has an origin to put it in, a polyline does not. It also
+   * makes the rotate gizmo do the obvious thing -- yaw about the box's own axis.
+   */
+  size_m: Vec3;
+}
+
 /** Any type this build does not know. Held so it survives a load/save cycle. */
 export interface UnknownObject extends BaseObject {
   [key: string]: unknown;
@@ -193,6 +214,7 @@ export type PlanObject =
   | CeilingObject
   | HeatFluxSensorObject
   | ThermocoupleObject
+  | ObstructionObject
   | UnknownObject;
 
 export interface PlanMeta {
@@ -205,6 +227,31 @@ export interface PlanMeta {
   modified?: string | null;
   revision?: string | null;
   notes?: string | null;
+  /**
+   * Where a converted plan came from. Format 1.2 documents it, but it is NOT
+   * version-bumping: `meta` is open in every 1.x schema, so a plan imported from FDS
+   * that uses no 1.1 or 1.2 features still declares the version its contents need.
+   */
+  source?: PlanSource | null;
+}
+
+export interface PlanSource {
+  /** The tool the plan was converted from, e.g. "FDS". */
+  tool?: string;
+  /** Name of the source file, for the human reading the plan. Not a path to resolve. */
+  file?: string | null;
+  /** FDS job identifier from `&HEAD`, when the source was an FDS input file. */
+  chid?: string | null;
+  importedAt?: string | null;
+  /**
+   * Position of the PLAN origin in the source tool's coordinates, so
+   * `source_xyz = plan_xyz + originOffset_m`.
+   *
+   * This format's origin is the burner centre at floor level and a source file's is
+   * arbitrary, so an import always re-origins; keeping the offset is what lets the
+   * inspector show the numbers the source file actually contains.
+   */
+  originOffset_m?: Vec3;
 }
 
 export interface PlanDocument {
@@ -254,6 +301,8 @@ export const isHeatFluxSensor = (o: PlanObject): o is HeatFluxSensorObject =>
   o.type === 'heatFluxSensor';
 export const isThermocouple = (o: PlanObject): o is ThermocoupleObject =>
   o.type === 'thermocouple';
+export const isObstruction = (o: PlanObject): o is ObstructionObject =>
+  o.type === 'obstruction';
 
 /** Objects whose orientation means "what it is pointed at", so they get an aim
  *  target, an aim-at-fire button, and the aim-mismatch check. */
@@ -275,12 +324,18 @@ export const isMounted = (
 
 export const KNOWN_TYPES = [
   'camera', 'burner', 'hood', 'wall', 'ceiling', 'heatFluxSensor', 'thermocouple',
+  'obstruction',
 ] as const;
 export const isKnownType = (t: string): boolean =>
   (KNOWN_TYPES as readonly string[]).includes(t);
 
 /** Object types introduced after format 1.0, and therefore version-bumping. */
 const TYPES_1_1: readonly string[] = ['heatFluxSensor', 'thermocouple'];
+/** And after 1.1. `meta.source` is deliberately in neither list: `meta` is open in
+ *  every 1.x schema, so a plan imported from FDS that holds nothing past 1.0 keeps
+ *  declaring 1.0.0. Provenance is not a feature a reader must understand to read
+ *  the file correctly. */
+const TYPES_1_2: readonly string[] = ['obstruction'];
 
 const compareVersions = (a: string, b: string): number => {
   const pa = a.split('.').map(Number);
@@ -304,10 +359,13 @@ export const maxVersion = (a: string, b: string): string =>
  * Mirror of `required_version` in python/fireplan/serialize.py.
  */
 export function requiredFormatVersion(doc: PlanDocument): string {
+  let needed = '1.0.0';
   for (const o of doc.objects ?? []) {
-    if (TYPES_1_1.includes(o.type)) return '1.1.0';
-    if (isCamera(o) && o.camera?.zoomFactor != null) return '1.1.0';
-    if (isBurner(o) && o.fire?.radiativeFraction != null) return '1.1.0';
+    // The highest tier there is; nothing later in the list can raise it further.
+    if (TYPES_1_2.includes(o.type)) return '1.2.0';
+    if (TYPES_1_1.includes(o.type)) needed = '1.1.0';
+    else if (isCamera(o) && o.camera?.zoomFactor != null) needed = '1.1.0';
+    else if (isBurner(o) && o.fire?.radiativeFraction != null) needed = '1.1.0';
   }
-  return '1.0.0';
+  return needed;
 }

@@ -10,12 +10,12 @@
 import {
   burnerDiameterM,
   burners,
+  cameraColor,
   cameras,
   ceilingAreaM2,
   ceilings,
   checkPlan,
   displayName,
-  cameraColor,
   flameTipZM,
   framingOf,
   gaugeRangeKwM2,
@@ -29,14 +29,15 @@ import {
   hoods,
   intrinsicsSourceOf,
   objectColor,
+  obstructions,
   positionOf,
   standoffHorizontalM,
   standoffM,
   tcMaxTemperatureC,
   tcTypeOf,
   thermocoupleBeads,
-  thermocoupleVerdict,
   thermocouples,
+  thermocoupleVerdict,
   vfovDegOf,
   walls,
   zoomOf,
@@ -115,6 +116,20 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
       cell(`${cl.polygon_m.length}-sided`),
       cell('—'),
       cell(formatLength(cl.height_m, unit), 'num'),
+      cell('—'),
+    ].join('') + '</tr>');
+  }
+
+  for (const ob of obstructions(doc)) {
+    const [dx, dy, dz] = ob.size_m;
+    rows.push('<tr>' + [
+      `<td>${esc(displayName(ob))}</td>`,
+      cell('obstruction'),
+      cell(`${formatLength(dx, unit)} × ${formatLength(dy, unit)} × `
+        + `${formatLengthWithUnit(dz, unit)}`),
+      cell(`${(dx * dy).toFixed(2)} m² footprint`),
+      cell('—'),
+      cell(formatLength(positionOf(ob)[2] + dz, unit), 'num'),
       cell('—'),
     ].join('') + '</tr>');
   }

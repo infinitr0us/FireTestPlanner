@@ -52,6 +52,7 @@ import {
   buildHeatFluxSensor,
   buildHood,
   buildStandoffDimension,
+  buildObstruction,
   buildThermocouple,
   buildWall,
 } from './builders';
@@ -655,6 +656,8 @@ export class Viewport {
         return buildHeatFluxSensor(obj as never);
       case 'thermocouple':
         return buildThermocouple(obj as never);
+      case 'obstruction':
+        return buildObstruction(obj as never);
       default:
         // Unknown types still get a placeholder so they can be selected, inspected
         // and deleted rather than being invisible in a plan that clearly has them.

@@ -251,6 +251,19 @@ export class Store {
     return text;
   }
 
+  /**
+   * Mark the document as having unsaved changes, without editing it.
+   *
+   * An imported plan is new work that has never been written. `replaceDocument`
+   * reasonably treats a freshly adopted document as clean -- it usually came off
+   * disk -- but for an import that would let someone close the window and lose the
+   * conversion in silence, and would make Save look like a no-op.
+   */
+  markDirty(): void {
+    this.dirty = true;
+    this.emit('dirty');
+  }
+
   markSaved(fileName?: string): void {
     if (fileName) this.fileName = fileName;
     this.dirty = false;

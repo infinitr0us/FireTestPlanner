@@ -13,7 +13,8 @@ import { maxVersion, requiredFormatVersion, type PlanDocument } from './types';
 const FLOAT_DECIMALS = 6;
 
 const TOP = ['format', 'version', 'meta', 'units', 'coordinateSystem', 'environment', 'objects'];
-const META = ['title', 'testId', 'author', 'organization', 'siteName', 'created', 'modified', 'revision', 'notes'];
+const META = ['title', 'testId', 'author', 'organization', 'siteName', 'created', 'modified', 'revision', 'notes', 'source'];
+const SOURCE = ['tool', 'file', 'chid', 'importedAt', 'originOffset_m'];
 const UNITS = ['length', 'angle', 'power', 'temperature', 'display'];
 const UNITS_DISPLAY = ['length', 'angle'];
 const COORD = ['convention', 'origin', 'northAzimuth_rad'];
@@ -42,6 +43,7 @@ const OBJECT_ORDER: Record<string, string[]> = {
   ceiling: ['id', 'type', 'name', 'transform', 'polygon_m', 'height_m', 'thickness_m', 'display', 'notes'],
   heatFluxSensor: ['id', 'type', 'name', 'transform', 'gauge', 'mount', 'display', 'notes'],
   thermocouple: ['id', 'type', 'name', 'transform', 'beadOffsets_m', 'thermocouple', 'mount', 'display', 'notes'],
+  obstruction: ['id', 'type', 'name', 'transform', 'size_m', 'display', 'notes'],
 };
 
 type Json = unknown;
@@ -178,7 +180,13 @@ export function canonicalize(data: PlanDocument): Obj {
   // A version this build does not recognise is left alone, not downgraded.
   d.version = maxVersion(String(d.version ?? ''), requiredFormatVersion(data));
 
-  if ('meta' in d) d.meta = orderIfObject(d.meta, META);
+  if ('meta' in d) {
+    const meta = orderIfObject(d.meta, META);
+    if (isPlainObject(meta) && isPlainObject(meta.source)) {
+      meta.source = order(meta.source, SOURCE);
+    }
+    d.meta = meta;
+  }
   if (isPlainObject(d.units)) {
     const units = order(d.units, UNITS);
     if (isPlainObject(units.display)) units.display = order(units.display, UNITS_DISPLAY);

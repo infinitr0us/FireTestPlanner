@@ -6,11 +6,15 @@ import {
   createCeiling,
   createHeatFluxSensor,
   createHood,
+  createObstruction,
   createThermocouple,
   createWall,
   defaultCameraPosition,
 } from '../core/factory';
-import { checkPlan, displayName, hasObjectColor, objectColor } from '../core/plan';
+import { deviceFromRecord, obstructionFromRecord } from '../core/fds';
+import { fdsFrame } from '../core/fdsview';
+import { NamelistError, readOneRecord } from '../core/namelist';
+import { checkPlan, displayName, hasObjectColor, nextId, objectColor } from '../core/plan';
 import { isMounted } from '../core/types';
 import { cameraPresets, isCustomPreset, presetsArePersistent } from '../core/presets';
 import { setPosition } from '../core/transform';
@@ -26,11 +30,17 @@ const TYPE_ICON: Record<string, string> = {
   ceiling: '▭',
   heatFluxSensor: '◉',
   thermocouple: '⋮',
+  obstruction: '▢',
 };
 
 export class Palette {
   /** Set while a palette item is armed for click-to-place in the viewport. */
   pending: (() => PlanObject) | null = null;
+
+  /** Draft FDS text and the last thing wrong with it. Kept on the instance so a
+   *  repaint -- which every object added causes -- does not wipe what was typed. */
+  private fdsDraft = '';
+  private fdsError: string | null = null;
 
   constructor(
     private root: HTMLElement,
@@ -48,6 +58,8 @@ export class Palette {
       this.tile('⌂', 'Hood', () => createHood(this.store.document)),
       this.tile('▬', 'Wall', () => createWall(this.store.document)),
       this.tile('▭', 'Ceiling', () => createCeiling(this.store.document)),
+      this.tile('▢', 'Obstruction', () => createObstruction(this.store.document),
+        'A box: furniture, equipment, blockwork. What stands between an instrument and the fire.'),
       this.tile('◉', 'Heat flux', () => createHeatFluxSensor(this.store.document),
         'Gauge, aimed at the fire on drop. Its inspector predicts what it will read.'),
       this.tile('⋮', 'Thermocouple', () => createThermocouple(this.store.document),
@@ -88,6 +100,78 @@ export class Palette {
     this.root.append(h('p', { class: 'panel__hint' }, [
       'Click an item, then click in the viewport to place it. Press Esc to cancel.',
     ]));
+
+    this.renderFdsPaste();
+  }
+
+  /**
+   * Create one object from a pasted FDS record.
+   *
+   * Straight into the plan rather than armed for placement: an `&OBST` already says
+   * where it goes, and asking someone to click a position for a line that carries
+   * six coordinates would throw the coordinates away.
+   *
+   * It goes through the importer's own converter, so a wall pasted here and the same
+   * wall imported from a file are classified by one rule rather than two.
+   */
+  private renderFdsPaste(): void {
+    this.root.append(h('h3', { class: 'panel__section' }, ['From FDS']));
+
+    const input = h('textarea', {
+      class: 'fdspaste__input',
+      spellcheck: false,
+      placeholder: "&OBST XB=0,2.4,0,0.1,0,2.5, SURF_ID='WALL' /",
+      value: this.fdsDraft,
+      oninput: (e: Event) => { this.fdsDraft = (e.target as HTMLTextAreaElement).value; },
+    });
+
+    this.root.append(h('div', { class: 'fdspaste' }, [
+      input,
+      this.fdsError ? h('p', { class: 'fdspaste__error' }, [this.fdsError]) : null,
+      h('div', { class: 'panel__actions' }, [
+        h('button', {
+          class: 'btn', type: 'button', onclick: () => this.createFromFds(),
+        }, ['Create']),
+      ]),
+      h('p', { class: 'panel__hint' }, [
+        'One record at a time. &OBST and &VENT become a wall, ceiling or box by their '
+        + 'shape; &DEVC becomes a gauge or a thermocouple by its quantity.',
+      ]),
+    ].filter(Boolean) as HTMLElement[]));
+  }
+
+  private createFromFds(): void {
+    const doc = this.store.document;
+    // The same frame the inspector's FDS view uses: a line copied out of the model
+    // this plan came from lands where that model puts it, not offset by the origin
+    // shift the import applied.
+    const { offset } = fdsFrame(doc);
+
+    let obj: PlanObject | null = null;
+    try {
+      const record = readOneRecord(this.fdsDraft);
+      obj = obstructionFromRecord(record, offset)
+        ?? deviceFromRecord(record, new Map(), offset);
+      if (!obj) {
+        this.fdsError = `&${record.group} has no counterpart in a test plan. `
+          + 'Geometry comes from &OBST or &VENT with an XB; instruments from &DEVC '
+          + 'with an XYZ and a heat flux or temperature quantity.';
+      }
+    } catch (err) {
+      this.fdsError = err instanceof NamelistError
+        ? err.message
+        : `Could not read that: ${(err as Error).message}`;
+    }
+
+    if (obj) {
+      // The converter mints ids from its own counter, which knows nothing about the
+      // plan already open; `nextId` is what keeps them unique in this document.
+      obj.id = nextId(doc, obj.id.replace(/-\d+$/, ''));
+      this.store.addObject(obj);
+      this.fdsDraft = '';
+      this.fdsError = null;
+    }
+    this.render();
   }
 
   private tile(icon: string, label: string, make: () => PlanObject, title?: string): HTMLElement {

@@ -29,6 +29,8 @@ import {
   standoffM,
   vfovRadOf,
   displayName,
+  hasObjectColor,
+  objectColor,
 } from '../core/plan';
 import type {
   BurnerObject,
@@ -36,6 +38,7 @@ import type {
   CeilingObject,
   HeatFluxSensorObject,
   HoodObject,
+  ObstructionObject,
   PlanObject,
   ThermocoupleObject,
   WallObject,
@@ -51,6 +54,7 @@ export const COLORS = {
   duct: 0x0ea5e9,
   wall: 0x94a3b8,
   ceiling: 0xcbd5e1,
+  obstruction: 0x78716c,
   cameraBody: 0x334155,
   heatFlux: 0xef4444,
   thermocouple: 0x10b981,
@@ -353,6 +357,51 @@ export function buildWall(wall: WallObject): THREE.Group {
 
     travelled += segLen;
   }
+
+  return group;
+}
+
+// -- obstruction ----------------------------------------------------------
+
+/**
+ * A box standing on its base.
+ *
+ * The origin is the centre of the base (CONVENTIONS section 5a), so the mesh is
+ * offset up by half its height rather than centred on the transform -- which is what
+ * makes dragging one along the floor keep it on the floor, and what makes the rotate
+ * gizmo yaw it about its own axis rather than swing it around a point in the air.
+ *
+ * A wire outline on top of the solid: an obstruction is usually in the way of
+ * something, and its edges are what you are judging when you decide whether a camera
+ * can see past it.
+ */
+export function buildObstruction(o: ObstructionObject): THREE.Group {
+  const group = new THREE.Group();
+  applyTransform(group, o);
+
+  const [dx, dy, dz] = o.size_m;
+  const geometry = new THREE.BoxGeometry(Math.max(dx, 1e-4), Math.max(dy, 1e-4), Math.max(dz, 1e-4));
+  const color = new THREE.Color(hasObjectColor(o) ? objectColor(o) : COLORS.obstruction);
+
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0.05 }),
+  );
+  mesh.position.z = dz / 2;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  group.add(mesh);
+
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geometry),
+    new THREE.LineBasicMaterial({ color: color.clone().multiplyScalar(0.55) }),
+  );
+  edges.position.z = dz / 2;
+  group.add(edges);
+
+  const label = makeLabel(displayName(o), 'object');
+  label.position.set(0, 0, dz + 0.15);
+  group.add(label);
 
   return group;
 }

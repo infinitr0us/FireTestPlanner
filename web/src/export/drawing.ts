@@ -10,10 +10,10 @@ import {
   beadOffsetsOf,
   burnerDiameterM,
   burners,
+  cameraColor,
   cameras,
   ceilings,
   displayName,
-  cameraColor,
   flameTipZM,
   footprintXY,
   fuelSurfaceZM,
@@ -24,6 +24,8 @@ import {
   hoodOpeningCornersXY,
   hoods,
   objectColor,
+  obstructionCornersXY,
+  obstructions,
   plumeRadiusAtZ,
   positionOf,
   quatOf,
@@ -52,6 +54,7 @@ const COLORS = {
   hood: '#0284c7',
   wall: '#64748b',
   ceiling: '#94a3b8',
+  obstruction: '#78716c',
 };
 
 export const escapeXml = (s: string): string =>
@@ -122,6 +125,12 @@ function collectPoints(doc: PlanDocument, view: DrawingView): Vec3[] {
     for (const v of cl.polygon_m) {
       const [x, y] = footprintXY(cl, v);
       pts.push([x, y, cl.height_m]);
+    }
+  }
+  for (const ob of obstructions(doc)) {
+    const z = positionOf(ob)[2];
+    for (const [x, y] of obstructionCornersXY(ob)) {
+      pts.push([x, y, z], [x, y, z + ob.size_m[2]]);
     }
   }
   for (const cam of cameras(doc)) {
@@ -297,6 +306,13 @@ function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
     out.push(`<path d="${d}" fill="none" stroke="${COLORS.wall}" stroke-width="${widthPx.toFixed(2)}" stroke-linecap="butt"/>`);
   }
 
+  // Solid fill, unlike the dashed ceiling: an obstruction is something you walk
+  // into and cannot see past, and the plan view is where that gets judged.
+  for (const ob of obstructions(doc)) {
+    out.push(polygon(obstructionCornersXY(ob).map(([x, y]) => p.project([x, y, 0])),
+      `fill="${COLORS.obstruction}" fill-opacity="0.22" stroke="${COLORS.obstruction}" stroke-width="1"`));
+  }
+
   for (const hd of hoods(doc)) {
     out.push(polygon(hoodOpeningCornersXY(hd).map(([x, y]) => p.project([x, y, 0])),
       `fill="${COLORS.hood}" fill-opacity="0.06" stroke="${COLORS.hood}" stroke-width="1" stroke-dasharray="8 4"`));
@@ -438,6 +454,19 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
     out.push(polygon([
       corner(lo, base), corner(hi, base), corner(hi, base + wl.height_m), corner(lo, base + wl.height_m),
     ], `fill="${COLORS.wall}" fill-opacity="0.18" stroke="${COLORS.wall}" stroke-width="1"`));
+  }
+
+  for (const ob of obstructions(doc)) {
+    const coords = obstructionCornersXY(ob).map(([x, y]) => lateral([x, y, 0]));
+    const lo = Math.min(...coords);
+    const hi = Math.max(...coords);
+    const base = positionOf(ob)[2];
+    const corner = (u: number, z: number): [number, number] =>
+      p.project(view === 'side' ? [0, u, z] : [u, 0, z]);
+    out.push(polygon([
+      corner(lo, base), corner(hi, base),
+      corner(hi, base + ob.size_m[2]), corner(lo, base + ob.size_m[2]),
+    ], `fill="${COLORS.obstruction}" fill-opacity="0.28" stroke="${COLORS.obstruction}" stroke-width="1"`));
   }
 
   for (const hd of hoods(doc)) {

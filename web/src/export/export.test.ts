@@ -90,6 +90,29 @@ describe('report content', () => {
     }
   });
 
+  it('lists an obstruction, and draws it in the plan and the elevations', () => {
+    // A box between a camera and the fire is the reason the type exists, so it has
+    // to reach the sheet somebody takes to site -- in the table and in both views.
+    const doc = fixture();
+    doc.objects.push({
+      id: 'obst-couch', type: 'obstruction', name: 'Couch',
+      transform: { position_m: [1.2, 0.8, 0] },
+      size_m: [2, 0.9, 0.8],
+    } as never);
+
+    const body = buildReportBody(doc, 'm');
+    expect(body).toContain('<td>obstruction</td>');
+    expect(body).toContain('Couch');
+
+    // Its corners have to move the drawing's extents, or a box outside the current
+    // bounds is simply clipped off the page.
+    for (const view of ['plan', 'front', 'side'] as const) {
+      const svg = buildViewSvg(doc, view, 'm');
+      const without = buildViewSvg(fixture(), view, 'm');
+      expect(svg).not.toBe(without);
+    }
+  });
+
   it('gives instruments their own exposure table', () => {
     const body = buildReportBody(fixture(), 'm');
     expect(body).toContain('Instrument exposure');

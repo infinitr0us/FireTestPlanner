@@ -10,6 +10,7 @@ import type {
   CeilingObject,
   HeatFluxSensorObject,
   HoodObject,
+  ObstructionObject,
   PlanDocument,
   ThermocoupleObject,
   Vec3,
@@ -88,6 +89,28 @@ export function createCeiling(doc: PlanDocument, position: Vec3 = [0, 0, 0]): Ce
     ],
     height_m: 3,
     thickness_m: 0.15,
+  };
+}
+
+/**
+ * A box, standing on the floor at the drop point.
+ *
+ * The default is furniture-sized rather than room-sized on purpose: an obstruction
+ * exists to say what stands between an instrument and the fire, and something the
+ * size of the bay would be a wall.
+ */
+export function createObstruction(
+  doc: PlanDocument,
+  position: Vec3 = [1, 1, 0],
+): ObstructionObject {
+  return {
+    id: nextId(doc, 'obst'),
+    type: 'obstruction',
+    name: 'Obstruction',
+    // The origin is the centre of the BASE, so z is the height it stands at, not
+    // the middle of the box. CONVENTIONS section 5a.
+    transform: { position_m: [position[0], position[1], 0] },
+    size_m: [1, 0.6, 0.8],
   };
 }
 

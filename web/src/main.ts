@@ -13,6 +13,7 @@ import {
   connectShell,
   embeddedPlanText,
   isSingleFileBuild,
+  openFdsText,
   openPlanText,
   savePlanText,
   saveShareableHtml,
@@ -21,6 +22,7 @@ import {
 import { Viewport, type GizmoMode, type ViewportOptions } from './scene/viewport';
 import { Store } from './state/store';
 import { h, qs } from './ui/dom';
+import { FdsImportDialog } from './ui/import-fds';
 import { Inspector } from './ui/inspector';
 import { ChecksPanel, Outliner, Palette } from './ui/panels';
 import { ReportOverlay } from './ui/report-overlay';
@@ -74,6 +76,7 @@ viewport.onMeasureChange = (count) => {
 };
 
 const reportOverlay = new ReportOverlay((html, name) => { void saveHtml(html, name); });
+const fdsImport = new FdsImportDialog();
 
 /** Write an HTML export, and say so if it fails rather than doing nothing visible. */
 async function saveHtml(html: string, name: string): Promise<void> {
@@ -167,6 +170,8 @@ function renderToolbar(): void {
       btn('Open', openPlan),
       btn('Save', savePlan),
       btn('Save as…', () => savePlan(true)),
+      btn('Import FDS…', importFds,
+        'Build a plan from an FDS input file — geometry, the burner and the devices'),
       btn('Example', loadExample, 'Load the reference plan built from the hand sketch'),
     ]),
 
@@ -301,6 +306,38 @@ function suggestFileName(): string {
   return `${slug}.ftp.json`;
 }
 
+/**
+ * Build a plan from an FDS input.
+ *
+ * The conversion is previewed before anything is adopted -- an FDS model is bigger
+ * than a test plan and most of it has no counterpart here, so "what did this
+ * actually import?" has to be answerable before the answer matters.
+ */
+async function importFds(): Promise<void> {
+  if (!confirmDiscard()) return;
+  let picked: Awaited<ReturnType<typeof openFdsText>>;
+  try {
+    picked = await openFdsText();
+  } catch (err) {
+    window.alert(`Could not open an FDS file:\n\n${(err as Error).message}`);
+    return;
+  }
+  if (!picked) return;
+
+  try {
+    fdsImport.open(picked.text, picked.name, store.displayUnit, (doc, name) => {
+      store.replaceDocument(doc, name);
+      // An import is not a saved file: the plan exists only here until it is
+      // written, and Save must ask for a destination rather than aiming at the .fds.
+      store.markDirty();
+      viewport.frameAll();
+    });
+  } catch (err) {
+    window.alert(
+      `${picked.name} could not be read as FDS input:\n\n${(err as Error).message}`);
+  }
+}
+
 function loadExample(): void {
   if (!confirmDiscard()) return;
   store.replaceDocument(
@@ -342,7 +379,11 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
-  // The drawing preview owns the keyboard while it is up.
+  // A modal owns the keyboard while it is up.
+  if (fdsImport.isOpen) {
+    if (e.key === 'Escape') fdsImport.close();
+    return;
+  }
   if (reportOverlay.isOpen) {
     if (e.key === 'Escape') reportOverlay.close();
     return;

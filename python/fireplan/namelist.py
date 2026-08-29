@@ -169,6 +169,12 @@ _LOGICAL = re.compile(r"^\.(TRUE|FALSE|T|F)\.$", re.IGNORECASE)
 _FORTRAN_REAL = re.compile(r"^[-+]?(\d+\.?\d*|\.\d+)[dD][-+]?\d+$")
 
 
+#: A Fortran real, spelled out rather than left to `float()`. `float` accepts
+#: 'inf', 'nan' and '1_0'; JavaScript's `Number` does not, and a parser that is
+#: supposed to agree in both languages cannot differ on what counts as a number.
+_REAL = re.compile(r"^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$")
+
+
 def _scalar(token: str) -> Any:
     if token[:1] in ("'", '"'):
         return token[1:-1].replace("''", "'")
@@ -176,10 +182,9 @@ def _scalar(token: str) -> Any:
         return token[1:2].upper() == "T"
     if _FORTRAN_REAL.match(token):
         return float(token.replace("D", "e").replace("d", "e"))
-    try:
+    if _REAL.match(token):
         return float(token)
-    except ValueError:
-        return token  # an unquoted word; FDS accepts these for some parameters
+    return token  # an unquoted word; FDS accepts these for some parameters
 
 
 def _parse_values(raw: str) -> List[Any]:
@@ -219,21 +224,14 @@ def _assign(params: Dict[str, List[Any]], key: str, subscript: Optional[str],
     leave 0.2 alone in the list and lose the first layer.
     """
     index = _first_index(subscript)
-    if index is None or index <= 1:
-        if index is None and key in params:
-            # An unsubscripted repeat of the same key: last one wins, as Fortran does.
-            params[key] = list(values)
-            return
-        params.setdefault(key, [])
-        params[key][:len(values)] = list(values)
-        # A short unsubscripted write replaces the whole value, not just a prefix.
-        if index is None:
-            del params[key][len(values):]
+    if index is None:
+        # An unsubscripted write replaces the whole value, as Fortran does.
+        params[key] = list(values)
         return
     slot = params.setdefault(key, [])
-    start = index - 1
-    if len(slot) < start:
-        slot.extend([None] * (start - len(slot)))
+    start = max(index - 1, 0)
+    while len(slot) < start:
+        slot.append(None)
     slot[start:start + len(values)] = list(values)
 
 

@@ -256,6 +256,15 @@ function validateByType(obj: PlanObject, err: Reporter): void {
       break;
     }
 
+    case 'obstruction': {
+      // Three positive numbers or the box is a degenerate mesh, and the builders
+      // would put a zero-volume ghost into the scene.
+      if (!isNumberArray(raw.size_m, 3) || (raw.size_m as number[]).some((v) => v <= 0)) {
+        err('bad-size', `Obstruction "${id}" needs a size_m of three positive numbers.`, id);
+      }
+      break;
+    }
+
     default:
       // Unknown types are legitimate and round-trip verbatim; nothing to check.
       break;
