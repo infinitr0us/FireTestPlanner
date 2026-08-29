@@ -1102,7 +1102,10 @@ export function fdsToPlan(
   if (fdsTitle && fdsTitle !== chid) notes.push(`&HEAD TITLE: ${fdsTitle}`);
   const time = group('TIME')[0];
   const tEnd = time ? time.number('T_END') : null;
-  if (tEnd !== null) notes.push(`Simulation T_END ${formatG(tEnd)} s.`);
+  // `String`, which is JSON.stringify's number spelling -- the one Python's
+  // `_js_number` reproduces. This string ends up in the plan file, so the two
+  // importers have to spell it the same way.
+  if (tEnd !== null) notes.push(`Simulation T_END ${String(tEnd)} s.`);
   if (burner !== null) {
     notes.push(`Origin is the '${burner.surf}' surface centre; floor from ${floorRule}.`);
   }
@@ -1153,12 +1156,4 @@ export function fdsToPlan(
     sourceFile: filename,
     counts,
   };
-}
-
-/** Python's `"{:g}".format(v)` for the values that reach it here: a whole number
- *  prints without a decimal point, so the two importers write the same note. */
-function formatG(value: number): string {
-  if (Number.isInteger(value)) return String(value);
-  const fixed = value.toPrecision(6).replace(/\.?0+$/, '');
-  return fixed;
 }

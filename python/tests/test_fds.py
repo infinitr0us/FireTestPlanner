@@ -167,6 +167,14 @@ def test_a_ramp_that_never_reaches_one_scales_the_heat_release():
     assert burner["fire"]["hrr_kw"] == pytest.approx(1000.0 * 1.0 * 0.4)
 
 
+def test_a_long_simulation_time_is_spelled_the_way_javascript_spells_it():
+    # This string ends up in meta.notes, so the two importers have to agree on it.
+    # Python's "{:g}" goes exponential at 1e6 and JavaScript does not, which would
+    # have written "1e+06 s" here and "1000000 s" in the editor.
+    text = "&TIME T_END=1000000. /\n&OBST XB=0,1,0,0.1,0,2 /\n"
+    assert "T_END 1000000 s" in fds.to_plan(text).plan.meta["notes"]
+
+
 def test_the_radiative_fraction_is_never_invented(sample):
     # The only RADIATIVE_FRACTION in the sample is on a REAC line with no leading '&',
     # which FDS never reads. Nor does this, and it does not substitute FDS's default.

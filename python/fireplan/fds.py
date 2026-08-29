@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from . import namelist
+from . import namelist, serialize
 from .namelist import Record
 from .plan import Issue, Plan, PlanError
 
@@ -870,7 +870,10 @@ def to_plan(text: str, filename: Optional[str] = None,
         notes.append("&HEAD TITLE: {}".format(fds_title))
     t_end = by_group.get("TIME", [None])[0]
     if t_end is not None and t_end.number("T_END") is not None:
-        notes.append("Simulation T_END {:g} s.".format(t_end.number("T_END")))
+        # `serialize._js_number`, not "{:g}": it is the one spelling of a float both
+        # writers agree on, and this string ends up in the plan file.
+        notes.append("Simulation T_END {} s.".format(
+            serialize._js_number(t_end.number("T_END"))))
     if burner is not None:
         notes.append("Origin is the '{}' surface centre; floor from {}."
                      .format(burner.surf, floor_rule))

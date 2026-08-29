@@ -165,6 +165,14 @@ describe('importing the sample', () => {
     expect(burner.fire!.fuel).toBe('polyurethane');
   });
 
+  it('spells a long simulation time the way Python spells it', () => {
+    // This string ends up in meta.notes, so the two importers have to agree on it.
+    // Python's "{:g}" goes exponential at 1e6 and JavaScript does not, which would
+    // have written "1e+06 s" there and "1000000 s" here.
+    const doc = fdsToPlan('&TIME T_END=1000000. /\n&OBST XB=0,1,0,0.1,0,2 /\n').doc;
+    expect(doc.meta!.notes).toContain('T_END 1000000 s');
+  });
+
   it('never invents a radiative fraction', () => {
     // The only RADIATIVE_FRACTION in the sample is on a REAC line FDS never reads.
     const burner = only(sample(), 'burner') as BurnerObject;

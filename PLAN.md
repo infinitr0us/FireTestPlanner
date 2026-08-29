@@ -215,7 +215,7 @@ tool to exist.
 | M9 | **Instruments** | Format 1.1: camera zoom, heat flux gauges, thermocouple rakes, predicted exposure, user-added camera presets | **done** |
 | M10 | **FDS bridge** | Namelist reader, FDS → plan import with a preview, format 1.2 obstructions, FDS-style coordinate entry | **done** |
 
-Phase 1 is complete. 287 Python tests, 210 web tests.
+Phase 1 is complete. 288 Python tests, 211 web tests.
 
 ### M9, from fire safety engineer feedback
 
