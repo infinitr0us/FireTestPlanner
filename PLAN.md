@@ -210,7 +210,7 @@ tool to exist.
 | M4 | **Geometry** | Burner shapes + HRR + plume cone, hood + skirt + duct, walls with openings | **done** |
 | M5 | **Share** | Save/load, single-file HTML export with plan embedded, standoff dimensions | **done** — measure tool still to do |
 | M6 | **Drawing** | Dimensioned plan + elevations, equipment list, coverage table, print to PDF | **done** |
-| M7 | **Desktop** | pywebview shell, native dialogs, recent files, PyInstaller exe | **done** — 9.8 MB exe |
+| M7 | **Desktop** | pywebview shell, native dialogs, recent files, PyInstaller exe | **done** — 9.9 MB exe |
 | M8 | **Flame** *(Phase 2)* | Import reconstructed 3D flame; time sequence playback | blocked on format decision |
 | M9 | **Instruments** | Format 1.1: camera zoom, heat flux gauges, thermocouple rakes, predicted exposure, user-added camera presets | **done** |
 | M10 | **FDS bridge** | Namelist reader, FDS → plan import with a preview, format 1.2 obstructions, FDS-style coordinate entry | **done** |
