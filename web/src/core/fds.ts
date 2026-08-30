@@ -24,17 +24,24 @@
  * left null, and the gauge checks say so, rather than inventing 50 kW/m².
  *
  * **Everything not imported is reported.** The result carries an issue list covering
- * every record the mapping dropped and every judgement call it made. An import that
- * quietly loses half a model is worse than one that refuses, so this one neither
- * loses nor refuses: it converts and then says what it did.
+ * the records the mapping dropped and the judgements it had to make: which
+ * heat-release surface was taken to be the burner, which `&HOLE` cut nothing, which
+ * `&DEVC` quantity has no counterpart. Per-object classification -- this box became
+ * a wall, that one a ceiling -- is reported as counts in the import preview rather
+ * than one issue per object, because a model with two hundred obstructions would
+ * bury everything else. An import that quietly loses half a model is worse than one
+ * that refuses, so this one neither loses nor refuses: it converts and then says
+ * what it did.
  */
 
 import { lookAtQuat } from './math';
 import { newPlan } from './plan';
+import { validateStructure } from './validate';
 import {
   readNamelist,
   type NamelistRecord,
 } from './namelist';
+import { requiredFormatVersion } from './types';
 import type {
   BurnerObject,
   CeilingObject,
@@ -106,6 +113,12 @@ const FDS_COLORS: Record<string, string | null> = {
   OLIVE: '#808000', MAROON: '#800000', INVISIBLE: null,
 };
 
+/** The record groups a single pasted record can become. Both converters check the
+ *  group before the fields: `&MESH`, `&INIT` and `&SLCF` all carry an `XB`, and
+ *  `&SLCF` carries a `QUANTITY` and an `XYZ` as well. */
+const GEOMETRY_GROUPS = ['OBST', 'VENT'];
+const DEVICE_GROUP = 'DEVC';
+
 /** The six faces of an FDS box, in `SURF_ID6` order. */
 const FACES = ['-x', '+x', '-y', '+y', '-z', '+z'] as const;
 
@@ -158,6 +171,13 @@ export interface FdsImportOptions {
   devices?: boolean;
   /** Fixed `meta.source.importedAt`, so two imports of one file compare equal. */
   importedAt?: string;
+  /** Whether `&CATF` includes were already spliced into `text`. The desktop shell
+   *  can read the files beside the input and does; a browser tab handed one file's
+   *  bytes cannot, and the import says so rather than quietly importing a fraction
+   *  of the model. */
+  includesResolved?: boolean;
+  /** `&CATF` names that were looked for and not found. */
+  unresolvedIncludes?: string[];
 }
 
 export class FdsError extends Error {
@@ -187,6 +207,14 @@ function sortedXb(values: number[]): Xb {
 }
 
 const sameXb = (a: Xb, b: Xb): boolean => a.every((v, i) => v === b[i]);
+
+/** This record's `XB`, sorted -- or null if it does not have six numbers. The count
+ *  is checked before anything indexes the list, so a half-finished hand edit is a
+ *  skipped record rather than an exception from inside the importer. */
+function xbOfRecord(rec: NamelistRecord): Xb | null {
+  const raw = rec.numbers('XB');
+  return raw.length === 6 ? sortedXb(raw) : null;
+}
 
 function colorOf(rec: NamelistRecord): string | null {
   const name = rec.string('COLOR');
@@ -246,6 +274,29 @@ function multipliers(records: NamelistRecord[]): Map<string, NamelistRecord> {
 }
 
 /**
+ * Whether this replicate falls in the block `&MULT` was told to leave out.
+ *
+ * `I_LOWER_SKIP`..`K_UPPER_SKIP` (and `N_LOWER_SKIP`/`N_UPPER_SKIP`) carve a hole
+ * out of the array -- a courtyard in a block of flats, the gap a stair core
+ * occupies. An expander that ignores them builds geometry the model does not have,
+ * right where the model deliberately has none. An axis with no bounds stated
+ * constrains nothing, and a `&MULT` with no skip fields at all skips nothing.
+ */
+function skippedByMult(mult: NamelistRecord, axes: Array<[string, number]>): boolean {
+  let stated = false;
+  for (const [name, index] of axes) {
+    const lo = mult.number(`${name}_LOWER_SKIP`);
+    const hi = mult.number(`${name}_UPPER_SKIP`);
+    if (lo === null && hi === null) continue;
+    stated = true;
+    const low = Math.trunc(lo ?? hi!);
+    const high = Math.trunc(hi ?? lo!);
+    if (index < Math.min(low, high) || index > Math.max(low, high)) return false;
+  }
+  return stated;
+}
+
+/**
  * Every copy `&MULT` asks for, including the original.
  *
  * Supports the two forms that appear in real inputs: a `DX`/`DY`/`DZ` step over
@@ -270,9 +321,9 @@ function expandMult(xb: Xb, mult: NamelistRecord | undefined): Xb[] {
 
   const dxb = mult.numbers('DXB');
   if (dxb.length === 6 && (mult.has('N_LOWER') || mult.has('N_UPPER'))) {
-    return range('N_LOWER', 'N_UPPER').map(
-      (n) => xb.map((v, k) => v + n * dxb[k]) as Xb,
-    );
+    return range('N_LOWER', 'N_UPPER')
+      .filter((n) => !skippedByMult(mult, [['N', n]]))
+      .map((n) => xb.map((v, k) => v + n * dxb[k]) as Xb);
   }
 
   const dx = mult.number('DX') ?? 0;
@@ -282,6 +333,7 @@ function expandMult(xb: Xb, mult: NamelistRecord | undefined): Xb[] {
   for (const i of range('I_LOWER', 'I_UPPER')) {
     for (const j of range('J_LOWER', 'J_UPPER')) {
       for (const k of range('K_LOWER', 'K_UPPER')) {
+        if (skippedByMult(mult, [['I', i], ['J', j], ['K', k]])) continue;
         const sx = dx0 + i * dx;
         const sy = dy0 + j * dy;
         const sz = dz0 + k * dz;
@@ -297,13 +349,32 @@ function boxesOf(
 ): Box[] {
   const out: Box[] = [];
   for (const rec of records) {
-    if (rec.group !== group || !rec.has('XB')) continue;
-    const raw = rec.numbers('XB');
-    if (raw.length !== 6) continue;
+    if (rec.group !== group) continue;
+    const xb = xbOfRecord(rec);
+    if (xb === null) continue;
     const mult = mults.get(rec.string('MULT_ID') ?? '');
-    for (const copy of expandMult(sortedXb(raw), mult)) {
+    for (const copy of expandMult(xb, mult)) {
       out.push({ xb: sortedXb(copy), rec, surfs: faceSurfs(rec), name: rec.string('ID') });
     }
+  }
+  return out;
+}
+
+/**
+ * Every `&MESH` box, `&MULT` expanded.
+ *
+ * The domain is what the origin falls back to when nothing in the file burns, so a
+ * `MULT_ID` on a mesh that this reader ignored would shift every coordinate in the
+ * plan by whatever the multiplied domain does not cover.
+ */
+function meshBoxes(records: NamelistRecord[], mults: Map<string, NamelistRecord>): Xb[] {
+  const out: Xb[] = [];
+  for (const rec of records) {
+    if (rec.group !== 'MESH') continue;
+    const xb = xbOfRecord(rec);
+    if (xb === null) continue;
+    const mult = mults.get(rec.string('MULT_ID') ?? '');
+    for (const copy of expandMult(xb, mult)) out.push(sortedXb(copy));
   }
   return out;
 }
@@ -339,20 +410,40 @@ function peakRamps(records: NamelistRecord[]): Map<string, number> {
   return peaks;
 }
 
+/**
+ * Whether this `&SURF` names a heat release rate at all.
+ *
+ * Deliberately blind to ramps: this answers "is this a fire surface", which is what
+ * decides whether a vent is a boundary condition or a burner, not "how big is the
+ * fire", which is `fireFaces`'s question.
+ */
+function statesHeat(rec: NamelistRecord | undefined): boolean {
+  return rec !== undefined && Boolean(rec.number('HRRPUA') || rec.number('MLRPUA'));
+}
+
 function fireFaces(
   boxes: Box[], vents: Box[], surfs: Map<string, NamelistRecord>,
-  peaks: Map<string, number>, heatOfCombustion: number | null,
+  peaks: Map<string, number>, heatOfCombustion: number | null, issues: Issue[],
 ): FireFace[] {
+  const off: string[] = [];
   const released = (surfId: string | null): number | null => {
     const rec = surfId === null ? undefined : surfs.get(surfId);
     if (!rec) return null;
-    const peak = peaks.get(rec.string('RAMP_Q') ?? '') ?? 1;
+    // Membership, not `peak || 1`: a ramp whose peak really is zero is a surface
+    // the input switches off, and reading that as "no ramp, so full power" turns a
+    // cold burner into the largest fire in the file.
+    const ramp = rec.string('RAMP_Q') ?? '';
+    const peak = peaks.has(ramp) ? peaks.get(ramp)! : 1;
+    if (peak <= 0) {
+      if (surfId !== null && !off.includes(surfId)) off.push(surfId);
+      return null;
+    }
     const hrrpua = rec.number('HRRPUA');
-    if (hrrpua) return hrrpua * (peak || 1);
+    if (hrrpua) return hrrpua * peak;
     const mlrpua = rec.number('MLRPUA');
     const hoc = rec.number('HEAT_OF_COMBUSTION') ?? heatOfCombustion;
     // kg/m²/s × kJ/kg = kW/m²
-    if (mlrpua && hoc) return mlrpua * hoc * (peak || 1);
+    if (mlrpua && hoc) return mlrpua * hoc * peak;
     return null;
   };
 
@@ -384,27 +475,83 @@ function fireFaces(
       });
     });
   }
+  if (off.length > 0) {
+    issues.push(issue('warning', 'fds-surface-off',
+      `${off.map((x) => `'${x}'`).join(', ')} release${off.length === 1 ? 's' : ''} no heat `
+      + 'in this input: the &RAMP on RAMP_Q never leaves zero, so the surface is switched '
+      + 'off. It was not imported as a fire.'));
+  }
   return out;
+}
+
+/**
+ * Whether this heat-release face can be *the* burner of a plan.
+ *
+ * A burner here is a floor-standing source: a footprint in plan, a rim height
+ * measured up from the floor, and a fuel surface on top. Three kinds of burning face
+ * are not that, and each one produces nonsense if it is forced to be:
+ *
+ * - **A vertical face** -- a wall lining -- has no plan footprint at all. Its
+ *   `size_m` comes out `[w, 0]`, which this editor's own load boundary rejects.
+ * - **A downward-facing face** -- a ceiling soffit, which is where a lining fire in
+ *   a compartment test usually is -- has a footprint, and that is what makes it
+ *   dangerous: `rimHeight_m` becomes the height of the ceiling, so the burner is a
+ *   solid box the size of the room reaching from the floor to the soffit. It fills
+ *   the room, hides everything inside it, and z-fights with every wall it shares a
+ *   face with.
+ * - **A degenerate horizontal face** has an area but no thickness in plan.
+ *
+ * All three are reported as burning surfaces instead, which is what they are.
+ */
+function canBeBurner(face: FireFace): boolean {
+  const [dx, dy] = extent(face.xb);
+  return face.face === '+z' && dx > TOL_M && dy > TOL_M;
 }
 
 /**
  * The heat-release face to treat as the plan's burner.
  *
- * Horizontal first, then smallest: a burning wall lining is not a burner, and when a
- * model has both an ignition source and a spreading fire the ignition source is the
+ * Horizontal only, then smallest: a burning wall lining is not a burner -- and
+ * cannot be one here, having no plan footprint (`canBeBurner`) -- and when a model
+ * has both an ignition source and a spreading fire the ignition source is the
  * compact one. The caller can name a `SURF` instead, and the import preview lists
  * every candidate so the choice is visible rather than implicit.
  */
 function pickBurner(faces: FireFace[], wanted: string | undefined): FireFace | null {
-  if (faces.length === 0) return null;
+  const usable = faces.filter(canBeBurner);
+  if (usable.length === 0) return null;
   const smallest = (pool: FireFace[]): FireFace =>
     pool.reduce((best, f) => (f.areaM2 < best.areaM2 ? f : best));
   if (wanted) {
-    const named = faces.filter((f) => f.surf === wanted);
+    const named = usable.filter((f) => f.surf === wanted);
     if (named.length > 0) return smallest(named);
   }
-  const horizontal = faces.filter((f) => f.horizontal);
-  return smallest(horizontal.length > 0 ? horizontal : faces);
+  return smallest(usable);
+}
+
+/**
+ * Every face that becomes a burner object: the picked one, then its siblings.
+ *
+ * One `&SURF` is routinely applied to several `&VENT`s -- two burners in a room, a
+ * row of sand-box fires -- and taking only the first would drop a fire source from
+ * the plan while reporting the conversion as complete. Format 1.2 holds several
+ * burners and calls the one at the origin the primary (CONVENTIONS section 1),
+ * which is exactly this: the picked face defines the frame, and its siblings are
+ * objects standing where the file puts them.
+ *
+ * Only the picked surface's own faces. A second heat-release *surface* is a
+ * different judgement -- the sample input's burning wall lining is not a second
+ * burner -- and that one stays a reported choice rather than a silent import.
+ */
+function burnerFaces(faces: FireFace[], picked: FireFace | null): FireFace[] {
+  if (picked === null) return [];
+  const out = [picked];
+  for (const face of faces) {
+    if (face.surf !== picked.surf || !canBeBurner(face)) continue;
+    if (out.some((other) => sameXb(face.xb, other.xb))) continue;
+    out.push(face);
+  }
+  return out;
 }
 
 // -- geometry classification ----------------------------------------------
@@ -452,6 +599,10 @@ function detectFloor(
  * This is what "create from FDS text" calls, so a pasted `&OBST` lands as the same
  * wall the full importer would have produced -- one classification rule, not two
  * that drift.
+ *
+ * The group is checked, not just the fields. `&MESH`, `&INIT`, `&SLCF` and a dozen
+ * others carry an `XB` too, and turning a computational mesh into a wall because it
+ * has six numbers is a worse answer than refusing it.
  */
 export function obstructionFromRecord(
   rec: NamelistRecord,
@@ -459,10 +610,10 @@ export function obstructionFromRecord(
   ids: Ids = new Ids(),
   surfs: Map<string, NamelistRecord> = new Map(),
 ): PlanObject | null {
-  if (!rec.has('XB')) return null;
-  const raw = rec.numbers('XB');
-  if (raw.length !== 6) return null;
-  return geometryObject(sortedXb(raw), rec, origin, ids, surfs);
+  if (!GEOMETRY_GROUPS.includes(rec.group)) return null;
+  const xb = xbOfRecord(rec);
+  if (xb === null) return null;
+  return geometryObject(xb, rec, origin, ids, surfs);
 }
 
 /**
@@ -482,7 +633,11 @@ function geometryObject(
   const name = rec.string('ID');
 
   let obj: PlanObject;
-  if (isSlabBox(xb) && dz > TOL_M) {
+  // A slab is a ceiling only if it is above the floor. One resting on it -- a
+  // plinth, a hearth, a second floor tile beside the first -- has a soffit height of
+  // zero or less, which is not a ceiling in this format and not a valid object in
+  // any schema version. It falls through to the box it actually is.
+  if (isSlabBox(xb) && dz > TOL_M && xb[4] - oz > TOL_M) {
     obj = {
       id: ids.make('ceiling', name), type: 'ceiling', name: name ?? 'Ceiling',
       transform: { position_m: [0, 0, 0] },
@@ -637,7 +792,12 @@ function rakeObject(
   };
 }
 
-/** One `&DEVC` as a plan instrument, or null if its quantity is not one. */
+/**
+ * One `&DEVC` as a plan instrument, or null if its quantity is not one.
+ *
+ * `&SLCF QUANTITY='TEMPERATURE', XYZ=...` has every field this reads and is a slice
+ * file, not a thermocouple, so the group is checked first.
+ */
 export function deviceFromRecord(
   rec: NamelistRecord,
   props: Map<string, NamelistRecord> = new Map(),
@@ -645,6 +805,7 @@ export function deviceFromRecord(
   aimTarget: Vec3 | null = null,
   ids: Ids = new Ids(),
 ): PlanObject | null {
+  if (rec.group !== DEVICE_GROUP) return null;
   const [quantity, diameter] = deviceQuantity(rec, props);
   const kind = defaultDeviceMap().get((quantity ?? '').toUpperCase()) ?? null;
   if (kind === null || !rec.has('XYZ')) return null;
@@ -665,8 +826,15 @@ export function deviceFromRecord(
  *
  * `SURF_ID='OPEN'` and `MB='XMAX'` are how an FDS model says "the world continues
  * past here". They are not geometry and they are not instruments.
+ *
+ * A vent that releases heat is never one of those, wherever it sits. A floor fire in
+ * a domain that starts at the floor is written `XB=...,z0,z0` with `z0` the bottom
+ * of the mesh -- flush with a domain face, and the most ordinary way there is to
+ * write a burner. Dropping it left the plan with no fire, an origin fallen back to
+ * the mesh centre, and a warning telling the user their input has no heat source.
  */
-function isDomainVent(box: Box, domain: Xb | null): boolean {
+function isDomainVent(box: Box, domain: Xb | null, surfs: Map<string, NamelistRecord>): boolean {
+  if (box.surfs.some((s) => statesHeat(s === null ? undefined : surfs.get(s)))) return false;
   if (box.surfs.some((s) => s === 'OPEN' || s === 'MIRROR' || s === 'PERIODIC')) return true;
   if (domain === null) return false;
   for (let i = 0; i < 6; i += 1) {
@@ -931,6 +1099,50 @@ function reportSkipped(byGroup: Map<string, NamelistRecord[]>, issues: Issue[]):
   }
 }
 
+/**
+ * Say so when `&CATF` named files nobody read.
+ *
+ * The desktop shell can read the files beside the input and hands them over already
+ * spliced. A browser tab is given one file's bytes and cannot go looking, and a
+ * silent skip there is the worst kind: the plan looks complete and holds a fraction
+ * of the model.
+ */
+function reportUnresolvedIncludes(
+  byGroup: Map<string, NamelistRecord[]>, opts: FdsImportOptions, issues: Issue[],
+): void {
+  const catf = byGroup.get('CATF') ?? [];
+  const missing = opts.unresolvedIncludes ?? [];
+  if (catf.length > 0 && !opts.includesResolved) {
+    const named = catf.flatMap((rec) => rec.strings('OTHER_FILES')).filter(Boolean);
+    issues.push(issue('warning', 'fds-catf-unresolved',
+      `&CATF pulls ${named.length > 0 ? `${named.length} other file(s)` : 'other files'} into `
+      + `this input (${named.length > 0 ? named.join(', ') : 'unnamed'}), and only the file `
+      + 'itself was read. Everything those files define — geometry, devices, surfaces — is '
+      + 'missing from this plan. Open it in the desktop app, from the folder that holds them.'));
+  }
+  if (missing.length > 0) {
+    issues.push(issue('warning', 'fds-catf-missing',
+      `&CATF names ${missing.join(', ')} but ${missing.length === 1 ? 'it was' : 'they were'} `
+      + 'not beside the input; anything they defined is missing from this plan.'));
+  }
+}
+
+/**
+ * Check the plan the conversion just built, and report rather than throw.
+ *
+ * Every other way a document reaches the editor goes through `parseAndValidatePlan`;
+ * an import that skipped it could adopt a plan that saves and then cannot be opened
+ * again -- a failure that surfaces a long way from the import that caused it. The
+ * findings are issues, not an exception, because the import preview is the right
+ * place to show them and the dialog refuses to adopt while any is present.
+ */
+function reportInvalid(doc: PlanDocument, issues: Issue[]): void {
+  for (const bad of validateStructure(doc)) {
+    issues.push(issue('error', 'fds-invalid',
+      `The conversion produced something this format does not accept: ${bad.message}`));
+  }
+}
+
 /** `[x0, x1, y0, y1]` covering every object's plan footprint, in plan coordinates. */
 function planSpan(objects: PlanObject[]): [number, number, number, number] | null {
   const xs: number[] = [];
@@ -992,11 +1204,7 @@ export function fdsToPlan(
   const mults = multipliers(records);
 
   // -- domain ------------------------------------------------------------
-  const meshes = group('MESH')
-    .filter((r) => r.has('XB'))
-    .map((r) => r.numbers('XB'))
-    .filter((v) => v.length === 6)
-    .map(sortedXb);
+  const meshes = meshBoxes(records, mults);
   const domain: Xb | null = meshes.length === 0 ? null : [
     Math.min(...meshes.map((m) => m[0])), Math.max(...meshes.map((m) => m[1])),
     Math.min(...meshes.map((m) => m[2])), Math.max(...meshes.map((m) => m[3])),
@@ -1007,29 +1215,67 @@ export function fdsToPlan(
   const wantGeometry = opts.geometry !== false;
   const reac = group('REAC')[0];
   const obstBoxes = boxesOf(records, 'OBST', mults);
-  const ventBoxes = boxesOf(records, 'VENT', mults).filter((b) => !isDomainVent(b, domain));
+  const ventBoxes = boxesOf(records, 'VENT', mults).filter((b) => !isDomainVent(b, domain, surfs));
   const heatOfCombustion = reac ? reac.number('HEAT_OF_COMBUSTION') : null;
-  const faces = fireFaces(obstBoxes, ventBoxes, surfs, peaks, heatOfCombustion);
+  const faces = fireFaces(obstBoxes, ventBoxes, surfs, peaks, heatOfCombustion, issues);
   const burner = pickBurner(faces, opts.burnerSurf);
-  const candidates = [...new Set(faces.map((f) => f.surf))].sort();
+  const burners = burnerFaces(faces, burner);
+  const candidates = [...new Set(faces.filter(canBeBurner).map((f) => f.surf))].sort();
+  // Heat-release surfaces no face of which could be a burner here: a lining on a
+  // wall vent, a plane fire with no plan area. They are still in the file and still
+  // change the fire, so they are named rather than passed over.
+  const unusable = [...new Set(faces.map((f) => f.surf))]
+    .filter((surf) => !candidates.includes(surf)).sort();
 
-  if (burner === null) {
+  if (burner === null && faces.length === 0) {
     issues.push(issue('warning', 'fds-no-fire',
       'No surface in this input releases heat, so the plan has no burner and its origin '
       + 'is the centre of the mesh. Add a burner, then move the geometry onto it — every '
       + 'standoff and flame-height figure is measured from the burner centre.'));
-  } else if (candidates.length > 1) {
-    issues.push(issue('info', 'fds-fire-choice',
-      `${candidates.length} surfaces release heat (${candidates.join(', ')}); `
-      + `'${burner.surf}' was taken as the burner because it is the most compact `
-      + 'horizontal one. The rest are burning surfaces the plan cannot represent.'));
+  } else if (burner === null) {
+    const surfaces = [...new Set(faces.map((f) => f.surf))].sort();
+    issues.push(issue('warning', 'fds-fire-not-a-burner',
+      `${surfaces.length} surface(s) release heat (${surfaces.join(', ')}) but none of them `
+      + 'is an upward-facing horizontal face — a wall lining burns on a plane with no plan '
+      + 'footprint, and a ceiling soffit burns downwards. Neither is the floor-standing '
+      + "source this format's burner describes, so the plan has no burner and its origin "
+      + 'is the centre of the mesh.'));
+  } else {
+    if (opts.burnerSurf && burner.surf !== opts.burnerSurf) {
+      // The chooser falls back to the default pick rather than refusing, which is the
+      // useful behaviour -- but a caller who named a surface and got a different one
+      // has to be told, or the plan silently describes a fire somewhere else.
+      issues.push(issue('warning', 'fds-burner-unavailable',
+        `'${opts.burnerSurf}' was asked for as the burner surface, but no face of it is `
+        + `one this format can hold as a burner; '${burner.surf}' was used instead.`));
+    }
+    if (candidates.length > 1) {
+      issues.push(issue('info', 'fds-fire-choice',
+        `${candidates.length} surfaces release heat (${candidates.join(', ')}); `
+        + `'${burner.surf}' was taken as the burner because it is the most compact `
+        + 'horizontal one. The rest are burning surfaces the plan cannot represent.'));
+    }
+    if (unusable.length > 0) {
+      issues.push(issue('info', 'fds-fire-not-a-burner',
+        `${unusable.map((x) => `'${x}'`).join(', ')} release${unusable.length === 1 ? 's' : ''} `
+        + 'heat on faces this format cannot hold as a burner — a wall lining has no plan '
+        + `footprint and a ceiling soffit burns downwards. ${
+          unusable.length === 1 ? 'It is not' : 'They are not'} in the plan as a burner; `
+        + 'the notes on the geometry say which surfaces burn.'));
+    }
+    if (burners.length > 1) {
+      issues.push(issue('info', 'fds-burner-instances',
+        `'${burner.surf}' burns on ${burners.length} separate faces; each became a burner, `
+        + 'and the one at the origin is the primary.'));
+    }
   }
 
   // -- origin and floor --------------------------------------------------
   // A shallow burner pan passes the slab test, so without this it becomes "the
   // lowest horizontal slab" and puts the floor at the top of the burner.
+  const burnerXbs = burners.filter((f) => !f.fromVent).map((f) => f.xb);
   const slabs = obstBoxes.filter(
-    (b) => isSlabBox(b.xb) && !(burner !== null && sameXb(b.xb, burner.xb)),
+    (b) => isSlabBox(b.xb) && !burnerXbs.some((xb) => sameXb(b.xb, xb)),
   );
   const [floorZ, floorRule] = opts.floorZM !== undefined
     ? [opts.floorZM, 'the level you gave']
@@ -1067,14 +1313,13 @@ export function fdsToPlan(
   const walls: Array<[WallObject, Xb]> = [];
 
   if (wantGeometry) {
-    let floorBox: Box | null = slabs.length > 0
-      ? slabs.reduce((best, s) => (s.xb[5] < best.xb[5] ? s : best))
-      : null;
-    if (floorBox !== null && floorBox.xb[5] > floorZ + TOL_M) floorBox = null;
-
+    // Every slab whose top is the floor, not merely the lowest one. A meshed model
+    // tiles its floor -- one &OBST per mesh is the usual shape -- and skipping a
+    // single instance leaves the rest to be converted as slabs sitting at floor
+    // level, which is not a ceiling and not an object anyone drew.
     for (const box of obstBoxes) {
-      if (burner !== null && sameXb(box.xb, burner.xb) && !burner.fromVent) continue;
-      if (box === floorBox) continue; // the floor is the z = 0 plane, not an object
+      if (burnerXbs.some((xb) => sameXb(box.xb, xb))) continue; // becomes the burner
+      if (isSlabBox(box.xb) && box.xb[5] <= floorZ + TOL_M) continue; // it is the floor
       const obj = geometryObject(box.xb, box.rec, origin, ids, surfs);
       if (obj.type === 'wall') walls.push([obj as WallObject, box.xb]);
       objects.push(obj);
@@ -1083,8 +1328,8 @@ export function fdsToPlan(
     applyHoles(boxesOf(records, 'HOLE', mults), walls, origin, issues);
   }
 
-  if (burner !== null) {
-    objects.push(burnerObject(ids, burner, origin, floorZ, reac, surfs));
+  for (const face of burners) {
+    objects.push(burnerObject(ids, face, origin, floorZ, reac, surfs));
   }
 
   const devices: DeviceGroup[] = [];
@@ -1141,7 +1386,15 @@ export function fdsToPlan(
   const tmpa = misc ? misc.number('TMPA') : null;
   if (tmpa !== null) env.ambientTemperature_C = tmpa;
 
+  // A freshly built plan starts at the baseline version and would report
+  // `version-understated` against its own contents until first saved. An import is
+  // not an edit in progress, so it declares what it holds straight away -- exactly
+  // as `fireplan.fds` does, and for the same reason.
+  doc.version = requiredFormatVersion(doc);
+
   reportSkipped(byGroup, issues);
+  reportUnresolvedIncludes(byGroup, opts, issues);
+  reportInvalid(doc, issues);
 
   const counts: Record<string, number> = {};
   for (const obj of objects) counts[obj.type] = (counts[obj.type] ?? 0) + 1;

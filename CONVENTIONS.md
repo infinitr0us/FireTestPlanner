@@ -455,7 +455,7 @@ Everything an import needs is in the input, before any simulation runs.
 
 ### The syntax rules that matter
 
-Three of them, and the sample input in `fixtures/fds/` exercises all three:
+Five of them, and the sample input in `fixtures/fds/` exercises the first three:
 
 - **A record ends at the first `/` outside a string.** The sample's `&HEAD` title
   contains `34.2x1000/300=114s`, so a reader that stops at the first `/` truncates
@@ -466,6 +466,19 @@ Three of them, and the sample input in `fixtures/fds/` exercises all three:
 - **A line without a leading `&` is a comment.** That is how an FDS line gets
   disabled, and the sample does it to a `REAC` carrying `RADIATIVE_FRACTION=0.29`.
   Reading it would change every predicted heat flux in the plan.
+- **`!` starts a comment, outside a string, anywhere on a line.** That is the
+  Fortran namelist rule and FDS reads these records with Fortran's own namelist
+  `READ`, so it inherits it. The other way to disable a line is to put a `!` in
+  front of it, and real inputs are full of `! &OBST` and `! &MULT` lines — the
+  official `FM_Burner` validation cases among them. A reader that takes one as live
+  input has geometry, devices or a reaction in its model that the simulation
+  never had.
+- **A record opens only where a line does.** FDS finds a record by walking a line
+  from its first character and giving up at the first one that is neither `&` nor a
+  space, so `&GROUP` in mid-sentence is prose. Searching the text for the next `&`
+  instead does worse than read prose as input: `R&D` opens a `&D` record whose body
+  runs to the next `/`, and the real record in between is swallowed as that body and
+  disappears. A comment can otherwise delete an obstruction.
 
 ### What maps
 
@@ -485,8 +498,37 @@ Classification is by aspect ratio: a box is a slab when its height is at most
 `SLAB_ASPECT` (0.5) of its smaller plan dimension, and a wall when its thin plan
 dimension is at most `WALL_ASPECT` (0.5) of both its length and its height.
 
-`&MULT` is expanded and `&CATF` includes are read, because a split input with a
-geometry file and a devices file is the normal shape for anything past a demo.
+`&MULT` is expanded — for `&OBST`, `&VENT`, `&HOLE` **and `&MESH`**, including the
+`*_SKIP` ranges that carve a hole out of the array, because a multiplied mesh moves
+the domain and the domain is what the origin falls back to when nothing burns.
+
+`&CATF` includes are read and spliced in **at the position of the `&CATF` record**,
+because a split input with a geometry file and a devices file is the normal shape
+for anything past a demo. The position is the point: `&CATF` belongs in the body,
+before `&TAIL`, and reading stops at `&TAIL` — so a child appended after the parent's
+last line is a child nobody reads. That needs a filesystem, so it is the desktop
+shell that supplies the sibling files (`/api/read-fds-include`, confined to the
+folder the input came from). A browser tab is handed one file's bytes and cannot go
+looking: there, an unresolved `&CATF` is a prominent warning naming every file that
+went unread, never a silent omission.
+
+**A heat-release surface is not a boundary condition.** A degenerate `&VENT`
+coplanar with a mesh face is normally `OPEN`/`MIRROR`/`PERIODIC` and is dropped —
+but never one whose `SURF` states `HRRPUA` or `MLRPUA`. A floor fire in a domain
+that starts at the floor is written exactly that way.
+
+**The burner is a floor-standing source.** Only an **upward-facing** horizontal
+heat-release face with a positive plan area can be one. A wall lining burns on a
+plane with no plan footprint, and flattening one into `size_m: [w, 0]` produces a
+plan the editor refuses to reopen; a ceiling soffit lining — where a compartment
+test's lining fire usually is — has a footprint, which is worse, because taken as a
+burner its rim height becomes the height of the ceiling and the "burner" is a solid
+box the size of the room. Both are reported as burning surfaces instead. A file whose
+only fire is one of those imports with no burner and a warning that says so, and
+naming such a surface explicitly falls back to the real burner rather than obeying. Where the chosen
+surface burns on several faces — one `&SURF` over two `&VENT`s is two burners in a
+room — every face becomes a burner and the one at the origin is the primary
+(section 1).
 
 ### The origin moves, and the move is recorded
 
@@ -518,6 +560,17 @@ reports a flux at a point and has no gauge to over-range; inventing 50 kW/m² wo
 make every over-range and low-signal verdict a fiction. The import says so, as a
 `fds-gauge-range` warning.
 
-Everything not imported is reported by name rather than dropped quietly. An import
-that loses half a model is worse than one that refuses, so this one neither loses nor
-refuses: it converts, and then says what it did.
+Everything not imported is reported by name rather than dropped quietly: the records
+the mapping dropped, and the judgements it had to make — which surface was taken to
+be the burner, which `&HOLE` cut nothing, which `&DEVC` quantity has no counterpart,
+which surface a zero `&RAMP` switches off. Per-object classification (this box became
+a wall, that one a ceiling) is reported as counts in the preview instead, because one
+issue per object would bury everything else in a model with two hundred of them.
+
+The conversion is then checked against this format before it is offered: an import
+that produced a plan the editor could not open again would save cleanly and fail on
+reopen, a long way from the import that caused it. Failures appear in the preview as
+errors, and the preview will not adopt while one is present.
+
+An import that loses half a model is worse than one that refuses, so this one neither
+loses nor refuses: it converts, and then says what it did.

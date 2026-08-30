@@ -116,6 +116,13 @@
       "minItems": 3,
       "maxItems": 3
     },
+    "positiveVec2": {
+      "description": "Two lengths, each greater than zero. A size with a zero or negative component is a degenerate object -- the editor's own load boundary rejects one, and every area, volume and drawing computed from it is wrong -- so the schema and the editor agree about it rather than disagreeing quietly.",
+      "type": "array",
+      "items": { "type": "number", "exclusiveMinimum": 0 },
+      "minItems": 2,
+      "maxItems": 2
+    },
     "quat": {
       "type": "array",
       "items": { "type": "number" },
@@ -183,7 +190,7 @@
         "shape": { "enum": ["circle", "square", "rectangle"] },
         "diameter_m": { "type": ["number", "null"], "exclusiveMinimum": 0 },
         "size_m": {
-          "oneOf": [{ "$ref": "#/$defs/vec2" }, { "type": "null" }]
+          "oneOf": [{ "$ref": "#/$defs/positiveVec2" }, { "type": "null" }]
         }
       },
       "allOf": [
@@ -327,7 +334,7 @@
         "transform": true, "display": true, "notes": true,
 
         "opening_m": {
-          "$ref": "#/$defs/vec2",
+          "$ref": "#/$defs/positiveVec2",
           "description": "Width and depth of the rectangular collection opening."
         },
         "height_m": {

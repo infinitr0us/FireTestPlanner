@@ -39,6 +39,10 @@ export class FdsImportDialog {
   private root: HTMLElement | null = null;
   private text = '';
   private fileName = 'model.fds';
+  /** What the caller knew before the conversion started -- whether `&CATF` includes
+   *  were resolved, and which were not. Merged into every re-conversion, so toggling
+   *  an option cannot quietly drop it. */
+  private source: FdsImportOptions = {};
   private options: FdsImportOptions = {};
   private result: FdsImportResult | null = null;
   private onAdopt: ((doc: PlanDocument, name: string) => void) | null = null;
@@ -60,13 +64,15 @@ export class FdsImportDialog {
     fileName: string,
     unit: LengthUnit,
     onAdopt: (doc: PlanDocument, name: string) => void,
+    source: FdsImportOptions = {},
   ): void {
     this.close();
     this.text = text;
     this.fileName = fileName;
     this.unit = unit;
     this.onAdopt = onAdopt;
-    this.options = {};
+    this.source = source;
+    this.options = { ...source };
     this.result = fdsToPlan(text, fileName, this.options);
 
     this.root = h('div', { class: 'modal' }, [h('div', { class: 'modal__panel' })]);
@@ -82,7 +88,7 @@ export class FdsImportDialog {
   }
 
   private reconvert(patch: Partial<FdsImportOptions>): void {
-    this.options = { ...this.options, ...patch };
+    this.options = { ...this.source, ...this.options, ...patch };
     this.result = fdsToPlan(this.text, this.fileName, this.options);
     this.render();
   }
@@ -94,6 +100,10 @@ export class FdsImportDialog {
     clear(panel);
 
     const total = Object.values(result.counts).reduce((a, b) => a + b, 0);
+    // A conversion that produced something the editor would refuse to open is not
+    // offered for adoption. It would save, and then fail to load -- a long way from
+    // the import that caused it.
+    const broken = result.issues.filter((i) => i.severity === 'error');
 
     panel.append(
       h('h2', { class: 'modal__title' }, [`Import ${this.fileName}`]),
@@ -114,9 +124,15 @@ export class FdsImportDialog {
       this.issueList(result.issues),
     ].filter(Boolean) as HTMLElement[]);
 
+    const importButton = button('Import', () => this.adopt(), 'btn--primary');
+    if (broken.length > 0) {
+      importButton.disabled = true;
+      importButton.title = 'This conversion produced a plan the editor could not open again.';
+    }
+
     panel.append(body, h('div', { class: 'import__actions' }, [
       button('Cancel', () => this.close()),
-      button('Import', () => this.adopt(), 'btn--primary'),
+      importButton,
     ]));
   }
 
@@ -215,6 +231,7 @@ export class FdsImportDialog {
     const result = this.result;
     const onAdopt = this.onAdopt;
     if (!result || !onAdopt) return;
+    if (result.issues.some((i) => i.severity === 'error')) return;
     // The plan name follows the FDS job, not the .fds filename: CHID is what the
     // engineer calls the case, and it is already the plan's title.
     const stem = (result.doc.meta?.testId ?? this.fileName.replace(/\.fds$/i, '')) || 'plan';

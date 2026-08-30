@@ -5,7 +5,7 @@ import examplePlan from '../../fixtures/pool-fire-camera-row.ftp.json';
 import { newPlan } from './core/plan';
 import { adoptShellPresets } from './core/presets';
 import type { LengthUnit, PlanDocument } from './core/types';
-import { parseAndValidatePlan } from './core/validate';
+import { describeErrors, parseAndValidatePlan, validateStructure } from './core/validate';
 import {
   announceReady,
   buildShareableHtml,
@@ -14,6 +14,7 @@ import {
   embeddedPlanText,
   isSingleFileBuild,
   openFdsText,
+  resolveFdsIncludes,
   openPlanText,
   savePlanText,
   saveShareableHtml,
@@ -324,14 +325,29 @@ async function importFds(): Promise<void> {
   }
   if (!picked) return;
 
+  // A split input -- geometry in one file, devices in another, pulled together by
+  // &CATF -- is the normal shape for anything past a demo, and importing only the
+  // file that was named would hand over a model with most of itself missing.
+  const source = await resolveFdsIncludes(picked.text);
+
   try {
-    fdsImport.open(picked.text, picked.name, store.displayUnit, (doc, name) => {
+    fdsImport.open(source.text, picked.name, store.displayUnit, (doc, name) => {
+      // The same boundary every other document crosses. `replaceDocument` installs
+      // the document before anything reads it, so a plan that would fail to load is
+      // refused here rather than adopted, saved and then refused on reopen.
+      const errors = validateStructure(doc);
+      if (errors.length > 0) {
+        window.alert(
+          `${picked!.name} converted into a plan this editor cannot open:\n\n`
+          + `${describeErrors(errors)}\n\nNothing was imported.`);
+        return;
+      }
       store.replaceDocument(doc, name);
       // An import is not a saved file: the plan exists only here until it is
       // written, and Save must ask for a destination rather than aiming at the .fds.
       store.markDirty();
       viewport.frameAll();
-    });
+    }, { includesResolved: source.resolved, unresolvedIncludes: source.unresolved });
   } catch (err) {
     window.alert(
       `${picked.name} could not be read as FDS input:\n\n${(err as Error).message}`);

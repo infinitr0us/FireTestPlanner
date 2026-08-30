@@ -24,7 +24,7 @@
  * the reason attached.
  */
 
-import { positionOf, quatOf } from './plan';
+import { positionOf, quatOf, toWorld } from './plan';
 import { forwardOf } from './math';
 import type { Xb } from './fds';
 import type {
@@ -82,13 +82,36 @@ export interface XbView {
   why?: string;
 }
 
-const box = (
-  cx: number, cy: number, dx: number, dy: number, z0: number, z1: number, offset: Vec3,
-): Xb => [
-  cx - dx / 2 + offset[0], cx + dx / 2 + offset[0],
-  cy - dy / 2 + offset[1], cy + dy / 2 + offset[1],
-  z0 + offset[2], z1 + offset[2],
-];
+/**
+ * A box in the object's LOCAL frame as an `XB` in the source file's frame.
+ *
+ * All eight corners go through the shared local-to-world path and the extremes are
+ * taken from what comes back, because for a rotated object the two are not the same
+ * thing: a 2 x 1 box yawed 90 degrees occupies 1 x 2 of the world, and reporting its
+ * unrotated extents as "the bounding box" -- which is what this view promises for
+ * anything it cannot write back -- puts the box somewhere it is not. For an
+ * unrotated object the rotation is the identity and this is plain translation.
+ */
+function worldXb(obj: PlanObject, local: Xb, offset: Vec3): Xb {
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const zs: number[] = [];
+  for (const i of [0, 1]) {
+    for (const j of [2, 3]) {
+      for (const k of [4, 5]) {
+        const w = toWorld(obj, [local[i], local[j], local[k]]);
+        xs.push(w[0]);
+        ys.push(w[1]);
+        zs.push(w[2]);
+      }
+    }
+  }
+  return [
+    Math.min(...xs) + offset[0], Math.max(...xs) + offset[0],
+    Math.min(...ys) + offset[1], Math.max(...ys) + offset[1],
+    Math.min(...zs) + offset[2], Math.max(...zs) + offset[2],
+  ];
+}
 
 /** Which object types have an `XB` at all. Instruments are points, not boxes. */
 export const hasXbView = (o: PlanObject): boolean =>
@@ -105,7 +128,6 @@ export const hasXyzView = (o: PlanObject): boolean =>
  * inspector calls this on whatever is selected.
  */
 export function xbOfObject(obj: PlanObject, offset: Vec3 = [0, 0, 0]): XbView | null {
-  const p = positionOf(obj);
   const rotated = !isUnrotated(obj);
   const rotatedWhy = 'this object is rotated, so its XB is only a bounding box';
 
@@ -114,10 +136,10 @@ export function xbOfObject(obj: PlanObject, offset: Vec3 = [0, 0, 0]): XbView | 
       thickness_m?: number | null; baseHeight_m?: number | null };
     const pts = wall.polyline_m ?? [];
     if (pts.length < 2) return null;
-    const xs = pts.map((q) => p[0] + q[0]);
-    const ys = pts.map((q) => p[1] + q[1]);
+    const xs = pts.map((q) => q[0]);
+    const ys = pts.map((q) => q[1]);
     const thickness = wall.thickness_m ?? 0.1;
-    const base = p[2] + (wall.baseHeight_m ?? 0);
+    const base = wall.baseHeight_m ?? 0;
 
     const x0 = Math.min(...xs);
     const x1 = Math.max(...xs);
@@ -126,14 +148,11 @@ export function xbOfObject(obj: PlanObject, offset: Vec3 = [0, 0, 0]): XbView | 
     // The centreline has no thickness; the box does, so the thin axis grows by the
     // wall's thickness about the line and the long one is left alone.
     const alongX = x1 - x0 >= y1 - y0;
-    const xb: Xb = [
-      x0 + offset[0] - (alongX ? 0 : thickness / 2),
-      x1 + offset[0] + (alongX ? 0 : thickness / 2),
-      y0 + offset[1] - (alongX ? thickness / 2 : 0),
-      y1 + offset[1] + (alongX ? thickness / 2 : 0),
-      base + offset[2],
-      base + wall.height_m + offset[2],
-    ];
+    const xb = worldXb(obj, [
+      x0 - (alongX ? 0 : thickness / 2), x1 + (alongX ? 0 : thickness / 2),
+      y0 - (alongX ? thickness / 2 : 0), y1 + (alongX ? thickness / 2 : 0),
+      base, base + wall.height_m,
+    ], offset);
 
     const straight = pts.length === 2;
     const axisAligned = straight
@@ -152,14 +171,14 @@ export function xbOfObject(obj: PlanObject, offset: Vec3 = [0, 0, 0]): XbView | 
     const slab = obj as CeilingObject;
     const pts = slab.polygon_m ?? [];
     if (pts.length < 3) return null;
-    const xs = pts.map((q) => p[0] + q[0]);
-    const ys = pts.map((q) => p[1] + q[1]);
-    const z0 = p[2] + slab.height_m;
-    const xb: Xb = [
-      Math.min(...xs) + offset[0], Math.max(...xs) + offset[0],
-      Math.min(...ys) + offset[1], Math.max(...ys) + offset[1],
-      z0 + offset[2], z0 + (slab.thickness_m ?? 0.1) + offset[2],
-    ];
+    const xs = pts.map((q) => q[0]);
+    const ys = pts.map((q) => q[1]);
+    const z0 = slab.height_m;
+    const xb = worldXb(obj, [
+      Math.min(...xs), Math.max(...xs),
+      Math.min(...ys), Math.max(...ys),
+      z0, z0 + (slab.thickness_m ?? 0.1),
+    ], offset);
     if (rotated) return { xb, editable: false, why: rotatedWhy };
     // A rectangle has four corners, each sharing an x with one neighbour and a y
     // with the other. Anything else is a shape XB cannot describe.
@@ -174,7 +193,9 @@ export function xbOfObject(obj: PlanObject, offset: Vec3 = [0, 0, 0]): XbView | 
 
   if (obj.type === 'obstruction') {
     const size = (obj as ObstructionObject).size_m;
-    const xb = box(p[0], p[1], size[0], size[1], p[2], p[2] + size[2], offset);
+    const xb = worldXb(obj, [
+      -size[0] / 2, size[0] / 2, -size[1] / 2, size[1] / 2, 0, size[2],
+    ], offset);
     return rotated ? { xb, editable: false, why: rotatedWhy } : { xb, editable: true };
   }
 
@@ -185,13 +206,15 @@ export function xbOfObject(obj: PlanObject, offset: Vec3 = [0, 0, 0]): XbView | 
     if (fp?.shape === 'circle') {
       const d = fp.diameter_m ?? 0;
       return {
-        xb: box(p[0], p[1], d, d, p[2], p[2] + rim, offset),
+        xb: worldXb(obj, [-d / 2, d / 2, -d / 2, d / 2, 0, rim], offset),
         editable: false,
         why: 'a circular pan has no XB; this is the box around it',
       };
     }
     const size = fp?.size_m ?? [0, 0];
-    const xb = box(p[0], p[1], size[0], size[1], p[2], p[2] + rim, offset);
+    const xb = worldXb(obj, [
+      -size[0] / 2, size[0] / 2, -size[1] / 2, size[1] / 2, 0, rim,
+    ], offset);
     return rotated ? { xb, editable: false, why: rotatedWhy } : { xb, editable: true };
   }
 

@@ -15,7 +15,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { fdsToPlan, obstructionFromRecord, type FdsImportResult, type Xb } from './fds';
+import {
+  deviceFromRecord,
+  fdsToPlan,
+  obstructionFromRecord,
+  type FdsImportResult,
+  type Xb,
+} from './fds';
 import {
   applyXbToObject,
   fdsFrame,
@@ -23,7 +29,8 @@ import {
   xyzOfObject,
 } from './fdsview';
 import { NamelistError, readNamelist, readOneRecord } from './namelist';
-import { newPlan } from './plan';
+import { spliceFdsIncludes } from '../io/files';
+import { checkPlan, newPlan, primaryBurner } from './plan';
 import { serializePlan } from './serialize';
 import type { BurnerObject, CeilingObject, ObstructionObject, PlanObject, ThermocoupleObject, WallObject } from './types';
 import { requiredFormatVersion } from './types';
@@ -95,6 +102,44 @@ describe('namelist reader', () => {
     expect(records).toHaveLength(1);
     expect(records[0].string('FUEL')).toBe('POLYURETHANE');
     expect(records[0].number('RADIATIVE_FRACTION')).toBeNull();
+  });
+
+  it('does not read a ! comment as live input', () => {
+    // `!` is the Fortran namelist comment, and FDS reads these records with
+    // Fortran's own namelist READ. Real inputs are full of disabled `! &OBST` lines,
+    // and reading one back puts a record into the model the simulation never had.
+    const records = readNamelist(
+      '! Example only: &REAC RADIATIVE_FRACTION=0.9 /\n'
+      + "&REAC FUEL='PROPANE', RADIATIVE_FRACTION=0.3 /\n");
+    expect(records.map((r) => r.group)).toEqual(['REAC']);
+    expect(records[0].number('RADIATIVE_FRACTION')).toBe(0.3);
+
+    // ...and inline, where it disables the rest of one line only.
+    const rec = readNamelist(
+      '&OBST XB=0,1,0,1,0,1 ! and /tmp, which is not the end\n'
+      + "      SURF_ID='W' /")[0];
+    expect(rec.numbers('XB')).toEqual([0, 1, 0, 1, 0, 1]);
+    expect(rec.string('SURF_ID')).toBe('W');
+  });
+
+  it('keeps a ! that is inside a string', () => {
+    expect(readNamelist("&HEAD TITLE='Bob''s ! test' /")[0].string('TITLE'))
+      .toBe("Bob's ! test");
+  });
+
+  it('does not let an ampersand in prose swallow the next record', () => {
+    // Searching the text for the next `&` does worse than read prose as input: `R&D`
+    // starts a `&D` record whose body runs to the next `/`, and the real record in
+    // between disappears without a trace.
+    const records = readNamelist(
+      "&HEAD CHID='t' /\nR&D department reference note\n&OBST XB=0,1,0,1,0,1 /\n&TAIL /\n");
+    expect(records.map((r) => r.group)).toEqual(['HEAD', 'OBST', 'TAIL']);
+    expect(records[1].line).toBe(3);
+  });
+
+  it('still reads a second record written after the first one’s slash', () => {
+    expect(readNamelist('&OBST XB=1,2,3,4,5,6 / &VENT XB=1,2,3,4,5,5 /').map((r) => r.group))
+      .toEqual(['OBST', 'VENT']);
   });
 
   it('expands repeat counts and accumulates subscripted assignments', () => {
@@ -224,19 +269,50 @@ describe('importing the sample', () => {
     expect(target[2]).toBeCloseTo(position[2], 9);
   });
 
-  it('reports the heat-release surfaces it chose between, and everything it skipped', () => {
+  it('reports a burning lining without offering it as a burner', () => {
+    // The sample's 'UPHOLSTERY' burns on three wall faces and the ceiling soffit.
+    // None of those is a floor-standing source, so the only candidate is the
+    // ignition pan -- and the lining is named in the report rather than passed over.
+    // Offering it as a burner produced a 2.6 x 3.7 m pan with a 2.4 m rim: a solid
+    // box the size of the room, reaching from the floor to the ceiling.
     const result = sample();
     expect(result.burnerSurf).toBe('FIRE');
-    expect(result.burnerCandidates).toEqual(['FIRE', 'UPHOLSTERY']);
-    const skipped = result.issues.find((i) => i.code === 'fds-not-imported')!;
+    expect(result.burnerCandidates).toEqual(['FIRE']);
+    const lining = result.issues.filter((i) => i.code === 'fds-fire-not-a-burner');
+    expect(lining).toHaveLength(1);
+    expect(lining[0].message).toContain('UPHOLSTERY');
+  });
+
+  it('names everything it skipped', () => {
+    const skipped = sample().issues.find((i) => i.code === 'fds-not-imported')!;
     for (const group of ['&MESH', '&MATL', '&SLCF', '&BNDF']) {
       expect(skipped.message).toContain(group);
     }
   });
 
-  it('lets the burner choice be overridden', () => {
-    expect(fdsToPlan(SAMPLE_TEXT, null, { burnerSurf: 'UPHOLSTERY' }).burnerSurf)
-      .toBe('UPHOLSTERY');
+  it('will not take the sample’s ceiling soffit lining as a burner, even when asked', () => {
+    // A downward-facing fire face has a footprint, which is what makes it dangerous:
+    // taken as a burner, its rim height is the height of the ceiling.
+    // Asking for it anyway falls back to the pan, and says so rather than quietly
+    // describing a fire somewhere else.
+    const result = fdsToPlan(SAMPLE_TEXT, null, { burnerSurf: 'UPHOLSTERY' });
+    expect(result.burnerSurf).toBe('FIRE');
+    expect(result.issues.map((i) => i.code)).toContain('fds-burner-unavailable');
+    expect(validateStructure(result.doc)).toEqual([]);
+  });
+
+  it('lets the burner choice be overridden between real pans', () => {
+    const twoPans = '&MESH IJK=40,40,30, XB=-1,5,-1,5,0,3 /\n'
+      + "&SURF ID='SMALL' HRRPUA=500. /\n"
+      + "&SURF ID='BIG' HRRPUA=100. /\n"
+      + "&VENT XB=0,0.5,0,0.5,0.5,0.5, SURF_ID='SMALL' /\n"
+      + "&VENT XB=2,4,2,4,0.5,0.5, SURF_ID='BIG' /\n";
+    const result = fdsToPlan(twoPans);
+    expect(result.burnerCandidates).toEqual(['BIG', 'SMALL']);
+    expect(result.burnerSurf).toBe('SMALL');       // the most compact one
+    expect(result.issues.map((i) => i.code)).toContain('fds-fire-choice');
+
+    expect(fdsToPlan(twoPans, null, { burnerSurf: 'BIG' }).burnerSurf).toBe('BIG');
   });
 
   it('does not move the instruments when geometry is skipped', () => {
@@ -302,6 +378,167 @@ describe('obstructions', () => {
   });
 });
 
+// -- the fire ------------------------------------------------------------
+
+describe('finding the fire', () => {
+  it('keeps a burner vent that sits flush with the mesh boundary', () => {
+    // A floor fire in a domain that starts at the floor is written flush with a
+    // domain face. Dropping it as an OPEN-style boundary vent left the plan with no
+    // fire, an origin fallen back to the mesh centre, and a warning telling the user
+    // their own input has no heat source.
+    const result = fdsToPlan(
+      '&MESH IJK=40,40,30, XB=0,4,0,4,0,3 /\n'
+      + "&SURF ID='B' HRRPUA=100. /\n"
+      + "&VENT XB=0,1,0,1,0,0, SURF_ID='B' /\n");
+    expect((only(result, 'burner') as BurnerObject).fire!.hrr_kw).toBeCloseTo(100, 9);
+    near(result.originM.slice(0, 2), [0.5, 0.5]);
+    expect(result.issues.map((i) => i.code)).not.toContain('fds-no-fire');
+  });
+
+  it('makes a burner of every face of the chosen surface', () => {
+    // One &SURF over several &VENTs is two burners in a room, not one. The second
+    // fire location used to vanish while the conversion reported success.
+    const result = fdsToPlan(
+      '&MESH IJK=40,40,30, XB=-1,5,-1,5,0,3 /\n'
+      + "&SURF ID='B' HRRPUA=100. /\n"
+      + "&VENT XB=0,1,0,1,0.5,0.5, SURF_ID='B' /\n"
+      + "&VENT XB=3,4,3,4,0.5,0.5, SURF_ID='B' /\n");
+    expect(result.counts.burner).toBe(2);
+    expect(result.issues.map((i) => i.code)).toContain('fds-burner-instances');
+    // The primary is the one the frame was built around, so it is at the origin.
+    near(primaryBurner(result.doc)!.transform!.position_m.slice(0, 2), [0, 0]);
+  });
+
+  it('reports a wall fire rather than flattening it into a zero-area burner', () => {
+    // A vertical heat-release face has no plan footprint. Writing one out as
+    // `size_m: [1, 0]` produced a plan that saved and then would not reopen.
+    const result = fdsToPlan(
+      '&MESH IJK=40,40,30, XB=-1,5,-1,5,0,3 /\n'
+      + "&SURF ID='B' HRRPUA=100. /\n"
+      + "&VENT XB=1,2,1,1,0,2, SURF_ID='B' /\n");
+    expect(result.counts.burner).toBeUndefined();
+    expect(result.issues.map((i) => i.code)).toContain('fds-fire-not-a-burner');
+    expect(validateStructure(result.doc)).toEqual([]);
+  });
+
+  it('reads a ramp that never leaves zero as a surface switched off', () => {
+    // `peak || 1` read "no ramp" and "a peak of zero" as the same thing, and turned
+    // a burner the input switches off into the largest fire in the file.
+    const result = fdsToPlan(
+      "&SURF ID='B' HRRPUA=100. RAMP_Q='r' /\n"
+      + "&RAMP ID='r' T=0. F=0.0 /\n"
+      + "&RAMP ID='r' T=10. F=0.0 /\n"
+      + "&VENT XB=0,1,0,1,0.5,0.5, SURF_ID='B' /\n");
+    expect(result.counts.burner).toBeUndefined();
+    expect(result.issues.map((i) => i.code)).toContain('fds-surface-off');
+  });
+});
+
+// -- geometry that is not a ceiling ---------------------------------------
+
+describe('slabs at floor level', () => {
+  it('treats every tile of a tiled floor as floor', () => {
+    // A meshed model tiles its floor, one &OBST per mesh. Skipping only the lowest
+    // left the rest to be converted as slabs at floor level -- ceilings with a
+    // negative height, which no schema version accepts.
+    const result = fdsToPlan(
+      '&MESH IJK=40,40,30, XB=-1,5,-1,5,-1,3 /\n'
+      + "&SURF ID='B' HRRPUA=100. /\n"
+      + "&OBST ID='floor-a' XB=0,2,0,4,-0.1,0.0 /\n"
+      + "&OBST ID='floor-b' XB=2,4,0,4,-0.1,0.0 /\n"
+      + "&VENT XB=1,2,1,2,0.0,0.0, SURF_ID='B' /\n");
+    expect(result.counts.ceiling).toBeUndefined();
+    expect(validateStructure(result.doc)).toEqual([]);
+  });
+
+  it('makes a box, not a ceiling, of a slab resting on the floor', () => {
+    // A plinth's soffit height is zero, which is not a ceiling and not a valid one.
+    const result = fdsToPlan(
+      "&SURF ID='B' HRRPUA=500. /\n"
+      + "&OBST ID='floor' XB=-1,5,-1,5,-0.1,0.0 /\n"
+      + "&OBST XB=0,0.2,0,0.2,0,0.1, SURF_ID6='I','I','I','I','I','B' /\n"
+      + "&OBST ID='plinth' XB=1,3,1,3,0,0.15 /\n");
+    expect(result.counts.ceiling).toBeUndefined();
+    expect((only(result, 'obstruction') as ObstructionObject).name).toBe('plinth');
+    expect(validateStructure(result.doc)).toEqual([]);
+  });
+});
+
+// -- &MULT ----------------------------------------------------------------
+
+describe('MULT', () => {
+  it('moves the domain, and therefore the origin, when it is on a mesh', () => {
+    // With no burner the origin is the centre of the domain, so a MULT_ID this
+    // reader ignored shifted every imported coordinate by a mesh width.
+    const result = fdsToPlan(
+      "&MULT ID='m' DX=10, I_UPPER=1 /\n"
+      + "&MESH IJK=10,10,10, XB=0,10,0,4,0,3, MULT_ID='m' /\n"
+      + "&DEVC ID='tc', QUANTITY='THERMOCOUPLE', XYZ=15,2,1 /\n");
+    expect(result.originM[0]).toBeCloseTo(10, 9);
+    expect((only(result, 'thermocouple') as ThermocoupleObject).transform!.position_m[0])
+      .toBeCloseTo(5, 9);
+  });
+
+  it('leaves a hole where a skip range asks for one', () => {
+    const result = fdsToPlan(
+      "&MULT ID='row', DX=1.0, I_LOWER=0, I_UPPER=3, I_LOWER_SKIP=1, I_UPPER_SKIP=2 /\n"
+      + "&OBST XB=0,0.2,0,0.2,0,1.0, MULT_ID='row', ID='post' /\n");
+    const posts = result.doc.objects.filter((o) => o.type === 'obstruction');
+    expect(posts).toHaveLength(2);
+    const xs = posts.map((o) => o.transform!.position_m[0]).sort((a, b) => a - b);
+    expect(xs[1] - xs[0]).toBeCloseTo(3, 9);
+  });
+});
+
+// -- malformed input and unresolved includes ------------------------------
+
+describe('what an import refuses to guess', () => {
+  it('skips a truncated XB rather than throwing', () => {
+    const result = fdsToPlan("&HEAD CHID='t' /\n&OBST XB=0,1,2 /\n&TAIL /\n");
+    expect(result.counts).toEqual({});
+  });
+
+  it('splices an include where the &CATF sits, not after &TAIL', async () => {
+    // &CATF belongs in the body, before &TAIL -- that is where the official
+    // validation cases put it -- and reading stops at &TAIL. A child appended after
+    // the parent's last line is a child nobody reads.
+    const files: Record<string, string> = {
+      'child.fds': "&SURF ID='B' HRRPUA=100. /\n&VENT XB=1,2,1,2,0.5,0.5, SURF_ID='B' /\n",
+    };
+    const spliced = await spliceFdsIncludes(
+      "&HEAD CHID='root' /\n&MESH IJK=10,10,10, XB=0,4,0,4,0,3 /\n"
+      + "&CATF OTHER_FILES='child.fds','gone.fds' /\n&TAIL /\n",
+      async (name) => files[name] ?? null,
+    );
+    expect(spliced.unresolved).toEqual(['gone.fds']);
+
+    const result = fdsToPlan(spliced.text, 'root.fds', { includesResolved: true });
+    expect((only(result, 'burner') as BurnerObject).fire!.hrr_kw).toBeCloseTo(100, 9);
+    expect(result.issues.map((i) => i.code)).not.toContain('fds-catf-unresolved');
+  });
+
+  it('says so when &CATF pulls in files nobody read', () => {
+    // The browser is handed one file's bytes and cannot go looking. Silence there
+    // would present a fraction of a model as a whole one.
+    const result = fdsToPlan(
+      "&HEAD CHID='t' /\n&CATF OTHER_FILES='geometry.fds' /\n&TAIL /\n");
+    const catf = result.issues.find((i) => i.code === 'fds-catf-unresolved');
+    expect(catf?.message).toContain('geometry.fds');
+  });
+
+  it('declares the version its own contents need, not the baseline', () => {
+    // Python's importer does this, with a comment explaining why: an import is not
+    // an edit in progress, and a fresh one should not open reporting
+    // `version-understated` against itself.
+    const result = fdsToPlan(
+      "&SURF ID='B', HRRPUA=500. /\n"
+      + "&OBST XB=0,0.2,0,0.2,0,0.1, SURF_ID6='I','I','I','I','I','B' /\n"
+      + "&OBST XB=1.0,3.0, 2.0,2.9, 0.0,0.8, ID='Couch' /\n");
+    expect(result.doc.version).toBe('1.2.0');
+    expect(checkPlan(result.doc).map((i) => i.code)).not.toContain('version-understated');
+  });
+});
+
 // -- one record at a time, for the paste box ------------------------------
 
 describe('creating one object from a pasted record', () => {
@@ -315,6 +552,19 @@ describe('creating one object from a pasted record', () => {
 
   it('returns null for a record with no XB', () => {
     expect(obstructionFromRecord(readOneRecord("&HEAD CHID='x' /"))).toBeNull();
+  });
+
+  it('refuses a record whose group is not one it can read', () => {
+    // Every one of these carries an XB, and none of them is a wall; &SLCF carries a
+    // QUANTITY and an XYZ as well, and is a slice file rather than a thermocouple.
+    expect(obstructionFromRecord(readOneRecord('&MESH IJK=10,10,10, XB=0,1,0,1,0,1 /'))).toBeNull();
+    expect(obstructionFromRecord(readOneRecord('&INIT XB=0,1,0,1,0,1, TEMPERATURE=100. /'))).toBeNull();
+    expect(deviceFromRecord(readOneRecord("&SLCF QUANTITY='TEMPERATURE', XYZ=1,1,1 /"))).toBeNull();
+    // A &DEVC carrying an XB is still a device, not geometry.
+    expect(obstructionFromRecord(
+      readOneRecord("&DEVC QUANTITY='TEMPERATURE', XYZ=1,1,1, XB=0,1,0,1,0,1 /"))).toBeNull();
+    expect(deviceFromRecord(readOneRecord("&DEVC QUANTITY='TEMPERATURE', XYZ=1,1,1 /"))!.type)
+      .toBe('thermocouple');
   });
 });
 
@@ -360,6 +610,23 @@ describe('reading a plan object as FDS spells it', () => {
     view = xbOfObject(wall)!;
     expect(view.editable).toBe(false);
     expect(view.why).toContain('3 points');
+  });
+
+  it('gives a rotated object the box that actually contains it', () => {
+    // The view promises "the bounding box" for anything it cannot write back. A
+    // 2 x 1 box yawed 90 degrees occupies 1 x 2 of the world, and reporting its
+    // unrotated extents puts the box somewhere it is not.
+    const doc = newPlan('rotated');
+    const box = {
+      id: 'b', type: 'obstruction',
+      transform: { position_m: [0, 0, 0], rotation_quat: [0, 0, Math.SQRT1_2, Math.SQRT1_2] },
+      size_m: [2, 1, 1],
+    } as unknown as ObstructionObject;
+    doc.objects.push(box);
+
+    const view = xbOfObject(box)!;
+    expect(view.editable).toBe(false);
+    near(view.xb, [-0.5, 0.5, -1, 1, 0, 1]);
   });
 
   it('will not offer an XB for a circular pan', () => {

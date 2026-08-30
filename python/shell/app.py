@@ -113,6 +113,9 @@ class Shell:
         # Absolute path of the plan currently open. The page only ever knows the
         # basename, so this is what makes Save mean "save" rather than "save as".
         self.current_path: Optional[str] = None
+        # Folder of the last FDS input opened, which is where its `&CATF` includes
+        # live. Not a document: an import produces an unsaved plan.
+        self.fds_directory: Optional[str] = None
 
     # -- settings ------------------------------------------------------
 
@@ -225,6 +228,14 @@ class Shell:
         `errors="replace"` rather than a strict decode: FDS inputs come off machines
         with every locale setting there is, and a stray byte in a comment is not a
         reason to refuse a model whose geometry is perfectly readable.
+
+        Reading one **forgets the open plan**. An import replaces the page's
+        document, and the only thing tying a Save to a file is the basename the page
+        sends back -- so with `case.ftp.json` open and `case.fds` imported, the two
+        agree and a plain Save writes the imported plan over the original. Same
+        name, different document, and an atomic rename leaves nothing to recover.
+        Nothing about an import belongs to the file that was open before it, so this
+        drops the claim and the first Save lands in Save As, where it belongs.
         """
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
@@ -232,7 +243,34 @@ class Shell:
         except OSError as exc:
             report("could not read {}: {}".format(path, exc))
             return {"error": str(exc)}
+        self.current_path = None
+        self.fds_directory = os.path.dirname(os.path.abspath(path))
+        self._set_title(os.path.basename(path) + " (imported)")
         return {"path": path, "text": text}
+
+    def read_fds_include(self, name: str) -> Dict[str, Any]:
+        """A file `&CATF` names, read from beside the input that names it.
+
+        Split inputs are the normal shape for anything past a demonstration case: a
+        geometry file plus a devices file, pulled in by `&CATF`. The conversion
+        lives in the shared core and the core cannot reach a disk, so this is the
+        one thing it needs from the shell -- the bytes of a sibling file, by name.
+
+        Confined to the folder the input came from, and to a bare filename: this
+        route is reachable by anything that has the page's token, and "read me any
+        file you like" is not what an importer needs.
+        """
+        directory = self.fds_directory
+        if not directory:
+            return {"error": "no FDS input has been opened"}
+        if not name or os.path.isabs(name) or os.path.basename(name) != name:
+            return {"error": "an &CATF include is read by bare filename only"}
+        path = os.path.join(directory, name)
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                return {"name": name, "text": fh.read()}
+        except OSError as exc:
+            return {"error": str(exc)}
 
     def read_plan(self, path: str) -> Optional[Dict[str, str]]:
         try:
@@ -417,6 +455,8 @@ class Handler(SimpleHTTPRequestHandler):
                     self.on_ready(self.shell)
             elif route == "/api/open":
                 self._send_json(self.shell.open_plan())
+            elif route == "/api/read-fds-include":
+                self._send_json(self.shell.read_fds_include(body.get("name", "")))
             elif route == "/api/open-fds":
                 self._send_json(self.shell.open_fds())
             elif route == "/api/open-recent":

@@ -674,6 +674,20 @@ describe('structural validation', () => {
     }))).toContain('bad-diameter');
   });
 
+  it('rejects a degenerate obstruction', () => {
+    for (const size of [[1, 0, 2], [1, 2, -2]]) {
+      expect(codesOf(withObject({
+        id: 'o', type: 'obstruction', transform: { position_m: [0, 0, 0] }, size_m: size,
+      }))).toContain('bad-size');
+    }
+  });
+
+  it('rejects a zero-area burner footprint', () => {
+    expect(codesOf(withObject({
+      id: 'b', type: 'burner', footprint: { shape: 'rectangle', size_m: [1, 0] },
+    }))).toContain('bad-size');
+  });
+
   it('rejects a ceiling with too few polygon points', () => {
     expect(codesOf(withObject({
       id: 'c', type: 'ceiling', polygon_m: [[0, 0], [1, 0]], height_m: 3,

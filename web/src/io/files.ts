@@ -6,11 +6,16 @@
  * desktop build gets real Save As without a second code path.
  */
 
+import { readNamelist } from '../core/namelist';
+
 export interface ShellBridge {
   openPlan(): Promise<{ path: string; text: string } | null>;
   /** Pick an FDS input and read it. The conversion happens in the shared core, so
    *  this is only the native dialog a browser tab cannot open. */
   openFds(): Promise<{ path: string; text: string } | null>;
+  /** One file an `&CATF` names, read from beside the input that named it. Null when
+   *  it is not there. The shell confines this to that folder and to bare filenames. */
+  readFdsInclude(name: string): Promise<string | null>;
   /** `saveAs` forces a destination dialog; otherwise the shell writes back to the
    *  file it opened, if the page is still showing that document.
    *  Resolves to null when the user cancels, and REJECTS when the write fails. */
@@ -82,6 +87,9 @@ export function connectShell(onReady: () => void): void {
   bridge = {
     openPlan: () => call<{ path: string; text: string } | null>('/api/open', {}).then((r) => r ?? null),
     openFds: () => call<{ path: string; text: string } | null>('/api/open-fds', {}).then((r) => r ?? null),
+    readFdsInclude: (name) =>
+      call<{ text?: string }>('/api/read-fds-include', { name })
+        .then((r) => (typeof r?.text === 'string' ? r.text : null)),
     savePlan: (text, name, saveAs) =>
       call<SaveResult>('/api/save', { text, name, saveAs }).then(unwrapSave),
     saveHtml: (html, name) => call<SaveResult>('/api/save-html', { html, name }).then(unwrapSave),
@@ -201,6 +209,85 @@ async function pickText(
 /** An FDS input file's text. The conversion is `fdsToPlan`, in the shared core. */
 export const openFdsText = (): Promise<{ name: string; text: string } | null> =>
   pickText('.fds,text/plain', (b) => b.openFds(), 'model.fds');
+
+/** How deep `&CATF` includes are followed before the reader gives up. Mirrors
+ *  `CATF_MAX_DEPTH` in python/fireplan/fds.py. */
+const CATF_MAX_DEPTH = 8;
+
+/**
+ * `text` with every `&CATF` include spliced in **where it sits**.
+ *
+ * The position matters as much as the content. `&CATF` belongs in the body of the
+ * input, before `&TAIL` -- that is where the official validation cases put it --
+ * and reading stops at `&TAIL`, so a child appended after the parent's last line is
+ * a child nobody reads. Mirror of `_read_source` in python/fireplan/fds.py, which
+ * is why the record offsets exist on `NamelistRecord`.
+ */
+async function spliceIncludes(
+  text: string, read: (name: string) => Promise<string | null>,
+  seen: Set<string>, depth: number, unresolved: string[],
+): Promise<string> {
+  if (depth > CATF_MAX_DEPTH) return text;
+  const pieces: string[] = [];
+  let pos = 0;
+
+  for (const rec of readNamelist(text)) {
+    if (rec.group !== 'CATF') continue;
+    const included: string[] = [];
+    for (const name of rec.strings('OTHER_FILES')) {
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue; // a file two others share is read once
+      seen.add(key);
+      // eslint-disable-next-line no-await-in-loop
+      const child = await read(name);
+      if (child === null) {
+        unresolved.push(name);
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      included.push(await spliceIncludes(child, read, seen, depth + 1, unresolved));
+    }
+    if (included.length > 0) {
+      pieces.push(text.slice(pos, rec.end), `\n${included.join('\n')}\n`);
+      pos = rec.end;
+    }
+  }
+  pieces.push(text.slice(pos));
+  return pieces.join('');
+}
+
+/**
+ * `text` with its `&CATF` includes spliced in, and the names `read` could not find.
+ *
+ * Separate from `resolveFdsIncludes` so the splicing can be tested against a reader
+ * that is not a filesystem -- this is the mirror of a Python function held to the
+ * same behaviour, and "it only runs under the desktop shell" is not a reason for it
+ * to be the untested half.
+ */
+export async function spliceFdsIncludes(
+  text: string, read: (name: string) => Promise<string | null>,
+): Promise<{ text: string; unresolved: string[] }> {
+  const unresolved: string[] = [];
+  const spliced = await spliceIncludes(text, read, new Set<string>(), 0, unresolved);
+  return { text: spliced, unresolved };
+}
+
+/**
+ * An FDS input's text with the files it `&CATF`s in pulled alongside it.
+ *
+ * Only the desktop shell can do this: it has a folder to resolve names against. A
+ * browser tab is handed one file's bytes and says so, and the import reports what
+ * is therefore missing rather than presenting a fraction of a model as a whole one.
+ */
+export async function resolveFdsIncludes(
+  text: string,
+): Promise<{ text: string; resolved: boolean; unresolved: string[] }> {
+  const bridge = shell();
+  if (!bridge) return { text, resolved: false, unresolved: [] };
+  const spliced = await spliceFdsIncludes(text, (name) => bridge.readFdsInclude(name));
+  return { ...spliced, resolved: true };
+}
 
 export const openPlanText = (): Promise<{ name: string; text: string } | null> =>
   pickText('.json,.ftp.json,application/json', (b) => b.openPlan(), 'plan.ftp.json');

@@ -418,6 +418,54 @@ def test_reading_an_fds_file_does_not_adopt_it_as_the_document(tmp_path):
     assert str(fds) not in shell.recent_files()
 
 
+def test_importing_fds_stops_save_writing_over_the_plan_that_was_open(tmp_path, monkeypatch):
+    """Open `case.ftp.json`, import `case.fds`, press Save: the original must live.
+
+    The page knows only a basename, and an import names the new document after the
+    FDS job -- so `case.ftp.json` open and `case.fds` imported produce the same
+    basename for two entirely unrelated documents. `_writeback_path` took the match
+    as proof the page still showed the opened file and wrote the imported plan over
+    it with no dialog, and the atomic rename leaves nothing to recover.
+    """
+    shell = shell_app.Shell()
+    original = tmp_path / "case.ftp.json"
+    original.write_text('{"the user": "spent all afternoon on this"}\n', encoding="utf-8")
+    fds_input = tmp_path / "case.fds"
+    fds_input.write_text("&HEAD CHID='case' /\n&TAIL /\n", encoding="utf-8")
+
+    assert shell.read_plan(str(original)) is not None
+    shell.read_fds(str(fds_input))
+
+    asked = []
+    monkeypatch.setattr(shell, "_ask_save", lambda name, kinds: asked.append(name) or None)
+
+    assert shell.save_plan('{"imported": true}\n', "case.ftp.json") is None
+    assert asked == ["case.ftp.json"]        # Save As, not a silent write-back
+    assert original.read_text(encoding="utf-8") == '{"the user": "spent all afternoon on this"}\n'
+
+
+def test_an_included_file_is_read_from_beside_the_input_that_names_it(tmp_path):
+    """`&CATF` splits an input across files, and the conversion lives in the shared
+    core, which cannot reach a disk. This is the one thing it needs from the shell."""
+    (tmp_path / "root.fds").write_text("&HEAD CHID='r' /\n", encoding="utf-8")
+    (tmp_path / "geometry.fds").write_text("&OBST XB=0,1,0,1,0,1 /\n", encoding="utf-8")
+
+    shell = shell_app.Shell()
+    assert shell.read_fds_include("geometry.fds")["error"]      # nothing opened yet
+    shell.read_fds(str(tmp_path / "root.fds"))
+    assert "OBST" in shell.read_fds_include("geometry.fds")["text"]
+
+
+@pytest.mark.parametrize("name", ["../secrets.txt", "sub/child.fds", ""])
+def test_an_include_cannot_reach_outside_the_folder_the_input_came_from(tmp_path, name):
+    # This route is reachable by anything holding the page's token, and "read me any
+    # file you like" is not what an importer needs.
+    (tmp_path / "root.fds").write_text("&HEAD CHID='r' /\n", encoding="utf-8")
+    shell = shell_app.Shell()
+    shell.read_fds(str(tmp_path / "root.fds"))
+    assert "error" in shell.read_fds_include(name)
+
+
 def test_an_unreadable_fds_file_reports_the_reason_rather_than_vanishing(tmp_path):
     shell = shell_app.Shell()
     result = shell.read_fds(str(tmp_path / "does-not-exist.fds"))
@@ -432,5 +480,3 @@ def test_an_fds_file_with_a_stray_byte_still_reads(tmp_path):
 
     result = shell_app.Shell().read_fds(str(fds))
     assert "CHID" in result["text"]
-
-

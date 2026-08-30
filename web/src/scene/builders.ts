@@ -413,6 +413,15 @@ export function buildObstruction(o: ObstructionObject): THREE.Group {
  *
  * Translucent because an opaque ceiling would hide the entire scene the moment
  * you orbit above it; plan mode hides ceilings outright, the way a floor plan does.
+ *
+ * The slab is pushed back a fraction in the depth buffer, because a wall whose top
+ * is level with a ceiling's is not a corner case -- it is the normal way a room is
+ * built, and it is exactly what the sample FDS import produces (walls to z = 2.5,
+ * ceiling slab 2.4 to 2.5). Two faces at one depth flicker against each other as
+ * the camera moves, which reads as the wall tops "flashing" during an orbit. The
+ * bias is in depth only: nothing moves, and the solid wins the tie, which is the
+ * right way round for an opaque wall under a glassy roof. Same reasoning as the
+ * floor plane's -0.005 nudge in viewport.ts, one buffer down.
  */
 export function buildCeiling(c: CeilingObject): THREE.Group {
   const group = new THREE.Group();
@@ -432,6 +441,9 @@ export function buildCeiling(c: CeilingObject): THREE.Group {
       transparent: true,
       opacity: 0.32,
       side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1,
     }),
   );
   slab.position.z = c.height_m;

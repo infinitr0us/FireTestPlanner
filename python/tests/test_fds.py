@@ -105,6 +105,49 @@ def test_reading_stops_at_tail():
     assert [r.group for r in records] == ["OBST", "TAIL"]
 
 
+def test_a_bang_comment_is_not_live_input():
+    """`!` is the Fortran namelist comment, and FDS reads these records with
+    Fortran's own namelist READ. Real inputs are full of disabled `! &OBST` lines,
+    and reading one back as live input puts a record into the model that the
+    simulation never had."""
+    records = namelist.read(
+        "! Example only: &REAC RADIATIVE_FRACTION=0.9 /\n"
+        "&REAC FUEL='PROPANE', RADIATIVE_FRACTION=0.3 /\n")
+    assert [r.group for r in records] == ["REAC"]
+    assert records[0].number("RADIATIVE_FRACTION") == 0.3
+
+    # ...and inline, where it disables the rest of one line only.
+    rec = namelist.read("&OBST XB=0,1,0,1,0,1 ! and /tmp, which is not the end\n"
+                        "      SURF_ID='W' /")[0]
+    assert rec.numbers("XB") == [0.0, 1.0, 0.0, 1.0, 0.0, 1.0]
+    assert rec.string("SURF_ID") == "W"
+
+
+def test_a_bang_inside_a_string_is_not_a_comment():
+    assert namelist.read("&HEAD TITLE='Bob''s ! test' /")[0].string("TITLE") == "Bob's ! test"
+
+
+def test_an_ampersand_in_prose_does_not_swallow_the_next_record():
+    """A record opens only where a line does.
+
+    Searching the text for the next `&` does worse than read prose as input: `R&D`
+    starts a `&D` record whose body runs to the next `/`, and the real record in
+    between disappears with no trace at all.
+    """
+    records = namelist.read(
+        "&HEAD CHID='t' /\n"
+        "R&D department reference note\n"
+        "&OBST XB=0,1,0,1,0,1 /\n"
+        "&TAIL /\n")
+    assert [r.group for r in records] == ["HEAD", "OBST", "TAIL"]
+    assert records[1].line == 3
+
+
+def test_a_second_record_after_a_slash_on_one_line_is_still_read():
+    assert [r.group for r in namelist.read("&OBST XB=1,2,3,4,5,6 / &VENT XB=1,2,3,4,5,5 /")] \
+        == ["OBST", "VENT"]
+
+
 def test_an_unsubscripted_rewrite_replaces_the_whole_value():
     rec = namelist.read("&X A=1,2,3, A=9 /")[0]
     assert rec.numbers("A") == [9.0]
@@ -371,13 +414,55 @@ def test_the_device_map_can_be_overridden():
 
 # -- what the import tells you --------------------------------------------
 
-def test_several_heat_release_surfaces_are_reported_and_the_choice_is_overridable(sample):
-    assert sample.burner_surf == "FIRE"
-    assert sample.burner_candidates == ["FIRE", "UPHOLSTERY"]
-    assert any(i.code == "fds-fire-choice" for i in sample.issues)
+def test_a_lining_that_burns_is_reported_but_is_not_offered_as_a_burner(sample):
+    """The sample's 'UPHOLSTERY' burns on three wall faces and the ceiling soffit.
 
+    None of those is a floor-standing source, so the only candidate is the ignition
+    pan -- and the lining is named in the report rather than passed over. Offering
+    it as a burner produced a 2.6 x 3.7 m pan with a 2.4 m rim: a solid box the size
+    of the room, reaching from the floor to the ceiling.
+    """
+    assert sample.burner_surf == "FIRE"
+    assert sample.burner_candidates == ["FIRE"]
+    lining = [i for i in sample.issues if i.code == "fds-fire-not-a-burner"]
+    assert len(lining) == 1 and "UPHOLSTERY" in lining[0].message
+
+    # Asking for it anyway falls back to the pan, and says so rather than quietly
+    # describing a fire somewhere else.
     other = fds.load(SAMPLE, fds.ImportOptions(burner_surf="UPHOLSTERY"))
-    assert other.burner_surf == "UPHOLSTERY"
+    assert other.burner_surf == "FIRE"
+    assert any(i.code == "fds-burner-unavailable" for i in other.issues)
+    other.plan.validate_schema()
+
+
+def test_a_ceiling_soffit_fire_does_not_become_a_room_sized_burner():
+    """A downward-facing fire face has a footprint, which is what makes it
+    dangerous: taken as a burner, its rim height is the height of the ceiling."""
+    result = fds.to_plan(
+        "&SURF ID='L' HRRPUA=300. /\n"
+        "&OBST ID='floor' XB=0,3,0,4,-0.1,0.0 /\n"
+        "&OBST ID='slab' XB=0,3,0,4,2.4,2.5, "
+        "SURF_ID6='I','I','I','I','L','I' /\n")
+    assert result.burner_candidates == []
+    assert result.counts.get("burner", 0) == 0
+    assert any(i.code == "fds-fire-not-a-burner" for i in result.issues)
+    # ...and the slab is still the ceiling it always was.
+    assert one(result, "ceiling")["height_m"] == pytest.approx(2.4)
+
+
+def test_the_burner_choice_is_overridable_between_real_pans():
+    two_pans = (
+        "&MESH IJK=40,40,30, XB=-1,5,-1,5,0,3 /\n"
+        "&SURF ID='SMALL' HRRPUA=500. /\n"
+        "&SURF ID='BIG' HRRPUA=100. /\n"
+        "&VENT XB=0,0.5,0,0.5,0.5,0.5, SURF_ID='SMALL' /\n"
+        "&VENT XB=2,4,2,4,0.5,0.5, SURF_ID='BIG' /\n")
+    result = fds.to_plan(two_pans)
+    assert result.burner_candidates == ["BIG", "SMALL"]
+    assert result.burner_surf == "SMALL"            # the most compact one
+    assert any(i.code == "fds-fire-choice" for i in result.issues)
+
+    assert fds.to_plan(two_pans, options=fds.ImportOptions(burner_surf="BIG")).burner_surf == "BIG"
 
 
 def test_simulation_only_records_are_named_rather_than_silently_dropped(sample):
@@ -392,6 +477,189 @@ def test_a_file_with_no_fire_still_converts_and_says_so():
     assert any(i.code == "fds-no-fire" for i in result.issues)
     assert result.counts.get("wall") == 1
     result.plan.validate_schema()
+
+
+def test_a_burner_vent_flush_with_the_mesh_boundary_is_not_a_boundary_condition():
+    """A floor fire in a domain that starts at the floor is written flush with a
+    domain face. Dropping it as an OPEN-style boundary vent left the plan with no
+    fire, an origin fallen back to the mesh centre, and a warning telling the user
+    their own input has no heat source."""
+    result = fds.to_plan(
+        "&MESH IJK=40,40,30, XB=0,4,0,4,0,3 /\n"
+        "&SURF ID='B' HRRPUA=100. /\n"
+        "&VENT XB=0,1,0,1,0,0, SURF_ID='B' /\n")
+    burner = one(result, "burner")
+    assert burner["fire"]["hrr_kw"] == pytest.approx(100.0)
+    assert result.origin_m[:2] == (0.5, 0.5)
+    assert "fds-no-fire" not in [i.code for i in result.issues]
+
+
+def test_every_face_of_the_chosen_surface_becomes_a_burner():
+    """One &SURF over several &VENTs is two burners in a room, not one. The second
+    fire location used to vanish while the conversion reported success."""
+    result = fds.to_plan(
+        "&MESH IJK=40,40,30, XB=-1,5,-1,5,0,3 /\n"
+        "&SURF ID='B' HRRPUA=100. /\n"
+        "&VENT XB=0,1,0,1,0.5,0.5, SURF_ID='B' /\n"
+        "&VENT XB=3,4,3,4,0.5,0.5, SURF_ID='B' /\n")
+    burners = [o for o in result.plan.data["objects"] if o["type"] == "burner"]
+    assert len(burners) == 2
+    assert "fds-burner-instances" in [i.code for i in result.issues]
+    # The primary is the one the frame was built around, so it is at the origin.
+    assert result.plan.burner.position[0] == pytest.approx(0.0)
+    assert result.plan.burner.position[1] == pytest.approx(0.0)
+
+
+def test_a_wall_fire_is_reported_rather_than_flattened_into_a_zero_area_burner():
+    """A vertical heat-release face has no plan footprint. Writing one out as
+    `size_m: [1.0, 0.0]` produced a plan that saved and then would not reopen."""
+    result = fds.to_plan(
+        "&MESH IJK=40,40,30, XB=-1,5,-1,5,0,3 /\n"
+        "&SURF ID='B' HRRPUA=100. /\n"
+        "&VENT XB=1,2,1,1,0,2, SURF_ID='B' /\n")
+    assert result.counts.get("burner", 0) == 0
+    assert "fds-fire-not-a-burner" in [i.code for i in result.issues]
+    result.plan.validate_schema()
+
+
+def test_a_ramp_that_never_leaves_zero_is_a_surface_switched_off():
+    """`peak or 1` read "no ramp" and "a peak of zero" as the same thing, and turned
+    a burner the input switches off into the largest fire in the file."""
+    result = fds.to_plan(
+        "&SURF ID='B' HRRPUA=100. RAMP_Q='r' /\n"
+        "&RAMP ID='r' T=0. F=0.0 /\n"
+        "&RAMP ID='r' T=10. F=0.0 /\n"
+        "&VENT XB=0,1,0,1,0.5,0.5, SURF_ID='B' /\n")
+    assert result.counts.get("burner", 0) == 0
+    assert "fds-surface-off" in [i.code for i in result.issues]
+
+
+# -- geometry that is not a ceiling ----------------------------------------
+
+def test_a_tiled_floor_is_all_floor_rather_than_one_tile_and_some_ceilings():
+    """A meshed model tiles its floor, one &OBST per mesh. Skipping only the lowest
+    left the rest to be converted as slabs at floor level -- ceilings with a
+    negative height, which no schema version accepts."""
+    result = fds.to_plan(
+        "&MESH IJK=40,40,30, XB=-1,5,-1,5,-1,3 /\n"
+        "&SURF ID='B' HRRPUA=100. /\n"
+        "&OBST ID='floor-a' XB=0,2,0,4,-0.1,0.0 /\n"
+        "&OBST ID='floor-b' XB=2,4,0,4,-0.1,0.0 /\n"
+        "&VENT XB=1,2,1,2,0.0,0.0, SURF_ID='B' /\n")
+    assert result.counts.get("ceiling", 0) == 0
+    result.plan.validate_schema()
+
+
+def test_a_slab_resting_on_the_floor_is_a_box_not_a_ceiling():
+    # A plinth's soffit height is zero, which is not a ceiling and not a valid one.
+    result = fds.to_plan(
+        "&SURF ID='B' HRRPUA=500. /\n"
+        "&OBST ID='floor' XB=-1,5,-1,5,-0.1,0.0 /\n"
+        "&OBST XB=0,0.2,0,0.2,0,0.1, SURF_ID6='I','I','I','I','I','B' /\n"
+        "&OBST ID='plinth' XB=1,3,1,3,0,0.15 /\n")
+    assert result.counts.get("ceiling", 0) == 0
+    assert one(result, "obstruction")["name"] == "plinth"
+    result.plan.validate_schema()
+
+
+# -- &MULT -----------------------------------------------------------------
+
+def test_a_mult_on_a_mesh_moves_the_domain_and_therefore_the_origin():
+    """With no burner the origin is the centre of the domain, so a MULT_ID this
+    reader ignored shifted every imported coordinate by a mesh width."""
+    result = fds.to_plan(
+        "&MULT ID='m' DX=10, I_UPPER=1 /\n"
+        "&MESH IJK=10,10,10, XB=0,10,0,4,0,3, MULT_ID='m' /\n"
+        "&DEVC ID='tc', QUANTITY='THERMOCOUPLE', XYZ=15,2,1 /\n")
+    assert result.origin_m[0] == pytest.approx(10.0)
+    assert one(result, "thermocouple")["transform"]["position_m"][0] == pytest.approx(5.0)
+
+
+def test_a_mult_skip_range_leaves_a_hole_rather_than_filling_it():
+    result = fds.to_plan(
+        "&MULT ID='row', DX=1.0, I_LOWER=0, I_UPPER=3, I_LOWER_SKIP=1, I_UPPER_SKIP=2 /\n"
+        "&OBST XB=0,0.2,0,0.2,0,1.0, MULT_ID='row', ID='post' /\n")
+    posts = [o for o in result.plan.data["objects"] if o["type"] == "obstruction"]
+    assert len(posts) == 2
+    xs = sorted(o["transform"]["position_m"][0] for o in posts)
+    assert xs[1] - xs[0] == pytest.approx(3.0)
+
+
+# -- malformed input, and the paste box ------------------------------------
+
+def test_a_truncated_xb_is_skipped_rather_than_raising():
+    """`&OBST XB=0,1,2 /` is a half-finished hand edit. Indexing six values before
+    checking there are six ended a whole import with an IndexError."""
+    result = fds.to_plan("&HEAD CHID='t' /\n&OBST XB=0,1,2 /\n&TAIL /\n")
+    assert result.counts == {}
+    assert fds.to_plan("&MESH XB=0,1,2 /\n&HEAD CHID='t' /\n") is not None
+
+
+@pytest.mark.parametrize("text", [
+    "&MESH IJK=10,10,10, XB=0,1,0,1,0,1 /",
+    "&INIT XB=0,1,0,1,0,1, TEMPERATURE=100. /",
+])
+def test_only_obst_and_vent_paste_as_geometry(text):
+    # Every one of these carries an XB, and none of them is a wall.
+    assert fds.obstruction_from_record(namelist.read_one(text)) is None
+
+
+def test_only_devc_pastes_as_an_instrument():
+    slice_file = namelist.read_one("&SLCF QUANTITY='TEMPERATURE', XYZ=1,1,1 /")
+    assert fds.device_from_record(slice_file) is None
+    device = namelist.read_one("&DEVC QUANTITY='TEMPERATURE', XYZ=1,1,1 /")
+    assert fds.device_from_record(device)["type"] == "thermocouple"
+
+
+# -- &CATF -----------------------------------------------------------------
+
+def _split_case(tmp_path):
+    root = tmp_path / "root.fds"
+    root.write_text(
+        "&HEAD CHID='root' /\n"
+        "&MESH IJK=10,10,10, XB=0,4,0,4,0,3 /\n"
+        "&CATF OTHER_FILES='child.fds' /\n"
+        "&TAIL /\n", encoding="utf-8")
+    (tmp_path / "child.fds").write_text(
+        "&SURF ID='B' HRRPUA=100. /\n"
+        "&VENT XB=1,2,1,2,0.5,0.5, SURF_ID='B' /\n", encoding="utf-8")
+    return root
+
+
+def test_a_catf_include_is_spliced_where_it_sits_not_after_tail(tmp_path):
+    """&CATF belongs in the body, before &TAIL -- that is where the official
+    validation cases put it -- and reading stops at &TAIL. A child appended after
+    the parent's last line is a child nobody reads."""
+    result = fds.load(str(_split_case(tmp_path)))
+    assert one(result, "burner")["fire"]["hrr_kw"] == pytest.approx(100.0)
+
+
+def test_converting_bare_text_says_its_includes_went_unread(tmp_path):
+    # The browser is handed one file's bytes and cannot go looking. Silence there
+    # would present a fraction of a model as a whole one.
+    text = _split_case(tmp_path).read_text(encoding="utf-8")
+    result = fds.to_plan(text, "root.fds")
+    assert "fds-catf-unresolved" in [i.code for i in result.issues]
+
+
+def test_an_unreadable_include_is_reported_rather_than_thrown(tmp_path):
+    (tmp_path / "sub").mkdir()
+    root = tmp_path / "root.fds"
+    root.write_text("&HEAD CHID='r' /\n&CATF OTHER_FILES='sub' /\n&TAIL /\n", encoding="utf-8")
+    result = fds.load(str(root))
+    assert "fds-catf-unreadable" in [i.code for i in result.issues]
+
+
+def test_a_file_included_twice_is_not_reported_as_including_itself(tmp_path):
+    (tmp_path / "common.fds").write_text("&SURF ID='C' /\n", encoding="utf-8")
+    (tmp_path / "a.fds").write_text("&CATF OTHER_FILES='common.fds' /\n", encoding="utf-8")
+    (tmp_path / "b.fds").write_text("&CATF OTHER_FILES='common.fds' /\n", encoding="utf-8")
+    root = tmp_path / "root.fds"
+    root.write_text("&HEAD CHID='r' /\n&CATF OTHER_FILES='a.fds','b.fds' /\n&TAIL /\n",
+                    encoding="utf-8")
+    codes = [i.code for i in fds.load(str(root)).issues]
+    assert "fds-catf-cycle" not in codes
+    assert "fds-catf-repeat" in codes
 
 
 def test_text_that_is_not_fds_input_is_refused():

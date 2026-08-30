@@ -47,7 +47,13 @@ checked against the fire it is pointed at rather than merely placed.
 **Import FDS…** builds a plan from a `.fds` input: walls, ceilings, boxes, the burner
 and its heat release, doorways from `&HOLE`, and the `&DEVC`s that correspond to
 instruments someone has to mount. It previews what it will make and what it will skip
-before anything is adopted.
+before anything is adopted, and it will not adopt a conversion the editor could not
+open again.
+
+A split input — geometry in one file, devices in another, pulled together by `&CATF`
+— imports whole: the desktop build reads the sibling files from the folder the input
+came from. A browser tab only has the one file it was handed, and says which files it
+could not read rather than presenting part of a model as all of it.
 
 ```bash
 python -c "from fireplan import Plan; Plan.from_fds('fixtures/fds/IR401_0.fds')"

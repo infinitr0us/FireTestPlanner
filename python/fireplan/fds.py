@@ -23,15 +23,19 @@ the plan. The same goes for a gauge's range, which FDS has no concept of: it is
 left null, and the gauge checks say so, rather than inventing 50 kW/m2.
 
 **Everything not imported is reported.** :class:`FdsImport` carries an issue list
-covering every record the mapping dropped and every judgement call it made -- which
-obstruction became a wall rather than a box, which heat-release surface was taken
-to be the burner. An import that quietly loses half a model is worse than one that
+covering the records the mapping dropped and the judgements it had to make: which
+heat-release surface was taken to be the burner, which `&HOLE` cut nothing, which
+`&DEVC` quantity has no counterpart. Per-object classification -- this box became a
+wall, that one a ceiling -- is reported as counts in the import preview rather than
+one issue per object, because a model with two hundred obstructions would bury
+everything else. An import that quietly loses half a model is worse than one that
 refuses, so this one neither loses nor refuses: it converts and then says what it
 did.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import os
 import re
@@ -102,6 +106,12 @@ FDS_COLORS = {
     "BEIGE": "#f5f5dc", "TAN": "#d2b48c", "NAVY": "#000080", "TEAL": "#008080",
     "OLIVE": "#808000", "MAROON": "#800000", "INVISIBLE": None,
 }
+
+#: The record groups a single pasted record can become. Both converters check the
+#: group before the fields: `&MESH`, `&INIT` and `&SLCF` all carry an `XB`, and
+#: `&SLCF` carries a `QUANTITY` and an `XYZ` as well.
+GEOMETRY_GROUPS = ("OBST", "VENT")
+DEVICE_GROUP = "DEVC"
 
 #: The six faces of an FDS box, in `SURF_ID6` order.
 FACES = ("-x", "+x", "-y", "+y", "-z", "+z")
@@ -189,6 +199,10 @@ class ImportOptions:
     geometry: bool = True
     #: Import `&DEVC` as instruments at all.
     devices: bool = True
+    #: Whether `&CATF` includes were already spliced into `text`. `load` resolves
+    #: them against the file's own folder and says so; a caller converting bare text
+    #: cannot, and gets told that its includes went unread.
+    includes_resolved: bool = False
     #: Timestamp for `meta.source.importedAt`. None means now. Set it to compare two
     #: imports of the same file byte for byte -- which is how the TypeScript and
     #: Python importers are held to the same output.
@@ -219,6 +233,19 @@ def _sorted_xb(xb: Sequence[float]) -> Xb:
     v = [float(x) for x in xb]
     return [min(v[0], v[1]), max(v[0], v[1]), min(v[2], v[3]), max(v[2], v[3]),
             min(v[4], v[5]), max(v[4], v[5])]
+
+
+def _xb_of(rec: Record) -> Optional[Xb]:
+    """This record's `XB`, sorted -- or None if it does not have six numbers.
+
+    The count is checked *before* anything indexes the list. `&OBST XB=0,1,2 /` is
+    a half-finished hand edit, and a whole import that stops with an IndexError
+    tells the reader nothing about which line to look at; skipping the record and
+    saying so is the behaviour the rest of this module promises, and the one the
+    TypeScript mirror already had.
+    """
+    raw = rec.numbers("XB")
+    return _sorted_xb(raw) if len(raw) == 6 else None
 
 
 def _color_of(rec: Record) -> Optional[str]:
@@ -262,33 +289,66 @@ class _Ids:
 
 # -- reading the file, including its includes -----------------------------
 
-def _read_source(path: str, seen: Optional[set] = None, depth: int = 0) -> Tuple[str, List[Issue]]:
-    """The file's text with any `&CATF` includes concatenated in place.
+#: How deep `&CATF` includes are followed before the reader gives up.
+CATF_MAX_DEPTH = 8
+
+
+def _read_source(path: str, seen: Optional[set] = None,
+                 stack: Optional[Tuple[str, ...]] = None,
+                 depth: int = 0) -> Tuple[str, List[Issue]]:
+    """The file's text with any `&CATF` includes spliced in **where they sit**.
 
     FDS's `&CATF` splices other files into the input, and split inputs are normal in
     anything bigger than a demonstration case -- a geometry file plus a devices file
     is the usual shape. Reading only the named file would import a model with no
     geometry and no obvious reason why.
+
+    The position matters as much as the content. `&CATF` belongs in the body of the
+    input, before `&TAIL` -- that is where the official validation cases put it --
+    and reading stops at `&TAIL`, so a child appended after the parent's last line
+    is a child nobody reads. Appending is the difference between importing a model
+    and importing its title.
     """
     seen = set() if seen is None else seen
-    issues: List[Issue] = []
+    stack = () if stack is None else stack
     real = os.path.abspath(path)
-    if real in seen:
+
+    if real in stack:
         return "", [Issue("warning", "fds-catf-cycle",
-                          "{} includes itself; the repeat was skipped".format(
-                              os.path.basename(path)))]
-    if depth > 8:
+                          "&CATF includes {} from inside itself; the repeat was skipped"
+                          .format(os.path.basename(path)))]
+    if real in seen:
+        # Not a cycle: two files including one common file, which FDS would splice
+        # twice. Once is enough here -- the second copy could only redefine what
+        # the first already said -- but it is not the file including itself, and
+        # saying so would send the reader looking for a loop that is not there.
+        return "", [Issue("info", "fds-catf-repeat",
+                          "{} is included more than once; it was read the first time"
+                          .format(os.path.basename(path)))]
+    if depth > CATF_MAX_DEPTH:
         return "", [Issue("warning", "fds-catf-deep",
-                          "&CATF nesting stopped at 8 levels deep")]
+                          "&CATF nesting stopped at {} levels deep".format(CATF_MAX_DEPTH))]
     seen.add(real)
 
-    with open(path, "r", encoding="utf-8", errors="replace") as fh:
-        text = fh.read()
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError as exc:
+        # A &CATF naming a directory, a file that vanished between the check and the
+        # open, or one the user cannot read. None of those is a reason to abandon a
+        # model whose other half is perfectly readable.
+        return "", [Issue("warning", "fds-catf-unreadable",
+                          "&CATF names {} but it could not be read ({}); anything it "
+                          "defined is missing from this plan"
+                          .format(os.path.basename(path), exc.strerror or exc))]
 
-    extra: List[str] = []
+    issues: List[Issue] = []
+    pieces: List[str] = []
+    pos = 0
     for rec in namelist.read(text):
         if rec.group != "CATF":
             continue
+        included: List[str] = []
         for other in rec.strings("OTHER_FILES"):
             if not other:
                 continue
@@ -299,11 +359,24 @@ def _read_source(path: str, seen: Optional[set] = None, depth: int = 0) -> Tuple
                                     "anything it defined is missing from this plan"
                                     .format(other)))
                 continue
-            child_text, child_issues = _read_source(child, seen, depth + 1)
-            extra.append(child_text)
+            child_text, child_issues = _read_source(child, seen, stack + (real,), depth + 1)
             issues.extend(child_issues)
+            if not child_text:
+                continue
+            if any(r.group == "TAIL" for r in namelist.read(child_text)):
+                issues.append(Issue(
+                    "warning", "fds-catf-tail",
+                    "the included file {} ends with &TAIL, which stops the reader "
+                    "there -- anything after the &CATF line in the parent is not in "
+                    "this plan".format(other)))
+            included.append(child_text)
+        if included:
+            pieces.append(text[pos:rec.end])
+            pieces.append("\n" + "\n".join(included) + "\n")
+            pos = rec.end
 
-    return "\n".join([text] + extra), issues
+    pieces.append(text[pos:])
+    return "".join(pieces), issues
 
 
 # -- the model, one step above raw records --------------------------------
@@ -321,6 +394,28 @@ class _Box:
 
 def _multipliers(records: List[Record]) -> Dict[str, Record]:
     return {r.string("ID"): r for r in records if r.group == "MULT" and r.string("ID")}
+
+
+def _skipped(mult: Record, axes: Sequence[Tuple[str, int]]) -> bool:
+    """Whether this replicate falls in the block `&MULT` was told to leave out.
+
+    `I_LOWER_SKIP`..`K_UPPER_SKIP` (and `N_LOWER_SKIP`/`N_UPPER_SKIP`) carve a hole
+    out of the array -- a courtyard in a block of flats, the gap a stair core
+    occupies. An expander that ignores them builds geometry the model does not have,
+    right where the model deliberately has none. An axis with no bounds stated
+    constrains nothing, and a `&MULT` with no skip fields at all skips nothing.
+    """
+    stated = False
+    for name, index in axes:
+        lo, hi = mult.number(name + "_LOWER_SKIP"), mult.number(name + "_UPPER_SKIP")
+        if lo is None and hi is None:
+            continue
+        stated = True
+        low = int(lo if lo is not None else hi)
+        high = int(hi if hi is not None else lo)
+        if not (min(low, high) <= index <= max(low, high)):
+            return False
+    return stated
 
 
 def _expand_mult(xb: Xb, mult: Optional[Record]) -> List[Xb]:
@@ -347,6 +442,8 @@ def _expand_mult(xb: Xb, mult: Optional[Record]) -> List[Xb]:
     if len(dxb) == 6 and (mult.has("N_LOWER") or mult.has("N_UPPER")):
         out = []
         for n in rng("N_LOWER", "N_UPPER"):
+            if _skipped(mult, [("N", n)]):
+                continue
             out.append([xb[k] + n * dxb[k] for k in range(6)])
         return out
 
@@ -357,19 +454,40 @@ def _expand_mult(xb: Xb, mult: Optional[Record]) -> List[Xb]:
     for i in rng("I_LOWER", "I_UPPER"):
         for j in rng("J_LOWER", "J_UPPER"):
             for k in rng("K_LOWER", "K_UPPER"):
+                if _skipped(mult, [("I", i), ("J", j), ("K", k)]):
+                    continue
                 sx, sy, sz = dx0 + i * dx, dy0 + j * dy, dz0 + k * dz
                 out.append([xb[0] + sx, xb[1] + sx, xb[2] + sy, xb[3] + sy,
                             xb[4] + sz, xb[5] + sz])
     return out
 
 
+def _mesh_boxes(records: List[Record], mults: Dict[str, Record]) -> List[Xb]:
+    """Every `&MESH` box, `&MULT` expanded.
+
+    The domain is what the origin falls back to when nothing in the file burns, so
+    a `MULT_ID` on a mesh that this reader ignored would shift every coordinate in
+    the plan by whatever the multiplied domain does not cover.
+    """
+    out: List[Xb] = []
+    for rec in records:
+        if rec.group != "MESH":
+            continue
+        xb = _xb_of(rec)
+        if xb is None:
+            continue
+        mult = mults.get(rec.string("MULT_ID") or "")
+        out.extend(_sorted_xb(copy) for copy in _expand_mult(xb, mult))
+    return out
+
+
 def _boxes(records: List[Record], group: str, mults: Dict[str, Record]) -> List[_Box]:
     out: List[_Box] = []
     for rec in records:
-        if rec.group != group or not rec.has("XB"):
+        if rec.group != group:
             continue
-        xb = _sorted_xb(rec.numbers("XB"))
-        if len(xb) != 6:
+        xb = _xb_of(rec)
+        if xb is None:
             continue
         mult = mults.get(rec.string("MULT_ID") or "")
         for copy in _expand_mult(xb, mult):
@@ -410,19 +528,40 @@ def _peak_ramp(records: List[Record]) -> Dict[str, float]:
     return peaks
 
 
+def _states_heat(rec: Optional[Record]) -> bool:
+    """Whether this `&SURF` names a heat release rate at all.
+
+    Deliberately blind to ramps: this answers "is this a fire surface", which is
+    what decides whether a vent is a boundary condition or a burner, not "how big
+    is the fire", which is :func:`_fire_faces`'s question.
+    """
+    return rec is not None and bool(rec.number("HRRPUA") or rec.number("MLRPUA"))
+
+
 def _fire_faces(boxes: List[_Box], vents: List[_Box], surfs: Dict[str, Record],
-                peaks: Dict[str, float], heat_of_combustion: Optional[float]) -> List[_FireFace]:
+                peaks: Dict[str, float], heat_of_combustion: Optional[float],
+                issues: List[Issue]) -> List[_FireFace]:
     """Every surface in the model that releases heat.
 
     A model can easily have several: the sample input has a 7500 kW/m2 ignition
     source *and* a 300 kW/m2 burning wall lining. Both are found; which one becomes
     the plan's burner is decided separately, and is overridable.
     """
+    off: List[str] = []
+
     def released(surf_id: Optional[str]) -> Optional[Tuple[float, str]]:
         rec = surfs.get(surf_id or "")
         if rec is None:
             return None
-        peak = peaks.get(rec.string("RAMP_Q") or "", 1.0) or 1.0
+        # `in`, not `or 1.0`: a ramp whose peak really is zero is a surface the
+        # input switches off, and reading that as "no ramp, so full power" turns a
+        # cold burner into the largest fire in the file.
+        ramp = rec.string("RAMP_Q") or ""
+        peak = peaks[ramp] if ramp in peaks else 1.0
+        if peak <= 0.0:
+            if surf_id and surf_id not in off:
+                off.append(str(surf_id))
+            return None
         hrrpua = rec.number("HRRPUA")
         if hrrpua:
             return hrrpua * peak, "HRRPUA"
@@ -460,25 +599,81 @@ def _fire_faces(boxes: List[_Box], vents: List[_Box], surfs: Dict[str, Record],
                 surf=str(surf_id), xb=box.xb, area_m2=area,
                 hrr_kw=rel[0] * area if area > 0 else None,
                 face=face, horizontal=face in ("-z", "+z"), from_vent=from_vent))
+    if off:
+        issues.append(Issue(
+            "warning", "fds-surface-off",
+            "{} release{} no heat in this input: the &RAMP on RAMP_Q never leaves "
+            "zero, so the surface is switched off. It was not imported as a fire."
+            .format(", ".join("'" + x + "'" for x in off), "s" if len(off) == 1 else "")))
     return out
+
+
+def _can_be_burner(face: _FireFace) -> bool:
+    """Whether this heat-release face can be *the* burner of a plan.
+
+    A burner here is a floor-standing source: a footprint in plan, a rim height
+    measured up from the floor, and a fuel surface on top. Three kinds of burning
+    face are not that, and each one produces nonsense if it is forced to be:
+
+    * **A vertical face** -- a wall lining -- has no plan footprint at all. Its
+      `size_m` comes out `[w, 0]`, which the editor's own load boundary rejects.
+    * **A downward-facing face** -- a ceiling soffit, which is where a lining fire
+      in a compartment test usually is -- has a footprint, and that is what makes it
+      dangerous: `rimHeight_m` becomes the height of the ceiling, so the burner is a
+      solid box the size of the room reaching from the floor to the soffit. It fills
+      the room, hides everything inside it, and z-fights with every wall it shares a
+      face with.
+    * **A degenerate horizontal face** has an area but no thickness in plan.
+
+    All three are reported as burning surfaces instead, which is what they are.
+    """
+    dx, dy, _ = _extent(face.xb)
+    return face.face == "+z" and dx > TOL_M and dy > TOL_M
 
 
 def _pick_burner(faces: List[_FireFace], wanted: Optional[str]) -> Optional[_FireFace]:
     """The heat-release face to treat as the plan's burner.
 
-    Horizontal first, then smallest: a burning wall lining is not a burner, and when
-    a model has both an ignition source and a spreading fire the ignition source is
-    the compact one. The caller can name a `SURF` instead, and the import preview
-    lists every candidate so the choice is visible rather than implicit.
+    Horizontal only, then smallest: a burning wall lining is not a burner -- and
+    cannot be one here, having no plan footprint (:func:`_can_be_burner`) -- and
+    when a model has both an ignition source and a spreading fire the ignition
+    source is the compact one. The caller can name a `SURF` instead, and the import
+    preview lists every candidate so the choice is visible rather than implicit.
     """
-    if not faces:
+    usable = [f for f in faces if _can_be_burner(f)]
+    if not usable:
         return None
     if wanted:
-        named = [f for f in faces if f.surf == wanted]
+        named = [f for f in usable if f.surf == wanted]
         if named:
             return min(named, key=lambda f: f.area_m2)
-    horizontal = [f for f in faces if f.horizontal]
-    return min(horizontal or faces, key=lambda f: f.area_m2)
+    return min(usable, key=lambda f: f.area_m2)
+
+
+def _burner_faces(faces: List[_FireFace], picked: Optional[_FireFace]) -> List[_FireFace]:
+    """Every face that becomes a burner object: the picked one, then its siblings.
+
+    One `&SURF` is routinely applied to several `&VENT`s -- two burners in a room,
+    a row of sand-box fires -- and taking only the first would drop a fire source
+    from the plan while reporting the conversion as complete. Format 1.2 holds
+    several burners and calls the one at the origin the primary (CONVENTIONS
+    section 1), which is exactly this: the picked face defines the frame, and its
+    siblings are objects standing where the file puts them.
+
+    Only the picked surface's own faces. A second heat-release *surface* is a
+    different judgement -- the sample input's burning wall lining is not a second
+    burner -- and that one stays a reported choice rather than a silent import.
+    """
+    if picked is None:
+        return []
+    out = [picked]
+    for face in faces:
+        if face.surf != picked.surf or not _can_be_burner(face):
+            continue
+        if any(face.xb == other.xb for other in out):
+            continue          # another face of a box already taken as a burner
+        out.append(face)
+    return out
 
 
 # -- geometry classification ----------------------------------------------
@@ -526,11 +721,15 @@ def obstruction_from_record(rec: Record, origin: Sequence[float] = (0.0, 0.0, 0.
     This is what the editor's "create from FDS text" box calls, so a pasted `&OBST`
     lands as the same wall the full importer would have produced -- one
     classification rule, not two that drift.
+
+    The group is checked, not just the fields. `&MESH`, `&INIT`, `&SLCF` and a
+    dozen others carry an `XB` too, and turning a computational mesh into a wall
+    because it has six numbers is a worse answer than refusing it.
     """
-    if not rec.has("XB"):
+    if rec.group not in GEOMETRY_GROUPS:
         return None
-    xb = _sorted_xb(rec.numbers("XB"))
-    if len(xb) != 6:
+    xb = _xb_of(rec)
+    if xb is None:
         return None
     return _geometry_object(xb, rec, origin, ids or _Ids(), surfs or {})
 
@@ -549,7 +748,11 @@ def _geometry_object(xb: Xb, rec: Record, origin: Sequence[float], ids: _Ids,
     display = {"color": color} if color else None
     name = rec.string("ID")
 
-    if _is_slab(xb) and dz > TOL_M:
+    # A slab is a ceiling only if it is above the floor. One resting on it -- a
+    # plinth, a hearth, a second floor tile beside the first -- has a soffit height
+    # of zero or less, which is not a ceiling in this format and not a valid object
+    # in any schema version. It falls through to the box it actually is.
+    if _is_slab(xb) and dz > TOL_M and xb[4] - oz > TOL_M:
         obj: Dict[str, Any] = {
             "id": ids.make("ceiling", name), "type": "ceiling", "name": name or "Ceiling",
             "transform": {"position_m": [0.0, 0.0, 0.0]},
@@ -621,7 +824,13 @@ def device_from_record(rec: Record, props: Optional[Dict[str, Record]] = None,
                        origin: Sequence[float] = (0.0, 0.0, 0.0),
                        aim_target: Optional[Sequence[float]] = None,
                        ids: Optional[_Ids] = None) -> Optional[Dict[str, Any]]:
-    """One `&DEVC` as a plan instrument, or None if its quantity is not one."""
+    """One `&DEVC` as a plan instrument, or None if its quantity is not one.
+
+    `&SLCF QUANTITY='TEMPERATURE', XYZ=...` has every field this reads and is a
+    slice file, not a thermocouple, so the group is checked first.
+    """
+    if rec.group != DEVICE_GROUP:
+        return None
     quantity, diameter = _device_quantity(rec, props or {})
     kind = default_device_map().get((quantity or "").upper())
     if kind is None or not rec.has("XYZ"):
@@ -757,8 +966,7 @@ def to_plan(text: str, filename: Optional[str] = None,
     mults = _multipliers(records)
 
     # -- domain ----------------------------------------------------------
-    meshes = [_sorted_xb(r.numbers("XB")) for r in by_group.get("MESH", []) if r.has("XB")]
-    meshes = [m for m in meshes if len(m) == 6]
+    meshes = _mesh_boxes(records, mults)
     domain: Optional[Xb] = None
     if meshes:
         domain = [min(m[0] for m in meshes), max(m[1] for m in meshes),
@@ -772,30 +980,73 @@ def to_plan(text: str, filename: Optional[str] = None,
     # would move every instrument in the plan.
     obst_boxes = _boxes(records, "OBST", mults)
     vent_boxes = [b for b in _boxes(records, "VENT", mults)
-                  if not _is_domain_vent(b, domain)]
+                  if not _is_domain_vent(b, domain, surfs)]
     heat_of_combustion = reac.number("HEAT_OF_COMBUSTION") if reac else None
-    faces = _fire_faces(obst_boxes, vent_boxes, surfs, peaks, heat_of_combustion)
+    faces = _fire_faces(obst_boxes, vent_boxes, surfs, peaks, heat_of_combustion, issues)
     burner = _pick_burner(faces, opts.burner_surf)
-    candidates = sorted({f.surf for f in faces})
+    burner_faces = _burner_faces(faces, burner)
+    candidates = sorted({f.surf for f in faces if _can_be_burner(f)})
+    # Heat-release surfaces no face of which could be a burner here: a lining on a
+    # wall vent, a plane fire with no plan area. They are still in the file and
+    # still change the fire, so they are named rather than passed over.
+    unusable = sorted({f.surf for f in faces} - set(candidates))
 
-    if burner is None:
+    if burner is None and not faces:
         issues.append(Issue(
             "warning", "fds-no-fire",
             "no surface in this input releases heat, so the plan has no burner and "
             "its origin is the centre of the mesh. Add a burner, then move the "
             "geometry onto it -- every standoff and flame-height figure is measured "
             "from the burner centre."))
-    elif len(candidates) > 1:
+    elif burner is None:
         issues.append(Issue(
-            "info", "fds-fire-choice",
-            "{} surfaces release heat ({}); '{}' was taken as the burner because it "
-            "is the most compact horizontal one. The rest are burning surfaces the "
-            "plan cannot represent."
-            .format(len(candidates), ", ".join(candidates), burner.surf)))
+            "warning", "fds-fire-not-a-burner",
+            "{} surface(s) release heat ({}) but none of them is an upward-facing "
+            "horizontal face -- a wall lining burns on a plane with no plan footprint, "
+            "and a ceiling soffit burns downwards. Neither is the floor-standing "
+            "source this format's burner describes, so the plan has no burner and its "
+            "origin is the centre of the mesh."
+            .format(len({f.surf for f in faces}),
+                    ", ".join(sorted({f.surf for f in faces})))))
+    else:
+        if opts.burner_surf and burner.surf != opts.burner_surf:
+            # The chooser falls back to the default pick rather than refusing, which
+            # is the useful behaviour -- but a caller who named a surface and got a
+            # different one has to be told, or the plan silently describes a fire
+            # somewhere else.
+            issues.append(Issue(
+                "warning", "fds-burner-unavailable",
+                "'{}' was asked for as the burner surface, but no face of it is one "
+                "this format can hold as a burner; '{}' was used instead."
+                .format(opts.burner_surf, burner.surf)))
+        if len(candidates) > 1:
+            issues.append(Issue(
+                "info", "fds-fire-choice",
+                "{} surfaces release heat ({}); '{}' was taken as the burner because it "
+                "is the most compact horizontal one. The rest are burning surfaces the "
+                "plan cannot represent."
+                .format(len(candidates), ", ".join(candidates), burner.surf)))
+        if unusable:
+            issues.append(Issue(
+                "info", "fds-fire-not-a-burner",
+                "{} release{} heat on faces this format cannot hold as a burner -- a "
+                "wall lining has no plan footprint and a ceiling soffit burns "
+                "downwards. {} in the plan as a burner; the notes on the geometry say "
+                "which surfaces burn."
+                .format(", ".join("'" + x + "'" for x in unusable),
+                        "s" if len(unusable) == 1 else "",
+                        "It is not" if len(unusable) == 1 else "They are not")))
+        if len(burner_faces) > 1:
+            issues.append(Issue(
+                "info", "fds-burner-instances",
+                "'{}' burns on {} separate faces; each became a burner, and the one "
+                "at the origin is the primary."
+                .format(burner.surf, len(burner_faces))))
 
     # -- origin and floor ------------------------------------------------
+    burner_xbs = [f.xb for f in burner_faces if not f.from_vent]
     slabs = [b for b in obst_boxes
-             if _is_slab(b.xb) and not (burner is not None and b.xb == burner.xb)]
+             if _is_slab(b.xb) and not any(b.xb == xb for xb in burner_xbs)]
     if opts.floor_z_m is not None:
         floor_z, floor_rule = float(opts.floor_z_m), "the level you gave"
     else:
@@ -835,13 +1086,15 @@ def to_plan(text: str, filename: Optional[str] = None,
     walls: List[Tuple[Dict[str, Any], Xb]] = []
 
     if opts.geometry:
-        floor_box = min(slabs, key=lambda s: s.xb[5]) if slabs else None
-        if floor_box is not None and floor_box.xb[5] > floor_z + TOL_M:
-            floor_box = None
+        # Every slab whose top is the floor, not merely the lowest one. A meshed
+        # model tiles its floor -- one &OBST per mesh is the usual shape -- and
+        # skipping a single instance leaves the rest to be converted as slabs
+        # sitting at floor level, which is not a ceiling and not an object anyone
+        # drew.
         for box in obst_boxes:
-            if burner is not None and box.xb == burner.xb and not burner.from_vent:
+            if any(box.xb == xb for xb in burner_xbs):
                 continue                      # becomes the burner, below
-            if box is floor_box:
+            if _is_slab(box.xb) and box.xb[5] <= floor_z + TOL_M:
                 continue                      # the floor is the z = 0 plane, not an object
             obj = _geometry_object(box.xb, box.rec, origin, ids, surfs)
             if obj["type"] == "wall":
@@ -850,8 +1103,8 @@ def to_plan(text: str, filename: Optional[str] = None,
 
         _apply_holes(_boxes(records, "HOLE", mults), walls, origin, issues)
 
-    if burner is not None:
-        objects.append(_burner_object(ids, burner, origin, floor_z, reac, surfs))
+    for face in burner_faces:
+        objects.append(_burner_object(ids, face, origin, floor_z, reac, surfs))
 
     device_groups: List[DeviceGroup] = []
     if opts.devices:
@@ -913,17 +1166,29 @@ def to_plan(text: str, filename: Optional[str] = None,
     plan.data["version"] = plan.effective_version
 
     _report_skipped(by_group, issues)
+    _report_unresolved_includes(by_group, opts, issues)
+    _report_invalid(plan, issues)
 
     return FdsImport(plan=plan, issues=issues, devices=device_groups, origin_m=origin,
                      burner_surf=burner.surf if burner else None,
                      burner_candidates=candidates, source_file=filename)
 
 
-def _is_domain_vent(box: _Box, domain: Optional[Xb]) -> bool:
+def _is_domain_vent(box: _Box, domain: Optional[Xb], surfs: Dict[str, Record]) -> bool:
     """A vent that is just a boundary condition on the edge of the mesh.
 
     `SURF_ID='OPEN'` and `MB='XMAX'` are how an FDS model says "the world continues
-    past here". They are not geometry and they are not instruments."""
+    past here". They are not geometry and they are not instruments.
+
+    A vent that releases heat is never one of those, wherever it sits. A floor fire
+    in a domain that starts at the floor is written `XB=...,z0,z0` with `z0` the
+    bottom of the mesh -- flush with a domain face, and the most ordinary way there
+    is to write a burner. Dropping it left the plan with no fire, an origin fallen
+    back to the mesh centre, and a warning telling the user their input has no heat
+    source.
+    """
+    if any(_states_heat(surfs.get(s or "")) for s in box.surfs):
+        return False
     if any(s == "OPEN" or s == "MIRROR" or s == "PERIODIC" for s in box.surfs):
         return True
     if domain is None:
@@ -1167,6 +1432,45 @@ def _report_skipped(by_group: Dict[str, List[Record]], issues: List[Issue]) -> N
             "Simulation-only records, left behind: " + ", ".join(parts) + "."))
 
 
+def _report_unresolved_includes(by_group: Dict[str, List[Record]], opts: ImportOptions,
+                                issues: List[Issue]) -> None:
+    """Say so when `&CATF` named files nobody read.
+
+    :func:`load` resolves includes because it has a path to resolve them against.
+    Converting text -- which is what the editor does, having been handed the bytes
+    of one file -- cannot, and a silent skip there is the worst kind: the plan looks
+    complete and holds a fraction of the model.
+    """
+    catf = by_group.get("CATF") or []
+    if catf and not opts.includes_resolved:
+        named = [x for rec in catf for x in rec.strings("OTHER_FILES") if x]
+        issues.append(Issue(
+            "warning", "fds-catf-unresolved",
+            "&CATF pulls {} into this input ({}), and only the file itself was read. "
+            "Everything those files define -- geometry, devices, surfaces -- is "
+            "missing from this plan. Open the input from a folder that holds them."
+            .format("{} other file(s)".format(len(named)) if named else "other files",
+                    ", ".join(named) if named else "unnamed")))
+
+
+def _report_invalid(plan: Plan, issues: List[Issue]) -> None:
+    """Check the plan the conversion just built, and report rather than raise.
+
+    Every other way a document reaches this format goes through a validation
+    boundary; an import that skipped it could hand back a plan that saves and then
+    cannot be opened again -- a failure that surfaces a long way from the import
+    that caused it. The findings are issues, not an exception, because the preview
+    is the right place to show them.
+    """
+    try:
+        plan.validate_schema()
+    except PlanError as exc:
+        issues.append(Issue(
+            "error", "fds-invalid",
+            "the conversion produced a plan this format does not accept, so it needs "
+            "fixing before it is used: {}".format(str(exc).replace("\n", " ").strip())))
+
+
 def _plan_span(objects: List[Dict[str, Any]]) -> Optional[List[float]]:
     """`[x0, x1, y0, y1]` covering every object's plan footprint, in plan coordinates."""
     xs: List[float] = []
@@ -1191,6 +1495,9 @@ def _plan_span(objects: List[Dict[str, Any]]) -> Optional[List[float]]:
 def load(path, options: Optional[ImportOptions] = None) -> FdsImport:
     """Read an FDS input file -- and anything it `&CATF`s in -- as a plan."""
     text, issues = _read_source(str(path))
-    result = to_plan(text, filename=os.path.basename(str(path)), options=options)
+    # The includes are resolved above, so the conversion should not warn that
+    # they were not.
+    opts = dataclasses.replace(options or ImportOptions(), includes_resolved=True)
+    result = to_plan(text, filename=os.path.basename(str(path)), options=opts)
     result.issues = issues + result.issues
     return result

@@ -3,12 +3,12 @@
  *
  * FDS input is a sequence of namelist records: `&GROUP key=value, ... /`. Anything
  * outside a record is a comment, which is how FDS files carry prose -- and it is
- * also how a line gets disabled, by deleting its leading `&`. That last point is not
- * a curiosity: the sample file in `fixtures/fds/` has a `REAC` line carrying
- * `RADIATIVE_FRACTION=0.29` that FDS never reads, and a reader that picks it up is
- * quietly wrong about the fire.
+ * also how a line gets disabled, either by deleting its leading `&` or by putting a
+ * `!` in front of it. Neither point is a curiosity: the sample file in
+ * `fixtures/fds/` has a `REAC` line carrying `RADIATIVE_FRACTION=0.29` that FDS
+ * never reads, and a reader that picks it up is quietly wrong about the fire.
  *
- * Three rules here are the ones a quick regex gets wrong, and all three are
+ * Five rules here are the ones a quick regex gets wrong, and the first three are
  * exercised by that same sample file:
  *
  * - **A record ends at the first `/` that is not inside a string.** The sample's
@@ -20,6 +20,17 @@
  * - **Subscripted assignments accumulate.** `MATL_ID(1,1)='X'` followed by
  *   `MATL_ID(2,1)='Y'` is two writes into one array, not two values of which the
  *   last wins.
+ * - **`!` starts a comment, outside a string, anywhere on a line.** That is the
+ *   Fortran namelist rule, and FDS reads these records with Fortran's own namelist
+ *   `READ`, so it inherits it. Real inputs are full of `! &OBST ...` lines the
+ *   author disabled; reading one back as live input puts geometry, devices or a
+ *   reaction into the model that the simulation never had.
+ * - **A record opens only where a line does.** FDS finds a record by scanning a
+ *   line for a leading `&` and giving up at the first character that is neither `&`
+ *   nor a space, so `&GROUP` mid-sentence is prose. Searching the whole text for
+ *   the next `&` instead does worse than read prose as input: `R&D` starts a `&D`
+ *   record whose body runs to the next `/`, swallowing the real record in between.
+ *   A comment can therefore delete an obstruction.
  *
  * This module is deliberately ignorant of what any of it means: it turns text into
  * records, and `fds.ts` decides what a record is for.
@@ -46,6 +57,13 @@ export class NamelistRecord {
     readonly group: string,
     readonly params: Map<string, NamelistValue[]>,
     readonly line: number,
+    /** Where the record sits in the text it was read from: `start` is its `&` and
+     *  `end` is just past its `/`. Python's mirror splices `&CATF` includes in at
+     *  exactly that point; nothing here needs it yet, but a reader comparing the
+     *  two files should not have to wonder why one of them knows and the other
+     *  does not. */
+    readonly start: number = 0,
+    readonly end: number = 0,
   ) {}
 
   has(key: string): boolean {
@@ -95,7 +113,65 @@ const GROUP_NAME = /^&([A-Za-z]\w*)/;
 interface Span {
   group: string;
   body: string;
+  /** Offset of the record's `&`. */
   offset: number;
+  /** Offset just past the record's terminating `/`. */
+  end: number;
+}
+
+/**
+ * `text` with every `!` comment blanked out, one character for one character.
+ *
+ * Blanking rather than deleting is what keeps this cheap: every offset in the
+ * result is the offset in the original, so record positions and line numbers are
+ * still the file's own and no second mapping has to be carried around.
+ *
+ * Quote state resets at each newline. A namelist string does not span input records
+ * in any FDS file, and bounding it that way means one unbalanced quote costs the
+ * line it is on rather than the rest of the file.
+ */
+export function stripComments(text: string): string {
+  // split('') rather than [...text]: this returns offsets the caller uses against
+  // the ORIGINAL string, so the copy has to keep its indexing, code units and all.
+  const out = text.split('');
+  let quote: string | null = null;
+  let commented = false;
+
+  for (let i = 0; i < out.length; i += 1) {
+    const ch = out[i];
+    if (ch === '\n') {
+      quote = null;
+      commented = false;
+    } else if (commented) {
+      out[i] = ' ';
+    } else if (quote !== null) {
+      if (ch === quote) {
+        // '' inside a single-quoted string is an escaped quote, not the end.
+        if (ch === "'" && out[i + 1] === "'") i += 1;
+        else quote = null;
+      }
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+    } else if (ch === '!') {
+      commented = true;
+      out[i] = ' ';
+    }
+  }
+  return out.join('');
+}
+
+/**
+ * Whether the `&` at `start` opens a record rather than sitting in prose.
+ *
+ * FDS's own reader walks a line from its first character and gives up at the first
+ * one that is neither `&` nor a space, so a record opens only where a line does.
+ * `resume` is where the previous record ended, which allows the one case a bare
+ * line test would refuse: a second record written after the first one's `/` on the
+ * same line.
+ */
+function opensARecord(scan: string, start: number, resume: number): boolean {
+  const lineStart = scan.lastIndexOf('\n', start - 1) + 1;
+  return scan.slice(Math.max(lineStart, resume), start).trim() === '';
 }
 
 /**
@@ -104,17 +180,21 @@ interface Span {
  * Character-by-character rather than a regex because the terminating `/` has to be
  * recognised outside strings only, and no regex can say that without modelling the
  * string grammar anyway.
+ *
+ * It runs over the comment-stripped text, so a `/` inside a `!` comment does not
+ * end a record and a commented-out record is not a record.
  */
 function recordSpans(text: string): Span[] {
   const out: Span[] = [];
-  const n = text.length;
+  const scan = stripComments(text);
+  const n = scan.length;
   let i = 0;
 
   while (i < n) {
-    const start = text.indexOf('&', i);
+    const start = scan.indexOf('&', i);
     if (start < 0) break;
-    const match = GROUP_NAME.exec(text.slice(start));
-    if (!match) {
+    const match = GROUP_NAME.exec(scan.slice(start));
+    if (!match || !opensARecord(scan, start, i)) {
       i = start + 1;
       continue;
     }
@@ -125,11 +205,13 @@ function recordSpans(text: string): Span[] {
     let quote: string | null = null;
 
     while (j < n) {
-      const ch = text[j];
-      if (quote !== null) {
+      const ch = scan[j];
+      if (ch === '\n') {
+        quote = null; // a string ends at its line, at the latest
+      } else if (quote !== null) {
         if (ch === quote) {
           // '' inside a single-quoted string is an escaped quote, not the end.
-          if (ch === "'" && text[j + 1] === "'") j += 1;
+          if (ch === "'" && scan[j + 1] === "'") j += 1;
           else quote = null;
         }
       } else if (ch === "'" || ch === '"') {
@@ -140,7 +222,7 @@ function recordSpans(text: string): Span[] {
       j += 1;
     }
 
-    out.push({ group, body: text.slice(bodyStart, j), offset: start });
+    out.push({ group, body: scan.slice(bodyStart, j), offset: start, end: Math.min(j + 1, n) });
     if (group === 'TAIL') break; // FDS stops reading here; so does this.
     i = j + 1;
   }
@@ -149,15 +231,32 @@ function recordSpans(text: string): Span[] {
 
 // -- 2. splitting a record body into parameters ---------------------------
 
-/** `body` with string *contents* replaced by X, so the assignment scan below cannot
- *  mistake an `=` inside a title for a parameter. */
+/**
+ * `body` with string *contents* replaced by X, so the assignment scan below cannot
+ * mistake an `=` inside a title for a parameter.
+ *
+ * Same two refinements as the record scan: a doubled quote inside a single-quoted
+ * string is an escaped quote rather than the end of one, and a string ends at its
+ * newline at the latest.
+ */
 function maskStrings(body: string): string {
+  const chars = body.split('');
   let out = '';
   let quote: string | null = null;
-  for (const ch of body) {
-    if (quote !== null) {
-      out += ch === quote ? ch : 'X';
-      if (ch === quote) quote = null;
+
+  for (let i = 0; i < chars.length; i += 1) {
+    const ch = chars[i];
+    if (ch === '\n') {
+      out += ch;
+      quote = null;
+    } else if (quote !== null) {
+      if (ch === quote && ch === "'" && chars[i + 1] === "'") {
+        out += 'XX';
+        i += 1;
+      } else {
+        out += ch === quote ? ch : 'X';
+        if (ch === quote) quote = null;
+      }
     } else {
       out += ch;
       if (ch === "'" || ch === '"') quote = ch;
@@ -266,11 +365,20 @@ function parseParams(body: string): Map<string, NamelistValue[]> {
 
 // -- 3. the public entry points -------------------------------------------
 
-/** Every namelist record in `text`, in file order. */
+/**
+ * Every namelist record in `text`, in file order.
+ *
+ * The line number is carried forward from the previous record rather than recounted
+ * from the start of the file: record offsets only ever increase, and a
+ * 20,000-record input is not the place to be quadratic.
+ */
 export function readNamelist(text: string): NamelistRecord[] {
-  return recordSpans(text).map(({ group, body, offset }) => {
-    const line = text.slice(0, offset).split('\n').length;
-    return new NamelistRecord(group, parseParams(body), line);
+  let line = 1;
+  let pos = 0;
+  return recordSpans(text).map(({ group, body, offset, end }) => {
+    for (let k = pos; k < offset; k += 1) if (text[k] === '\n') line += 1;
+    pos = offset;
+    return new NamelistRecord(group, parseParams(body), line, offset, end);
   });
 }
 

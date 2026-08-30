@@ -2,13 +2,13 @@
 
 FDS input is a sequence of namelist records: ``&GROUP key=value, ... /``. Anything
 outside a record is a comment, which is how FDS files carry prose -- and it is also
-how a line gets disabled, by deleting its leading ``&``. That last point is not a
-curiosity: the sample file in ``fixtures/fds/`` has a ``REAC`` line carrying
-``RADIATIVE_FRACTION=0.29`` that FDS never reads, and a reader that picks it up is
-quietly wrong about the fire.
+how a line gets disabled, either by deleting its leading ``&`` or by putting a ``!``
+in front of it. Neither point is a curiosity: the sample file in ``fixtures/fds/``
+has a ``REAC`` line carrying ``RADIATIVE_FRACTION=0.29`` that FDS never reads, and a
+reader that picks it up is quietly wrong about the fire.
 
-Three rules here are the ones a quick regex gets wrong, and all three are exercised
-by that same sample file:
+Five rules here are the ones a quick regex gets wrong, and the first three are
+exercised by that same sample file:
 
 * **A record ends at the first ``/`` that is not inside a string.** The sample's
   ``&HEAD`` title contains ``34.2x1000/300=114s``, so a reader that stops at the
@@ -19,6 +19,17 @@ by that same sample file:
 * **Subscripted assignments accumulate.** ``MATL_ID(1,1)='X'`` followed by
   ``MATL_ID(2,1)='Y'`` is two writes into one array, not two values of which the
   last wins.
+* **``!`` starts a comment, outside a string, anywhere on a line.** That is the
+  Fortran namelist rule, and FDS reads these records with Fortran's own namelist
+  ``READ``, so it inherits it. Real inputs are full of ``! &OBST ...`` lines the
+  author disabled; reading one back as live input puts geometry, devices or a
+  reaction into the model that the simulation never had.
+* **A record opens only where a line does.** FDS finds a record by scanning a line
+  for a leading ``&`` and giving up at the first character that is neither ``&``
+  nor a space, so ``&GROUP`` mid-sentence is prose. Searching the whole text for
+  the next ``&`` instead does worse than read prose as input: ``R&D`` starts a
+  ``&D`` record whose body runs to the next ``/``, swallowing the real record in
+  between. A comment can therefore delete an obstruction.
 
 This module is deliberately ignorant of what any of it means: it turns text into
 records, and :mod:`fireplan.fds` decides what a record is for.
@@ -30,7 +41,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Sequence
 
-__all__ = ["Record", "read", "read_one", "NamelistError"]
+__all__ = ["Record", "read", "read_one", "strip_comments", "NamelistError"]
 
 
 class NamelistError(ValueError):
@@ -49,6 +60,11 @@ class Record:
     group: str
     params: Dict[str, List[Any]] = field(default_factory=dict)
     line: int = 0
+    #: Where the record sits in the text it was read from: `start` is its ``&`` and
+    #: `end` is just past its ``/``. `&CATF` splicing needs to put a whole file in
+    #: at exactly that point, and nothing else can tell it where the point is.
+    start: int = 0
+    end: int = 0
 
     # -- typed accessors, all tolerant of a missing key ------------------
 
@@ -95,21 +111,75 @@ class Record:
 _GROUP_NAME = re.compile(r"&([A-Za-z]\w*)")
 
 
+def strip_comments(text: str) -> str:
+    """`text` with every ``!`` comment blanked out, one character for one character.
+
+    Blanking rather than deleting is what keeps this cheap: every offset in the
+    result is the offset in the original, so record positions and line numbers are
+    still the file's own and no second mapping has to be carried around.
+
+    Quote state resets at each newline. A namelist string does not span input
+    records in any FDS file, and bounding it that way means one unbalanced quote
+    costs the line it is on rather than the rest of the file.
+    """
+    out = list(text)
+    quote: Optional[str] = None
+    commented = False
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\n":
+            quote, commented = None, False
+        elif commented:
+            out[i] = " "
+        elif quote is not None:
+            if ch == quote:
+                # '' inside a single-quoted string is an escaped quote, not the end.
+                if ch == "'" and text[i + 1:i + 2] == "'":
+                    i += 1
+                else:
+                    quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "!":
+            commented = True
+            out[i] = " "
+        i += 1
+    return "".join(out)
+
+
+def _opens_a_record(scan: str, start: int, resume: int) -> bool:
+    """Whether the ``&`` at `start` opens a record rather than sitting in prose.
+
+    FDS's own reader walks a line from its first character and gives up at the
+    first one that is neither ``&`` nor a space, so a record opens only where a
+    line does. `resume` is where the previous record ended, which allows the one
+    case a bare line test would refuse: a second record written after the first
+    one's ``/`` on the same line.
+    """
+    line_start = scan.rfind("\n", 0, start) + 1
+    return not scan[max(line_start, resume):start].strip()
+
+
 def _record_spans(text: str) -> Iterator[tuple]:
-    """Yield ``(group, body, offset)`` for every record, in file order.
+    """Yield ``(group, body, start, end)`` for every record, in file order.
 
     The scan is character-by-character rather than a regex because the terminating
     ``/`` has to be recognised outside strings only, and Python's regex engine has
     no way to say that without either a lookbehind that cannot span a string or a
     pattern that has to model the string grammar anyway.
+
+    It runs over the comment-stripped text, so a ``/`` inside a ``!`` comment does
+    not end a record and a commented-out record is not a record.
     """
-    i, n = 0, len(text)
+    scan = strip_comments(text)
+    i, n = 0, len(scan)
     while i < n:
-        start = text.find("&", i)
+        start = scan.find("&", i)
         if start < 0:
             return
-        match = _GROUP_NAME.match(text, start)
-        if match is None:
+        match = _GROUP_NAME.match(scan, start)
+        if match is None or not _opens_a_record(scan, start, i):
             i = start + 1
             continue
 
@@ -117,11 +187,13 @@ def _record_spans(text: str) -> Iterator[tuple]:
         j = match.end()
         quote: Optional[str] = None
         while j < n:
-            ch = text[j]
-            if quote is not None:
+            ch = scan[j]
+            if ch == "\n":
+                quote = None       # a string ends at its line, at the latest
+            elif quote is not None:
                 if ch == quote:
                     # '' inside a single-quoted string is an escaped quote, not the end.
-                    if ch == "'" and text[j + 1:j + 2] == "'":
+                    if ch == "'" and scan[j + 1:j + 2] == "'":
                         j += 1
                     else:
                         quote = None
@@ -131,7 +203,7 @@ def _record_spans(text: str) -> Iterator[tuple]:
                 break
             j += 1
 
-        yield group, text[match.end():j], start
+        yield group, scan[match.end():j], start, min(j + 1, n)
         if group == "TAIL":
             return  # FDS stops reading here; so does this.
         i = j + 1
@@ -141,18 +213,33 @@ def _record_spans(text: str) -> Iterator[tuple]:
 
 def _mask_strings(body: str) -> str:
     """`body` with string *contents* replaced by X, so the assignment scan below
-    cannot mistake an `=` inside a title for a parameter."""
+    cannot mistake an `=` inside a title for a parameter.
+
+    Same two refinements as the record scan: a doubled quote inside a
+    single-quoted string is an escaped quote rather than the end of one, and a
+    string ends at its newline at the latest.
+    """
     out: List[str] = []
     quote: Optional[str] = None
-    for ch in body:
-        if quote is not None:
-            out.append("X" if ch != quote else ch)
-            if ch == quote:
-                quote = None
+    i, n = 0, len(body)
+    while i < n:
+        ch = body[i]
+        if ch == "\n":
+            out.append(ch)
+            quote = None
+        elif quote is not None:
+            if ch == quote and ch == "'" and body[i + 1:i + 2] == "'":
+                out.append("XX")
+                i += 1
+            else:
+                out.append("X" if ch != quote else ch)
+                if ch == quote:
+                    quote = None
         else:
             out.append(ch)
             if ch in "'\"":
                 quote = ch
+        i += 1
     return "".join(out)
 
 
@@ -249,11 +336,19 @@ def _parse_params(body: str) -> Dict[str, List[Any]]:
 # -- 3. the public entry points -------------------------------------------
 
 def read(text: str) -> List[Record]:
-    """Every namelist record in `text`, in file order."""
+    """Every namelist record in `text`, in file order.
+
+    The line number is carried forward from the previous record rather than
+    recounted from the start of the file: record offsets only ever increase, and a
+    20,000-record input is not the place to be quadratic.
+    """
     out: List[Record] = []
-    for group, body, offset in _record_spans(text):
-        out.append(Record(group=group, params=_parse_params(body),
-                          line=text.count("\n", 0, offset) + 1))
+    line, pos = 1, 0
+    for group, body, start, end in _record_spans(text):
+        line += text.count("\n", pos, start)
+        pos = start
+        out.append(Record(group=group, params=_parse_params(body), line=line,
+                          start=start, end=end))
     return out
 
 

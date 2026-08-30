@@ -381,6 +381,28 @@ def test_schema_rejects_a_circle_without_a_diameter():
         plan.validate_schema()
 
 
+@pytest.mark.parametrize("size", [[1.0, 0.0, 2.0], [1.0, 2.0, -2.0]])
+def test_schema_rejects_a_degenerate_obstruction(size):
+    """The browser rejects each component <= 0 (`bad-size` in web/src/core/validate.ts).
+    A schema that accepted them made the two engines disagree about the same file,
+    and let a zero-volume box reach every area and volume computed from it."""
+    plan = Plan.new("bad")
+    plan.add({"id": "o", "type": "obstruction",
+              "transform": {"position_m": [0.0, 0.0, 0.0]}, "size_m": size})
+    with pytest.raises(PlanError, match="schema validation"):
+        plan.validate_schema()
+
+
+def test_schema_rejects_a_zero_area_burner_footprint():
+    # The same divergence one field over: this is what let an FDS wall fire convert
+    # into a burner the editor would then refuse to open.
+    plan = Plan.new("bad")
+    plan.add({"id": "b", "type": "burner",
+              "footprint": {"shape": "rectangle", "size_m": [1.0, 0.0]}})
+    with pytest.raises(PlanError, match="schema validation"):
+        plan.validate_schema()
+
+
 # -- format version ------------------------------------------------------
 #
 # The declared version is DERIVED, not authored: a writer emits the lowest version
