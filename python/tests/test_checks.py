@@ -114,6 +114,38 @@ def test_hood_checks_stay_silent_with_no_hood():
     assert plan.hood_checks() == []
 
 
+def test_a_hood_moved_down_in_z_is_judged_where_it_is_drawn():
+    """The 3D view applies the transform and then the local opening height, so a
+    hood with height_m 4 at z = -3 has its intake at 1 m. The check read height_m
+    alone and cleared a 1.44 m flame that was visibly inside the canopy."""
+    plan = _plan_with_hood(hood_height_m=4.0, opening_m=[4.0, 4.0],
+                           hood_position=(0.0, 0.0, -3.0))
+    hood = plan.hoods[0]
+    assert hood.opening_z_m == pytest.approx(1.0)
+    assert hood.intake_height_m == pytest.approx(1.0)
+    assert "flame-impingement" in codes(plan.hood_checks())
+    # And the equipment table prints the same plane.
+    row = next(r for r in plan.equipment_table() if r["category"] == "hood")
+    assert row["height_m"] == pytest.approx(1.0)
+
+
+def test_hood_checks_take_every_fire_into_account():
+    """A second burner beside the hood is a plume it does not capture -- a fire the
+    HRR measurement will miss -- and used to go unmentioned."""
+    plan = _plan_with_hood(hood_height_m=3.0, opening_m=[2.0, 2.0])
+    plan.add({
+        "id": "burner-2", "type": "burner", "name": "Second pan",
+        "transform": {"position_m": [5.0, 0.0, 0.0]},
+        "footprint": {"shape": "square", "size_m": [0.3, 0.3]},
+        "rimHeight_m": 0.1,
+        "fire": {"hrr_kw": 100.0, "hrrCurve": None},
+    })
+    found = plan.hood_checks()
+    offset = [i for i in found if i.code == "hood-offset"]
+    assert len(offset) == 1
+    assert "Second pan" in offset[0].message
+
+
 # -- hood placement ------------------------------------------------------
 #
 # A hood only captures the plume it is actually over. Judging capture from the
@@ -202,6 +234,30 @@ def test_marginal_ceiling_clearance_is_a_warning():
     found = codes(plan.ceiling_checks())
     assert "ceiling-clearance" in found
     assert "ceiling-impingement" not in found
+
+
+def test_a_ceiling_moved_down_in_z_is_judged_where_it_is_drawn():
+    """Same as the hood: a slab with height_m 4 at z = -3 has its soffit at 1 m."""
+    plan = _plan_with_ceiling(height_m=4.0)
+    plan.ceilings[0].raw["transform"]["position_m"] = [0.0, 0.0, -3.0]
+    assert plan.ceilings[0].soffit_z_m == pytest.approx(1.0)
+    assert "ceiling-impingement" in codes(plan.ceiling_checks())
+    row = next(r for r in plan.equipment_table() if r["category"] == "ceiling")
+    assert row["height_m"] == pytest.approx(1.0)
+
+
+def test_ceiling_checks_take_every_fire_into_account():
+    plan = _plan_with_ceiling(height_m=6.0, half_extent_m=10.0)
+    plan.add({
+        "id": "burner-2", "type": "burner", "name": "Big pan",
+        "transform": {"position_m": [5.0, 0.0, 0.0]},
+        "footprint": {"shape": "square", "size_m": [0.3, 0.3]},
+        "rimHeight_m": 0.1,
+        "fire": {"hrr_kw": 5000.0, "hrrCurve": None},   # a 5 MW fire reaches 6 m
+    })
+    found = plan.ceiling_checks()
+    assert "ceiling-impingement" in codes(found)
+    assert "Big pan" in next(i.message for i in found if i.code == "ceiling-impingement")
 
 
 def test_a_high_ceiling_is_silent():

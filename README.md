@@ -133,6 +133,10 @@ why it is HTTP rather than pywebview's `js_api`.
 pip install -e python/      # or just run pytest from the repo root
 ```
 
+The wheel carries its own copy of the schemas (`fireplan/schemas/`, a byte-identical
+mirror of `schema/` that a test holds it to), so `validate_schema()` and FDS
+conversion work from an installed package with no repository checkout beside it.
+
 ```python
 from fireplan import Plan
 
@@ -171,8 +175,8 @@ definitions in [CONVENTIONS.md](CONVENTIONS.md) section 3.
 ## Tests
 
 ```bash
-python -m pytest python/tests -q     # 288 tests, no GUI needed
-cd web && npm test                   # 211 tests
+python -m pytest python/tests -q     # 338 tests, no GUI needed
+cd web && npm test                   # 271 tests
 ```
 
 The web suite asserts that the TypeScript writer reproduces the Python-written

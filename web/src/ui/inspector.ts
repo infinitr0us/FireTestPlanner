@@ -12,6 +12,7 @@ import { defaultAimTarget } from '../core/factory';
 import {
   applyXbToObject,
   fdsFrame,
+  xbProblem,
   hasXbView,
   hasXyzView,
   iorLabel,
@@ -27,6 +28,7 @@ import {
   burnerFlameHeightM,
   ceilingAreaM2,
   ceilingCoversXY,
+  ceilingSoffitZM,
   effectiveFocalLengthMm,
   flameTipZM,
   framingOf,
@@ -149,6 +151,10 @@ export class Inspector {
    * rather than silently re-pointing it at another camera's optics.
    */
   private pendingPreset: { cameraId: string; name: string } | null = null;
+
+  /** Why the last XB typed for an object was refused, shown under its XB fields
+   *  until the next edit of that object goes through. */
+  private xbProblem: { id: string; message: string } | null = null;
 
   /** Fields, or the FDS spelling of the same geometry. See `core/fdsview.ts`. */
   private coordMode: CoordMode = 'fields';
@@ -342,15 +348,27 @@ export class Inspector {
         view.editable
           ? vecField(
             [view.xb[lo], view.xb[lo + 1]], unit, [labels[lo], labels[lo + 1]],
-            (index, metres) => this.patch(obj.id, 'Set XB', (o) => {
+            (index, metres) => {
               // Re-read rather than closing over the rendered box: two edits in a
-              // row would otherwise write the second onto a stale first.
-              const current = xbOfObject(o, offset);
+              // row would otherwise write the second onto a stale first. `obj` is
+              // the live document object, so this reads its current state.
+              const current = xbOfObject(obj, offset);
               if (!current) return;
               const next = [...current.xb] as typeof current.xb;
               next[lo + index] = metres;
-              applyXbToObject(o, next, offset);
-            }),
+              // Refused BEFORE it becomes an edit: an XB that would make the object
+              // one the load boundary rejects must not enter the document, or it
+              // saves and the plan then refuses to reopen. Nothing goes onto the
+              // undo stack for a value that was never applied.
+              const problem = xbProblem(obj, next, offset);
+              if (problem !== null) {
+                this.xbProblem = { id: obj.id, message: problem };
+                this.render();
+                return;
+              }
+              this.xbProblem = null;
+              this.patch(obj.id, 'Set XB', (o) => { applyXbToObject(o, next, offset); });
+            },
           )
           : h('span', { class: 'field__static' }, [
             `${formatLength(view.xb[lo], unit)}, ${formatLength(view.xb[lo + 1], unit)}`,
@@ -358,6 +376,12 @@ export class Inspector {
       ));
     }
     this.root.append(...rows);
+
+    if (this.xbProblem?.id === obj.id) {
+      this.root.append(h('p', { class: 'panel__error' }, [
+        `Not applied: ${this.xbProblem.message}.`,
+      ]));
+    }
 
     if (!view.editable) {
       this.root.append(h('p', { class: 'panel__hint' }, [
@@ -690,6 +714,10 @@ export class Inspector {
       h('p', { class: 'panel__hint' }, [
         'Captures the optics above — resolution, sensor, focal length, band and frame '
         + 'rate — but not the zoom, which belongs to the shot rather than to the camera.',
+        cam.camera.intrinsicsSource === 'calibrated'
+          ? ' Nor the calibration: a principal point and distortion belong to this one '
+            + 'physical unit, so the preset is saved as datasheet-grade.'
+          : '',
         presetsArePersistent()
           ? ''
           : ' The library has nowhere to be stored that outlives this session, so the preset '
@@ -894,7 +922,8 @@ export class Inspector {
           this.patch(hood.id, 'Set hood height', (o) => {
             (o as HoodObject).height_m = Math.max(0.1, m);
           })),
-        'Height of the opening plane above the floor'),
+        'Height of the opening plane above the hood\'s origin — the floor, unless the '
+        + 'hood has been moved in Z. The readouts below are above the floor'),
       row(`Skirt depth (${unit})`,
         lengthField(hood.skirtDepth_m ?? 0, unit, (m) =>
           this.patch(hood.id, 'Set skirt', (o) => {
@@ -910,8 +939,10 @@ export class Inspector {
     );
 
     const burner = primaryBurner(this.store.document);
+    // World space: the hood's own height plus wherever its transform puts it, which
+    // is the plane the 3D view draws and the checks judge.
     const intake = hoodIntakeHeightM(hood);
-    const items: HTMLElement[] = [readout('Intake plane', formatLengthWithUnit(intake, unit))];
+    const items: HTMLElement[] = [readout('Intake plane above floor', formatLengthWithUnit(intake, unit))];
 
     if (burner) {
       const bp = positionOf(burner);
@@ -1048,7 +1079,8 @@ export class Inspector {
           this.patch(slab.id, 'Set ceiling height', (o) => {
             (o as CeilingObject).height_m = Math.max(0.1, m);
           })),
-        'Underside above the floor — the surface a flame impinges on'),
+        'Underside above the slab\'s origin — the floor, unless the slab has been moved '
+        + 'in Z. This is the surface a flame impinges on'),
       row(`Thickness (${unit})`,
         lengthField(slab.thickness_m ?? 0.1, unit, (m) =>
           this.patch(slab.id, 'Set ceiling thickness', (o) => {
@@ -1083,8 +1115,11 @@ export class Inspector {
     this.root.append(h('div', { class: 'panel__actions' }, actions));
 
     const burner = primaryBurner(this.store.document);
+    // World space, as the checks and the drawing judge it.
+    const soffit = ceilingSoffitZM(slab);
     const items: HTMLElement[] = [
       readout('Slab area', `${ceilingAreaM2(slab).toFixed(2)} m²`),
+      readout('Soffit above floor', formatLengthWithUnit(soffit, unit)),
       readout('Covers the fire',
         burner && ceilingCoversXY(slab, positionOf(burner)[0], positionOf(burner)[1]) ? 'yes' : 'no',
         'muted'),
@@ -1092,9 +1127,9 @@ export class Inspector {
     if (burner) {
       const tip = flameTipZM(burner);
       if (tip !== null) {
-        const clearance = slab.height_m - tip;
+        const clearance = soffit - tip;
         items.push(readout('Flame tip clearance', formatLengthWithUnit(clearance, unit),
-          clearance > 0.2 * slab.height_m ? 'good' : 'bad'));
+          clearance > 0.2 * soffit ? 'good' : 'bad'));
         items.push(h('p', { class: 'readout__note' }, [
           'Flame on a ceiling spreads as a ceiling jet, and the free-plume correlations ' +
           'used elsewhere here stop applying.',

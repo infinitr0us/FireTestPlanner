@@ -50,22 +50,31 @@ and drive the user's file dialogs.
 | Route | Method | Purpose |
 |---|---|---|
 | `/api/ready` | POST | The app reports it has booted; returns any plan named on the command line |
-| `/api/open` | POST | Native open dialog; returns `{path, text}` |
-| `/api/open-recent` | POST | Read a known path |
-| `/api/save` | POST | Writes the plan; asks for a destination unless it can write back |
+| `/api/open` | POST | Native open dialog; returns `{path, text, token}` |
+| `/api/open-recent` | POST | Read a known path; same answer |
+| `/api/save` | POST | Writes the plan to the file `token` names; asks for a destination otherwise |
 | `/api/save-html` | POST | Native save dialog, writes an exported page |
 | `/api/recent` | GET | Recent paths that still exist |
 
 Everything else is served as static files from the bundle directory.
 
-Both save routes answer `{"path": ...}`, `{"error": ...}` or `null`. The three are
-distinct on purpose: `null` is a cancelled dialog, which needs no comment, while an
-`error` is the user's work not reaching the disk and has to be shown to them.
+Both save routes answer `{"path": ...}`, `{"error": ...}` or `null` — `/api/save`
+adds a `token` to the success answer. The three are distinct on purpose: `null` is a
+cancelled dialog, which needs no comment, while an `error` is the user's work not
+reaching the disk and has to be shown to them.
 
-`/api/save` writes straight back to the open file only when the page's suggested
-filename still matches it. The page can swap its document without telling the shell —
-the Example button does — and the file that was opened must not be overwritten with
-whatever is on screen now.
+**Document identity is a token, not a filename.** Every plan the shell reads or
+writes comes with an opaque token naming that file. The page keeps the token only
+while the document it arrived with is the one on screen — `replaceDocument` drops it
+unless a new one is supplied — and sends it back on a plain Save. The shell writes to
+the file the token names and to nothing else; no token, or one it never issued, means
+a Save As dialog. This is what stops three ways of losing a file that a basename
+match allowed: opening a plan the page then rejects (its name matched the plan that
+stayed on screen), loading the bundled Example over an open copy of the reference
+fixture (same name, different plan), and importing `case.fds` over an open
+`case.ftp.json`. The page also records which document and revision a save was taken
+from, so a save that lands after further typing leaves the dirty marker up, and one
+that lands after the document was replaced is ignored.
 
 ## Packaging
 

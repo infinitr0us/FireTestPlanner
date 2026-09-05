@@ -529,9 +529,26 @@ class Hood(PlanObject):
         return float(self.raw.get("skirtDepth_m") or 0.0)
 
     @property
+    def opening_z_m(self) -> float:
+        """Height of the opening plane above the floor, in world space.
+
+        `height_m` is measured from the hood's own origin, and the origin can move:
+        the editor's gizmo translates a hood in Z like any other object, and the 3D
+        view draws the canopy where the transform puts it. Every check and table
+        goes through here rather than reading `height_m` directly, so a hood moved
+        three metres down is judged where it is drawn -- a check that read
+        `height_m` alone cleared a flame that was visibly inside the canopy. Mirror
+        of `hoodOpeningZM` in web/src/core/plan.ts.
+        """
+        return float(self.position[2]) + self.height_m
+
+    @property
     def intake_height_m(self) -> float:
-        """Lowest plane that must capture the plume: opening, less any skirt."""
-        return self.height_m - self.skirt_depth_m
+        """Lowest plane that must capture the plume: opening, less any skirt.
+
+        World space -- above the floor, wherever the hood's transform puts it.
+        """
+        return self.opening_z_m - self.skirt_depth_m
 
     @property
     def duct(self) -> Optional[Dict[str, Any]]:
@@ -592,8 +609,16 @@ class Ceiling(PlanObject):
 
     @property
     def height_m(self) -> float:
-        """Underside above the floor -- the surface a flame impinges on."""
+        """Underside above the slab's own origin -- the floor, unless the slab has
+        been moved in Z. `soffit_z_m` is the same plane above the floor."""
         return float(self.raw["height_m"])
+
+    @property
+    def soffit_z_m(self) -> float:
+        """The surface a flame impinges on, in world space: the slab's own height
+        plus wherever its transform puts it. Same reasoning as `Hood.opening_z_m`.
+        Mirror of `ceilingSoffitZM` in web/src/core/plan.ts."""
+        return float(self.position[2]) + self.height_m
 
     @property
     def thickness_m(self) -> float:

@@ -18,11 +18,13 @@ import {
 } from './correlations';
 import { angleBetweenDeg, columnsToQuat, forwardOf, lookAtQuat, quatToColumns, sub } from './math';
 import {
+  boundsPoints,
   burnerDiameterM,
   cameraColor,
   ceilingAreaM2,
   ceilingChecks,
   ceilingCoversXY,
+  ceilingSoffitZM,
   ceilings,
   checkPlan,
   flameTipZM,
@@ -30,7 +32,10 @@ import {
   fxOf,
   hfovDegOf,
   hoodChecks,
+  hoodIntakeHeightM,
+  hoodOpeningZM,
   newPlan,
+  objectColor,
   parsePlan,
   primaryBurner,
   principalPointOf,
@@ -44,7 +49,7 @@ import { serializePlan } from './serialize';
 import { setPosition, setRotation } from './transform';
 import type { CameraObject, CeilingObject, PlanDocument, Quat, Vec3 } from './types';
 import { formatLength, parseLength } from './units';
-import { describeErrors, validateStructure } from './validate';
+import { describeErrors, parseAndValidatePlan, validateStructure } from './validate';
 
 const FIXTURE_PATH = fileURLToPath(new URL('../../../fixtures/pool-fire-camera-row.ftp.json', import.meta.url));
 const FIXTURE_TEXT = readFileSync(FIXTURE_PATH, 'utf8');
@@ -174,6 +179,25 @@ describe('canonical serialisation', () => {
   it('rejects a file that is not a fire test plan', () => {
     expect(() => parsePlan('{"format":"something-else"}')).toThrow(/Not a fire test plan/);
     expect(() => parsePlan('{not json')).toThrow(/Invalid JSON/);
+  });
+
+  it('keeps data whose keys happen to be prototype names', () => {
+    // `'constructor' in {}` is true, so a `meta.constructor` key read as already
+    // emitted and vanished, and an unknown object typed `constructor` was routed
+    // to the known-type path and handed Object.prototype.constructor as its key
+    // order -- which threw out of the save.
+    const doc = newPlan('prototype names');
+    doc.meta = { ...doc.meta, constructor: 'keep this', toString: 'and this' } as never;
+    doc.objects.push({ id: 'odd', type: 'constructor', hasOwnProperty: 1 } as never);
+    doc.objects.push({ id: 'odd2', type: 'toString' } as never);
+
+    const back = parsePlan(serializePlan(doc));
+    expect((back.meta as Record<string, unknown>).constructor).toBe('keep this');
+    expect((back.meta as Record<string, unknown>).toString).toBe('and this');
+    expect(back.objects.map((o) => o.type)).toEqual(['constructor', 'toString']);
+    expect((back.objects[0] as Record<string, unknown>).hasOwnProperty).toBe(1);
+    // Nor does a prototype name masquerade as a colour.
+    expect(objectColor(back.objects[0])).toMatch(/^#[0-9a-f]{6}$/i);
   });
 });
 
@@ -387,6 +411,124 @@ describe('plan checks', () => {
 
   it('flags a plan with no burner', () => {
     expect(codes(newPlan('empty'))).toContain('no-burner');
+  });
+
+  // -- vertical translation --------------------------------------------
+  //
+  // The renderer applies the object transform and then the local opening or soffit
+  // height, so a hood or a ceiling moved in Z is drawn where the transform puts it.
+  // The checks read `height_m` alone and cleared a flame that was visibly inside
+  // the canopy.
+
+  const translated = (): PlanDocument => {
+    const doc = newPlan('translated');
+    doc.objects.push({
+      id: 'burner-1', type: 'burner', transform: { position_m: [0, 0, 0] },
+      footprint: { shape: 'circle', diameter_m: 0.3 }, rimHeight_m: 0.1,
+      fire: { fuel: 'n-heptane', hrr_kw: 130, hrrCurve: null },
+    } as never);
+    doc.objects.push({
+      id: 'hood-1', type: 'hood', transform: { position_m: [0, 0, -3] },
+      opening_m: [4, 4], height_m: 4, skirtDepth_m: 0, duct: { diameter_m: 0.6, length_m: 2 },
+    } as never);
+    doc.objects.push({
+      id: 'ceiling-1', type: 'ceiling', transform: { position_m: [0, 0, -3] },
+      polygon_m: [[-3, -3], [3, -3], [3, 3], [-3, 3]], height_m: 4, thickness_m: 0.15,
+    } as never);
+    return doc;
+  };
+
+  it('judges a hood and a ceiling where their transforms put them', () => {
+    const doc = translated();
+    // A 130 kW, 0.3 m pan with a 0.1 m rim: mean tip at 1.44 m. Both surfaces are
+    // drawn at 1 m, and both used to report all clear.
+    expect(flameTipZM(primaryBurner(doc)!)).toBeCloseTo(1.440816, 5);
+    expect(hoodOpeningZM(doc.objects[1] as never)).toBeCloseTo(1, 9);
+    expect(hoodIntakeHeightM(doc.objects[1] as never)).toBeCloseTo(1, 9);
+    expect(ceilingSoffitZM(doc.objects[2] as never)).toBeCloseTo(1, 9);
+    expect(hoodChecks(doc).map((i) => i.code)).toContain('flame-impingement');
+    expect(ceilingChecks(doc).map((i) => i.code)).toContain('ceiling-impingement');
+  });
+
+  it('still reads an untranslated hood and ceiling exactly as before', () => {
+    const doc = translated();
+    doc.objects[1].transform!.position_m = [0, 0, 0];
+    doc.objects[2].transform!.position_m = [0, 0, 0];
+    expect(hoodChecks(doc)).toEqual([]);
+    expect(ceilingChecks(doc)).toEqual([]);
+  });
+
+  // -- more than one fire ----------------------------------------------
+
+  it('checks a hood and a ceiling against every fire, naming the one it means', () => {
+    const doc = fixture();
+    doc.objects.push({
+      id: 'burner-2', type: 'burner', name: 'Second pan',
+      transform: { position_m: [5, 0, 0] },
+      footprint: { shape: 'square', size_m: [0.3, 0.3] }, rimHeight_m: 0.1,
+      fire: { fuel: 'n-heptane', hrr_kw: 5000, hrrCurve: null },
+    } as never);
+    // The reference hood does not cover the second fire...
+    const offset = hoodChecks(doc).filter((i) => i.code === 'hood-offset');
+    expect(offset).toHaveLength(1);
+    expect(offset[0].message).toContain('Second pan');
+    // ...and a 5 MW fire under a slab over it would reach it.
+    doc.objects.push({
+      id: 'ceiling-2', type: 'ceiling', transform: { position_m: [5, 0, 0] },
+      polygon_m: [[-1, -1], [1, -1], [1, 1], [-1, 1]], height_m: 4,
+    } as never);
+    const hit = ceilingChecks(doc).filter((i) => i.objectId === 'ceiling-2');
+    expect(hit.map((i) => i.code)).toContain('ceiling-impingement');
+    expect(hit[0].message).toContain('Second pan');
+    // And the plan says the framing does not look at that fire.
+    const second = checkPlan(doc).filter((i) => i.code === 'secondary-burner');
+    expect(second.map((i) => i.objectId)).toEqual(['burner-2']);
+  });
+});
+
+// -- extents ------------------------------------------------------------
+
+describe('what the layout occupies', () => {
+  const zs = (pts: Vec3[]): number[] => pts.map((p) => p[2]);
+  const xs = (pts: Vec3[]): number[] => pts.map((p) => p[0]);
+
+  it('includes an obstruction by its corners, not its origin', () => {
+    // Fit saw a 20 x 12 x 8 m box as the point at its base centre and put the
+    // camera inside it.
+    const doc = newPlan('box');
+    doc.objects.push({
+      id: 'o', type: 'obstruction', transform: { position_m: [0, 0, 0] }, size_m: [20, 12, 8],
+    } as never);
+    const pts = boundsPoints(doc);
+    expect(Math.max(...xs(pts))).toBeCloseTo(10, 9);
+    expect(Math.min(...xs(pts))).toBeCloseTo(-10, 9);
+    expect(Math.max(...zs(pts))).toBeCloseTo(8, 9);
+  });
+
+  it('includes a wall from its base height, and a slab where its transform puts it', () => {
+    const doc = newPlan('raised');
+    doc.objects.push({
+      id: 'w', type: 'wall', transform: { position_m: [0, 0, 0] },
+      polyline_m: [[0, 0], [1, 0]], height_m: 1, baseHeight_m: 10,
+    } as never);
+    doc.objects.push({
+      id: 'c', type: 'ceiling', transform: { position_m: [0, 0, -3] },
+      polygon_m: [[-1, -1], [1, -1], [1, 1], [-1, 1]], height_m: 4, thickness_m: 0.15,
+    } as never);
+    const pts = boundsPoints(doc);
+    expect(Math.max(...zs(pts))).toBeCloseTo(11, 9);
+    expect(zs(pts)).toContain(10);
+    expect(zs(pts).some((z) => Math.abs(z - 1) < 1e-9)).toBe(true);
+    expect(zs(pts).some((z) => Math.abs(z - 4) < 1e-9)).toBe(false);
+  });
+
+  it('reaches the hood apex, and the duct only when asked', () => {
+    const doc = fixture();
+    const hood = doc.objects.find((o) => o.type === 'hood')!;
+    const opening = hoodOpeningZM(hood as never);
+    const apex = opening + Math.max(Math.min(2.4384, 2.4384) * 0.45, 0.4);
+    expect(Math.max(...zs(boundsPoints(doc)))).toBeCloseTo(apex, 6);
+    expect(Math.max(...zs(boundsPoints(doc, { ducts: true })))).toBeGreaterThan(apex);
   });
 });
 
@@ -726,6 +868,52 @@ describe('structural validation', () => {
     expect(validateStructure(withObject({
       id: 'tc', type: 'thermocoupleTree', heights_m: [0.5, 1],
     }))).toEqual([]);
+  });
+
+  it('refuses a plan whose objects are not a list, rather than emptying it', () => {
+    // `parsePlan` used to replace a map with `[]` before validation saw it, so the
+    // file opened as "Objects (0)" and lost its collection on the next save.
+    const text = JSON.stringify({ ...newPlan('map'), objects: { kept: { id: 'kept', type: 'burner' } } });
+    const doc = parsePlan(text);
+    expect(codesOf(doc)).toContain('bad-objects');
+    expect(() => parseAndValidatePlan(text)).toThrow(/not a list/);
+  });
+
+  it('rejects wall openings the builder cannot slice', () => {
+    // `openings: {}` passed, was installed, and threw out of the builder --
+    // leaving stale panels over an empty scene and a Save offering the bad file.
+    const wall = (openings: unknown) => ({
+      id: 'w', type: 'wall', polyline_m: [[-1.5, 0], [1.5, 0]], height_m: 2.4, openings,
+    });
+    expect(codesOf(withObject(wall({})))).toContain('bad-openings');
+    expect(codesOf(withObject(wall([{ offset_m: 0.5, width_m: -1, height_m: 2 }])))).toContain('bad-openings');
+    expect(codesOf(withObject(wall([{ offset_m: 'a', width_m: 1, height_m: 2 }])))).toContain('bad-openings');
+    expect(codesOf(withObject(wall([{ offset_m: 0.5, width_m: 0.8, height_m: 2, sillHeight_m: -1 }])))).toContain('bad-openings');
+    expect(validateStructure(withObject(wall([{ offset_m: 0.5, width_m: 0.8, height_m: 2 }])))).toEqual([]);
+    expect(validateStructure(withObject(wall(null)))).toEqual([]);
+  });
+
+  it('rejects the optional lengths the builders multiply into geometry', () => {
+    expect(codesOf(withObject({
+      id: 'w', type: 'wall', polyline_m: [[0, 0], [1, 0]], height_m: 2, thickness_m: 'thick',
+    }))).toContain('bad-thickness');
+    expect(codesOf(withObject({
+      id: 'w', type: 'wall', polyline_m: [[0, 0], [1, 0]], height_m: 2, baseHeight_m: Number.NaN,
+    }))).toContain('bad-base-height');
+    expect(codesOf(withObject({
+      id: 'h', type: 'hood', opening_m: [2, 2], height_m: 2.7, skirtDepth_m: -0.3,
+    }))).toContain('bad-skirt-depth');
+    expect(codesOf(withObject({
+      id: 'h', type: 'hood', opening_m: [2, 2], height_m: 2.7, duct: { diameter_m: 0 },
+    }))).toContain('bad-duct');
+    expect(codesOf(withObject({
+      id: 'b', type: 'burner', footprint: { shape: 'circle', diameter_m: 0.3 }, rimHeight_m: 'x',
+    }))).toContain('bad-rim-height');
+    // Null is "unstated" everywhere, and the reference plan is untouched.
+    expect(validateStructure(withObject({
+      id: 'h', type: 'hood', opening_m: [2, 2], height_m: 2.7, skirtDepth_m: null, duct: null,
+    }))).toEqual([]);
+    expect(validateStructure(fixture())).toEqual([]);
   });
 
   it('rejects a radiative fraction outside the range the physics uses', () => {

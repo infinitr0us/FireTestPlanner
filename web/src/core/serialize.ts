@@ -52,6 +52,19 @@ type Obj = Record<string, Json>;
 const isPlainObject = (v: Json): v is Obj =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
+/**
+ * Own-property membership, never `in`.
+ *
+ * `'constructor' in {}` is true, and so is `'toString' in {}`: those names live on
+ * every object's prototype. With `in`, a legitimate extra key called `constructor`
+ * was treated as already emitted and dropped, and an unknown object whose `type`
+ * was `constructor` was routed to the known-type path and handed
+ * `Object.prototype.constructor` as its key order -- which is not iterable, so the
+ * save threw. Uncommon names, but preserving unknown content is a promise this
+ * format makes (CONVENTIONS section 6), and a promise with a hole in it is not one.
+ */
+const hasOwn = (o: object, key: string): boolean => Object.prototype.hasOwnProperty.call(o, key);
+
 function roundFloats(value: Json): Json {
   if (typeof value === 'number') {
     if (Number.isInteger(value)) return value;
@@ -71,8 +84,14 @@ function roundFloats(value: Json): Json {
  *  The tail is what keeps unknown keys from a newer format version alive. */
 function order(d: Obj, keys: string[]): Obj {
   const out: Obj = {};
-  for (const k of keys) if (k in d) out[k] = d[k];
-  for (const k of Object.keys(d)) if (!(k in out)) out[k] = d[k];
+  const emitted = new Set<string>();
+  for (const k of keys) {
+    if (hasOwn(d, k)) {
+      out[k] = d[k];
+      emitted.add(k);
+    }
+  }
+  for (const k of Object.keys(d)) if (!emitted.has(k)) out[k] = d[k];
   return out;
 }
 
@@ -99,8 +118,8 @@ function dropNull1_1(block: Obj, key: string): void {
 function canonObject(raw: Obj): Obj {
   const o: Obj = { ...raw };
 
-  if ('transform' in o) o.transform = orderIfObject(o.transform, TRANSFORM);
-  if ('display' in o) o.display = orderIfObject(o.display, DISPLAY);
+  if (hasOwn(o, 'transform')) o.transform = orderIfObject(o.transform, TRANSFORM);
+  if (hasOwn(o, 'display')) o.display = orderIfObject(o.display, DISPLAY);
 
   switch (o.type) {
     case 'camera': {
@@ -110,12 +129,12 @@ function canonObject(raw: Obj): Obj {
         dropNull1_1(spec, 'zoomFactor');
         o.camera = spec;
       }
-      if ('mount' in o) o.mount = orderIfObject(o.mount, MOUNT);
+      if (hasOwn(o, 'mount')) o.mount = orderIfObject(o.mount, MOUNT);
       break;
     }
     case 'burner': {
-      if ('footprint' in o) o.footprint = orderIfObject(o.footprint, FOOTPRINT);
-      if ('fire' in o) {
+      if (hasOwn(o, 'footprint')) o.footprint = orderIfObject(o.footprint, FOOTPRINT);
+      if (hasOwn(o, 'fire')) {
         const fire = orderIfObject(o.fire, FIRE);
         if (isPlainObject(fire)) dropNull1_1(fire, 'radiativeFraction');
         o.fire = fire;
@@ -133,13 +152,13 @@ function canonObject(raw: Obj): Obj {
       break;
     }
     case 'heatFluxSensor': {
-      if ('gauge' in o) o.gauge = orderIfObject(o.gauge, GAUGE);
-      if ('mount' in o) o.mount = orderIfObject(o.mount, MOUNT);
+      if (hasOwn(o, 'gauge')) o.gauge = orderIfObject(o.gauge, GAUGE);
+      if (hasOwn(o, 'mount')) o.mount = orderIfObject(o.mount, MOUNT);
       break;
     }
     case 'thermocouple': {
-      if ('thermocouple' in o) o.thermocouple = orderIfObject(o.thermocouple, THERMOCOUPLE);
-      if ('mount' in o) o.mount = orderIfObject(o.mount, MOUNT);
+      if (hasOwn(o, 'thermocouple')) o.thermocouple = orderIfObject(o.thermocouple, THERMOCOUPLE);
+      if (hasOwn(o, 'mount')) o.mount = orderIfObject(o.mount, MOUNT);
       break;
     }
     default:
@@ -148,6 +167,11 @@ function canonObject(raw: Obj): Obj {
 
   return roundFloats(order(o, OBJECT_ORDER[String(o.type)])) as Obj;
 }
+
+/** Whether `type` is one this version defines -- an own key of the order table,
+ *  never a prototype name masquerading as one. */
+const isKnownObjectType = (type: unknown): boolean =>
+  typeof type === 'string' && hasOwn(OBJECT_ORDER, type);
 
 /**
  * An object whose `type` this version does not recognise.
@@ -180,7 +204,7 @@ export function canonicalize(data: PlanDocument): Obj {
   // A version this build does not recognise is left alone, not downgraded.
   d.version = maxVersion(String(d.version ?? ''), requiredFormatVersion(data));
 
-  if ('meta' in d) {
+  if (hasOwn(d, 'meta')) {
     const meta = orderIfObject(d.meta, META);
     if (isPlainObject(meta) && isPlainObject(meta.source)) {
       meta.source = order(meta.source, SOURCE);
@@ -192,12 +216,12 @@ export function canonicalize(data: PlanDocument): Obj {
     if (isPlainObject(units.display)) units.display = order(units.display, UNITS_DISPLAY);
     d.units = units;
   }
-  if ('coordinateSystem' in d) d.coordinateSystem = orderIfObject(d.coordinateSystem, COORD);
-  if ('environment' in d) d.environment = orderIfObject(d.environment, ENV);
+  if (hasOwn(d, 'coordinateSystem')) d.coordinateSystem = orderIfObject(d.coordinateSystem, COORD);
+  if (hasOwn(d, 'environment')) d.environment = orderIfObject(d.environment, ENV);
   if (Array.isArray(d.objects)) {
     d.objects = d.objects.map((o) => {
       if (!isPlainObject(o)) return o;
-      return String(o.type) in OBJECT_ORDER ? canonObject(o) : canonUnknownObject(o);
+      return isKnownObjectType(o.type) ? canonObject(o) : canonUnknownObject(o);
     });
   }
 

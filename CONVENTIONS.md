@@ -191,6 +191,13 @@ Seeded presets are `datasheet` where a real spec was used and `nominal` otherwis
 data scientist should treat `nominal` as a red flag before using a plan as a
 reconstruction prior — which is exactly why the field exists.
 
+**A preset is never `calibrated`.** A calibration belongs to one physical unit — its
+principal point and distortion — and a preset carries neither: it is a reusable
+specification applied to whatever body turns up. Lifting a preset out of a calibrated
+camera (**Save as preset**) steps the label down to `datasheet`, and so does reading
+a stored library entry that claims otherwise. The camera it was lifted from keeps its
+own calibration and its own label.
+
 **`distortion`** is `null` for an ideal pinhole, or OpenCV `[k1, k2, p1, p2, k3]`.
 Wide-angle action cameras are badly served by a pinhole model; populate this after a
 real calibration if the plan will feed a reconstruction.
@@ -268,6 +275,17 @@ the point: dragging a box along the floor keeps it on the floor, and the rotate
 gizmo yaws it about its own vertical axis rather than swinging it around a point in
 the air.
 
+**A hood's and a ceiling's heights are local to the object.** `hood.height_m` and
+`ceiling.height_m` are measured from the object's own origin, and the origin is
+wherever `transform.position_m` puts it — normally on the floor, but the gizmo moves
+it in Z like anything else and the 3D view draws the canopy or the slab where the
+transform says. Everything that judges or prints those planes therefore goes through
+the world-space helpers — `hoodOpeningZM`, `hoodIntakeHeightM`, `ceilingSoffitZM` in
+`web/src/core/plan.ts`, mirrored by `Hood.opening_z_m`, `Hood.intake_height_m`,
+`Ceiling.soffit_z_m` in `python/fireplan/objects.py` — never `height_m` on its own. A
+hood with `height_m: 4` at `z = −3` has its intake at 1 m, and a check that read the
+4 cleared a flame that was visibly inside the canopy.
+
 **Yaw is the case that is honoured everywhere. Pitch and roll are 3D-only.** Nothing
 stops the rotate gizmo tilting a wall, hood or ceiling, and the 3D view renders the
 tilt faithfully — but `footprintXY` drops z, so the checks and the plan view see the
@@ -281,6 +299,25 @@ scene, so treat it as unsupported rather than as a feature.
 
 Both are first-order estimates for **sizing and placement**, not measurements, and
 both are reported with that caveat attached wherever they appear.
+
+### More than one burner
+
+A plan can hold several burners (section 1 calls the one at the origin the primary,
+and an FDS import keeps every face the burner surface burns on), and the scene draws a
+flame on each. What is judged against which fire:
+
+| | Fires considered |
+|---|---|
+| Hood placement, impingement, capture | **every** burner with an HRR, one verdict per burner, named when there is more than one |
+| Ceiling impingement and clearance | every burner, likewise |
+| Thermocouple bead region | every burner: inside any flame cone is `flame`; else inside any plume envelope is `plume`, reading the **hotter** centreline; else `outside` |
+| Incident heat flux | the **sum** over every burner — radiation from independent sources adds. The distance, angle, view-cone and near-field figures refer to the source contributing most of the flux (the primary on a tie) |
+| Camera framing, "aim at fire", the point-source position | the **primary only** |
+
+The last row is the asymmetry, and `checkPlan` / `Plan.check()` file
+`secondary-burner` on every other lit burner so a coverage table reading 100% is not
+taken to cover a fire the camera never looked at. `fireBurners` /
+`Plan.fire_burners` is the single list, primary first.
 
 ### Incident heat flux — point source
 
@@ -517,6 +554,23 @@ coplanar with a mesh face is normally `OPEN`/`MIRROR`/`PERIODIC` and is dropped 
 but never one whose `SURF` states `HRRPUA` or `MLRPUA`. A floor fire in a domain
 that starts at the floor is written exactly that way.
 
+**A `&VENT` faces the way its solid says.** FDS decides a vent's orientation from
+which side of it the solid is, or from an explicit `IOR` whose sign is the direction
+of the surface normal (±3 is Z). The import does the same by inspection: `IOR` when
+stated; otherwise the `&OBST` the vent lies within the face of — on a box's top face
+it burns upward, on its underside downward; otherwise the mesh boundary — the domain
+floor faces up, the domain ceiling faces down. Reading every horizontal vent as
+upward turned a fire on the underside of a ceiling into an upward-burning pan three
+metres high.
+
+**A zero-thickness `&OBST` is drawn 10 mm thick.** FDS allows a plate with no
+thickness — glazing, a thin partition, a shelf — and models are full of them. This
+format has no planar object, and a box with a zero extent is one the editor refuses
+to open, so the plate is given `THIN_M` (0.01 m) in that axis and the import says so
+(`fds-thin-geometry`). It is the only dimension the conversion ever invents. A
+`&VENT` is not geometry at all: the palette's paste box refuses one and says to paste
+the `&OBST` it sits on.
+
 **The burner is a floor-standing source.** Only an **upward-facing** horizontal
 heat-release face with a positive plan area can be one. A wall lining burns on a
 plane with no plan footprint, and flattening one into `size_m: [w, 0]` produces a
@@ -537,12 +591,17 @@ is arbitrary. So an import always translates, and writes the shift to
 `meta.source.originOffset_m` — **the position of the plan origin in the source
 file's coordinates**, so `source_xyz = plan_xyz + originOffset_m`.
 
-The floor is the **top face of the lowest horizontal slab**, not the bottom of the
-mesh. The distinction is not academic: the sample's meshes start at `z = −0.2` while
-its floor slab's top is at `z = 0`, so taking the mesh would put every height in the
-plan 200 mm out and leave the burner floating. A burner's own pan is excluded from
-that search, or a model with no floor slab would put the floor at the top of the
-burner.
+The floor is the **top face of the lowest horizontal slab below the burner**, not
+the bottom of the mesh. The distinction is not academic: the sample's meshes start at
+`z = −0.2` while its floor slab's top is at `z = 0`, so taking the mesh would put
+every height in the plan 200 mm out and leave the burner floating. A burner's own pan
+is excluded from that search, or a model with no floor slab would put the floor at
+the top of the burner. **Below the burner** is load-bearing too: when every slab in
+the model is above the fire — a floor-level fire under a ceiling, with no floor slab
+drawn — the floor is the burner's own base (`fds-floor-inferred` says so) and the
+slabs stay ceilings. Falling back to "any slab" took the ceiling as the floor,
+dropped it from the plan as floor geometry, and put every device two metres below
+ground.
 
 That offset is what the inspector's **Fields / FDS** switch is built on: it shows a
 box as `XB` and a device as `XYZ` + `IOR`, in the source file's own coordinates, so

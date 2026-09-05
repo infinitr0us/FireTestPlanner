@@ -106,7 +106,10 @@ export function parsePlan(text: string): PlanDocument {
   if (doc.format !== FORMAT) {
     throw new Error(`Not a fire test plan: expected format "${FORMAT}", got "${String(doc.format)}"`);
   }
-  if (!Array.isArray(doc.objects)) doc.objects = [];
+  // Deliberately NOT normalised here. `objects` that is a map rather than a list is
+  // a file this format cannot read, and `validateStructure` says so as
+  // `bad-objects`; quietly replacing it with an empty list opened the file as a
+  // plan with nothing in it and threw the collection away on the next save.
   return doc;
 }
 
@@ -134,6 +137,27 @@ export function primaryBurner(d: PlanDocument): BurnerObject | undefined {
   if (all.length <= 1) return all[0];
   return all.find((b) => Math.hypot(...positionOf(b).slice(0, 2)) < 1e-6) ?? all[0];
 }
+
+/**
+ * Every burner with a fire to assess -- an HRR and a footprint -- primary first.
+ *
+ * A plan can hold several (CONVENTIONS section 1 calls the one at the origin the
+ * primary, and an FDS import keeps every face the burner surface burns on), and the
+ * scene draws a flame on each. The checks that ask "does this fire reach that
+ * surface", "what does this bead sit in" or "what does this gauge receive" have to
+ * ask it of every fire, or a second burner is drawn and then silently left out of
+ * the verdicts -- a type-T bead half a metre above a megawatt fire was being called
+ * "outside the plume" because the plume it was in belonged to the other burner.
+ */
+export function fireBurners(d: PlanDocument): BurnerObject[] {
+  const primary = primaryBurner(d);
+  const lit = burners(d).filter((b) => flameTipZM(b) !== null);
+  if (!primary || !lit.includes(primary)) return lit;
+  return [primary, ...lit.filter((b) => b !== primary)];
+}
+
+/** Burners drawn with a fire that the camera framing does not judge. */
+export const secondaryBurners = (d: PlanDocument): BurnerObject[] => fireBurners(d).slice(1);
 
 export function nextId(d: PlanDocument, prefix: string): string {
   const taken = new Set(d.objects.map((o) => o.id));
@@ -255,6 +279,41 @@ export const vfovDegOf = (c: CameraObject): number => (vfovRadOf(c) * 180) / Mat
 export const aspectOf = (c: CameraObject): number =>
   c.camera.resolution_px[0] / c.camera.resolution_px[1];
 
+/**
+ * Where the image's edges fall, as tangents: multiply by a depth along the view
+ * axis to get metres right, left, up and down of the axis at that depth.
+ *
+ * Derived from `fx`, `fy` and the principal point -- the same numbers
+ * `projectToPixels` uses -- rather than from the two fields of view and the pixel
+ * aspect ratio. The two agree only for square pixels and a centred principal
+ * point. A camera whose sensor is square but whose image is 2:1 has fx = 2 fy, and
+ * a preview built from vfov and aspect showed it seeing 50 percent wider than the
+ * framing verdict said it could; an off-centre calibrated principal point shifts
+ * the whole frame sideways and a symmetric frustum cannot show that at all. The
+ * drawn frustum and the picture-in-picture preview are built from these, so what
+ * they show is what `isPointVisible` judges.
+ *
+ * Edges are at pixel EDGES: the image spans u from -0.5 to W-0.5 under the OpenCV
+ * convention (CONVENTIONS section 4). The verdict tests pixel centres, so the
+ * preview shows half a pixel more per side than the verdict accepts -- the same
+ * half pixel `verticalCoverageM` accounts for.
+ */
+export function imagePlaneExtents(c: CameraObject): {
+  left: number; right: number; top: number; bottom: number;
+} {
+  const [w, h] = c.camera.resolution_px;
+  const [cx, cy] = principalPointOf(c);
+  const fx = fxOf(c);
+  const fy = fyOf(c);
+  return {
+    left: (-0.5 - cx) / fx,
+    right: (w - 0.5 - cx) / fx,
+    // Image v grows downward; the camera's local +Y is up.
+    top: (cy + 0.5) / fy,
+    bottom: -(h - 0.5 - cy) / fy,
+  };
+}
+
 /** Slant range to the burner. Trivial only because the origin IS the burner. */
 export const standoffM = (c: CameraObject): number => length(positionOf(c));
 
@@ -304,6 +363,12 @@ export const TYPE_COLORS: Record<string, string> = {
   thermocouple: '#10b981',
 };
 
+/** Own-property lookup. `type in TYPE_COLORS` is true for an object whose type is
+ *  `constructor` or `toString`, because those are on every object's prototype --
+ *  and an unknown type is exactly the kind of value a plan from a newer tool can
+ *  carry. Mirror of the same care in serialize.ts. */
+const hasOwn = (o: object, key: string): boolean => Object.prototype.hasOwnProperty.call(o, key);
+
 /**
  * True when an object's colour carries information — a camera's modality, an
  * instrument's kind, or a colour the user set by hand. A wall has no such colour,
@@ -311,7 +376,7 @@ export const TYPE_COLORS: Record<string, string> = {
  */
 export const hasObjectColor = (o: PlanObject): boolean =>
   isCamera(o)
-  || o.type in TYPE_COLORS
+  || hasOwn(TYPE_COLORS, o.type)
   || (typeof o.display?.color === 'string' && HEX_COLOR.test(o.display.color));
 
 /** Any object's display colour, normalised. Same guarantees as above: this is the
@@ -320,7 +385,7 @@ export function objectColor(o: PlanObject): string {
   const raw = o.display?.color;
   if (typeof raw === 'string' && HEX_COLOR.test(raw)) return raw;
   if (isCamera(o)) return MODALITY_COLORS[o.camera.modality] || MODALITY_COLORS.other;
-  return TYPE_COLORS[o.type] ?? MODALITY_COLORS.other;
+  return hasOwn(TYPE_COLORS, o.type) ? TYPE_COLORS[o.type] : MODALITY_COLORS.other;
 }
 
 export const intrinsicsSourceOf = (c: CameraObject) => c.camera.intrinsicsSource ?? 'nominal';
@@ -471,36 +536,52 @@ export function flameRadiusAtZ(b: BurnerObject, zAboveFloorM: number): number | 
   return (burnerDiameterM(b) / 2) * (1 - (zAboveFloorM - base) / (tip - base));
 }
 
-/**
- * Where the point-source radiation model puts the fire: mid-flame, on the burner
- * axis. Also the point a camera or a gauge means by "aim at the fire", which is
- * why there is one function rather than two conventions.
- */
-export function firePointSourceM(d: PlanDocument): Vec3 | null {
-  const b = primaryBurner(d);
-  if (!b) return null;
+/** Where the point-source model puts one burner's fire: mid-flame, on its axis. */
+export function burnerPointSourceM(b: BurnerObject): Vec3 | null {
   const tip = flameTipZM(b);
   if (tip === null) return null;
   const p = positionOf(b);
   return [p[0], p[1], (fuelSurfaceZM(b) + tip) / 2];
 }
 
+/**
+ * Where the point-source radiation model puts THE fire: mid-flame, on the primary
+ * burner's axis. Also the point a camera or a gauge means by "aim at the fire",
+ * which is why there is one function rather than two conventions. The heat flux
+ * estimate itself sums every burner (`heatFluxEstimate`); this is the primary
+ * only, because "aim at the fire" needs one point.
+ */
+export function firePointSourceM(d: PlanDocument): Vec3 | null {
+  const b = primaryBurner(d);
+  return b ? burnerPointSourceM(b) : null;
+}
+
 // -- heat flux sensor ------------------------------------------------------
 
 export interface HeatFluxEstimate {
-  /** Slant distance from the sensing face to the mid-flame point source. */
+  /** Slant distance from the sensing face to the mid-flame point source of
+   *  `sourceId`. */
   distanceM: number;
-  /** Angle between the gauge's outward normal and the line to the fire. */
+  /** Angle between the gauge's outward normal and the line to that source. */
   offAxisDeg: number;
-  /** Predicted incident flux, kW/m2. Zero when the gauge faces away. */
+  /** Predicted incident flux, kW/m2, summed over every fire in the plan. Zero when
+   *  the gauge faces away from all of them. */
   incidentKwM2: number;
+  /** True when at least one fire is in front of the sensing face. */
   facesFire: boolean;
-  /** False when the fire falls outside a view-limiting tube's acceptance cone. */
+  /** False when `sourceId` falls outside a view-limiting tube's acceptance cone. */
   withinViewAngle: boolean;
-  /** True when the gauge is close enough that "point source" stops being true. */
+  /** True when `sourceId` is close enough that "point source" stops being true. */
   nearField: boolean;
   /** Fraction of full scale, or null when no range is recorded. */
   fractionOfRange: number | null;
+  /**
+   * The burner the geometric figures refer to: the one contributing most of the
+   * flux, or the primary when none contributes. Incident radiation from several
+   * independent sources adds, so the flux is a sum; a distance and an angle are
+   * to one point, and the one that dominates the reading is the one that matters.
+   */
+  sourceId: string;
 }
 
 /** The gauge's outward normal: it looks down local -Z, exactly as a camera does. */
@@ -528,38 +609,52 @@ export function heatFluxEstimate(
   d: PlanDocument,
   s: HeatFluxSensorObject,
 ): HeatFluxEstimate | null {
-  const burner = primaryBurner(d);
-  const source = firePointSourceM(d);
-  if (!burner || !source) return null;
-  const q = hrrKwOf(burner);
-  if (q === null || q <= 0) return null;
+  const fires = fireBurners(d);
+  if (fires.length === 0) return null;
 
   const at = positionOf(s);
-  const delta = sub(source, at);
-  const distanceM = length(delta);
+  const normal = gaugeNormal(s);
   const range = gaugeRangeKwM2(s);
 
-  if (distanceM < 1e-9) {
-    // Sitting in the fire. There is no direction to the source, so there is no
-    // cosine either; say so rather than dividing by zero.
-    return {
-      distanceM: 0, offAxisDeg: 0, incidentKwM2: Number.POSITIVE_INFINITY,
-      facesFire: true, withinViewAngle: true, nearField: true,
-      fractionOfRange: range === null ? null : Number.POSITIVE_INFINITY,
-    };
+  interface Part {
+    burner: BurnerObject; distanceM: number; cosTheta: number; offAxisDeg: number; incident: number;
+  }
+  const parts: Part[] = [];
+  for (const burner of fires) {
+    const source = burnerPointSourceM(burner)!;
+    const delta = sub(source, at);
+    const distanceM = length(delta);
+    if (distanceM < 1e-9) {
+      // Sitting in the fire. There is no direction to the source, so there is no
+      // cosine either; say so rather than dividing by zero.
+      return {
+        distanceM: 0, offAxisDeg: 0, incidentKwM2: Number.POSITIVE_INFINITY,
+        facesFire: true, withinViewAngle: true, nearField: true,
+        fractionOfRange: range === null ? null : Number.POSITIVE_INFINITY,
+        sourceId: burner.id,
+      };
+    }
+    const cosTheta = dot(normal, normalize(delta));
+    parts.push({
+      burner, distanceM, cosTheta,
+      offAxisDeg: angleBetweenDeg(normal, delta),
+      incident: pointSourceFluxKwM2(hrrKwOf(burner)!, distanceM, cosTheta, radiativeFractionOf(burner)),
+    });
   }
 
-  const cosTheta = dot(gaugeNormal(s), normalize(delta));
-  const incidentKwM2 = pointSourceFluxKwM2(q, distanceM, cosTheta, radiativeFractionOf(burner));
+  // The primary is first, so a tie -- and the one-burner case -- keeps it.
+  const dominant = parts.reduce((best, p) => (p.incident > best.incident ? p : best), parts[0]);
+  const incidentKwM2 = parts.reduce((sum, p) => sum + p.incident, 0);
 
   return {
-    distanceM,
-    offAxisDeg: angleBetweenDeg(gaugeNormal(s), delta),
+    distanceM: dominant.distanceM,
+    offAxisDeg: dominant.offAxisDeg,
     incidentKwM2,
-    facesFire: cosTheta > 0,
-    withinViewAngle: angleBetweenDeg(gaugeNormal(s), delta) <= gaugeViewAngleDeg(s) / 2,
-    nearField: distanceM < POINT_SOURCE_MIN_DIAMETERS * burnerDiameterM(burner),
+    facesFire: parts.some((p) => p.cosTheta > 0),
+    withinViewAngle: dominant.offAxisDeg <= gaugeViewAngleDeg(s) / 2,
+    nearField: dominant.distanceM < POINT_SOURCE_MIN_DIAMETERS * burnerDiameterM(dominant.burner),
     fractionOfRange: range === null ? null : incidentKwM2 / range,
+    sourceId: dominant.burner.id,
   };
 }
 
@@ -592,9 +687,11 @@ export interface BeadState {
   /** Offset along the rake, from the object origin. */
   offsetM: number;
   world: Vec3;
-  /** Horizontal distance from the burner axis. */
+  /** Horizontal distance from the axis of the fire it sits in -- or from the
+   *  primary burner's axis when it sits in none. NaN with no fire at all. */
   radialM: number;
-  /** Where it sits relative to the drawn fire. */
+  /** Where it sits relative to the drawn fires: inside any burner's flame cone
+   *  first, else inside any burner's plume envelope, else outside them all. */
   region: 'flame' | 'plume' | 'outside';
   /**
    * Predicted gas temperature, degrees Celsius, or null where no correlation
@@ -612,39 +709,56 @@ export interface BeadState {
  * against a wall leans in the readout too.
  */
 export function thermocoupleBeads(d: PlanDocument, t: ThermocoupleObject): BeadState[] {
-  const burner = primaryBurner(d);
+  const fires = fireBurners(d);
   const ambient = d.environment?.ambientTemperature_C ?? 20;
-  const bp = burner ? positionOf(burner) : null;
-  const tipZ = burner ? flameTipZM(burner) : null;
-  const q = burner ? hrrKwOf(burner) : null;
+  const primary = primaryBurner(d);
 
   return beadOffsetsOf(t).map((offsetM, index) => {
     const world = toWorld(t, [0, 0, offsetM]);
-    const radialM = bp ? Math.hypot(world[0] - bp[0], world[1] - bp[1]) : Number.NaN;
+    const radialTo = (b: BurnerObject): number => {
+      const bp = positionOf(b);
+      return Math.hypot(world[0] - bp[0], world[1] - bp[1]);
+    };
 
     let region: BeadState['region'] = 'outside';
     let gasTemperatureC: number | null = null;
+    let radialM = primary ? radialTo(primary) : Number.NaN;
 
-    if (burner && bp && tipZ !== null) {
+    // Every fire in the plan, flame beating plume: a bead inside one burner's flame
+    // is in the flame whatever another burner's plume says, and a bead in two
+    // plumes reads the hotter centreline -- an upper bound either way, which is
+    // what the figure is documented as.
+    for (const burner of fires) {
+      const surface = fuelSurfaceZM(burner);
+      const tipZ = flameTipZM(burner)!;
+      const radial = radialTo(burner);
       const flameR = flameRadiusAtZ(burner, world[2]);
       const plumeR = plumeRadiusAtZ(burner, world[2]);
       // Both bounds are load-bearing. `flameRadiusAtZ` reports 0 outside the cone's
       // own height band rather than null, so without the lower bound a bead exactly
       // on the burner axis -- the default placement of a rake with no transform --
-      // satisfies `radialM <= 0` at any depth below the pan and is called `flame`.
-      if (world[2] >= fuelSurfaceZM(burner) && world[2] <= tipZ
-          && flameR !== null && radialM <= flameR) {
+      // satisfies `radial <= 0` at any depth below the pan and is called `flame`.
+      if (world[2] >= surface && world[2] <= tipZ && flameR !== null && radial <= flameR) {
         region = 'flame';
-      } else if (world[2] > fuelSurfaceZM(burner) && plumeR !== null && radialM <= plumeR) {
-        region = 'plume';
+        gasTemperatureC = null;
+        radialM = radial;
+        break;
+      }
+      if (world[2] > surface && plumeR !== null && radial <= plumeR) {
         // Above the mean tip only: inside the flame's own height the plume
         // correlation is not merely imprecise, it is the wrong correlation.
-        if (world[2] > tipZ && q !== null) {
+        let here: number | null = null;
+        if (world[2] > tipZ) {
           const rise = plumeCentrelineRiseK(
-            world[2] - fuelSurfaceZM(burner), q, burnerDiameterM(burner),
+            world[2] - surface, hrrKwOf(burner)!, burnerDiameterM(burner),
             radiativeFractionOf(burner),
           );
-          if (rise !== null) gasTemperatureC = ambient + rise;
+          if (rise !== null) here = ambient + rise;
+        }
+        if (region !== 'plume' || (here !== null && (gasTemperatureC === null || here > gasTemperatureC))) {
+          region = 'plume';
+          gasTemperatureC = here;
+          radialM = radial;
         }
       }
     }
@@ -655,8 +769,21 @@ export function thermocoupleBeads(d: PlanDocument, t: ThermocoupleObject): BeadS
 
 // -- hood -----------------------------------------------------------------
 
-/** Lowest plane that must capture the plume: opening, less any skirt. */
-export const hoodIntakeHeightM = (h: HoodObject): number => h.height_m - (h.skirtDepth_m ?? 0);
+/**
+ * Height of the opening plane above the floor, in world space.
+ *
+ * `height_m` is measured from the hood's own origin, and the origin can move: the
+ * gizmo translates a hood in Z like any other object, and the 3D view draws the
+ * canopy where the transform puts it. Every check, readout, drawing and bound goes
+ * through here rather than reading `height_m` directly, so a hood dragged three
+ * metres down is judged where it is drawn -- a check that read `height_m` alone
+ * cleared a flame that was visibly inside the canopy.
+ */
+export const hoodOpeningZM = (h: HoodObject): number => positionOf(h)[2] + h.height_m;
+
+/** Lowest plane that must capture the plume: opening, less any skirt. World space. */
+export const hoodIntakeHeightM = (h: HoodObject): number =>
+  hoodOpeningZM(h) - (h.skirtDepth_m ?? 0);
 
 /** The four corners of the opening in world XY, honouring the hood's own rotation. */
 export function hoodOpeningCornersXY(h: HoodObject): Array<[number, number]> {
@@ -690,6 +817,10 @@ export function hoodOpeningOffset(
 }
 
 // -- ceiling --------------------------------------------------------------
+
+/** Height of the soffit above the floor, in world space: the slab's own `height_m`
+ *  plus wherever its transform puts it. Same reasoning as `hoodOpeningZM`. */
+export const ceilingSoffitZM = (c: CeilingObject): number => positionOf(c)[2] + c.height_m;
 
 /** Shoelace area of the slab footprint. */
 export function ceilingAreaM2(c: CeilingObject): number {
@@ -739,66 +870,75 @@ const issue = (severity: Issue['severity'], code: string, message: string, objec
  * offset from the opening centre by however far apart the two are. A hood that is
  * merely large is not a hood that captures.
  */
+/** ` of "name"` when a plan has more than one fire, so a finding says which; nothing
+ *  when there is only the one, as there almost always is. */
+const whichFire = (b: BurnerObject, many: boolean): string =>
+  many ? ` of "${displayName(b)}"` : '';
+
 export function hoodChecks(d: PlanDocument): Issue[] {
   const out: Issue[] = [];
   const allHoods = hoods(d);
   if (allHoods.length === 0) return out;
 
-  const burner = primaryBurner(d);
-  if (!burner) return out;
-  const tip = flameTipZM(burner);
-  if (tip === null) return out;
-  const bp = positionOf(burner);
+  // Every fire, not only the primary: a second burner beside the hood is a plume
+  // the hood does not capture, and a fire the HRR measurement will miss.
+  const fires = fireBurners(d);
+  const many = fires.length > 1;
 
   for (const hood of allHoods) {
     const intake = hoodIntakeHeightM(hood);
-    const off = hoodOpeningOffset(hood, [bp[0], bp[1]]);
+    for (const burner of fires) {
+      const tip = flameTipZM(burner)!;
+      const bp = positionOf(burner);
+      const of = whichFire(burner, many);
+      const off = hoodOpeningOffset(hood, [bp[0], bp[1]]);
 
-    // Nothing else is meaningful about a hood that is not over the fire: the flame
-    // cannot reach a canopy beside it, and the plume it fails to capture is not a
-    // margin problem but a placement one.
-    if (!off.inside) {
-      out.push(issue('error', 'hood-offset',
-        `The hood opening does not cover the burner — the burner centre is ` +
-        `${off.overhang.toFixed(2)} m outside the opening, so this hood captures ` +
-        `none of the plume.`, hood.id));
-      continue;
-    }
+      // Nothing else is meaningful about a hood that is not over the fire: the
+      // flame cannot reach a canopy beside it, and the plume it fails to capture is
+      // not a margin problem but a placement one.
+      if (!off.inside) {
+        out.push(issue('error', 'hood-offset',
+          `The hood opening does not cover the burner${of} — the burner centre is ` +
+          `${off.overhang.toFixed(2)} m outside the opening, so this hood captures ` +
+          `none of its plume.`, hood.id));
+        continue;
+      }
 
-    if (tip >= intake) {
-      out.push(issue('error', 'flame-impingement',
-        `Mean flame tip reaches ${tip.toFixed(2)} m, at or above the hood intake at ` +
-        `${intake.toFixed(2)} m — flame in the canopy, not a free plume.`, hood.id));
-    } else if (tip > 0.8 * intake) {
-      out.push(issue('warning', 'flame-clearance',
-        `Mean flame tip at ${tip.toFixed(2)} m leaves only ${(intake - tip).toFixed(2)} m ` +
-        `below the hood intake; an intermittent tip will reach higher.`, hood.id));
-    }
+      if (tip >= intake) {
+        out.push(issue('error', 'flame-impingement',
+          `Mean flame tip${of} reaches ${tip.toFixed(2)} m, at or above the hood intake at ` +
+          `${intake.toFixed(2)} m — flame in the canopy, not a free plume.`, hood.id));
+      } else if (tip > 0.8 * intake) {
+        out.push(issue('warning', 'flame-clearance',
+          `Mean flame tip${of} at ${tip.toFixed(2)} m leaves only ${(intake - tip).toFixed(2)} m ` +
+          `below the hood intake; an intermittent tip will reach higher.`, hood.id));
+      }
 
-    const radius = plumeRadiusAtZ(burner, intake);
-    if (radius !== null) {
-      const plumeD = 2 * radius;
-      // Span the plume demands along each opening axis, and the axis with the least
-      // slack -- which is the one that spills first.
-      const axes: Array<[number, number]> = [
-        [2 * (Math.abs(off.u) + radius), hood.opening_m[0]],
-        [2 * (Math.abs(off.v) + radius), hood.opening_m[1]],
-      ];
-      const [need, avail] = axes.reduce((a, b) => (a[1] - a[0] <= b[1] - b[0] ? a : b));
-      const eccentric = Math.hypot(off.u, off.v) > 1e-9
-        ? `, ${Math.hypot(off.u, off.v).toFixed(2)} m off the opening centre`
-        : '';
+      const radius = plumeRadiusAtZ(burner, intake);
+      if (radius !== null) {
+        const plumeD = 2 * radius;
+        // Span the plume demands along each opening axis, and the axis with the
+        // least slack -- which is the one that spills first.
+        const axes: Array<[number, number]> = [
+          [2 * (Math.abs(off.u) + radius), hood.opening_m[0]],
+          [2 * (Math.abs(off.v) + radius), hood.opening_m[1]],
+        ];
+        const [need, avail] = axes.reduce((a, b) => (a[1] - a[0] <= b[1] - b[0] ? a : b));
+        const eccentric = Math.hypot(off.u, off.v) > 1e-9
+          ? `, ${Math.hypot(off.u, off.v).toFixed(2)} m off the opening centre`
+          : '';
 
-      if (need > avail) {
-        out.push(issue('error', 'plume-spillage',
-          `Plume is ${plumeD.toFixed(2)} m across at the hood intake${eccentric}, needing ` +
-          `${need.toFixed(2)} m of a ${avail.toFixed(2)} m opening — the hood will spill and ` +
-          `HRR by oxygen consumption will read low.`, hood.id));
-      } else if (need > 0.8 * avail) {
-        out.push(issue('warning', 'plume-margin',
-          `Plume is ${plumeD.toFixed(2)} m across at the hood intake${eccentric}, needing ` +
-          `${need.toFixed(2)} m of a ${avail.toFixed(2)} m opening — little margin for ` +
-          `draught or an off-centre fire.`, hood.id));
+        if (need > avail) {
+          out.push(issue('error', 'plume-spillage',
+            `Plume${of} is ${plumeD.toFixed(2)} m across at the hood intake${eccentric}, needing ` +
+            `${need.toFixed(2)} m of a ${avail.toFixed(2)} m opening — the hood will spill and ` +
+            `HRR by oxygen consumption will read low.`, hood.id));
+        } else if (need > 0.8 * avail) {
+          out.push(issue('warning', 'plume-margin',
+            `Plume${of} is ${plumeD.toFixed(2)} m across at the hood intake${eccentric}, needing ` +
+            `${need.toFixed(2)} m of a ${avail.toFixed(2)} m opening — little margin for ` +
+            `draught or an off-centre fire.`, hood.id));
+        }
       }
     }
   }
@@ -817,28 +957,29 @@ export function ceilingChecks(d: PlanDocument): Issue[] {
   const slabs = ceilings(d);
   if (slabs.length === 0) return out;
 
-  const burner = primaryBurner(d);
-  if (!burner) return out;
-  const tip = flameTipZM(burner);
-  if (tip === null) return out;
-
-  const bp = positionOf(burner);
-  const surface = fuelSurfaceZM(burner);
+  const fires = fireBurners(d);
+  const many = fires.length > 1;
 
   for (const slab of slabs) {
-    if (slab.height_m <= surface) continue;              // below the fire
-    if (!ceilingCoversXY(slab, bp[0], bp[1])) continue;  // off to one side
+    const soffit = ceilingSoffitZM(slab);
+    for (const burner of fires) {
+      const tip = flameTipZM(burner)!;
+      const bp = positionOf(burner);
+      const of = whichFire(burner, many);
+      if (soffit <= fuelSurfaceZM(burner)) continue;      // below the fire
+      if (!ceilingCoversXY(slab, bp[0], bp[1])) continue;  // off to one side
 
-    if (tip >= slab.height_m) {
-      out.push(issue('error', 'ceiling-impingement',
-        `Mean flame tip reaches ${tip.toFixed(2)} m, at or above the ceiling soffit at ` +
-        `${slab.height_m.toFixed(2)} m — the fire will spread as a ceiling jet and the ` +
-        `free-plume correlations no longer apply.`, slab.id));
-    } else if (tip > 0.8 * slab.height_m) {
-      out.push(issue('warning', 'ceiling-clearance',
-        `Mean flame tip at ${tip.toFixed(2)} m leaves only ` +
-        `${(slab.height_m - tip).toFixed(2)} m below the ceiling; an intermittent tip ` +
-        `will reach higher.`, slab.id));
+      if (tip >= soffit) {
+        out.push(issue('error', 'ceiling-impingement',
+          `Mean flame tip${of} reaches ${tip.toFixed(2)} m, at or above the ceiling soffit at ` +
+          `${soffit.toFixed(2)} m — the fire will spread as a ceiling jet and the ` +
+          `free-plume correlations no longer apply.`, slab.id));
+      } else if (tip > 0.8 * soffit) {
+        out.push(issue('warning', 'ceiling-clearance',
+          `Mean flame tip${of} at ${tip.toFixed(2)} m leaves only ` +
+          `${(soffit - tip).toFixed(2)} m below the ceiling; an intermittent tip ` +
+          `will reach higher.`, slab.id));
+      }
     }
   }
   return out;
@@ -965,9 +1106,10 @@ export function instrumentChecks(d: PlanDocument): Issue[] {
         `the acceptance cone.`, s.id));
     }
     if (e.nearField) {
+      const source = findObject(d, e.sourceId) as BurnerObject;
       out.push(issue('warning', 'gauge-near-field',
         `The gauge is ${e.distanceM.toFixed(2)} m from a fire of effective diameter ` +
-        `${burnerDiameterM(primaryBurner(d)!).toFixed(2)} m. Closer than ` +
+        `${burnerDiameterM(source).toFixed(2)} m. Closer than ` +
         `${POINT_SOURCE_MIN_DIAMETERS} diameters the fire is plainly not a point source, so ` +
         `the predicted flux is an order of magnitude, not a value to size a gauge on.`, s.id));
     }
@@ -1021,10 +1163,10 @@ export function instrumentChecks(d: PlanDocument): Issue[] {
         `the ${limit} °C limit of a type ${type} thermocouple.`, t.id));
     }
 
-    if (beads.every((b) => b.region === 'outside') && firePointSourceM(d) !== null) {
+    if (beads.every((b) => b.region === 'outside') && fireBurners(d).length > 0) {
       out.push(issue('info', 'tc-outside-plume',
-        'No bead falls inside the flame or the plume envelope, so this rake will read close ' +
-        'to ambient.', t.id));
+        'No bead falls inside the flame or the plume envelope of any fire, so this rake ' +
+        'will read close to ambient.', t.id));
     }
   }
 
@@ -1106,7 +1248,83 @@ export function checkPlan(d: PlanDocument): Issue[] {
         out.push(issue('info', 'no-hrr', 'No hrr_kw, so flame and plume geometry cannot be drawn.', b.id));
       }
     }
+    // The hood, ceiling and instrument checks below take every fire into account.
+    // Camera framing does not: it answers "does this lens see THE fire", and the
+    // fire it means is the primary at the origin. Say so on each other burner, so a
+    // coverage table that reads 100 percent is not taken to cover a fire it never
+    // looked at.
+    for (const b of secondaryBurners(d)) {
+      out.push(issue('warning', 'secondary-burner',
+        `"${displayName(b)}" is a second fire. The hood, ceiling and instrument verdicts ` +
+        'include it, but camera framing and "aim at fire" are judged against the primary ' +
+        'burner at the origin only.', b.id));
+    }
   }
 
   return out.concat(hoodChecks(d), ceilingChecks(d), instrumentChecks(d));
+}
+
+// -- extents --------------------------------------------------------------
+
+/**
+ * Every point the physical layout occupies, in world space.
+ *
+ * One list for the two consumers that frame the layout -- Fit in the viewport and
+ * the page bounds of the exported drawing -- so neither can forget a primitive the
+ * other draws. Fit used to see an obstruction as its origin alone and put the camera
+ * inside a 20 m box; the drawing used to size its page from a wall's transform Z
+ * and clip a raised wall clean off the sheet. Everything here is what the scene
+ * builders and the SVG projector actually emit: walls from their base height,
+ * hoods and ceilings where their transforms put them, boxes by their corners.
+ *
+ * Editor furniture -- frustums, dimension lines, the grid -- is deliberately not
+ * here. A single wide-angle camera's frustum would zoom the whole view out until
+ * the equipment was a speck.
+ */
+export function boundsPoints(d: PlanDocument, opts: { ducts?: boolean } = {}): Vec3[] {
+  const pts: Vec3[] = [];
+  for (const obj of d.objects) {
+    const p = positionOf(obj);
+    pts.push(p);
+
+    if (isBurner(obj)) {
+      const r = burnerDiameterM(obj) / 2;
+      const surface = fuelSurfaceZM(obj);
+      pts.push([p[0] - r, p[1] - r, p[2]], [p[0] + r, p[1] + r, surface]);
+      const tip = flameTipZM(obj);
+      if (tip !== null) pts.push([p[0], p[1], tip]);
+    } else if (isHood(obj)) {
+      const opening = hoodOpeningZM(obj);
+      const [w, dd] = obj.opening_m;
+      const apex = opening + Math.max(Math.min(w, dd) * 0.45, 0.4);
+      const top = opts.ducts && obj.duct ? apex + (obj.duct.length_m ?? 2) : apex;
+      for (const [x, y] of hoodOpeningCornersXY(obj)) {
+        pts.push([x, y, hoodIntakeHeightM(obj)], [x, y, top]);
+      }
+    } else if (isWall(obj)) {
+      const base = p[2] + (obj.baseHeight_m ?? 0);
+      for (const v of obj.polyline_m) {
+        const [x, y] = footprintXY(obj, v);
+        pts.push([x, y, base], [x, y, base + obj.height_m]);
+      }
+    } else if (isCeiling(obj)) {
+      const soffit = ceilingSoffitZM(obj);
+      for (const v of obj.polygon_m) {
+        const [x, y] = footprintXY(obj, v);
+        pts.push([x, y, soffit], [x, y, soffit + (obj.thickness_m ?? 0.1)]);
+      }
+    } else if (isObstruction(obj)) {
+      for (const [x, y] of obstructionCornersXY(obj)) {
+        pts.push([x, y, p[2]], [x, y, p[2] + obj.size_m[2]]);
+      }
+    } else if (isThermocouple(obj)) {
+      // Every bead, not the origin: a rake reaching to the ceiling would otherwise
+      // be framed as a point on the floor.
+      for (const offset of beadOffsetsOf(obj)) pts.push(toWorld(obj, [0, 0, offset]));
+      pts.push([p[0], p[1], 0]);
+    } else if (isCamera(obj) || isHeatFluxSensor(obj)) {
+      pts.push([p[0], p[1], 0]); // the tripod foot
+    }
+  }
+  return pts;
 }

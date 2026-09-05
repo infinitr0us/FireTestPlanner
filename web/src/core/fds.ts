@@ -77,6 +77,17 @@ export const WALL_ASPECT = 0.5;
  *  few decimals by hand or by a mesh generator; 0.1 mm is finer than either. */
 export const TOL_M = 1e-4;
 
+/**
+ * What a zero-thickness `&OBST` is drawn as.
+ *
+ * FDS allows an obstruction with no thickness -- glazing, a thin partition, a shelf
+ * -- and real models are full of them. This format has no planar object, and a box
+ * with a zero extent is one the editor refuses to open, so the plate is given a
+ * nominal thickness and the import says so. 10 mm reads as a plate and can still be
+ * picked in the viewport.
+ */
+export const THIN_M = 0.01;
+
 /** A burner standing more than this above the detected floor is worth mentioning. */
 const BURNER_PLATFORM_TOL_M = 0.05;
 
@@ -115,8 +126,12 @@ const FDS_COLORS: Record<string, string | null> = {
 
 /** The record groups a single pasted record can become. Both converters check the
  *  group before the fields: `&MESH`, `&INIT` and `&SLCF` all carry an `XB`, and
- *  `&SLCF` carries a `QUANTITY` and an `XYZ` as well. */
-const GEOMETRY_GROUPS = ['OBST', 'VENT'];
+ *  `&SLCF` carries a `QUANTITY` and an `XYZ` as well. `&VENT` is deliberately not
+ *  here: a vent is a boundary condition on the face of a solid, not a solid, and the
+ *  full import never turns one into geometry either -- it only ever reads one as a
+ *  fire. Pasting one used to produce a box with a zero extent that the editor then
+ *  refused to reopen. */
+const GEOMETRY_GROUPS = ['OBST'];
 const DEVICE_GROUP = 'DEVC';
 
 /** The six faces of an FDS box, in `SURF_ID6` order. */
@@ -176,8 +191,10 @@ export interface FdsImportOptions {
    *  bytes cannot, and the import says so rather than quietly importing a fraction
    *  of the model. */
   includesResolved?: boolean;
-  /** `&CATF` names that were looked for and not found. */
-  unresolvedIncludes?: string[];
+  /** What splicing the includes had to report -- a file that was not there, a
+   *  child that ended in `&TAIL`, a file read twice. Prepended to the import's own
+   *  issues, exactly as `fireplan.fds.load` prepends its reader's. */
+  includeIssues?: Issue[];
 }
 
 export class FdsError extends Error {
@@ -421,9 +438,59 @@ function statesHeat(rec: NamelistRecord | undefined): boolean {
   return rec !== undefined && Boolean(rec.number('HRRPUA') || rec.number('MLRPUA'));
 }
 
+/**
+ * Which way a `&VENT` faces: `'+z'`, `'-z'`, `'+x'` and so on, or null when the
+ * box is not a plane at all.
+ *
+ * A vent is a face on a solid, and FDS decides its orientation from which side the
+ * solid is on -- or from an explicit `IOR`, whose sign is the direction of the
+ * surface normal. This reader has no solver, so it does the same by inspection:
+ * `IOR` when stated; otherwise the obstruction the vent lies on (a vent on a box's
+ * top face burns upward, one on its underside burns downward); otherwise the mesh
+ * boundary (the domain floor faces up, the domain ceiling faces down). Reading
+ * every horizontal vent as upward turned a fire on the underside of a ceiling into
+ * an upward-burning pan three metres high.
+ */
+function ventOrientation(xb: Xb, rec: NamelistRecord, obsts: Box[], domain: Xb | null): string | null {
+  const [dx, dy, dz] = extent(xb);
+  let axis: 'x' | 'y' | 'z';
+  if (dz <= TOL_M) axis = 'z';
+  else if (dy <= TOL_M) axis = 'y';
+  else if (dx <= TOL_M) axis = 'x';
+  else return null;
+
+  const ior = rec.number('IOR');
+  if (ior !== null && Math.trunc(ior) !== 0) return `${ior > 0 ? '+' : '-'}${axis}`;
+
+  const lo = axis === 'x' ? 0 : axis === 'y' ? 2 : 4;
+  const plane = xb[lo];
+  // The vent has to lie within the face it sits on, in the two in-plane axes.
+  const inPlane = [0, 2, 4].filter((i) => i !== lo);
+  const within = (box: Xb): boolean => inPlane.every(
+    (i) => xb[i] >= box[i] - TOL_M && xb[i + 1] <= box[i + 1] + TOL_M,
+  );
+  let onHighFace = false;
+  let onLowFace = false;
+  for (const box of obsts) {
+    if (!within(box.xb)) continue;
+    if (Math.abs(plane - box.xb[lo + 1]) <= TOL_M) onHighFace = true;
+    if (Math.abs(plane - box.xb[lo]) <= TOL_M) onLowFace = true;
+  }
+  if (onHighFace && !onLowFace) return `+${axis}`;
+  if (onLowFace && !onHighFace) return `-${axis}`;
+  if (domain !== null) {
+    if (Math.abs(plane - domain[lo]) <= TOL_M) return `+${axis}`;
+    if (Math.abs(plane - domain[lo + 1]) <= TOL_M) return `-${axis}`;
+  }
+  // Nothing establishes it -- a vent floating in the domain, which FDS itself would
+  // reject -- so the positive side stands, as it always has.
+  return `+${axis}`;
+}
+
 function fireFaces(
   boxes: Box[], vents: Box[], surfs: Map<string, NamelistRecord>,
   peaks: Map<string, number>, heatOfCombustion: number | null, issues: Issue[],
+  domain: Xb | null = null,
 ): FireFace[] {
   const off: string[] = [];
   const released = (surfId: string | null): number | null => {
@@ -461,12 +528,16 @@ function fireFaces(
       let area = face === '-x' || face === '+x' ? dy * dz
         : face === '-y' || face === '+y' ? dx * dz
           : dx * dy;
-      // A vent is a plane: whichever extent is degenerate names its face, and the
-      // other two give its area, whatever SURF_ID6 slot it arrived in.
+      // A vent is a plane: whichever extent is degenerate names its axis, the solid
+      // it sits on (or its IOR) names the side, and the other two extents give its
+      // area, whatever SURF_ID6 slot it arrived in.
       if (fromVent) {
-        if (dz <= TOL_M) { face = '+z'; area = dx * dy; }
-        else if (dy <= TOL_M) { face = '+y'; area = dx * dz; }
-        else if (dx <= TOL_M) { face = '+x'; area = dy * dz; }
+        const oriented = ventOrientation(box.xb, box.rec, boxes, domain);
+        if (oriented !== null) {
+          face = oriented;
+          const axis = oriented[1];
+          area = axis === 'z' ? dx * dy : axis === 'y' ? dx * dz : dy * dz;
+        }
       }
       out.push({
         surf: String(surfId), xb: box.xb, areaM2: area,
@@ -578,18 +649,24 @@ export function isWallBox(xb: Xb): boolean {
 function detectFloor(
   slabs: Box[], burner: FireFace | null, domain: Xb | null,
 ): [number, string] {
-  const below = slabs.filter(
-    (s) => burner === null || s.xb[5] <= burner.xb[4] + BURNER_PLATFORM_TOL_M,
-  );
-  const pool = below.length > 0 ? below : slabs;
-  if (pool.length > 0) {
-    const lowest = pool.reduce((best, s) => (s.xb[5] < best.xb[5] ? s : best));
+  // With a burner, only a slab UNDER it can be the floor. Falling back to every slab
+  // when none qualifies took the one slab in the model -- an overhead ceiling -- as
+  // the floor, put the origin at its top, dropped it from the plan as floor geometry
+  // and left every device two metres below ground.
+  const candidates = burner === null
+    ? slabs
+    : slabs.filter((s) => s.xb[5] <= burner.xb[4] + BURNER_PLATFORM_TOL_M);
+  if (candidates.length > 0) {
+    const lowest = candidates.reduce((best, s) => (s.xb[5] < best.xb[5] ? s : best));
     return [lowest.xb[5], 'the top of the lowest horizontal slab'];
   }
   if (burner !== null) return [burner.xb[4], 'the base of the burner'];
   if (domain !== null) return [domain[4], 'the bottom of the mesh'];
   return [0, 'z = 0'];
 }
+
+/** The rule `detectFloor` reports when it took the burner's own base as the floor. */
+const FLOOR_FROM_BURNER = 'the base of the burner';
 
 // -- single-record conversion, shared with the paste box ------------------
 
@@ -616,28 +693,42 @@ export function obstructionFromRecord(
   return geometryObject(xb, rec, origin, ids, surfs);
 }
 
+/** How many boxes the conversion had to thicken to draw at all. */
+interface GeometryStats {
+  thin: number;
+}
+
 /**
  * A box -- classified, re-origined and named -- as a wall, ceiling or obstruction.
  *
  * Takes the `XB` separately from the record so a `&MULT` copy converts through
  * exactly this path rather than a parallel one.
+ *
+ * An extent of zero -- FDS's thin obstruction -- becomes `THIN_M`, and is counted in
+ * `stats` so the import can say so. It is the only dimension this conversion ever
+ * invents, and it invents it because a zero one is not a box the editor can open.
  */
 function geometryObject(
   xb: Xb, rec: NamelistRecord, origin: Vec3, ids: Ids,
-  surfs: Map<string, NamelistRecord>,
+  surfs: Map<string, NamelistRecord>, stats: GeometryStats = { thin: 0 },
 ): PlanObject {
   const [ox, oy, oz] = origin;
   const [dx, dy, dz] = extent(xb);
   const [cx, cy] = centre(xb);
   const color = colorOf(rec);
   const name = rec.string('ID');
+  const thickened = (v: number): number => {
+    if (v > TOL_M) return v;
+    stats.thin += 1;
+    return THIN_M;
+  };
 
   let obj: PlanObject;
   // A slab is a ceiling only if it is above the floor. One resting on it -- a
   // plinth, a hearth, a second floor tile beside the first -- has a soffit height of
   // zero or less, which is not a ceiling in this format and not a valid object in
   // any schema version. It falls through to the box it actually is.
-  if (isSlabBox(xb) && dz > TOL_M && xb[4] - oz > TOL_M) {
+  if (isSlabBox(xb) && xb[4] - oz > TOL_M) {
     obj = {
       id: ids.make('ceiling', name), type: 'ceiling', name: name ?? 'Ceiling',
       transform: { position_m: [0, 0, 0] },
@@ -646,7 +737,7 @@ function geometryObject(
         [xb[1] - ox, xb[3] - oy], [xb[0] - ox, xb[3] - oy],
       ],
       height_m: xb[4] - oz,
-      thickness_m: dz,
+      thickness_m: thickened(dz),
     } as CeilingObject;
   } else if (isWallBox(xb)) {
     const runsAlongY = dx <= dy;
@@ -661,7 +752,7 @@ function geometryObject(
       // because that is how you seal one to a slab -- keeps its top where the file
       // put it instead of gaining the buried part twice.
       height_m: Math.max(xb[5] - Math.max(xb[4], oz), TOL_M),
-      thickness_m: runsAlongY ? dx : dy,
+      thickness_m: thickened(runsAlongY ? dx : dy),
       baseHeight_m: Math.max(xb[4] - oz, 0),
       openings: [],
     } as WallObject;
@@ -669,7 +760,7 @@ function geometryObject(
     obj = {
       id: ids.make('obst', name), type: 'obstruction', name: name ?? 'Obstruction',
       transform: { position_m: [cx - ox, cy - oy, xb[4] - oz] },
-      size_m: [dx, dy, dz],
+      size_m: [thickened(dx), thickened(dy), thickened(dz)],
     } as ObstructionObject;
   }
 
@@ -1111,7 +1202,6 @@ function reportUnresolvedIncludes(
   byGroup: Map<string, NamelistRecord[]>, opts: FdsImportOptions, issues: Issue[],
 ): void {
   const catf = byGroup.get('CATF') ?? [];
-  const missing = opts.unresolvedIncludes ?? [];
   if (catf.length > 0 && !opts.includesResolved) {
     const named = catf.flatMap((rec) => rec.strings('OTHER_FILES')).filter(Boolean);
     issues.push(issue('warning', 'fds-catf-unresolved',
@@ -1119,11 +1209,6 @@ function reportUnresolvedIncludes(
       + `this input (${named.length > 0 ? named.join(', ') : 'unnamed'}), and only the file `
       + 'itself was read. Everything those files define — geometry, devices, surfaces — is '
       + 'missing from this plan. Open it in the desktop app, from the folder that holds them.'));
-  }
-  if (missing.length > 0) {
-    issues.push(issue('warning', 'fds-catf-missing',
-      `&CATF names ${missing.join(', ')} but ${missing.length === 1 ? 'it was' : 'they were'} `
-      + 'not beside the input; anything they defined is missing from this plan.'));
   }
 }
 
@@ -1188,7 +1273,10 @@ export function fdsToPlan(
   }
   const group = (name: string): NamelistRecord[] => byGroup.get(name) ?? [];
 
-  const issues: Issue[] = [];
+  // Whatever reading the includes had to say comes first, as it does from
+  // `fireplan.fds.load`: a child that ended in &TAIL explains everything missing
+  // below it, and belongs above the findings it caused.
+  const issues: Issue[] = [...(opts.includeIssues ?? [])];
   const ids = new Ids();
   const surfs = new Map<string, NamelistRecord>();
   for (const rec of group('SURF')) {
@@ -1217,7 +1305,7 @@ export function fdsToPlan(
   const obstBoxes = boxesOf(records, 'OBST', mults);
   const ventBoxes = boxesOf(records, 'VENT', mults).filter((b) => !isDomainVent(b, domain, surfs));
   const heatOfCombustion = reac ? reac.number('HEAT_OF_COMBUSTION') : null;
-  const faces = fireFaces(obstBoxes, ventBoxes, surfs, peaks, heatOfCombustion, issues);
+  const faces = fireFaces(obstBoxes, ventBoxes, surfs, peaks, heatOfCombustion, issues, domain);
   const burner = pickBurner(faces, opts.burnerSurf);
   const burners = burnerFaces(faces, burner);
   const candidates = [...new Set(faces.filter(canBeBurner).map((f) => f.surf))].sort();
@@ -1300,6 +1388,16 @@ export function fdsToPlan(
       + `from ${floorRule}. If it stands on a platform this is right; if the floor was `
       + 'detected wrongly every height in the plan is off by the same amount.'));
   }
+  if (floorRule === FLOOR_FROM_BURNER && slabs.length > 0) {
+    // The model has slabs, but every one of them is above the fire. That is the
+    // shape of a floor-level fire under a ceiling with no floor slab drawn -- and
+    // also the shape of a floor slab this reader failed to recognise, so it is
+    // worth a line rather than a silent choice.
+    issues.push(issue('info', 'fds-floor-inferred',
+      `No horizontal slab lies below the burner, so the floor was taken as the burner's `
+      + `base (z = ${String(floorZ)} in the file). The ${slabs.length} slab(s) above it `
+      + `${slabs.length === 1 ? 'was' : 'were'} kept as ceilings.`));
+  }
 
   // -- build the plan ----------------------------------------------------
   const head = group('HEAD')[0];
@@ -1313,6 +1411,7 @@ export function fdsToPlan(
   const walls: Array<[WallObject, Xb]> = [];
 
   if (wantGeometry) {
+    const stats: GeometryStats = { thin: 0 };
     // Every slab whose top is the floor, not merely the lowest one. A meshed model
     // tiles its floor -- one &OBST per mesh is the usual shape -- and skipping a
     // single instance leaves the rest to be converted as slabs sitting at floor
@@ -1320,12 +1419,19 @@ export function fdsToPlan(
     for (const box of obstBoxes) {
       if (burnerXbs.some((xb) => sameXb(box.xb, xb))) continue; // becomes the burner
       if (isSlabBox(box.xb) && box.xb[5] <= floorZ + TOL_M) continue; // it is the floor
-      const obj = geometryObject(box.xb, box.rec, origin, ids, surfs);
+      const obj = geometryObject(box.xb, box.rec, origin, ids, surfs, stats);
       if (obj.type === 'wall') walls.push([obj as WallObject, box.xb]);
       objects.push(obj);
     }
 
     applyHoles(boxesOf(records, 'HOLE', mults), walls, origin, issues);
+
+    if (stats.thin > 0) {
+      issues.push(issue('info', 'fds-thin-geometry',
+        `${stats.thin} zero-thickness &OBST extent(s) were drawn ${THIN_M * 1000} mm thick: `
+        + 'this format has no planar object, and a box with no thickness is one the '
+        + 'editor cannot open.'));
+    }
   }
 
   for (const face of burners) {

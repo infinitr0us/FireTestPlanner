@@ -13,6 +13,7 @@ import {
   cameraColor,
   cameras,
   ceilingAreaM2,
+  ceilingSoffitZM,
   ceilings,
   checkPlan,
   displayName,
@@ -115,7 +116,7 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
       cell(`${ceilingAreaM2(cl).toFixed(2)} m² slab`),
       cell(`${cl.polygon_m.length}-sided`),
       cell('—'),
-      cell(formatLength(cl.height_m, unit), 'num'),
+      cell(formatLength(ceilingSoffitZM(cl), unit), 'num'),
       cell('—'),
     ].join('') + '</tr>');
   }

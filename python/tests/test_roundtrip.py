@@ -212,6 +212,42 @@ def test_save_can_leave_the_timestamp_alone(tmp_path, plan):
         assert fh.read() == plan.dumps()
 
 
+def test_a_save_that_cannot_serialise_leaves_the_previous_file_intact(tmp_path, plan):
+    """`open(path, "w")` truncates before a byte is written, so a NaN that had crept
+    into a coordinate used to leave a 0-byte file where the plan had been."""
+    out = tmp_path / "plan.ftp.json"
+    plan.save(out)
+    before = out.read_bytes()
+    modified_before = plan.meta["modified"]
+
+    plan.environment["ambientTemperature_C"] = float("nan")
+    with pytest.raises(ValueError, match="not JSON compliant"):
+        plan.save(out)
+
+    assert out.read_bytes() == before
+    # No half-written temporary left beside it, and no save time it never had.
+    assert [p.name for p in tmp_path.iterdir()] == ["plan.ftp.json"]
+    assert plan.meta["modified"] == modified_before
+
+
+def test_a_write_that_fails_midway_leaves_the_previous_file_intact(tmp_path, plan, monkeypatch):
+    out = tmp_path / "plan.ftp.json"
+    plan.save(out)
+    before = out.read_bytes()
+
+    import fireplan.plan as plan_module
+
+    def explode(src, dst):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(plan_module.os, "replace", explode)
+    plan.meta["title"] = "changed"
+    with pytest.raises(OSError):
+        plan.save(out)
+    assert out.read_bytes() == before
+    assert [p.name for p in tmp_path.iterdir()] == ["plan.ftp.json"]
+
+
 def test_files_are_written_with_unix_newlines(tmp_path, plan):
     """Otherwise every plan saved on Windows diffs wholesale against one saved
     elsewhere."""
@@ -564,6 +600,24 @@ def test_every_shipped_schema_is_loadable_and_distinct():
         with io.open(path, encoding="utf-8") as fh:
             ids.append(json.load(fh)["$id"])
     assert len(set(ids)) == len(schemas)
+
+
+def test_the_packaged_schemas_are_the_normative_ones_byte_for_byte():
+    """`fireplan/schemas/` ships inside the wheel so an installed package can
+    validate at all; `schema/` at the repository root is the normative copy the
+    editor and the docs point at. Editing one without the other is the drift this
+    test exists to catch -- copy `schema/*.schema.json` over `fireplan/schemas/`."""
+    from importlib import resources
+
+    from fireplan.plan import _SCHEMA_FILES, _schema_text
+
+    for version, filename in _SCHEMA_FILES.items():
+        with io.open(os.path.join(os.path.dirname(FIXTURES), "schema", filename),
+                     encoding="utf-8") as fh:
+            normative = fh.read()
+        assert _schema_text(filename) == normative, filename
+        # And it really is package data, not a path relative to this checkout.
+        assert resources.files("fireplan").joinpath("schemas", filename).is_file(), version
 
 
 def test_the_1_0_schema_was_not_edited_to_accept_1_1_content():

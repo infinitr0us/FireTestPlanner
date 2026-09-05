@@ -564,3 +564,5 @@ body.is-measuring .viewport { cursor: cell; }
 }
 
 .fdspaste__error { margin: 0; color: var(--bad); font-size: 11px; white-space: pre-wrap; }
+/* The same voice anywhere a typed value is refused with a reason. */
+.panel__error { margin: 4px 0 8px; color: var(--bad); font-size: 11px; white-space: pre-wrap; }

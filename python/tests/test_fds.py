@@ -522,6 +522,65 @@ def test_a_wall_fire_is_reported_rather_than_flattened_into_a_zero_area_burner()
     result.plan.validate_schema()
 
 
+def test_an_overhead_slab_is_never_taken_as_the_floor_when_the_fire_is_below_it():
+    """A floor-level fire under a ceiling, with no floor slab drawn.
+
+    The fallback to "any slab" chose the ceiling: origin at its top, the ceiling
+    itself dropped as floor geometry, and a device at 1 m placed at -2.1 m.
+    """
+    result = fds.to_plan(
+        "&HEAD CHID='review-floor' /\n&MESH XB=0,4,0,4,0,4 /\n"
+        "&SURF ID='B', HRRPUA=100 /\n&VENT XB=0,1,0,1,0,0, SURF_ID='B' /\n"
+        "&OBST XB=0,4,0,4,3,3.1 /\n"
+        "&DEVC XYZ=1,1,1, QUANTITY='TEMPERATURE' /\n&TAIL /\n")
+    assert result.origin_m == pytest.approx((0.5, 0.5, 0.0))
+    assert one(result, "ceiling")["height_m"] == pytest.approx(3.0)
+    assert one(result, "thermocouple")["transform"]["position_m"][2] == pytest.approx(1.0)
+    note = next(i for i in result.issues if i.code == "fds-floor-inferred")
+    assert "kept as ceilings" in note.message
+
+
+@pytest.mark.parametrize("ior", [", IOR=-3", ""])
+def test_a_downward_facing_vent_is_a_soffit_fire_not_an_upward_pan(ior):
+    """Every horizontal vent used to be +z. One on the underside of a ceiling --
+    stated by IOR=-3, or established by the slab it sits under -- became a square
+    burner with a 3 m rim: an upward flame on a three-metre-high pan."""
+    text = ("&HEAD CHID='downward' /\n&MESH XB=0,4,0,4,0,4 /\n"
+            "&OBST XB=0,4,0,4,-0.1,0 /\n&OBST XB=0,4,0,4,3,3.1 /\n"
+            "&SURF ID='B', HRRPUA=100 /\n"
+            "&VENT XB=1,2,1,2,3,3, SURF_ID='B'{} /\n&TAIL /\n".format(ior))
+    result = fds.to_plan(text)
+    assert result.counts.get("burner", 0) == 0
+    assert "fds-fire-not-a-burner" in [i.code for i in result.issues]
+    assert one(result, "ceiling")["height_m"] == pytest.approx(3.0)
+    result.plan.validate_schema()
+
+    # The same footprint on the TOP of the floor slab, with nothing stated, is the
+    # ordinary burner -- and an explicit IOR wins over inspection either way.
+    plain = text.replace("SURF_ID='B'" + ior + " /", "SURF_ID='B' /")
+    assert fds.to_plan(plain.replace("XB=1,2,1,2,3,3", "XB=1,2,1,2,0,0")).counts["burner"] == 1
+    assert fds.to_plan(plain.replace("SURF_ID='B' /", "SURF_ID='B', IOR=3 /")).counts["burner"] == 1
+
+
+def test_a_zero_thickness_obstruction_is_given_a_drawable_thickness():
+    """FDS thin obstructions -- glazing, partitions -- are ordinary. A wall of
+    thickness zero and a slab of thickness zero were both objects the schema
+    rejects, which blocked the whole import."""
+    result = fds.to_plan(
+        "&SURF ID='B' HRRPUA=100. /\n"
+        "&OBST ID='floor' XB=-1,5,-1,5,-0.1,0 /\n"
+        "&OBST XB=0,0.2,0,0.2,0,0.1, SURF_ID6='I','I','I','I','I','B' /\n"
+        "&OBST ID='glazing' XB=0,2,1,1,0,2.4 /\n"
+        "&OBST ID='shelf' XB=2,3,2,3,1.2,1.2 /\n")
+    assert by_id(result, "wall-glazing")["thickness_m"] == fds.THIN_M
+    shelf = by_id(result, "ceiling-shelf")
+    assert shelf["thickness_m"] == fds.THIN_M
+    assert shelf["height_m"] == pytest.approx(1.2)
+    result.plan.validate_schema()
+    note = next(i for i in result.issues if i.code == "fds-thin-geometry")
+    assert "2 zero-thickness" in note.message
+
+
 def test_a_ramp_that_never_leaves_zero_is_a_surface_switched_off():
     """`peak or 1` read "no ramp" and "a peak of zero" as the same thing, and turned
     a burner the input switches off into the largest fire in the file."""
@@ -604,6 +663,14 @@ def test_only_obst_and_vent_paste_as_geometry(text):
     assert fds.obstruction_from_record(namelist.read_one(text)) is None
 
 
+def test_a_vent_does_not_paste_as_geometry():
+    # A planar vent pasted as geometry became a box with a zero extent: it saved,
+    # and the editor then refused to reopen the file. A vent is a face on a solid.
+    assert fds.obstruction_from_record(namelist.read_one("&VENT XB=0,1,0,1,0,0 /")) is None
+    plate = fds.obstruction_from_record(namelist.read_one("&OBST XB=0,2,1,1,0,2.4 /"))
+    assert plate["type"] == "wall" and plate["thickness_m"] == fds.THIN_M
+
+
 def test_only_devc_pastes_as_an_instrument():
     slice_file = namelist.read_one("&SLCF QUANTITY='TEMPERATURE', XYZ=1,1,1 /")
     assert fds.device_from_record(slice_file) is None
@@ -632,6 +699,22 @@ def test_a_catf_include_is_spliced_where_it_sits_not_after_tail(tmp_path):
     the parent's last line is a child nobody reads."""
     result = fds.load(str(_split_case(tmp_path)))
     assert one(result, "burner")["fire"]["hrr_kw"] == pytest.approx(100.0)
+
+
+def test_a_child_that_ends_in_tail_is_reported(tmp_path):
+    """Reading stops at &TAIL, so a child that carries one ends the parent there:
+    the parent's thermocouple after the &CATF line is not in this plan, and the
+    import has to say why rather than present the remainder as the whole."""
+    root = tmp_path / "root.fds"
+    root.write_text("&HEAD CHID='catf' /\n&CATF OTHER_FILES='child.fds' /\n"
+                    "&DEVC ID='parent', XYZ=1,1,1, QUANTITY='TEMPERATURE' /\n&TAIL /\n",
+                    encoding="utf-8")
+    (tmp_path / "child.fds").write_text("&OBST XB=0,2,0,0.1,0,2 /\n&TAIL /\n", encoding="utf-8")
+    result = fds.load(str(root))
+    tail = next(i for i in result.issues if i.code == "fds-catf-tail")
+    assert "child.fds" in tail.message
+    assert result.counts.get("wall") == 1
+    assert "thermocouple" not in result.counts
 
 
 def test_converting_bare_text_says_its_includes_went_unread(tmp_path):

@@ -19,6 +19,7 @@ import {
   deviceFromRecord,
   fdsToPlan,
   obstructionFromRecord,
+  THIN_M,
   type FdsImportResult,
   type Xb,
 } from './fds';
@@ -26,6 +27,7 @@ import {
   applyXbToObject,
   fdsFrame,
   xbOfObject,
+  xbProblem,
   xyzOfObject,
 } from './fdsview';
 import { NamelistError, readNamelist, readOneRecord } from './namelist';
@@ -421,6 +423,67 @@ describe('finding the fire', () => {
     expect(validateStructure(result.doc)).toEqual([]);
   });
 
+  it('never takes an overhead slab as the floor when the fire is below every slab', () => {
+    // A floor-level fire under a ceiling, with no floor slab drawn. The fallback to
+    // "any slab" chose the ceiling: origin at its top, the ceiling itself dropped
+    // as floor geometry, and a device at 1 m placed at -2.1 m.
+    const result = fdsToPlan(
+      "&HEAD CHID='review-floor' /\n&MESH XB=0,4,0,4,0,4 /\n"
+      + "&SURF ID='B', HRRPUA=100 /\n&VENT XB=0,1,0,1,0,0, SURF_ID='B' /\n"
+      + '&OBST XB=0,4,0,4,3,3.1 /\n'
+      + "&DEVC XYZ=1,1,1, QUANTITY='TEMPERATURE' /\n&TAIL /\n");
+    near(result.originM, [0.5, 0.5, 0]);
+    expect((only(result, 'ceiling') as CeilingObject).height_m).toBeCloseTo(3, 9);
+    expect((only(result, 'thermocouple') as ThermocoupleObject).transform!.position_m[2])
+      .toBeCloseTo(1, 9);
+    // And it says the floor was inferred rather than found.
+    const note = result.issues.find((i) => i.code === 'fds-floor-inferred');
+    expect(note?.message).toContain('kept as ceilings');
+  });
+
+  it('reads a downward-facing vent as a soffit fire, not an upward pan', () => {
+    // Every horizontal vent used to be +z. This one is on the underside of a
+    // ceiling, IOR=-3, and became a square burner with a 3 m rim: an upward flame
+    // on a three-metre-high pan.
+    const model = (ior: string): string =>
+      "&HEAD CHID='downward' /\n&MESH XB=0,4,0,4,0,4 /\n"
+      + '&OBST XB=0,4,0,4,-0.1,0 /\n&OBST XB=0,4,0,4,3,3.1 /\n'
+      + "&SURF ID='B', HRRPUA=100 /\n"
+      + `&VENT XB=1,2,1,2,3,3, SURF_ID='B'${ior} /\n&TAIL /\n`;
+    for (const ior of [', IOR=-3', '']) {
+      const result = fdsToPlan(model(ior));
+      expect(result.counts.burner).toBeUndefined();
+      expect(result.issues.map((i) => i.code)).toContain('fds-fire-not-a-burner');
+      expect((only(result, 'ceiling') as CeilingObject).height_m).toBeCloseTo(3, 9);
+      expect(validateStructure(result.doc)).toEqual([]);
+    }
+    // The same footprint on the TOP of the floor slab is the ordinary burner.
+    const floorFire = fdsToPlan(model('').replace('XB=1,2,1,2,3,3', 'XB=1,2,1,2,0,0'));
+    expect(floorFire.counts.burner).toBe(1);
+    // An explicit IOR wins over inspection: +3 on the underside is still upward.
+    expect(fdsToPlan(model(', IOR=3')).counts.burner).toBe(1);
+  });
+
+  it('gives a zero-thickness obstruction a drawable thickness and says so', () => {
+    // FDS thin obstructions -- glazing, partitions -- are ordinary. A wall of
+    // thickness zero and a slab of thickness zero were both objects the editor
+    // refused to reopen, which blocked the whole import.
+    const result = fdsToPlan(
+      "&SURF ID='B' HRRPUA=100. /\n"
+      + "&OBST ID='floor' XB=-1,5,-1,5,-0.1,0 /\n"
+      + "&OBST XB=0,0.2,0,0.2,0,0.1, SURF_ID6='I','I','I','I','I','B' /\n"
+      + "&OBST ID='glazing' XB=0,2,1,1,0,2.4 /\n"
+      + "&OBST ID='shelf' XB=2,3,2,3,1.2,1.2 /\n");
+    const wall = byId(result, 'wall-glazing') as WallObject;
+    expect(wall.thickness_m).toBe(THIN_M);
+    const shelf = byId(result, 'ceiling-shelf') as CeilingObject;
+    expect(shelf.thickness_m).toBe(THIN_M);
+    expect(shelf.height_m).toBeCloseTo(1.2, 9);
+    expect(validateStructure(result.doc)).toEqual([]);
+    expect(result.issues.find((i) => i.code === 'fds-thin-geometry')?.message)
+      .toContain('2 zero-thickness');
+  });
+
   it('reads a ramp that never leaves zero as a surface switched off', () => {
     // `peak || 1` read "no ramp" and "a peak of zero" as the same thing, and turned
     // a burner the input switches off into the largest fire in the file.
@@ -517,6 +580,36 @@ describe('what an import refuses to guess', () => {
     expect(result.issues.map((i) => i.code)).not.toContain('fds-catf-unresolved');
   });
 
+  it('reports a child that ends in &TAIL, and everything else the splice could not do', async () => {
+    // Reading stops at &TAIL, so a child that carries one ends the parent there:
+    // the parent's thermocouple after the &CATF line is not in this plan. Python
+    // has always said so; the splicer here dropped it in silence.
+    const files: Record<string, string> = {
+      'child.fds': '&OBST XB=0,2,0,0.1,0,2 /\n&TAIL /\n',
+      'common.fds': "&SURF ID='C' /\n",
+      'a.fds': "&CATF OTHER_FILES='common.fds' /\n",
+      'b.fds': "&CATF OTHER_FILES='common.fds','b.fds' /\n",
+    };
+    const spliced = await spliceFdsIncludes(
+      "&HEAD CHID='catf' /\n&CATF OTHER_FILES='a.fds','b.fds','gone.fds','child.fds' /\n"
+      + "&DEVC ID='parent', XYZ=1,1,1, QUANTITY='TEMPERATURE' /\n&TAIL /\n",
+      async (name) => files[name] ?? null,
+    );
+    const codes = spliced.issues.map((i) => i.code);
+    expect(codes).toEqual(expect.arrayContaining(
+      ['fds-catf-repeat', 'fds-catf-cycle', 'fds-catf-missing', 'fds-catf-tail']));
+    expect(spliced.issues.find((i) => i.code === 'fds-catf-tail')?.message).toContain('child.fds');
+    expect(spliced.issues.find((i) => i.code === 'fds-catf-missing')?.message).toContain('gone.fds');
+
+    // And the conversion carries them through, ahead of its own findings.
+    const result = fdsToPlan(spliced.text, 'catf.fds',
+      { includesResolved: true, includeIssues: spliced.issues });
+    expect(result.issues.slice(0, spliced.issues.length)).toEqual(spliced.issues);
+    expect(result.counts.wall).toBe(1);
+    expect(result.counts.thermocouple).toBeUndefined();   // lost to the child's &TAIL
+    expect(result.issues.map((i) => i.code)).not.toContain('fds-catf-unresolved');
+  });
+
   it('says so when &CATF pulls in files nobody read', () => {
     // The browser is handed one file's bytes and cannot go looking. Silence there
     // would present a fraction of a model as a whole one.
@@ -552,6 +645,23 @@ describe('creating one object from a pasted record', () => {
 
   it('returns null for a record with no XB', () => {
     expect(obstructionFromRecord(readOneRecord("&HEAD CHID='x' /"))).toBeNull();
+  });
+
+  it('refuses a &VENT, which is a face and not a box', () => {
+    // A planar vent pasted as geometry became an obstruction with size [1, 1, 0]:
+    // it displayed, it saved, and the loader then rejected the file. The full
+    // import never makes geometry of a vent, and neither does this.
+    expect(obstructionFromRecord(readOneRecord('&VENT XB=0,1,0,1,0,0 /'))).toBeNull();
+    expect(obstructionFromRecord(readOneRecord("&VENT XB=0,1,0,1,0,0, SURF_ID='B' /"))).toBeNull();
+  });
+
+  it('still makes a valid object of a thin &OBST pasted on its own', () => {
+    const plate = obstructionFromRecord(readOneRecord('&OBST XB=0,2,1,1,0,2.4 /')) as WallObject;
+    expect(plate.type).toBe('wall');
+    expect(plate.thickness_m).toBe(THIN_M);
+    const doc = newPlan('paste');
+    doc.objects.push(plate);
+    expect(validateStructure(doc)).toEqual([]);
   });
 
   it('refuses a record whose group is not one it can read', () => {
@@ -591,8 +701,34 @@ describe('reading a plan object as FDS spells it', () => {
     const result = sample();
     const wall = byId(result, 'wall-1');
     const next: Xb = [-0.1, 4.0, 3.6, 3.7, 0, 2.5];
-    applyXbToObject(wall, next, [0.1, 0.1, 0]);
+    expect(applyXbToObject(wall, next, [0.1, 0.1, 0])).toBeNull();
     near(xbOfObject(wall, [0.1, 0.1, 0])!.xb, next);
+  });
+
+  it('refuses an XB that would make the object one the loader rejects', () => {
+    // A ceiling typed with Z1 at the floor is a slab with a soffit height of zero
+    // -- not a ceiling, and not a valid one. It used to be written anyway, and the
+    // plan then saved and failed to reopen with `bad-height`.
+    const result = sample();
+    const slab = byId(result, 'ceiling-1') as CeilingObject;
+    const before = JSON.stringify(slab);
+    const atFloor: Xb = [0, 2, 0, 2, 0, 0.2];
+    expect(xbProblem(slab, atFloor)).toContain('soffit');
+    expect(applyXbToObject(slab, atFloor)).toContain('soffit');
+    expect(JSON.stringify(slab)).toBe(before);           // nothing was changed
+    expect(validateStructure(result.doc)).toEqual([]);
+
+    // The same slab a metre up is fine.
+    expect(applyXbToObject(slab, [0, 2, 0, 2, 1, 1.2])).toBeNull();
+    expect(slab.height_m).toBeCloseTo(1, 9);
+    expect(validateStructure(result.doc)).toEqual([]);
+
+    // A wall with no height, a box with no depth: refused the same way.
+    const wall = byId(result, 'wall-1');
+    expect(xbProblem(wall, [0, 2, 0, 0.1, 1, 1])).toContain('height');
+    const box = { id: 'b', type: 'obstruction', transform: { position_m: [0, 0, 0] }, size_m: [1, 1, 1] } as unknown as ObstructionObject;
+    expect(xbProblem(box, [0, 1, 0, 0, 0, 1])).toContain('three extents');
+    expect(xbProblem(box, [0, 1, 0, 1, 0, 1])).toBeNull();
   });
 
   it('reports a bounding box as read-only rather than squaring off geometry', () => {

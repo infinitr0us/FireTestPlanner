@@ -77,6 +77,13 @@ WALL_ASPECT = 0.5
 #: few decimals by hand or by a mesh generator; 0.1 mm is finer than either.
 TOL_M = 1e-4
 
+#: What a zero-thickness `&OBST` is drawn as. FDS allows an obstruction with no
+#: thickness -- glazing, a thin partition, a shelf -- and real models are full of
+#: them. This format has no planar object, and a box with a zero extent is one the
+#: editor refuses to open, so the plate is given a nominal thickness and the import
+#: says so. 10 mm reads as a plate and can still be picked in the viewport.
+THIN_M = 0.01
+
 #: A burner standing more than this above the detected floor is worth mentioning:
 #: either it is on a platform, or the floor was detected wrongly, and the reader is
 #: better placed to tell which.
@@ -109,8 +116,12 @@ FDS_COLORS = {
 
 #: The record groups a single pasted record can become. Both converters check the
 #: group before the fields: `&MESH`, `&INIT` and `&SLCF` all carry an `XB`, and
-#: `&SLCF` carries a `QUANTITY` and an `XYZ` as well.
-GEOMETRY_GROUPS = ("OBST", "VENT")
+#: `&SLCF` carries a `QUANTITY` and an `XYZ` as well. `&VENT` is deliberately not
+#: here: a vent is a boundary condition on the face of a solid, not a solid, and the
+#: full import never turns one into geometry either -- it only ever reads one as a
+#: fire. Pasting one used to produce a box with a zero extent that the editor then
+#: refused to reopen.
+GEOMETRY_GROUPS = ("OBST",)
 DEVICE_GROUP = "DEVC"
 
 #: The six faces of an FDS box, in `SURF_ID6` order.
@@ -538,9 +549,69 @@ def _states_heat(rec: Optional[Record]) -> bool:
     return rec is not None and bool(rec.number("HRRPUA") or rec.number("MLRPUA"))
 
 
+def _vent_orientation(xb: Xb, rec: Record, obsts: List[_Box],
+                      domain: Optional[Xb]) -> Optional[str]:
+    """Which way a `&VENT` faces: ``'+z'``, ``'-z'``, ``'+x'`` and so on, or None
+    when the box is not a plane at all.
+
+    A vent is a face on a solid, and FDS decides its orientation from which side
+    the solid is on -- or from an explicit `IOR`, whose sign is the direction of the
+    surface normal. This reader has no solver, so it does the same by inspection:
+    `IOR` when stated; otherwise the obstruction the vent lies on (a vent on a box's
+    top face burns upward, one on its underside burns downward); otherwise the mesh
+    boundary (the domain floor faces up, the domain ceiling faces down). Reading
+    every horizontal vent as upward turned a fire on the underside of a ceiling
+    into an upward-burning pan three metres high. Mirror of `ventOrientation` in
+    web/src/core/fds.ts.
+    """
+    dx, dy, dz = _extent(xb)
+    if dz <= TOL_M:
+        axis = "z"
+    elif dy <= TOL_M:
+        axis = "y"
+    elif dx <= TOL_M:
+        axis = "x"
+    else:
+        return None
+
+    ior = rec.number("IOR")
+    if ior is not None and int(ior) != 0:
+        return ("+" if ior > 0 else "-") + axis
+
+    lo = {"x": 0, "y": 2, "z": 4}[axis]
+    plane = xb[lo]
+    in_plane = [i for i in (0, 2, 4) if i != lo]
+
+    def within(box: Xb) -> bool:
+        # The vent has to lie within the face it sits on, in the two in-plane axes.
+        return all(xb[i] >= box[i] - TOL_M and xb[i + 1] <= box[i + 1] + TOL_M
+                   for i in in_plane)
+
+    on_high_face = on_low_face = False
+    for box in obsts:
+        if not within(box.xb):
+            continue
+        if abs(plane - box.xb[lo + 1]) <= TOL_M:
+            on_high_face = True
+        if abs(plane - box.xb[lo]) <= TOL_M:
+            on_low_face = True
+    if on_high_face and not on_low_face:
+        return "+" + axis
+    if on_low_face and not on_high_face:
+        return "-" + axis
+    if domain is not None:
+        if abs(plane - domain[lo]) <= TOL_M:
+            return "+" + axis
+        if abs(plane - domain[lo + 1]) <= TOL_M:
+            return "-" + axis
+    # Nothing establishes it -- a vent floating in the domain, which FDS itself
+    # would reject -- so the positive side stands, as it always has.
+    return "+" + axis
+
+
 def _fire_faces(boxes: List[_Box], vents: List[_Box], surfs: Dict[str, Record],
                 peaks: Dict[str, float], heat_of_combustion: Optional[float],
-                issues: List[Issue]) -> List[_FireFace]:
+                issues: List[Issue], domain: Optional[Xb] = None) -> List[_FireFace]:
     """Every surface in the model that releases heat.
 
     A model can easily have several: the sample input has a 7500 kW/m2 ignition
@@ -586,15 +657,15 @@ def _fire_faces(boxes: List[_Box], vents: List[_Box], surfs: Dict[str, Record],
                 area = dx * dz
             else:
                 area = dx * dy
-            # A vent is a plane: whichever extent is degenerate names its face, and
-            # the other two give its area, whatever SURF_ID6 slot it arrived in.
+            # A vent is a plane: whichever extent is degenerate names its axis, the
+            # solid it sits on (or its IOR) names the side, and the other two
+            # extents give its area, whatever SURF_ID6 slot it arrived in.
             if from_vent:
-                if dz <= TOL_M:
-                    face, area = "+z", dx * dy
-                elif dy <= TOL_M:
-                    face, area = "+y", dx * dz
-                elif dx <= TOL_M:
-                    face, area = "+x", dy * dz
+                oriented = _vent_orientation(box.xb, box.rec, boxes, domain)
+                if oriented is not None:
+                    face = oriented
+                    axis = oriented[1]
+                    area = dx * dy if axis == "z" else (dx * dz if axis == "y" else dy * dz)
             out.append(_FireFace(
                 surf=str(surf_id), xb=box.xb, area_m2=area,
                 hrr_kw=rel[0] * area if area > 0 else None,
@@ -698,17 +769,26 @@ def _detect_floor(slabs: List[_Box], burner: Optional[_FireFace],
     meshes start at z = -0.2 while its floor slab's top is at z = 0, so taking the
     mesh would put every height in the plan 200 mm out and leave the burner floating.
     """
-    below = [s for s in slabs
-             if burner is None or s.xb[5] <= burner.xb[4] + BURNER_PLATFORM_TOL_M]
-    pool = below or slabs
-    if pool:
-        lowest = min(pool, key=lambda s: s.xb[5])
+    # With a burner, only a slab UNDER it can be the floor. Falling back to every
+    # slab when none qualifies took the one slab in the model -- an overhead
+    # ceiling -- as the floor, put the origin at its top, dropped it from the plan
+    # as floor geometry and left every device two metres below ground.
+    if burner is None:
+        candidates = list(slabs)
+    else:
+        candidates = [s for s in slabs if s.xb[5] <= burner.xb[4] + BURNER_PLATFORM_TOL_M]
+    if candidates:
+        lowest = min(candidates, key=lambda s: s.xb[5])
         return lowest.xb[5], "the top of the lowest horizontal slab"
     if burner is not None:
-        return burner.xb[4], "the base of the burner"
+        return burner.xb[4], _FLOOR_FROM_BURNER
     if domain is not None:
         return domain[4], "the bottom of the mesh"
     return 0.0, "z = 0"
+
+
+#: The rule `_detect_floor` reports when it took the burner's own base as the floor.
+_FLOOR_FROM_BURNER = "the base of the burner"
 
 
 # -- single-record conversion, shared with the editor's paste box ----------
@@ -735,12 +815,19 @@ def obstruction_from_record(rec: Record, origin: Sequence[float] = (0.0, 0.0, 0.
 
 
 def _geometry_object(xb: Xb, rec: Record, origin: Sequence[float], ids: _Ids,
-                     surfs: Dict[str, Record]) -> Dict[str, Any]:
+                     surfs: Dict[str, Record],
+                     stats: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
     """A box -- classified, re-origined and named -- as a wall, ceiling or obstruction.
 
     Takes the `XB` separately from the record so a `&MULT` copy converts through
     exactly this path rather than a parallel one.
+
+    An extent of zero -- FDS's thin obstruction -- becomes `THIN_M`, and is counted
+    in ``stats["thin"]`` so the import can say so. It is the only dimension this
+    conversion ever invents, and it invents it because a zero one is not a box the
+    editor can open.
     """
+    stats = {"thin": 0} if stats is None else stats
     ox, oy, oz = (float(v) for v in origin)
     dx, dy, dz = _extent(xb)
     cx, cy, _ = _centre(xb)
@@ -748,18 +835,24 @@ def _geometry_object(xb: Xb, rec: Record, origin: Sequence[float], ids: _Ids,
     display = {"color": color} if color else None
     name = rec.string("ID")
 
+    def thickened(v: float) -> float:
+        if v > TOL_M:
+            return v
+        stats["thin"] += 1
+        return THIN_M
+
     # A slab is a ceiling only if it is above the floor. One resting on it -- a
     # plinth, a hearth, a second floor tile beside the first -- has a soffit height
     # of zero or less, which is not a ceiling in this format and not a valid object
     # in any schema version. It falls through to the box it actually is.
-    if _is_slab(xb) and dz > TOL_M and xb[4] - oz > TOL_M:
+    if _is_slab(xb) and xb[4] - oz > TOL_M:
         obj: Dict[str, Any] = {
             "id": ids.make("ceiling", name), "type": "ceiling", "name": name or "Ceiling",
             "transform": {"position_m": [0.0, 0.0, 0.0]},
             "polygon_m": [[xb[0] - ox, xb[2] - oy], [xb[1] - ox, xb[2] - oy],
                           [xb[1] - ox, xb[3] - oy], [xb[0] - ox, xb[3] - oy]],
             "height_m": xb[4] - oz,
-            "thickness_m": dz,
+            "thickness_m": thickened(dz),
         }
     elif _is_wall(xb):
         if dx <= dy:                       # runs along Y
@@ -780,7 +873,7 @@ def _geometry_object(xb: Xb, rec: Record, origin: Sequence[float], ids: _Ids,
             # 100 mm down, because that is how you seal one to a slab -- keeps its
             # top where the file put it instead of gaining the buried part twice.
             "height_m": max(xb[5] - max(xb[4], oz), TOL_M),
-            "thickness_m": thickness,
+            "thickness_m": thickened(thickness),
             "baseHeight_m": max(base, 0.0),
             "openings": [],
         }
@@ -788,7 +881,7 @@ def _geometry_object(xb: Xb, rec: Record, origin: Sequence[float], ids: _Ids,
         obj = {
             "id": ids.make("obst", name), "type": "obstruction", "name": name or "Obstruction",
             "transform": {"position_m": [cx - ox, cy - oy, xb[4] - oz]},
-            "size_m": [dx, dy, dz],
+            "size_m": [thickened(dx), thickened(dy), thickened(dz)],
         }
 
     if display:
@@ -982,7 +1075,8 @@ def to_plan(text: str, filename: Optional[str] = None,
     vent_boxes = [b for b in _boxes(records, "VENT", mults)
                   if not _is_domain_vent(b, domain, surfs)]
     heat_of_combustion = reac.number("HEAT_OF_COMBUSTION") if reac else None
-    faces = _fire_faces(obst_boxes, vent_boxes, surfs, peaks, heat_of_combustion, issues)
+    faces = _fire_faces(obst_boxes, vent_boxes, surfs, peaks, heat_of_combustion, issues,
+                        domain)
     burner = _pick_burner(faces, opts.burner_surf)
     burner_faces = _burner_faces(faces, burner)
     candidates = sorted({f.surf for f in faces if _can_be_burner(f)})
@@ -1072,6 +1166,17 @@ def to_plan(text: str, filename: Optional[str] = None,
             "stands on a platform this is right; if the floor was detected wrongly "
             "every height in the plan is off by the same amount."
             .format(burner.xb[4] - floor_z, floor_rule)))
+    if floor_rule == _FLOOR_FROM_BURNER and slabs:
+        # The model has slabs, but every one of them is above the fire. That is the
+        # shape of a floor-level fire under a ceiling with no floor slab drawn -- and
+        # also the shape of a floor slab this reader failed to recognise, so it is
+        # worth a line rather than a silent choice.
+        issues.append(Issue(
+            "info", "fds-floor-inferred",
+            "No horizontal slab lies below the burner, so the floor was taken as the "
+            "burner's base (z = {} in the file). The {} slab(s) above it {} kept as "
+            "ceilings.".format(serialize._js_number(float(floor_z)), len(slabs),
+                               "was" if len(slabs) == 1 else "were")))
 
     # -- build the plan --------------------------------------------------
     head = (by_group.get("HEAD") or [None])[0]
@@ -1086,6 +1191,7 @@ def to_plan(text: str, filename: Optional[str] = None,
     walls: List[Tuple[Dict[str, Any], Xb]] = []
 
     if opts.geometry:
+        stats = {"thin": 0}
         # Every slab whose top is the floor, not merely the lowest one. A meshed
         # model tiles its floor -- one &OBST per mesh is the usual shape -- and
         # skipping a single instance leaves the rest to be converted as slabs
@@ -1096,12 +1202,19 @@ def to_plan(text: str, filename: Optional[str] = None,
                 continue                      # becomes the burner, below
             if _is_slab(box.xb) and box.xb[5] <= floor_z + TOL_M:
                 continue                      # the floor is the z = 0 plane, not an object
-            obj = _geometry_object(box.xb, box.rec, origin, ids, surfs)
+            obj = _geometry_object(box.xb, box.rec, origin, ids, surfs, stats)
             if obj["type"] == "wall":
                 walls.append((obj, box.xb))
             objects.append(obj)
 
         _apply_holes(_boxes(records, "HOLE", mults), walls, origin, issues)
+
+        if stats["thin"]:
+            issues.append(Issue(
+                "info", "fds-thin-geometry",
+                "{} zero-thickness &OBST extent(s) were drawn {} mm thick: this format "
+                "has no planar object, and a box with no thickness is one the editor "
+                "cannot open.".format(stats["thin"], serialize._js_number(THIN_M * 1000))))
 
     for face in burner_faces:
         objects.append(_burner_object(ids, face, origin, floor_z, reac, surfs))

@@ -8,11 +8,28 @@
 
 import { newPlan } from '../core/plan';
 import { serializePlan } from '../core/serialize';
+import { setPosition } from '../core/transform';
 import { parseAndValidatePlan } from '../core/validate';
 import { maxVersion, requiredFormatVersion } from '../core/types';
 import type { LengthUnit, PlanDocument, PlanObject } from '../core/types';
 
 const HISTORY_LIMIT = 100;
+
+/**
+ * What a save has to bring back to be credited to the document it wrote.
+ *
+ * A save is asynchronous under the desktop shell, and the document can change
+ * underneath it: the user types on while the dialog is up, or opens another file.
+ * `documentId` says which document the bytes came from and `revision` says which
+ * edit, so the store can tell "this file is now saved" from "an older state of it
+ * is now saved" from "a document that is no longer open is now saved".
+ */
+export interface SaveIdentity {
+  documentId: number;
+  revision: number;
+  /** The shell's handle on the file this document came from, or null. */
+  token: string | null;
+}
 
 /**
  * Four standard views. The three orthographic ones share a camera and differ only
@@ -38,11 +55,37 @@ export class Store {
   selectedIds: string[] = [];
   viewMode: ViewMode = '3d';
   fileName = 'untitled.ftp.json';
+  /**
+   * The desktop shell's handle on the file this document was read from or last
+   * written to, or null when no file stands behind it. The page never learns a path;
+   * this is what lets a plain Save mean "write back to that file" without the shell
+   * guessing from a basename -- which is how a rejected file, or the Example plan,
+   * used to get written over the file that was open before it.
+   */
+  documentToken: string | null = null;
+  /** Counts document replacements, so a save that lands late can tell whether the
+   *  document it wrote is still the one on screen. */
+  documentId = 0;
+  /** Counts every change to the document, so a save can tell whether anything was
+   *  typed while it was pending. */
+  revision = 0;
   /** True when there are unsaved edits. Drives the title bar and the close prompt. */
   dirty = false;
 
   constructor(doc?: PlanDocument) {
     this.doc = doc ?? newPlan();
+  }
+
+  /** Every mutation goes through here, so nothing can dirty the document without
+   *  also advancing the revision a pending save will be checked against. */
+  private touch(): void {
+    this.revision += 1;
+    this.dirty = true;
+  }
+
+  /** Snapshot to take BEFORE serialising for a save; hand it back to `markSaved`. */
+  identity(): SaveIdentity {
+    return { documentId: this.documentId, revision: this.revision, token: this.documentToken };
   }
 
   // -- subscription ------------------------------------------------------
@@ -70,7 +113,7 @@ export class Store {
     // Not an undoable edit: it is a view preference that happens to live in the
     // file, and burying it in history would make undo feel unpredictable.
     this.doc.units.display = { ...(this.doc.units.display ?? {}), length: unit };
-    this.dirty = true;
+    this.touch();
     this.emit('document');
   }
 
@@ -96,7 +139,7 @@ export class Store {
     }
     this.pendingLabel = label;
     mutate(this.doc);
-    this.dirty = true;
+    this.touch();
     this.emit('document');
   }
 
@@ -120,7 +163,7 @@ export class Store {
     this.doc = JSON.parse(prev) as PlanDocument;
     this.pendingLabel = null;
     this.pruneSelection();
-    this.dirty = true;
+    this.touch();
     this.emit('document');
   }
 
@@ -131,7 +174,7 @@ export class Store {
     this.doc = JSON.parse(next) as PlanDocument;
     this.pendingLabel = null;
     this.pruneSelection();
-    this.dirty = true;
+    this.touch();
     this.emit('document');
   }
 
@@ -169,8 +212,11 @@ export class Store {
         copy.id = `${src.id}-${i}`;
         if (copy.name) copy.name = `${copy.name} (copy)`;
         // Offset so the copy is visible rather than hidden inside the original.
-        const t = copy.transform ?? (copy.transform = { position_m: [0, 0, 0] });
-        t.position_m = [t.position_m[0] + 0.5, t.position_m[1] + 0.5, t.position_m[2]];
+        // Through `setPosition`, like every other move: a camera or a gauge keeps
+        // its recorded target and is re-aimed at it from the new spot, instead of
+        // carrying an orientation that now disagrees with the target it claims.
+        const p = copy.transform?.position_m ?? [0, 0, 0];
+        setPosition(copy, [p[0] + 0.5, p[1] + 0.5, p[2]]);
         d.objects.push(copy);
         created.push(copy.id);
       }
@@ -217,21 +263,59 @@ export class Store {
 
   // -- files -------------------------------------------------------------
 
-  replaceDocument(doc: PlanDocument, fileName: string): void {
+  /**
+   * Install a document that came from elsewhere: a file, the Example, an import.
+   *
+   * `token` is the shell's handle on the file the document was read from. Anything
+   * that is not that file -- the Example plan, an FDS import -- passes none, so the
+   * first Save asks for a destination instead of aiming at whatever was open before.
+   *
+   * If a listener throws while adopting the document -- a builder choking on a
+   * shape the load boundary let through -- the previous document, history and file
+   * identity are put back and re-announced before the error propagates. Leaving the
+   * broken document installed would show stale panels over an empty scene and offer
+   * to save the very file that could not be rendered.
+   */
+  replaceDocument(doc: PlanDocument, fileName: string, token: string | null = null): void {
+    const previous = {
+      doc: this.doc, fileName: this.fileName, token: this.documentToken,
+      undo: this.undoStack, redo: this.redoStack, pendingLabel: this.pendingLabel,
+      selectedIds: this.selectedIds, dirty: this.dirty,
+      documentId: this.documentId, revision: this.revision,
+    };
     this.doc = doc;
     this.fileName = fileName;
-    this.undoStack.length = 0;
-    this.redoStack.length = 0;
+    this.documentToken = token;
+    this.undoStack = [];
+    this.redoStack = [];
     this.pendingLabel = null;
     this.selectedIds = [];
     this.dirty = false;
-    this.emit('document');
-    this.emit('selection');
+    this.documentId += 1;
+    this.revision += 1;
+    try {
+      this.emit('document');
+      this.emit('selection');
+    } catch (err) {
+      this.doc = previous.doc;
+      this.fileName = previous.fileName;
+      this.documentToken = previous.token;
+      this.undoStack = previous.undo;
+      this.redoStack = previous.redo;
+      this.pendingLabel = previous.pendingLabel;
+      this.selectedIds = previous.selectedIds;
+      this.dirty = previous.dirty;
+      this.documentId = previous.documentId;
+      this.revision = previous.revision;
+      this.emit('document');
+      this.emit('selection');
+      throw err;
+    }
   }
 
   /** Throws before touching state if the text is not a valid plan. */
-  loadFromText(text: string, fileName: string): void {
-    this.replaceDocument(parseAndValidatePlan(text), fileName);
+  loadFromText(text: string, fileName: string, token: string | null = null): void {
+    this.replaceDocument(parseAndValidatePlan(text), fileName, token);
   }
 
   serialize(): string {
@@ -260,13 +344,25 @@ export class Store {
    * conversion in silence, and would make Save look like a no-op.
    */
   markDirty(): void {
-    this.dirty = true;
+    this.touch();
     this.emit('dirty');
   }
 
-  markSaved(fileName?: string): void {
-    if (fileName) this.fileName = fileName;
-    this.dirty = false;
+  /**
+   * Record that a save landed -- but only for the document and revision it wrote.
+   *
+   * `identity` is the snapshot taken before serialising. A save that completes
+   * after the document was replaced says nothing about the one now open and is
+   * ignored outright. One that completes after further edits did write a real
+   * file -- so the name and the shell's handle are adopted -- but those edits are
+   * not in it, so the document stays dirty rather than the bullet disappearing
+   * over work that was never written.
+   */
+  markSaved(fileName: string, identity: SaveIdentity, token: string | null = identity.token): void {
+    if (identity.documentId !== this.documentId) return;
+    this.fileName = fileName;
+    this.documentToken = token;
+    if (identity.revision === this.revision) this.dirty = false;
     this.emit('dirty');
   }
 }

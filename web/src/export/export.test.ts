@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { checkPlan, firePointSourceM, parsePlan, positionOf } from '../core/plan';
+import { checkPlan, firePointSourceM, newPlan, parsePlan, positionOf } from '../core/plan';
 import { lookAtQuat } from '../core/math';
 import type { CameraObject, PlanDocument } from '../core/types';
 import { buildViewSvg, escapeXml } from './drawing';
@@ -213,6 +213,77 @@ describe('report content', () => {
       ys.add(Number(/ y="(-?[0-9.]+)"/.exec(line as string)![1]));
     }
     expect(ys.size).toBe(6);
+  });
+
+  it('draws the side elevation with north on the left, as the editor does', () => {
+    // Looking east from the west, north (+Y) is on your left. The projector mapped
+    // +Y to increasing screen X, so the exported side view was the mirror image of
+    // the editor's Side view while both claimed to look east.
+    const doc = newPlan('side');
+    doc.objects.push({
+      id: 'north', type: 'obstruction', name: 'North box',
+      transform: { position_m: [0, 2, 0] }, size_m: [0.5, 0.5, 1.6],
+    } as never);
+    doc.objects.push({
+      id: 'south', type: 'obstruction', name: 'South box',
+      transform: { position_m: [0, -2, 0] }, size_m: [0.5, 0.5, 0.8],
+    } as never);
+    const svg = buildViewSvg(doc, 'side', 'm');
+    const polygons = [...svg.matchAll(/<polygon points="([^"]+)"/g)].map((m) => m[1]);
+    const centreX = (points: string): number => {
+      const xs = points.split(' ').map((p) => Number(p.split(',')[0]));
+      return xs.reduce((a, b) => a + b, 0) / xs.length;
+    };
+    const heights = polygons.map((p) => {
+      const ys = p.split(' ').map((q) => Number(q.split(',')[1]));
+      return Math.max(...ys) - Math.min(...ys);
+    });
+    const tall = polygons[heights.indexOf(Math.max(...heights))];
+    const short = polygons[heights.indexOf(Math.min(...heights))];
+    expect(centreX(tall)).toBeLessThan(centreX(short));
+
+    // The front view is unchanged: east (+X) to the right.
+    const front = newPlan('front');
+    front.objects.push({
+      id: 'east', type: 'obstruction', transform: { position_m: [2, 0, 0] }, size_m: [0.5, 0.5, 1.6],
+    } as never);
+    front.objects.push({
+      id: 'west', type: 'obstruction', transform: { position_m: [-2, 0, 0] }, size_m: [0.5, 0.5, 0.8],
+    } as never);
+    const fsvg = buildViewSvg(front, 'front', 'm');
+    const fpolys = [...fsvg.matchAll(/<polygon points="([^"]+)"/g)].map((m) => m[1]);
+    const fh = fpolys.map((p) => {
+      const ys = p.split(' ').map((q) => Number(q.split(',')[1]));
+      return Math.max(...ys) - Math.min(...ys);
+    });
+    expect(centreX(fpolys[fh.indexOf(Math.max(...fh))]))
+      .toBeGreaterThan(centreX(fpolys[fh.indexOf(Math.min(...fh))]));
+  });
+
+  it('keeps a raised wall, and a translated slab, on the page', () => {
+    // The page was sized from a wall's transform Z alone, so a wall with a base
+    // height of 10 m was drawn at y = -3500 on a 934-pixel sheet.
+    const doc = newPlan('raised');
+    doc.objects.push({
+      id: 'w', type: 'wall', transform: { position_m: [0, 0, 0] },
+      polyline_m: [[0, 0], [1, 0]], height_m: 1, baseHeight_m: 10,
+    } as never);
+    doc.objects.push({
+      id: 'c', type: 'ceiling', transform: { position_m: [0, 0, -3] },
+      polygon_m: [[-1, -1], [1, -1], [1, 1], [-1, 1]], height_m: 4,
+    } as never);
+    for (const view of ['front', 'side'] as const) {
+      const svg = buildViewSvg(doc, view, 'm');
+      const height = Number(/viewBox="0 0 [0-9.]+ ([0-9.]+)"/.exec(svg)![1]);
+      const coords = [...svg.matchAll(/<polygon points="([^"]+)"/g)]
+        .flatMap((m) => m[1].split(' ').map((p) => Number(p.split(',')[1])));
+      const lines = [...svg.matchAll(/<line [^>]*y1="(-?[0-9.]+)"[^>]*y2="(-?[0-9.]+)"/g)]
+        .flatMap((m) => [Number(m[1]), Number(m[2])]);
+      for (const y of [...coords, ...lines]) {
+        expect(y).toBeGreaterThanOrEqual(0);
+        expect(y).toBeLessThanOrEqual(height);
+      }
+    }
   });
 
   it('draws instrument symbols in the plan and the elevations', () => {

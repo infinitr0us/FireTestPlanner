@@ -273,6 +273,95 @@ describe('camera zoom', () => {
 
 // -- the point source -----------------------------------------------------
 
+describe('a second fire', () => {
+  const withSecondBurner = (
+    doc: PlanDocument, position: Vec3 = [5, 0, 0], hrrKw = 1000, id = 'burner-2',
+  ): BurnerObject => {
+    const burner: BurnerObject = {
+      id, type: 'burner', name: 'Second pan',
+      transform: { position_m: position },
+      footprint: { shape: 'square', size_m: [0.3, 0.3] },
+      rimHeight_m: 0.1,
+      fire: { fuel: 'n-heptane', hrr_kw: hrrKw, hrrCurve: null },
+    };
+    doc.objects.push(burner);
+    return burner;
+  };
+
+  it('puts a bead above a second burner in that burner\'s fire', () => {
+    // The reviewer's case: a type-T bead half a metre above a megawatt secondary
+    // was called "outside the plume" and predicted to read close to ambient,
+    // because the only fire the beads were placed against was the primary.
+    const doc = firePlan(100);
+    const second = withSecondBurner(doc);
+    doc.objects.push({
+      id: 'tc-1', type: 'thermocouple', transform: { position_m: [5, 0, 0.5] },
+      beadOffsets_m: [0], thermocouple: { tcType: 'T' },
+    } as never);
+
+    const bead = thermocoupleBeads(doc, doc.objects[2] as ThermocoupleObject)[0];
+    expect(bead.region).toBe('flame');
+    expect(bead.radialM).toBeCloseTo(0, 9);
+    const found = codes(doc);
+    expect(found).toContain('tc-over-temperature');
+    expect(found).not.toContain('tc-outside-plume');
+    // And the plan says the framing does not look at that fire.
+    expect(checkPlan(doc).filter((i) => i.code === 'secondary-burner').map((i) => i.objectId))
+      .toEqual([second.id]);
+  });
+
+  it('reads the hotter centreline for a bead inside two plumes', () => {
+    const doc = firePlan(100);
+    withSecondBurner(doc, [0.6, 0, 0], 1000);
+    doc.objects.push({
+      id: 'tc-1', type: 'thermocouple', transform: { position_m: [0.3, 0, 6] }, beadOffsets_m: [0],
+    } as never);
+    const bead = thermocoupleBeads(doc, doc.objects[2] as ThermocoupleObject)[0];
+    expect(bead.region).toBe('plume');
+
+    // The same 1000 kW pan on its own gives the same figure: the 100 kW plume the
+    // bead also sits in is cooler up here, and does not add to it.
+    const alone = newPlan('one big fire');
+    withSecondBurner(alone, [0.6, 0, 0], 1000, 'burner-main');
+    alone.objects.push({
+      id: 'tc-1', type: 'thermocouple', transform: { position_m: [0.3, 0, 6] }, beadOffsets_m: [0],
+    } as never);
+    const ref = thermocoupleBeads(alone, alone.objects[1] as ThermocoupleObject)[0];
+    expect(bead.gasTemperatureC).toBeCloseTo(ref.gasTemperatureC!, 9);
+    expect(bead.gasTemperatureC!).toBeGreaterThan(100);
+  });
+
+  it('sums incident flux over every fire and names the dominant one', () => {
+    const doc = firePlan(130);
+    const second = withSecondBurner(doc, [5, 0, 0], 130);
+    const z = firePointSourceM(doc)![2];
+    // Facing the primary from 2 m away, with the second fire 7 m behind the source.
+    const gauge = addGauge(doc, [-2, 0, z]);
+    const e = heatFluxEstimate(doc, gauge)!;
+    const alone = firePlan(130);
+    const ref = heatFluxEstimate(alone, addGauge(alone, [-2, 0, z]))!;
+    expect(e.sourceId).toBe('burner-main');
+    expect(e.distanceM).toBeCloseTo(2, 9);
+    expect(e.incidentKwM2).toBeGreaterThan(ref.incidentKwM2);
+    // Not to nine places: the two pans differ by 5 mm of side, so the second
+    // source sits a hair off the primary's height and its cosine is not exactly 1.
+    expect(e.incidentKwM2).toBeCloseTo(ref.incidentKwM2 * (1 + 4 / 49), 6);
+
+    // Facing the second fire instead: the primary is behind the face and adds
+    // nothing, and the figures are to the second fire.
+    const other = addGauge(doc, [2.5, 0, z], { aim: [5, 0, z], id: 'hf-2' });
+    const e2 = heatFluxEstimate(doc, other)!;
+    expect(e2.sourceId).toBe(second.id);
+    expect(e2.facesFire).toBe(true);
+    expect(e2.distanceM).toBeCloseTo(2.5, 4);   // the pans differ by 5 mm of side
+    // The near-field message names the fire it is near, not the primary.
+    const near = addGauge(doc, [4.6, 0, z], { aim: [5, 0, z], id: 'hf-3' });
+    expect(heatFluxEstimate(doc, near)!.nearField).toBe(true);
+    expect(instrumentChecks(doc).some((i) => i.objectId === 'hf-3' && i.code === 'gauge-near-field'))
+      .toBe(true);
+  });
+});
+
 describe('the fire as a point source', () => {
   it('sits at mid-flame on the burner axis', () => {
     const doc = firePlan();
@@ -907,6 +996,33 @@ describe('the camera preset library', () => {
       expect(p.sensor_mm.every((s) => s > 0)).toBe(true);
       expect(p.resolution_px.every((r) => Number.isInteger(r) && r > 0)).toBe(true);
     }
+  });
+
+  it('never lets a preset claim to be calibrated', () => {
+    // A calibration -- principal point, distortion -- belongs to one physical unit,
+    // and a preset carries neither. Lifting one out of a calibrated camera kept
+    // the label while dropping the numbers, so the next camera placed from it said
+    // `calibrated` with a null principal point and the Python reader's
+    // `is_reconstruction_ready` believed it.
+    const doc = fixture();
+    const cam = cameras(doc)[0];
+    cam.camera.intrinsicsSource = 'calibrated';
+    cam.camera.principalPoint_px = [250, 200];
+    cam.camera.distortion = { model: 'opencv', coefficients: [-0.1, 0.02, 0, 0, 0] };
+
+    const preset = presetFromCamera(cam, 'Unit 7');
+    expect(preset.intrinsicsSource).toBe('datasheet');
+    const placed = specFromPreset(preset);
+    expect(placed.intrinsicsSource).toBe('datasheet');
+    expect(placed.principalPoint_px).toBeNull();
+    expect(placed.distortion).toBeNull();
+
+    // A stored library entry that says so -- written by an older build -- is read
+    // the same way, and a datasheet or nominal one is left alone.
+    adoptShellPresets([{ ...preset, intrinsicsSource: 'calibrated' }], async () => true);
+    expect(customCameraPresets()[0].intrinsicsSource).toBe('datasheet');
+    cam.camera.intrinsicsSource = 'nominal';
+    expect(presetFromCamera(cam, 'Nominal').intrinsicsSource).toBe('nominal');
   });
 
   it('lifts a preset out of a camera that is already in a plan', () => {

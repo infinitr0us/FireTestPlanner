@@ -188,17 +188,24 @@ def test_save_writes_back_to_the_open_file_but_save_as_asks(tmp_path, monkeypatc
     out = tmp_path / "plan.ftp.json"
     out.write_text('{"v": 1}\n', encoding="utf-8")
 
-    assert shell.read_plan(str(out)) is not None      # this is what sets current_path
+    opened = shell.read_plan(str(out))
+    assert opened is not None
+    token = opened["token"]                            # the page's handle on the file
     asked = []
     monkeypatch.setattr(shell, "_ask_save", lambda name, kinds: asked.append(name) or None)
 
-    assert shell.save_plan('{"v": 2}\n', "plan.ftp.json") == {"path": str(out)}
+    saved = shell.save_plan('{"v": 2}\n', "plan.ftp.json", token=token)
+    assert saved["path"] == str(out)
     assert out.read_text(encoding="utf-8") == '{"v": 2}\n'
     assert asked == []                                 # no dialog for a plain Save
 
-    assert shell.save_plan('{"v": 3}\n', "elsewhere.ftp.json", save_as=True) is None
+    # A save hands back a fresh handle, and it writes back too.
+    assert shell.save_plan('{"v": 4}\n', "plan.ftp.json", token=saved["token"])["path"] == str(out)
+    assert out.read_text(encoding="utf-8") == '{"v": 4}\n'
+
+    assert shell.save_plan('{"v": 3}\n', "elsewhere.ftp.json", save_as=True, token=token) is None
     assert asked == ["elsewhere.ftp.json"]             # Save as... does ask
-    assert out.read_text(encoding="utf-8") == '{"v": 2}\n'
+    assert out.read_text(encoding="utf-8") == '{"v": 4}\n'
 
 
 def test_save_asks_when_the_page_is_showing_a_different_document(tmp_path, monkeypatch):
@@ -217,10 +224,67 @@ def test_save_asks_when_the_page_is_showing_a_different_document(tmp_path, monke
     asked = []
     monkeypatch.setattr(shell, "_ask_save", lambda name, kinds: asked.append(name) or None)
 
-    # The Example button leaves the page reporting the example's own filename.
+    # The Example button leaves the page reporting the example's own filename, and
+    # no token: the Example is bundled, not a file.
     assert shell.save_plan('{"example": true}\n', "pool-fire-camera-row.ftp.json") is None
     assert asked == ["pool-fire-camera-row.ftp.json"]
     assert original.read_text(encoding="utf-8") == '{"the user": "spent all afternoon on this"}\n'
+
+
+def test_a_matching_basename_is_not_enough_to_write_back(tmp_path, monkeypatch):
+    """Open pool-fire-camera-row.ftp.json, hit Example, Save: same name, different plan.
+
+    The basename was once the whole test, and the Example plan happens to report the
+    reference fixture's own filename -- so a user who had opened their copy of that
+    fixture lost it to the bundled one. Only the token says which file is on screen.
+    """
+    shell = shell_app.Shell()
+    original = tmp_path / "pool-fire-camera-row.ftp.json"
+    original.write_text('{"mine": true}\n', encoding="utf-8")
+    assert shell.read_plan(str(original)) is not None
+
+    asked = []
+    monkeypatch.setattr(shell, "_ask_save", lambda name, kinds: asked.append(name) or None)
+    assert shell.save_plan('{"example": true}\n', "pool-fire-camera-row.ftp.json", token=None) is None
+    assert asked == ["pool-fire-camera-row.ftp.json"]
+    assert original.read_text(encoding="utf-8") == '{"mine": true}\n'
+
+
+def test_a_rejected_open_does_not_redirect_the_next_save(tmp_path, monkeypatch):
+    """Open A/case.ftp.json, then open a broken B/case.ftp.json, then Ctrl+S.
+
+    The page rejects B and keeps A on screen -- and keeps A's token, because the
+    document it belongs to is still the one showing. Reading B issued a token the
+    page never adopted, so a plain Save goes to A, and B is left exactly as it was.
+    Before the token, `current_path` was already pointing at B by the time the page
+    said no, and the matching basename wrote A's plan over B with no dialog.
+    """
+    shell = shell_app.Shell()
+    good = tmp_path / "A" / "case.ftp.json"
+    bad = tmp_path / "B" / "case.ftp.json"
+    good.parent.mkdir()
+    bad.parent.mkdir()
+    good.write_text('{"format": "fire-test-plan", "v": 1}\n', encoding="utf-8")
+    bad.write_text("{ this is not json", encoding="utf-8")
+
+    token_a = shell.read_plan(str(good))["token"]
+    shell.read_plan(str(bad))                          # the page will reject this one
+
+    asked = []
+    monkeypatch.setattr(shell, "_ask_save", lambda name, kinds: asked.append(name) or None)
+    saved = shell.save_plan('{"format": "fire-test-plan", "v": 2}\n', "case.ftp.json", token=token_a)
+    assert saved["path"] == str(good)
+    assert asked == []
+    assert good.read_text(encoding="utf-8") == '{"format": "fire-test-plan", "v": 2}\n'
+    assert bad.read_text(encoding="utf-8") == "{ this is not json"
+
+
+def test_a_token_this_shell_never_issued_asks(tmp_path, monkeypatch):
+    shell = shell_app.Shell()
+    asked = []
+    monkeypatch.setattr(shell, "_ask_save", lambda name, kinds: asked.append(name) or None)
+    assert shell.save_plan("{}", "plan.ftp.json", token="made-up") is None
+    assert asked == ["plan.ftp.json"]
 
 
 def test_a_plan_with_no_file_behind_it_still_asks(monkeypatch):
@@ -236,13 +300,13 @@ def test_a_failed_save_is_reported_rather_than_looking_like_a_cancel(tmp_path, m
     shell = shell_app.Shell()
     out = tmp_path / "plan.ftp.json"
     out.write_text('{"v": 1}\n', encoding="utf-8")
-    shell.read_plan(str(out))
+    token = shell.read_plan(str(out))["token"]
 
     def explode(src, dst):
         raise OSError(28, "No space left on device")
 
     monkeypatch.setattr(shell_app.os, "replace", explode)
-    result = shell.save_plan('{"v": 2}\n', "plan.ftp.json")
+    result = shell.save_plan('{"v": 2}\n', "plan.ftp.json", token=token)
     assert result is not None and "No space left on device" in result["error"]
 
 
@@ -383,6 +447,31 @@ def test_dialog_routes_are_inert_without_a_window(server):
     assert payload is None
 
 
+def test_save_over_the_api_writes_back_only_with_the_token(server, plan_file):
+    """The whole contract, end to end over HTTP: open hands out a token, save with it
+    writes back with no dialog, save without it (or with a wrong one) asks."""
+    _, _, base, _ = server
+    _, opened = request(base, "/api/open-recent", "test-token", {"path": plan_file})
+    assert isinstance(opened["token"], str) and opened["token"]
+
+    _, saved = request(base, "/api/save", "test-token",
+                       {"text": '{"v": 2}\n', "name": "demo.ftp.json", "token": opened["token"]})
+    assert saved["path"] == plan_file
+    assert isinstance(saved["token"], str)
+    with open(plan_file, encoding="utf-8") as fh:
+        assert fh.read() == '{"v": 2}\n'
+
+    # No window, so a save that has to ask for a destination answers null.
+    _, payload = request(base, "/api/save", "test-token",
+                         {"text": '{"v": 3}\n', "name": "demo.ftp.json"})
+    assert payload is None
+    _, payload = request(base, "/api/save", "test-token",
+                         {"text": '{"v": 3}\n', "name": "demo.ftp.json", "token": 42})
+    assert payload is None
+    with open(plan_file, encoding="utf-8") as fh:
+        assert fh.read() == '{"v": 2}\n'
+
+
 def test_free_port_returns_a_usable_port():
     assert 1024 < shell_app.free_port() <= 65535
 
@@ -439,6 +528,8 @@ def test_importing_fds_stops_save_writing_over_the_plan_that_was_open(tmp_path, 
     asked = []
     monkeypatch.setattr(shell, "_ask_save", lambda name, kinds: asked.append(name) or None)
 
+    # An import replaces the document, so the page drops the token it held for
+    # the plan that was open; Save arrives with none.
     assert shell.save_plan('{"imported": true}\n', "case.ftp.json") is None
     assert asked == ["case.ftp.json"]        # Save As, not a silent write-back
     assert original.read_text(encoding="utf-8") == '{"the user": "spent all afternoon on this"}\n'

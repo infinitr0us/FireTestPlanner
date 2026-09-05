@@ -20,5 +20,12 @@ dev = ["pytest>=7.0"]
 [tool.setuptools.packages.find]
 include = ["fireplan*"]
 
+# The JSON Schemas ship inside the wheel. `Plan.validate_schema()` and every FDS
+# conversion read them through importlib.resources, so an install outside this
+# repository has to carry them; `fireplan/schemas/` is a byte-identical mirror of
+# the normative `schema/` directory at the repository root, held to it by a test.
+[tool.setuptools.package-data]
+fireplan = ["schemas/*.schema.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

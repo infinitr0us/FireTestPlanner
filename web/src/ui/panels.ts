@@ -19,6 +19,7 @@ import { isMounted } from '../core/types';
 import { cameraPresets, isCustomPreset, presetsArePersistent } from '../core/presets';
 import { setPosition } from '../core/transform';
 import type { Issue, PlanObject, Vec3 } from '../core/types';
+import { describeErrors, validateStructure } from '../core/validate';
 import type { Store } from '../state/store';
 import { clear, h } from './dom';
 
@@ -134,8 +135,9 @@ export class Palette {
         }, ['Create']),
       ]),
       h('p', { class: 'panel__hint' }, [
-        'One record at a time. &OBST and &VENT become a wall, ceiling or box by their '
-        + 'shape; &DEVC becomes a gauge or a thermocouple by its quantity.',
+        'One record at a time. &OBST becomes a wall, ceiling or box by its shape; '
+        + '&DEVC becomes a gauge or a thermocouple by its quantity. A &VENT is a '
+        + 'surface on a solid, not a solid — paste the &OBST it sits on.',
       ]),
     ].filter(Boolean) as HTMLElement[]));
   }
@@ -153,9 +155,13 @@ export class Palette {
       obj = obstructionFromRecord(record, offset)
         ?? deviceFromRecord(record, new Map(), offset);
       if (!obj) {
-        this.fdsError = `&${record.group} has no counterpart in a test plan. `
-          + 'Geometry comes from &OBST or &VENT with an XB; instruments from &DEVC '
-          + 'with an XYZ and a heat flux or temperature quantity.';
+        this.fdsError = record.group === 'VENT'
+          ? 'A &VENT is a boundary condition on the face of a solid, not a solid: it '
+            + 'has no thickness, and this format has no planar object. Paste the &OBST '
+            + 'it sits on instead.'
+          : `&${record.group} has no counterpart in a test plan. `
+            + 'Geometry comes from &OBST with an XB; instruments from &DEVC '
+            + 'with an XYZ and a heat flux or temperature quantity.';
       }
     } catch (err) {
       this.fdsError = err instanceof NamelistError
@@ -167,6 +173,18 @@ export class Palette {
       // The converter mints ids from its own counter, which knows nothing about the
       // plan already open; `nextId` is what keeps them unique in this document.
       obj.id = nextId(doc, obj.id.replace(/-\d+$/, ''));
+      // The same boundary a file crosses on the way in. An object the load boundary
+      // would refuse must not be added: it would save, and the plan would then
+      // refuse to reopen, a long way from the paste that caused it.
+      const errors = validateStructure({ ...doc, objects: [...doc.objects, obj] });
+      if (errors.length > 0) {
+        this.fdsError = 'That record converts into something this format cannot hold:\n'
+          + describeErrors(errors);
+        obj = null;
+      }
+    }
+
+    if (obj) {
       this.store.addObject(obj);
       this.fdsDraft = '';
       this.fdsError = null;

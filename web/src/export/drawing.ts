@@ -8,10 +8,12 @@
 
 import {
   beadOffsetsOf,
+  boundsPoints,
   burnerDiameterM,
   burners,
   cameraColor,
   cameras,
+  ceilingSoffitZM,
   ceilings,
   displayName,
   flameTipZM,
@@ -22,6 +24,7 @@ import {
   hfovRadOf,
   hoodIntakeHeightM,
   hoodOpeningCornersXY,
+  hoodOpeningZM,
   hoods,
   objectColor,
   obstructionCornersXY,
@@ -61,6 +64,34 @@ export const escapeXml = (s: string): string =>
   s.replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c] as string);
 
+/**
+ * World -> a view's own 2D axes, before scaling. SVG y grows downward, so the
+ * vertical component is negated to keep "up" up.
+ *
+ * Each view is defined by where the viewer stands, and the lateral axis follows
+ * from that -- the same way the editor's orthographic camera derives its right
+ * vector from its viewing direction (`orientOrthoCamera` in scene/viewport.ts):
+ *
+ * - plan: looking down, north (+Y) up the page, east (+X) to the right;
+ * - front: standing south, looking north (+Y); east (+X) is to the right;
+ * - side: standing west, looking east (+X); north (+Y) is to the LEFT, so Y is
+ *   negated. Mapping +Y to the right drew the side elevation mirrored against the
+ *   editor's Side view while the heading claimed the same viewing direction.
+ *
+ * One function, used for the bounds and for every projected point, so the two
+ * cannot disagree about which way a view faces.
+ */
+function planeOf(view: DrawingView, p: Vec3): [number, number] {
+  switch (view) {
+    case 'plan':
+      return [p[0], -p[1]];
+    case 'front':
+      return [p[0], -p[2]];
+    case 'side':
+      return [-p[1], -p[2]];
+  }
+}
+
 /** Maps world metres onto SVG pixels for one of the three standard views. */
 class Projector {
   constructor(
@@ -70,17 +101,8 @@ class Projector {
     private offsetY: number,
   ) {}
 
-  /** World -> the view's own 2D axes, before scaling. SVG y grows downward, so the
-   *  vertical component is negated to keep "up" up. */
   plane(p: Vec3): [number, number] {
-    switch (this.view) {
-      case 'plan':
-        return [p[0], -p[1]];
-      case 'front':
-        return [p[0], -p[2]];
-      case 'side':
-        return [p[1], -p[2]];
-    }
+    return planeOf(this.view, p);
   }
 
   project(p: Vec3): [number, number] {
@@ -100,68 +122,23 @@ interface Bounds {
   maxV: number;
 }
 
-/** Every point the drawing must contain, in the view's own 2D axes. */
-function collectPoints(doc: PlanDocument, view: DrawingView): Vec3[] {
-  const pts: Vec3[] = [[0, 0, 0]];
-
-  for (const b of burners(doc)) {
-    const p = positionOf(b);
-    const r = burnerDiameterM(b) / 2;
-    pts.push([p[0] - r, p[1] - r, p[2]], [p[0] + r, p[1] + r, p[2]]);
-    const tip = flameTipZM(b);
-    if (tip !== null) pts.push([p[0], p[1], tip]);
-  }
-  for (const hd of hoods(doc)) {
-    for (const [x, y] of hoodOpeningCornersXY(hd)) pts.push([x, y, 0], [x, y, hd.height_m]);
-  }
-  for (const wl of walls(doc)) {
-    const p = positionOf(wl);
-    for (const v of wl.polyline_m) {
-      const [x, y] = footprintXY(wl, v);
-      pts.push([x, y, p[2]], [x, y, p[2] + wl.height_m]);
-    }
-  }
-  for (const cl of ceilings(doc)) {
-    for (const v of cl.polygon_m) {
-      const [x, y] = footprintXY(cl, v);
-      pts.push([x, y, cl.height_m]);
-    }
-  }
-  for (const ob of obstructions(doc)) {
-    const z = positionOf(ob)[2];
-    for (const [x, y] of obstructionCornersXY(ob)) {
-      pts.push([x, y, z], [x, y, z + ob.size_m[2]]);
-    }
-  }
-  for (const cam of cameras(doc)) {
-    const p = positionOf(cam);
-    pts.push([p[0], p[1], p[2]], [p[0], p[1], 0]); // include the tripod foot
-  }
-  for (const s of heatFluxSensors(doc)) {
-    const p = positionOf(s);
-    pts.push([p[0], p[1], p[2]], [p[0], p[1], 0]);
-  }
-  for (const tc of thermocouples(doc)) {
-    // Every bead, not the origin: a rake reaching to the ceiling would otherwise
-    // be scaled as though it were a point on the floor.
-    for (const offset of beadOffsetsOf(tc)) pts.push(toWorld(tc, [0, 0, offset]));
-    const p = positionOf(tc);
-    pts.push([p[0], p[1], 0]);
-  }
-
-  if (view !== 'plan') pts.push([0, 0, 0]); // the ground line always shows
-  return pts;
+/**
+ * Every point the drawing must contain.
+ *
+ * `boundsPoints` is the same list the viewport's Fit frames, built from the
+ * primitives the scene and this file actually draw -- a wall from its base height,
+ * a hood and a ceiling where their transforms put them, a box by its corners. The
+ * page used to be sized from a wall's transform Z alone, so a wall with a base
+ * height was drawn metres above the top edge of its own sheet.
+ */
+function collectPoints(doc: PlanDocument): Vec3[] {
+  // The origin is always on the page: it is the datum every dimension refers to,
+  // and in an elevation it is where the ground line sits.
+  return [[0, 0, 0], ...boundsPoints(doc)];
 }
 
 function makeProjector(doc: PlanDocument, view: DrawingView): { projector: Projector; height: number } {
-  const raw = collectPoints(doc, view);
-  const planar = raw.map((p) => {
-    switch (view) {
-      case 'plan': return [p[0], -p[1]] as [number, number];
-      case 'front': return [p[0], -p[2]] as [number, number];
-      case 'side': return [p[1], -p[2]] as [number, number];
-    }
-  });
+  const planar = collectPoints(doc).map((p) => planeOf(view, p));
 
   const bounds: Bounds = {
     minU: Math.min(...planar.map((q) => q[0])),
@@ -433,14 +410,20 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
   // An elevation shows an object's extent along the view's lateral axis, so the
   // footprint has to be rotated before it is flattened -- a wall turned 90 degrees
   // spans a different width on the page.
+  // Heights are world-space -- a slab or a hood whose transform has been moved in Z
+  // is drawn where the 3D view puts it, and where the checks judge it.
   for (const cl of ceilings(doc)) {
     const coords = cl.polygon_m.map((v) => lateral([...footprintXY(cl, v), 0]));
     const lo = Math.min(...coords);
     const hi = Math.max(...coords);
-    const a = p.project(view === 'side' ? [0, lo, cl.height_m] : [lo, 0, cl.height_m]);
-    const b = p.project(view === 'side' ? [0, hi, cl.height_m] : [hi, 0, cl.height_m]);
+    const soffit = ceilingSoffitZM(cl);
+    const a = p.project(view === 'side' ? [0, lo, soffit] : [lo, 0, soffit]);
+    const b = p.project(view === 'side' ? [0, hi, soffit] : [hi, 0, soffit]);
     out.push(line(a[0], a[1], b[0], b[1], COLORS.ceiling, 'stroke-width="3"'));
-    out.push(text(b[0] + 6, b[1] + 3, formatLengthWithUnit(cl.height_m, unit), 'class="obj-label"'));
+    // The label sits past whichever end is on the right of the PAGE, which in the
+    // side view is the low-Y end.
+    const rightX = Math.max(a[0], b[0]);
+    out.push(text(rightX + 6, b[1] + 3, formatLengthWithUnit(soffit, unit), 'class="obj-label"'));
   }
 
   for (const wl of walls(doc)) {
@@ -476,20 +459,23 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
     const span = Math.max(...coords) - Math.min(...coords);
     const centre = (Math.max(...coords) + Math.min(...coords)) / 2;
     const intake = hoodIntakeHeightM(hd);
+    const opening = hoodOpeningZM(hd);
     const at = (u: number, z: number): [number, number] =>
       p.project(view === 'side' ? [0, u, z] : [u, 0, z]);
-    const apex = hd.height_m + Math.max(span * 0.45, 0.4);
+    const apex = opening + Math.max(span * 0.45, 0.4);
     out.push(polygon([
       at(centre - span / 2, intake),
       at(centre + span / 2, intake),
-      at(centre + span / 2, hd.height_m),
+      at(centre + span / 2, opening),
       at(centre + 0.15, apex),
       at(centre - 0.15, apex),
-      at(centre - span / 2, hd.height_m),
+      at(centre - span / 2, opening),
     ], `fill="${COLORS.hood}" fill-opacity="0.1" stroke="${COLORS.hood}" stroke-width="1.2"`));
 
-    const edge = at(centre + span / 2, intake);
-    out.push(dimension(edge[0] + 26, at(0, 0)[1], edge[0] + 26, edge[1],
+    // The intake dimension stands off the edge that is on the right of the PAGE.
+    const edgeX = Math.max(at(centre - span / 2, intake)[0], at(centre + span / 2, intake)[0]);
+    const edgeY = at(centre, intake)[1];
+    out.push(dimension(edgeX + 26, at(0, 0)[1], edgeX + 26, edgeY,
       formatLengthWithUnit(intake, unit)));
   }
 

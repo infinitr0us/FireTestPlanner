@@ -221,20 +221,71 @@ export function xbOfObject(obj: PlanObject, offset: Vec3 = [0, 0, 0]): XbView | 
   return null;
 }
 
+/** `raw` in plan coordinates with each pair ascending, exactly as the importer
+ *  normalises an XB: typing the far corner first is a normal thing to do and should
+ *  not invert the object. */
+const normalisedXb = (raw: Xb, offset: Vec3): Xb => [
+  Math.min(raw[0], raw[1]) - offset[0], Math.max(raw[0], raw[1]) - offset[0],
+  Math.min(raw[2], raw[3]) - offset[1], Math.max(raw[2], raw[3]) - offset[1],
+  Math.min(raw[4], raw[5]) - offset[2], Math.max(raw[4], raw[5]) - offset[2],
+];
+
 /**
- * Rewrite an object's geometry from an FDS `XB`. Mutates in place.
+ * Why `raw` cannot be written onto `obj` as its XB, or null when it can.
+ *
+ * Checked BEFORE anything is mutated, and phrased for the person typing: the XB view
+ * is where an engineer types six numbers straight out of an input file, and a slab
+ * whose Z1 is the floor is a normal thing to type -- but a ceiling with a soffit
+ * height of zero is not an object this format has, and writing it produced a plan
+ * that saved and then refused to reopen.
+ */
+export function xbProblem(obj: PlanObject, raw: Xb, offset: Vec3 = [0, 0, 0]): string | null {
+  if (raw.some((v) => !Number.isFinite(v))) return 'every XB coordinate has to be a number';
+  const xb = normalisedXb(raw, offset);
+  const dx = xb[1] - xb[0];
+  const dy = xb[3] - xb[2];
+  const dz = xb[5] - xb[4];
+  const floorInFile = offset[2];
+
+  if (obj.type === 'wall') {
+    if (Math.max(dx, dy) <= TOL_M) return 'a wall needs some length: X1 X2 or Y1 Y2 have to differ';
+    if (dz <= TOL_M) return 'a wall needs some height: Z2 has to be above Z1';
+    return null;
+  }
+  if (obj.type === 'ceiling') {
+    if (dx <= TOL_M || dy <= TOL_M) return 'a slab needs a footprint: X1 X2 and Y1 Y2 have to differ';
+    if (xb[4] <= TOL_M) {
+      return `a ceiling's Z1 is its soffit, and it has to be above the floor (Z1 > `
+        + `${floorInFile}): a slab at floor level is the floor, not a ceiling`;
+    }
+    return null;
+  }
+  if (obj.type === 'obstruction') {
+    if (dx <= TOL_M || dy <= TOL_M || dz <= TOL_M) {
+      return 'a box needs three extents: X, Y and Z pairs all have to differ';
+    }
+    return null;
+  }
+  if (obj.type === 'burner') {
+    if (dx <= TOL_M || dy <= TOL_M) return 'a burner needs a footprint: X1 X2 and Y1 Y2 have to differ';
+    if (dz < 0) return 'a burner needs Z2 at or above Z1';
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Rewrite an object's geometry from an FDS `XB`. Mutates in place, and returns
+ * the reason it refused to when it did -- in which case nothing was changed.
  *
  * Only ever called for a box `xbOfObject` reported as editable, so it may assume
  * the object is unrotated and its shape is one FDS can describe.
  */
-export function applyXbToObject(obj: PlanObject, raw: Xb, offset: Vec3 = [0, 0, 0]): void {
-  // Ascending pairs, exactly as the importer normalises them: typing the far corner
-  // first is a normal thing to do and should not invert the object.
-  const xb: Xb = [
-    Math.min(raw[0], raw[1]) - offset[0], Math.max(raw[0], raw[1]) - offset[0],
-    Math.min(raw[2], raw[3]) - offset[1], Math.max(raw[2], raw[3]) - offset[1],
-    Math.min(raw[4], raw[5]) - offset[2], Math.max(raw[4], raw[5]) - offset[2],
-  ];
+export function applyXbToObject(obj: PlanObject, raw: Xb, offset: Vec3 = [0, 0, 0]): string | null {
+  const problem = xbProblem(obj, raw, offset);
+  if (problem !== null) return problem;
+
+  const xb = normalisedXb(raw, offset);
   const dx = Math.max(xb[1] - xb[0], TOL_M);
   const dy = Math.max(xb[3] - xb[2], TOL_M);
   const dz = Math.max(xb[5] - xb[4], TOL_M);
@@ -255,7 +306,7 @@ export function applyXbToObject(obj: PlanObject, raw: Xb, offset: Vec3 = [0, 0, 
     wall.thickness_m = alongX ? dy : dx;
     wall.baseHeight_m = xb[4];
     wall.height_m = dz;
-    return;
+    return null;
   }
 
   if (obj.type === 'ceiling') {
@@ -264,14 +315,14 @@ export function applyXbToObject(obj: PlanObject, raw: Xb, offset: Vec3 = [0, 0, 
     slab.polygon_m = [[xb[0], xb[2]], [xb[1], xb[2]], [xb[1], xb[3]], [xb[0], xb[3]]];
     slab.height_m = xb[4];
     slab.thickness_m = dz;
-    return;
+    return null;
   }
 
   if (obj.type === 'obstruction') {
     const solid = obj as ObstructionObject;
     solid.transform = { ...(solid.transform ?? {}), position_m: [cx, cy, xb[4]] };
     solid.size_m = [dx, dy, dz];
-    return;
+    return null;
   }
 
   if (obj.type === 'burner') {
@@ -283,8 +334,11 @@ export function applyXbToObject(obj: PlanObject, raw: Xb, offset: Vec3 = [0, 0, 
       size_m: [dx, dy],
       diameter_m: null,
     };
-    burner.rimHeight_m = dz;
+    // The rim may genuinely be zero -- a fire on a flat surface -- so this is not
+    // clamped the way the extents are.
+    burner.rimHeight_m = Math.max(xb[5] - xb[4], 0);
   }
+  return null;
 }
 
 export interface XyzView {

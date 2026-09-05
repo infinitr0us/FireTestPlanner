@@ -101,6 +101,78 @@ def test_no_hrr_means_no_point_source_rather_than_a_guess():
     assert plan.fire_point_source() is None
 
 
+# -- a second fire -------------------------------------------------------
+
+def _with_second_burner(plan, position=(5.0, 0.0, 0.0), hrr_kw=1000.0, obj_id="burner-2"):
+    plan.add({
+        "id": obj_id, "type": "burner", "name": "Second pan",
+        "transform": {"position_m": [float(v) for v in position]},
+        "footprint": {"shape": "square", "size_m": [0.3, 0.3]},
+        "rimHeight_m": 0.1,
+        "fire": {"fuel": "n-heptane", "hrr_kw": hrr_kw, "hrrCurve": None},
+    })
+    return plan.burners[-1]
+
+
+def test_a_bead_above_a_second_burner_is_in_that_burner_fire():
+    """The reviewer's case: a type-T bead half a metre above a megawatt secondary was
+    called 'outside the plume' and predicted to read close to ambient, because the
+    only fire the beads were placed against was the primary at the origin."""
+    plan = _fire_plan(hrr_kw=100.0)
+    second = _with_second_burner(plan)
+    rake = _rake(plan, [5.0, 0.0, 0.5], [0.0], tc_type="T")
+
+    bead = plan.thermocouple_beads(rake)[0]
+    assert bead["region"] == "flame"
+    assert bead["radial_m"] == pytest.approx(0.0)
+
+    found = codes(plan.instrument_checks())
+    assert "tc-over-temperature" in found
+    assert "tc-outside-plume" not in found
+    # And the plan says the framing does not look at that fire.
+    secondary = [i for i in plan.check() if i.code == "secondary-burner"]
+    assert [i.object_id for i in secondary] == [second.id]
+
+
+def test_a_bead_in_two_plumes_reads_the_hotter_centreline():
+    plan = _fire_plan(hrr_kw=100.0)
+    _with_second_burner(plan, position=(0.6, 0.0, 0.0), hrr_kw=1000.0)
+    # Well above both tips, between the two axes: inside both plume envelopes.
+    rake = _rake(plan, [0.3, 0.0, 6.0], [0.0])
+    bead = plan.thermocouple_beads(rake)[0]
+    assert bead["region"] == "plume"
+    # The same 1000 kW pan on its own gives the same figure: the 100 kW plume the
+    # bead also sits in is cooler up here, and does not add to it.
+    only_big = Plan.new("one big fire")
+    _with_second_burner(only_big, position=(0.6, 0.0, 0.0), hrr_kw=1000.0, obj_id="burner-main")
+    alone = only_big.thermocouple_beads(_rake(only_big, [0.3, 0.0, 6.0], [0.0]))[0]
+    assert bead["gas_temperature_c"] == pytest.approx(alone["gas_temperature_c"])
+    assert bead["gas_temperature_c"] > 100.0
+
+
+def test_incident_flux_sums_over_every_fire_and_names_the_dominant_one():
+    plan = _fire_plan(hrr_kw=130.0)
+    second = _with_second_burner(plan, position=(5.0, 0.0, 0.0), hrr_kw=130.0)
+    z = float(plan.fire_point_source()[2])
+    # Facing the primary from 2 m away, with the second fire 7 m behind the source.
+    gauge = _gauge(plan, [-2.0, 0.0, z])
+    est = plan.heat_flux_estimate(gauge)
+    alone = _fire_plan(hrr_kw=130.0)
+    alone_est = alone.heat_flux_estimate(_gauge(alone, [-2.0, 0.0, z]))
+    assert est["source_id"] == "burner-main"
+    assert est["distance_m"] == pytest.approx(2.0)
+    assert est["incident_kw_m2"] > alone_est["incident_kw_m2"]
+    assert est["incident_kw_m2"] == pytest.approx(alone_est["incident_kw_m2"] * (1 + 4.0 / 49.0))
+
+    # Facing the second fire instead: the primary is behind the face and adds
+    # nothing, and the figures are to the second fire.
+    facing_second = _gauge(plan, [2.5, 0.0, z], aim=[5.0, 0.0, z], obj_id="hf-2")
+    est2 = plan.heat_flux_estimate(facing_second)
+    assert est2["source_id"] == second.id
+    assert est2["faces_fire"] is True
+    assert est2["distance_m"] == pytest.approx(2.5)
+
+
 # -- heat flux prediction ------------------------------------------------
 
 def test_incident_flux_matches_the_point_source_formula():

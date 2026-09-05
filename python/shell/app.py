@@ -110,9 +110,17 @@ class Shell:
         self._settings = self._load_settings()
         self._queued_plan: Optional[str] = None
         self.ready_info: Optional[Dict[str, Any]] = None
-        # Absolute path of the plan currently open. The page only ever knows the
-        # basename, so this is what makes Save mean "save" rather than "save as".
+        # Absolute path of the plan most recently read or written, for the window
+        # title. It is NOT what decides where a plain Save goes -- see `_documents`.
         self.current_path: Optional[str] = None
+        # The files the page may write back to, keyed by an opaque token issued when
+        # each was read or written. The page keeps a token only while the document it
+        # came with is the one on screen, and hands it back on a plain Save; a Save
+        # with no token, or with one this shell never issued, asks for a destination.
+        # This is what makes Save mean "save" rather than "save as" -- the basename
+        # the page reports is not enough, because a file the page rejected, or the
+        # bundled Example, can carry the same name as the file that was open before.
+        self._documents: Dict[str, str] = {}
         # Folder of the last FDS input opened, which is where its `&CATF` includes
         # live. Not a document: an import produces an unsaved plan.
         self.fds_directory: Optional[str] = None
@@ -272,7 +280,21 @@ class Shell:
         except OSError as exc:
             return {"error": str(exc)}
 
+    def _issue_token(self, path: str) -> str:
+        """A fresh handle on `path`, for the page to hand back on a plain Save."""
+        token = secrets.token_urlsafe(12)
+        self._documents[token] = os.path.abspath(path)
+        return token
+
     def read_plan(self, path: str) -> Optional[Dict[str, str]]:
+        """A plan's text, its path, and a token the page can save back with.
+
+        Reading a file does not make it the Save destination. Only the page knows
+        whether it adopted the document -- it may reject the file as not a plan -- so
+        the token travels with the text and comes back only if the document did go
+        on screen. A rejected `case.ftp.json` therefore cannot become the target of
+        the next Ctrl+S on the `case.ftp.json` that was open before it.
+        """
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 text = fh.read()
@@ -282,22 +304,28 @@ class Shell:
         self._remember(path)
         self.current_path = os.path.abspath(path)
         self._set_title(os.path.basename(path))
-        return {"path": path, "text": text}
+        return {"path": path, "text": text, "token": self._issue_token(path)}
 
-    def save_plan(self, text: str, suggested_name: str, save_as: bool = False) -> Optional[Dict[str, str]]:
-        """Save to the open file, or ask for a destination.
+    def save_plan(self, text: str, suggested_name: str, save_as: bool = False,
+                  token: Optional[str] = None) -> Optional[Dict[str, str]]:
+        """Save to the file `token` names, or ask for a destination.
 
         `Save` on a plan that came from disk writes straight back to it -- prompting
         for a filename the user already chose is not a save, and it is how a plan
         ends up saved next to itself under three near-identical names. `Save as...`,
         and any plan with no file behind it yet, still ask.
 
-        Returns `{"path": ...}`, or `{"error": ...}` if the write failed, or None if
-        the user cancelled the dialog. The page has to tell those apart: a failed
-        save that looks like a cancelled one leaves the user believing their work is
-        on disk when it is not.
+        Which file "it" is comes from the token the page was given when the file was
+        read or last written, never from the name the page suggests: the Example plan
+        and a rejected open can both report the basename of the file that was open
+        before them, and a basename match wrote over that file with no dialog.
+
+        Returns `{"path": ..., "token": ...}`, or `{"error": ...}` if the write
+        failed, or None if the user cancelled the dialog. The page has to tell those
+        apart: a failed save that looks like a cancelled one leaves the user believing
+        their work is on disk when it is not.
         """
-        path = None if save_as else self._writeback_path(suggested_name)
+        path = None if save_as else self._writeback_path(token)
         if path is None:
             path = self._ask_save(suggested_name, PLAN_FILTER)
         if not path:
@@ -308,24 +336,21 @@ class Shell:
         self._remember(path)
         self.current_path = os.path.abspath(path)
         self._set_title(os.path.basename(path))
-        return {"path": path}
+        return {"path": path, "token": self._issue_token(path)}
 
-    def _writeback_path(self, suggested_name: str) -> Optional[str]:
-        """The open file, if the page is still showing the document that came from it.
+    def _writeback_path(self, token: Optional[str]) -> Optional[str]:
+        """The file a token names, if this shell issued it.
 
         The editor can replace its document without the shell hearing about it -- the
-        Example button does exactly that, and so does a command-line plan the page
-        rejects -- after which `current_path` names a file that has nothing to do with
-        what is on screen. Writing to it anyway destroys the user's plan silently,
-        which is worse than the extra dialog it was meant to save.
-
-        The page knows only a basename, and sends it back as the suggested name on a
-        plain Save. Matching that against the open file is enough to tell 'this is the
-        file I opened' from 'this is some other document now'.
+        Example button does exactly that, and so does an Open the page rejects -- so
+        the shell cannot know which file is on screen. The page can: it keeps the
+        token it was handed with the document it adopted, drops it when the document
+        is replaced, and sends it back on a plain Save. No token, or one this shell
+        never issued, means there is no file to write back to.
         """
-        if not self.current_path:
+        if not token:
             return None
-        return self.current_path if suggested_name == os.path.basename(self.current_path) else None
+        return self._documents.get(str(token))
 
     def save_html(self, html: str, suggested_name: str) -> Optional[Dict[str, str]]:
         path = self._ask_save(suggested_name, HTML_FILTER)
@@ -462,10 +487,12 @@ class Handler(SimpleHTTPRequestHandler):
             elif route == "/api/open-recent":
                 self._send_json(self.shell.read_plan(str(body.get("path", ""))))
             elif route == "/api/save":
+                token = body.get("token")
                 self._send_json(self.shell.save_plan(
                     body.get("text", ""),
                     body.get("name", "plan.ftp.json"),
                     save_as=bool(body.get("saveAs")),
+                    token=token if isinstance(token, str) else None,
                 ))
             elif route == "/api/save-html":
                 self._send_json(self.shell.save_html(body.get("html", ""), body.get("name", "page.html")))

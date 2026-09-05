@@ -1,0 +1,474 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/infinitr0us/FireTestPlanner/main/schema/fire-test-plan-1.0.0.schema.json",
+  "title": "Fire Test Plan",
+  "description": "Interchange format for fire test layouts, shared between fire safety engineers and data scientists. Lengths are metres, angles radians, power kilowatts, temperature degrees Celsius. See CONVENTIONS.md for the coordinate and camera frame definitions.",
+  "type": "object",
+  "required": ["format", "version", "units", "coordinateSystem", "objects"],
+  "additionalProperties": false,
+
+  "properties": {
+    "format": { "const": "fire-test-plan" },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version of the FILE FORMAT, not of the plan content."
+    },
+
+    "meta": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "title": { "type": "string" },
+        "testId": { "type": ["string", "null"] },
+        "author": { "type": ["string", "null"] },
+        "organization": { "type": ["string", "null"] },
+        "siteName": { "type": ["string", "null"] },
+        "created": { "type": ["string", "null"], "format": "date-time" },
+        "modified": { "type": ["string", "null"], "format": "date-time" },
+        "revision": {
+          "type": ["string", "null"],
+          "description": "Free-text revision marker. Plans are revised by editing into a NEW file rather than storing planned-vs-as-built in one file, so this plus git history is the audit trail."
+        },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+
+    "units": {
+      "type": "object",
+      "required": ["length", "angle", "power", "temperature"],
+      "additionalProperties": false,
+      "description": "Canonical units of the stored numbers. These are FIXED for format 1.x; the field exists so a reader can assert rather than assume.",
+      "properties": {
+        "length": { "const": "m" },
+        "angle": { "const": "rad" },
+        "power": { "const": "kW" },
+        "temperature": { "const": "C" },
+        "display": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "UI preference only. Never affects stored values.",
+          "properties": {
+            "length": { "enum": ["m", "cm", "mm", "ft", "in"] },
+            "angle": { "enum": ["deg", "rad"] }
+          }
+        }
+      }
+    },
+
+    "coordinateSystem": {
+      "type": "object",
+      "required": ["convention", "origin"],
+      "additionalProperties": false,
+      "properties": {
+        "convention": {
+          "const": "Z-up-right-handed",
+          "description": "World frame: +X and +Y horizontal, +Z vertically up, right-handed."
+        },
+        "origin": {
+          "const": "burner-center-floor",
+          "description": "World origin is the centre of the primary burner, at floor level. Camera standoff is therefore norm(position)."
+        },
+        "northAzimuth_rad": {
+          "type": ["number", "null"],
+          "description": "Compass bearing of the +Y axis, if the site orientation matters. Null when unknown or irrelevant."
+        }
+      }
+    },
+
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "floorSize_m": {
+          "$ref": "#/$defs/vec2",
+          "description": "Extent of the drawn floor plane, centred on the origin. Visual only."
+        },
+        "ceilingHeight_m": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0,
+          "description": "Null for an open / very large bay."
+        },
+        "ambientTemperature_C": {
+          "type": ["number", "null"],
+          "description": "Used by plume correlations. Defaults to 20 when null."
+        },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+
+    "objects": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/object" }
+    }
+  },
+
+  "$defs": {
+    "vec2": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "vec3": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "positiveVec2": {
+      "description": "Two lengths, each greater than zero. A size with a zero or negative component is a degenerate object -- the editor's own load boundary rejects one, and every area, volume and drawing computed from it is wrong -- so the schema and the editor agree about it rather than disagreeing quietly.",
+      "type": "array",
+      "items": { "type": "number", "exclusiveMinimum": 0 },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "quat": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 4,
+      "maxItems": 4,
+      "description": "Unit quaternion in XYZW order (Three.js ordering)."
+    },
+    "res2": {
+      "type": "array",
+      "items": { "type": "integer", "exclusiveMinimum": 0 },
+      "minItems": 2,
+      "maxItems": 2
+    },
+
+    "transform": {
+      "type": "object",
+      "required": ["position_m"],
+      "additionalProperties": false,
+      "properties": {
+        "position_m": { "$ref": "#/$defs/vec3" },
+        "rotation_quat": {
+          "$ref": "#/$defs/quat",
+          "description": "AUTHORITATIVE orientation, camera-to-world / object-to-world. Stored in the OpenGL-style local frame: object looks down local -Z with local +Y up. Defaults to identity when absent."
+        },
+        "aimTarget_m": {
+          "oneOf": [{ "$ref": "#/$defs/vec3" }, { "type": "null" }],
+          "description": "Authoring intent ('point at the flame base'). Advisory: rotation_quat is what a consumer reads. A writer MUST keep the two consistent; a reader MAY warn when they disagree."
+        }
+      }
+    },
+
+    "display": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Presentation overrides. Ignoring this block entirely must never change the meaning of the plan.",
+      "properties": {
+        "color": { "type": ["string", "null"], "pattern": "^#[0-9a-fA-F]{6}$" },
+        "visible": { "type": "boolean", "default": true },
+        "locked": { "type": "boolean", "default": false }
+      }
+    },
+
+    "objectCommon": {
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique within the plan. Stable across revisions so diffs are meaningful."
+        },
+        "type": { "type": "string" },
+        "name": { "type": ["string", "null"] },
+        "transform": { "$ref": "#/$defs/transform" },
+        "display": { "$ref": "#/$defs/display" },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+
+    "footprint": {
+      "type": "object",
+      "required": ["shape"],
+      "additionalProperties": false,
+      "properties": {
+        "shape": { "enum": ["circle", "square", "rectangle"] },
+        "diameter_m": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "size_m": {
+          "oneOf": [{ "$ref": "#/$defs/positiveVec2" }, { "type": "null" }]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "shape": { "const": "circle" } }, "required": ["shape"] },
+          "then": { "required": ["diameter_m"] }
+        },
+        {
+          "if": { "properties": { "shape": { "enum": ["square", "rectangle"] } }, "required": ["shape"] },
+          "then": { "required": ["size_m"] }
+        }
+      ]
+    },
+
+    "camera": {
+      "allOf": [{ "$ref": "#/$defs/objectCommon" }],
+      "type": "object",
+      "required": ["id", "type", "camera"],
+      "additionalProperties": false,
+      "properties": {
+        "id": true, "type": { "const": "camera" }, "name": true,
+        "transform": true, "display": true, "notes": true,
+
+        "camera": {
+          "type": "object",
+          "required": ["modality", "resolution_px", "sensor_mm", "focalLength_mm"],
+          "additionalProperties": false,
+          "properties": {
+            "modality": {
+              "enum": ["RGB", "LWIR", "MWIR", "SWIR", "NIR", "other"],
+              "description": "Drives frustum colour in the viewer and grouping in the equipment table."
+            },
+            "presetId": {
+              "type": ["string", "null"],
+              "description": "Hint only. All intrinsics are stored inline, so a plan opened without the preset library is still fully specified."
+            },
+            "resolution_px": { "$ref": "#/$defs/res2" },
+            "sensor_mm": {
+              "$ref": "#/$defs/vec2",
+              "description": "Active sensor width and height. With focalLength_mm this is the AUTHORITATIVE intrinsic pair; field of view is derived, never stored, so the two can never disagree."
+            },
+            "focalLength_mm": { "type": "number", "exclusiveMinimum": 0 },
+            "principalPoint_px": {
+              "oneOf": [{ "$ref": "#/$defs/vec2" }, { "type": "null" }],
+              "description": "Null means the exact image centre, ((w-1)/2, (h-1)/2)."
+            },
+            "distortion": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["model", "coefficients"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "model": { "const": "opencv" },
+                    "coefficients": {
+                      "type": "array",
+                      "items": { "type": "number" },
+                      "minItems": 4,
+                      "maxItems": 5,
+                      "description": "k1, k2, p1, p2 [, k3] in OpenCV order."
+                    }
+                  }
+                },
+                { "type": "null" }
+              ],
+              "description": "Null means an ideal pinhole was assumed. Populate after a real calibration."
+            },
+            "intrinsicsSource": {
+              "enum": ["nominal", "datasheet", "calibrated"],
+              "default": "nominal",
+              "description": "How much to trust the intrinsics. 'nominal' is a plausible placeholder, 'datasheet' is from the manufacturer, 'calibrated' came from an actual calibration of this unit."
+            },
+            "spectralBand_um": {
+              "oneOf": [{ "$ref": "#/$defs/vec2" }, { "type": "null" }],
+              "description": "Low and high wavelength, e.g. [7.5, 14.0] for LWIR, [3.0, 5.0] for MWIR."
+            },
+            "framerate_hz": { "type": ["number", "null"], "exclusiveMinimum": 0 }
+          }
+        },
+
+        "mount": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": { "enum": ["tripod", "pole", "ceiling", "wall", "handheld", "other"] },
+            "height_m": {
+              "type": ["number", "null"],
+              "description": "Mount height above floor. Advisory; transform.position_m[2] is authoritative."
+            }
+          }
+        },
+
+        "recording": {
+          "description": "RESERVED for a future post-test record (which footage this camera produced, clock sync, checksums). Format 1.0 writers MUST emit null. Reserving the key keeps 1.0 files forward-compatible without a version bump.",
+          "type": "null"
+        }
+      }
+    },
+
+    "burner": {
+      "allOf": [{ "$ref": "#/$defs/objectCommon" }],
+      "type": "object",
+      "required": ["id", "type", "footprint"],
+      "additionalProperties": false,
+      "properties": {
+        "id": true, "type": { "const": "burner" }, "name": true,
+        "transform": true, "display": true, "notes": true,
+
+        "footprint": { "$ref": "#/$defs/footprint" },
+        "rimHeight_m": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Height of the pan rim / fuel surface above the object origin."
+        },
+        "fire": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "fuel": { "type": ["string", "null"] },
+            "hrr_kw": {
+              "type": ["number", "null"],
+              "exclusiveMinimum": 0,
+              "description": "Steady or peak heat release rate, used by the flame-height and plume correlations."
+            },
+            "hrrCurve": {
+              "description": "RESERVED for a time-varying HRR series. 1.0 writers MUST emit null.",
+              "type": "null"
+            }
+          }
+        }
+      }
+    },
+
+    "hood": {
+      "allOf": [{ "$ref": "#/$defs/objectCommon" }],
+      "type": "object",
+      "required": ["id", "type", "opening_m", "height_m"],
+      "additionalProperties": false,
+      "properties": {
+        "id": true, "type": { "const": "hood" }, "name": true,
+        "transform": true, "display": true, "notes": true,
+
+        "opening_m": {
+          "$ref": "#/$defs/positiveVec2",
+          "description": "Width and depth of the rectangular collection opening."
+        },
+        "height_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Height of the opening plane above the floor. Compared against flame height and plume width for the capture checks."
+        },
+        "skirtDepth_m": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Vertical skirt hanging below the opening plane, if any."
+        },
+        "duct": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["diameter_m"],
+              "additionalProperties": false,
+              "properties": {
+                "diameter_m": { "type": "number", "exclusiveMinimum": 0 },
+                "length_m": { "type": ["number", "null"], "exclusiveMinimum": 0 }
+              }
+            },
+            { "type": "null" }
+          ],
+          "description": "Exhaust duct rising from the canopy apex. Geometry is indicative only."
+        }
+      }
+    },
+
+    "wall": {
+      "allOf": [{ "$ref": "#/$defs/objectCommon" }],
+      "type": "object",
+      "required": ["id", "type", "polyline_m", "height_m"],
+      "additionalProperties": false,
+      "properties": {
+        "id": true, "type": { "const": "wall" }, "name": true,
+        "transform": true, "display": true, "notes": true,
+
+        "polyline_m": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/vec2" },
+          "minItems": 2,
+          "description": "Plan-view centreline of the wall run, in world XY."
+        },
+        "height_m": { "type": "number", "exclusiveMinimum": 0 },
+        "thickness_m": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "baseHeight_m": {
+          "type": ["number", "null"],
+          "description": "Bottom of the wall above the floor. Null or 0 means floor-standing."
+        },
+        "openings": {
+          "type": "array",
+          "description": "Doors and windows, positioned along the polyline by arc length from its start.",
+          "items": {
+            "type": "object",
+            "required": ["offset_m", "width_m", "height_m"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": ["string", "null"] },
+              "offset_m": { "type": "number", "minimum": 0 },
+              "width_m": { "type": "number", "exclusiveMinimum": 0 },
+              "height_m": { "type": "number", "exclusiveMinimum": 0 },
+              "sillHeight_m": { "type": ["number", "null"], "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+
+    "ceiling": {
+      "allOf": [{ "$ref": "#/$defs/objectCommon" }],
+      "type": "object",
+      "required": ["id", "type", "polygon_m", "height_m"],
+      "additionalProperties": false,
+      "description": "A horizontal slab. Together with walls this covers the building geometry a fire test needs: the tool targets open bays and simple enclosures, not detailed room layouts.",
+      "properties": {
+        "id": true, "type": { "const": "ceiling" }, "name": true,
+        "transform": true, "display": true, "notes": true,
+
+        "polygon_m": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/vec2" },
+          "minItems": 3,
+          "description": "Plan-view outline in world XY. Assumed closed; do not repeat the first point."
+        },
+        "height_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Height of the UNDERSIDE above the floor. This is the surface a flame impinges on, so it is the one measured."
+        },
+        "thickness_m": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0,
+          "description": "Slab thickness, extruded upward from the underside."
+        }
+      }
+    },
+
+    "unknown": {
+      "description": "Any object type this version does not recognise. Preserved verbatim on load and re-emitted unchanged on save, so a newer plan opened in an older tool does not silently lose objects.",
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "type": "string" }
+      }
+    },
+
+    "object": {
+      "type": "object",
+      "required": ["id", "type"],
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "camera" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/camera" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "burner" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/burner" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "hood" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/hood" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "wall" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/wall" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "ceiling" } }, "required": ["type"] },
+          "then": { "$ref": "#/$defs/ceiling" }
+        }
+      ]
+    }
+  }
+}

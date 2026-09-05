@@ -168,10 +168,10 @@ function renderToolbar(): void {
     ]),
 
     group([
-      btn('Open', openPlan),
-      btn('Save', savePlan),
-      btn('Save as…', () => savePlan(true)),
-      btn('Import FDS…', importFds,
+      btn('Open', () => { void openPlan(); }),
+      btn('Save', () => { void savePlan(false); }),
+      btn('Save as…', () => { void savePlan(true); }),
+      btn('Import FDS…', () => { void importFds(); },
         'Build a plan from an FDS input file — geometry, the burner and the devices'),
       btn('Example', loadExample, 'Load the reference plan built from the hand sketch'),
     ]),
@@ -225,14 +225,21 @@ function renderToolbar(): void {
 
 const group = (children: HTMLElement[]): HTMLElement => h('div', { class: 'toolbar__group' }, children);
 
+// The click event is swallowed here rather than forwarded: a handler such as
+// `savePlan(saveAs = false)` registered directly would receive the MouseEvent as its
+// first argument, and a truthy object where a boolean was expected turned every
+// click on Save into Save As. Typing the callback as `() => void` does not stop the
+// DOM supplying an argument at runtime; not passing it on does.
 const btn = (label: string, onClick: () => void, title?: string): HTMLElement =>
-  h('button', { class: 'toolbar__btn', type: 'button', onclick: onClick, title: title ?? '' }, [label]);
+  h('button', {
+    class: 'toolbar__btn', type: 'button', onclick: () => onClick(), title: title ?? '',
+  }, [label]);
 
 const toggle = (label: string, active: boolean, onClick: () => void, title?: string): HTMLElement =>
   h('button', {
     class: `toolbar__btn${active ? ' toolbar__btn--active' : ''}`,
     type: 'button',
-    onclick: onClick,
+    onclick: () => onClick(),
     title: title ?? '',
   }, [label]);
 
@@ -261,7 +268,7 @@ async function openPlan(): Promise<void> {
     return;
   }
   if (!result) return;
-  adopt(result.text, result.name);
+  adopt(result.text, result.name, result.token);
 }
 
 /**
@@ -269,11 +276,13 @@ async function openPlan(): Promise<void> {
  *
  * Shared by Open and by a plan named on the desktop shell's command line, so both
  * validate before the store is touched and both leave the current document intact
- * on failure.
+ * on failure. `token` is the shell's handle on the file the text came from; it is
+ * adopted only if the document is, so a file the page rejects never becomes the
+ * destination of the next Save -- the document still on screen keeps its own.
  */
-function adopt(text: string, name: string): void {
+function adopt(text: string, name: string, token: string | null = null): void {
   try {
-    store.replaceDocument(parseAndValidatePlan(text), name);
+    store.replaceDocument(parseAndValidatePlan(text), name, token);
     viewport.frameAll();
   } catch (err) {
     window.alert(
@@ -285,19 +294,32 @@ function adopt(text: string, name: string): void {
   }
 }
 
+/** True while a save is waiting on the shell, so a second Ctrl+S does not race it. */
+let saveInFlight = false;
+
 async function savePlan(saveAs = false): Promise<void> {
+  // Two saves in flight would write two snapshots to one file in whichever order the
+  // dialogs close. The dirty bullet stays up until the first one lands, so a second
+  // press is not lost -- it is simply asked for again once the file is on disk.
+  if (saveInFlight) return;
   const suggested = saveAs || store.fileName === 'untitled.ftp.json'
     ? suggestFileName()
     : store.fileName;
+  // Taken BEFORE serialising: this is the document and revision the bytes describe,
+  // and it is what decides whether the dirty bullet may clear when the write lands.
+  const identity = store.identity();
+  saveInFlight = true;
   try {
-    const saved = await savePlanText(store.serialize(), suggested, saveAs);
+    const saved = await savePlanText(store.serialize(), suggested, saveAs, identity.token);
     // null means the user cancelled the dialog; a failed write throws.
-    if (saved) store.markSaved(saved.split(/[\\/]/).pop() ?? suggested);
+    if (saved) store.markSaved(saved.path.split(/[\\/]/).pop() ?? suggested, identity, saved.token);
   } catch (err) {
     window.alert(
       `${suggested} was not saved:\n\n${(err as Error).message}\n\n` +
       'The plan is still open and unchanged — try Save as… to a different location.',
     );
+  } finally {
+    saveInFlight = false;
   }
 }
 
@@ -342,12 +364,13 @@ async function importFds(): Promise<void> {
           + `${describeErrors(errors)}\n\nNothing was imported.`);
         return;
       }
+      // No token: an import is not a saved file. The plan exists only here until
+      // it is written, and Save must ask for a destination rather than aiming at
+      // the .fds or at whatever plan was open before.
       store.replaceDocument(doc, name);
-      // An import is not a saved file: the plan exists only here until it is
-      // written, and Save must ask for a destination rather than aiming at the .fds.
       store.markDirty();
       viewport.frameAll();
-    }, { includesResolved: source.resolved, unresolvedIncludes: source.unresolved });
+    }, { includesResolved: source.resolved, includeIssues: source.issues });
   } catch (err) {
     window.alert(
       `${picked.name} could not be read as FDS input:\n\n${(err as Error).message}`);
@@ -356,6 +379,9 @@ async function importFds(): Promise<void> {
 
 function loadExample(): void {
   if (!confirmDiscard()) return;
+  // No token: the Example is bundled, not a file on this machine, so the first Save
+  // asks where to put it -- even when the file that was open before happened to be
+  // called pool-fire-camera-row.ftp.json too.
   store.replaceDocument(
     JSON.parse(JSON.stringify(examplePlan)) as PlanDocument,
     'pool-fire-camera-row.ftp.json',
@@ -459,7 +485,7 @@ viewport.frameAll();
 // (`is-shared-view` and `is-desktop` carry no styling of their own; they are hooks for
 // a user stylesheet, and for anything that later wants to trim the chrome.)
 if (sharedPlanAdopted) {
-  store.markSaved(`${(store.document.meta?.title ?? 'plan')}.ftp.json`);
+  store.markSaved(`${(store.document.meta?.title ?? 'plan')}.ftp.json`, store.identity());
   document.body.classList.add('is-shared-view');
 }
 
@@ -495,6 +521,6 @@ connectShell(() => {
   }).then((queued) => {
     // A plan named on the shell's command line comes back from app_ready().
     if (!queued) return;
-    adopt(queued.text, queued.path.split(/[\\/]/).pop() ?? 'plan.ftp.json');
+    adopt(queued.text, queued.path.split(/[\\/]/).pop() ?? 'plan.ftp.json', queued.token);
   });
 });

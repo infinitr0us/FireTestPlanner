@@ -20,14 +20,12 @@ import {
   cameraColor,
   fuelSurfaceZM,
   gaugeViewAngleDeg,
-  hfovRadOf,
-  hoodIntakeHeightM,
+  imagePlaneExtents,
   plumeRadiusAtZ,
   positionOf,
   quatOf,
   rimHeightM,
   standoffM,
-  vfovRadOf,
   displayName,
   hasObjectColor,
   objectColor,
@@ -65,6 +63,15 @@ export const COLORS = {
  *  preview can exclude it and show only what the real camera would see. */
 export const LAYER_DEFAULT = 0;
 export const LAYER_EDITOR = 1;
+/**
+ * Ceilings get a layer of their own. Plan mode hides them -- a floor plan is cut
+ * below the ceiling, and the slab would otherwise cover everything the top-down
+ * view is for -- but that is a choice about the EDITOR'S camera, not about the
+ * room. The camera preview renders the same scene, and a modelled camera looking
+ * up at a ceiling has to keep seeing it whichever view the editor is in; leaving
+ * ceilings out of the scene in plan mode made the preview show empty sky.
+ */
+export const LAYER_CEILING = 2;
 
 const upright = (g: THREE.BufferGeometry): THREE.BufferGeometry => {
   g.rotateX(Math.PI / 2);
@@ -222,7 +229,9 @@ export function buildHood(h: HoodObject): THREE.Group {
 
   const [w, d] = h.opening_m;
   const skirt = h.skirtDepth_m ?? 0;
-  const intake = hoodIntakeHeightM(h);
+  // Local to the group, which `applyTransform` has already placed: the world-space
+  // intake `hoodIntakeHeightM` reports is this plus the transform's Z.
+  const intake = h.height_m - skirt;
   const ductD = h.duct?.diameter_m ?? Math.min(w, d) * 0.25;
   const apexRise = Math.max(Math.min(w, d) * 0.45, 0.4);
 
@@ -466,6 +475,10 @@ export function buildCeiling(c: CeilingObject): THREE.Group {
   label.position.set(centroid[0], centroid[1], c.height_m + thickness + 0.15);
   group.add(label);
 
+  // The whole slab, label included, on the ceiling layer: the editor's plan camera
+  // switches the layer off, every other camera -- and the preview -- keeps it on.
+  group.traverse((o) => o.layers.set(LAYER_CEILING));
+
   return group;
 }
 
@@ -680,15 +693,21 @@ export function buildCamera(c: CameraObject, showFrustum: boolean): THREE.Group 
 function buildFrustum(c: CameraObject, color: THREE.Color): THREE.Object3D {
   // Reach far enough to pass the fire without cluttering the scene.
   const far = Math.min(Math.max(standoffM(c) * 1.35, 1.5), 12);
-  const halfW = Math.tan(hfovRadOf(c) / 2) * far;
-  const halfH = Math.tan(vfovRadOf(c) / 2) * far;
+  // The image's own edges -- fx, fy and the principal point -- not a symmetric
+  // pyramid from two fields of view. Non-square pixels and an off-centre principal
+  // point both move these, and the framing verdict is computed from them.
+  const e = imagePlaneExtents(c);
+  const left = e.left * far;
+  const right = e.right * far;
+  const top = e.top * far;
+  const bottom = e.bottom * far;
 
   // Local -Z is forward; local +Y is up.
   const corners = [
-    new THREE.Vector3(-halfW, -halfH, -far),
-    new THREE.Vector3(halfW, -halfH, -far),
-    new THREE.Vector3(halfW, halfH, -far),
-    new THREE.Vector3(-halfW, halfH, -far),
+    new THREE.Vector3(left, bottom, -far),
+    new THREE.Vector3(right, bottom, -far),
+    new THREE.Vector3(right, top, -far),
+    new THREE.Vector3(left, top, -far),
   ];
   const apex = new THREE.Vector3(0, 0, 0);
 
@@ -704,7 +723,7 @@ function buildFrustum(c: CameraObject, color: THREE.Color): THREE.Object3D {
 
   // Faint image plane, so overlapping fields of view are legible at a glance.
   const plane = new THREE.Mesh(
-    new THREE.PlaneGeometry(halfW * 2, halfH * 2),
+    new THREE.PlaneGeometry(right - left, top - bottom),
     new THREE.MeshBasicMaterial({
       color,
       transparent: true,
@@ -713,7 +732,7 @@ function buildFrustum(c: CameraObject, color: THREE.Color): THREE.Object3D {
       depthWrite: false,
     }),
   );
-  plane.position.z = -far;
+  plane.position.set((left + right) / 2, (top + bottom) / 2, -far);
   group.add(plane);
 
   return group;

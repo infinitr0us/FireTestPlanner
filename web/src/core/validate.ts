@@ -36,6 +36,28 @@ const isPairList = (v: unknown, minPairs: number): boolean =>
 /** An optional field: absent and null are both "unstated" throughout this format. */
 const isStated = (v: unknown): boolean => v !== undefined && v !== null;
 
+/**
+ * An optional length that the builders feed straight into geometry.
+ *
+ * These are the numbers a builder multiplies into a mesh without looking:
+ * `thickness_m`, `baseHeight_m`, `skirtDepth_m`, `rimHeight_m`. A string or NaN in
+ * one of them is a NaN geometry the schema would have rejected, and it reached the
+ * renderer because only the required fields were being checked.
+ */
+const checkOptionalLength = (
+  raw: Record<string, unknown>, key: string, id: string, err: Reporter,
+  { positive = false, label }: { positive?: boolean; label: string },
+): void => {
+  const v = raw[key];
+  if (!isStated(v)) return;
+  const ok = positive ? isPositive(v) : isFiniteNumber(v) && v >= 0;
+  if (!ok) {
+    err(`bad-${key.replace(/_m$/, '').replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`,
+      `${label} "${id}" has ${key} ${JSON.stringify(v)}; expected a `
+      + `${positive ? 'positive' : 'non-negative'} number, or null.`, id);
+  }
+};
+
 export function validateStructure(doc: PlanDocument): Issue[] {
   const out: Issue[] = [];
   const err = (code: string, message: string, objectId?: string): void => {
@@ -60,7 +82,9 @@ export function validateStructure(doc: PlanDocument): Issue[] {
       `Unsupported coordinate convention "${String(doc.coordinateSystem?.convention)}".`);
   }
   if (!Array.isArray(doc.objects)) {
-    err('bad-objects', 'The "objects" field is missing or is not a list.');
+    err('bad-objects',
+      'The "objects" field is missing or is not a list. Nothing in it can be read, '
+      + 'and opening the file anyway would drop it on the next save.');
     return out; // nothing further is checkable
   }
 
@@ -174,6 +198,7 @@ function validateByType(obj: PlanObject, err: Reporter): void {
       } else if (!isNumberArray(fp.size_m, 2) || (fp.size_m as number[]).some((v) => v <= 0)) {
         err('bad-size', `Burner "${id}" needs a size_m of two positive numbers.`, id);
       }
+      checkOptionalLength(raw, 'rimHeight_m', id, err, { label: 'Burner' });
       const fire = raw.fire as Record<string, unknown> | undefined;
       if (isStated(fire?.hrr_kw) && !isPositive(fire!.hrr_kw)) {
         err('bad-hrr', `Burner "${id}" has a non-positive hrr_kw.`, id);
@@ -196,6 +221,15 @@ function validateByType(obj: PlanObject, err: Reporter): void {
         err('bad-opening', `Hood "${id}" needs an opening_m of two positive numbers.`, id);
       }
       if (!isPositive(raw.height_m)) err('bad-height', `Hood "${id}" needs a positive height_m.`, id);
+      checkOptionalLength(raw, 'skirtDepth_m', id, err, { label: 'Hood' });
+      const duct = raw.duct as Record<string, unknown> | undefined | null;
+      if (isStated(duct)) {
+        if (typeof duct !== 'object' || !isPositive(duct!.diameter_m)) {
+          err('bad-duct', `Hood "${id}" has a duct without a positive diameter_m.`, id);
+        } else if (isStated(duct!.length_m) && !isPositive(duct!.length_m)) {
+          err('bad-duct', `Hood "${id}" has a duct with a non-positive length_m.`, id);
+        }
+      }
       break;
     }
 
@@ -204,6 +238,31 @@ function validateByType(obj: PlanObject, err: Reporter): void {
         err('bad-polyline', `Wall "${id}" needs a polyline_m of at least two [x, y] points.`, id);
       }
       if (!isPositive(raw.height_m)) err('bad-height', `Wall "${id}" needs a positive height_m.`, id);
+      checkOptionalLength(raw, 'thickness_m', id, err, { positive: true, label: 'Wall' });
+      checkOptionalLength(raw, 'baseHeight_m', id, err, { label: 'Wall' });
+      // The builder slices, sorts and subtracts these. A wall whose `openings` is
+      // an object rather than a list passed structural validation, was installed,
+      // and then threw out of the builder -- leaving a broken document on screen
+      // and offering to save it.
+      const openings = raw.openings;
+      if (isStated(openings)) {
+        if (!Array.isArray(openings)) {
+          err('bad-openings', `Wall "${id}" has openings that are not a list.`, id);
+        } else {
+          openings.forEach((o, i) => {
+            const op = o as Record<string, unknown> | null;
+            const okShape = typeof op === 'object' && op !== null
+              && isFiniteNumber(op.offset_m) && op.offset_m >= 0
+              && isPositive(op.width_m) && isPositive(op.height_m)
+              && (!isStated(op.sillHeight_m) || (isFiniteNumber(op.sillHeight_m) && op.sillHeight_m >= 0));
+            if (!okShape) {
+              err('bad-openings',
+                `Wall "${id}" opening ${i + 1} needs offset_m ≥ 0, positive width_m and height_m, `
+                + 'and a non-negative sillHeight_m if any.', id);
+            }
+          });
+        }
+      }
       break;
     }
 
@@ -212,6 +271,7 @@ function validateByType(obj: PlanObject, err: Reporter): void {
         err('bad-polygon', `Ceiling "${id}" needs a polygon_m of at least three [x, y] points.`, id);
       }
       if (!isPositive(raw.height_m)) err('bad-height', `Ceiling "${id}" needs a positive height_m.`, id);
+      checkOptionalLength(raw, 'thickness_m', id, err, { positive: true, label: 'Ceiling' });
       break;
     }
 

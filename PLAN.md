@@ -215,7 +215,7 @@ tool to exist.
 | M9 | **Instruments** | Format 1.1: camera zoom, heat flux gauges, thermocouple rakes, predicted exposure, user-added camera presets | **done** |
 | M10 | **FDS bridge** | Namelist reader, FDS → plan import with a preview, format 1.2 obstructions, FDS-style coordinate entry | **done** |
 
-Phase 1 is complete. 288 Python tests, 211 web tests.
+Phase 1 is complete. 338 Python tests, 271 web tests.
 
 ### M9, from fire safety engineer feedback
 
@@ -363,6 +363,17 @@ is invisible until someone works the arithmetic — or opens the plan.
 - **Pitch and roll are honoured in the 3D view only** — checks, plan view and
   elevations all read a tilted wall, hood or ceiling as if it were upright. Yaw is
   handled consistently everywhere. See CONVENTIONS §5a.
+- **Camera framing is judged against the primary burner only.** Hood, ceiling and
+  instrument verdicts take every fire in the plan into account (CONVENTIONS §5b),
+  but "does this lens frame the fire" and "aim at fire" mean the burner at the
+  origin. A plan with a second lit burner carries a `secondary-burner` warning on
+  it so the coverage table is not read as covering a fire it never looked at.
+- **A preset is at most datasheet-grade.** A calibration belongs to one physical
+  unit and a preset carries none, so **Save as preset** on a calibrated camera saves
+  a `datasheet` preset. The camera itself keeps its calibration.
+- **Zero-thickness FDS obstructions are drawn 10 mm thick.** This format has no
+  planar object, so a thin plate gets a nominal thickness on import and the
+  preview says how many. A `&VENT` is not geometry and cannot be pasted as one.
 
 ## 8. Open questions
 

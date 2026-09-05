@@ -14,36 +14,24 @@ import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 
 import {
   aspectOf,
-  beadOffsetsOf,
-  burnerDiameterM,
+  boundsPoints,
   cameras as planCameras,
   displayName,
   findObject,
-  flameTipZM,
-  footprintXY,
   hfovRadOf,
-  hoodOpeningCornersXY,
   isCamera,
   positionOf,
   quatOf,
   standoffHorizontalM,
-  toWorld,
   vfovRadOf,
 } from '../core/plan';
 import { setPosition, setRotation } from '../core/transform';
 import { formatLengthWithUnit, gridStep } from '../core/units';
 import { makeLabel } from './labels';
-import type {
-  BurnerObject,
-  CameraObject,
-  CeilingObject,
-  HoodObject,
-  PlanObject,
-  ThermocoupleObject,
-  WallObject,
-} from '../core/types';
+import type { CameraObject, PlanObject } from '../core/types';
 import { isOrthoMode, type Store } from '../state/store';
 import {
+  LAYER_CEILING,
   LAYER_DEFAULT,
   LAYER_EDITOR,
   buildBurner,
@@ -56,6 +44,7 @@ import {
   buildThermocouple,
   buildWall,
 } from './builders';
+import { applyPlanCameraProjection, shownHits } from './camera-model';
 
 export type GizmoMode = 'translate' | 'rotate';
 
@@ -359,8 +348,14 @@ export class Viewport {
     this.measureRoot.traverse((o) => o.layers.set(LAYER_EDITOR));
   }
 
-  /** Exact surface point under the cursor, falling back to the floor plane. */
-  private pickPoint(clientX: number, clientY: number): THREE.Vector3 | null {
+  /**
+   * What the pointer is over, nearest first: the physical objects the active
+   * camera is drawing, and nothing it is not. Hidden objects are skipped -- Three's
+   * raycaster tests layers but not visibility, so hiding a wall used to leave it
+   * catching every click and measurement aimed at the gauge behind it -- and in
+   * plan mode ceilings are off the camera's layers and therefore off this list too.
+   */
+  private hitsUnder(clientX: number, clientY: number): THREE.Intersection[] {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
       ((clientX - rect.left) / rect.width) * 2 - 1,
@@ -368,24 +363,20 @@ export class Viewport {
     );
     this.raycaster.setFromCamera(ndc, this.activeCamera);
     this.raycaster.layers.set(LAYER_DEFAULT);
+    if (!this.isPlanMode) this.raycaster.layers.enable(LAYER_CEILING);
+    return shownHits(this.raycaster.intersectObjects(this.contentRoot.children, true), this.contentRoot);
+  }
 
-    const hits = this.raycaster.intersectObjects(this.contentRoot.children, true);
+  /** Exact surface point under the cursor, falling back to the floor plane. */
+  private pickPoint(clientX: number, clientY: number): THREE.Vector3 | null {
+    const hits = this.hitsUnder(clientX, clientY);
     if (hits.length > 0) return hits[0].point.clone();
     return this.screenToGround(clientX, clientY);
   }
 
   /** Object id under the cursor, or null. */
   pick(clientX: number, clientY: number): string | null {
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const ndc = new THREE.Vector2(
-      ((clientX - rect.left) / rect.width) * 2 - 1,
-      -((clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    this.raycaster.setFromCamera(ndc, this.activeCamera);
-    this.raycaster.layers.set(LAYER_DEFAULT);
-
-    const hits = this.raycaster.intersectObjects(this.contentRoot.children, true);
-    for (const hit of hits) {
+    for (const hit of this.hitsUnder(clientX, clientY)) {
       let node: THREE.Object3D | null = hit.object;
       while (node) {
         const id = node.userData.planId;
@@ -465,7 +456,7 @@ export class Viewport {
 
   // -- cameras -----------------------------------------------------------
 
-  /** True only for the top-down view, which is the one that hides ceilings. */
+  /** True only for the top-down view, which is the one whose camera hides ceilings. */
   private get isPlanMode(): boolean {
     return this.store.viewMode === 'plan';
   }
@@ -490,8 +481,10 @@ export class Viewport {
 
     if (ortho) this.orientOrthoCamera();
     this.resize();
-    // Ceilings are hidden in plan mode, so scene content depends on the mode.
-    this.rebuild();
+    // The scene is the same in every mode -- plan mode hides ceilings by switching
+    // their layer off on ITS camera, not by leaving them out -- so nothing needs
+    // rebuilding; the gizmo and outline just follow the camera that is now active.
+    this.syncSelection();
   }
 
   /**
@@ -514,7 +507,9 @@ export class Viewport {
         break;
       case 'side':
         // Looking east (+X) from the west, so the YZ plane faces the viewer with
-        // +Y to the right. Matches the side elevation in the exported drawing.
+        // north (+Y) on the LEFT: standing west of the rig and facing east, north
+        // is on your left hand. The exported side elevation uses the same basis
+        // (`Projector.plane` in export/drawing.ts negates Y), so the two agree.
         this.ortho.up.set(0, 0, 1);
         this.ortho.position.set(target.x - ORTHO_ELEVATION, target.y, target.z);
         break;
@@ -527,54 +522,18 @@ export class Viewport {
   /**
    * Bounds of the physical layout, ignoring frustums.
    *
-   * Measuring the rendered geometry would include camera frustums, which reach
-   * many metres past everything else -- a single wide-angle camera would zoom the
-   * whole view out until the actual equipment was a speck.
+   * `boundsPoints` is the one list of what the layout occupies, shared with the
+   * drawing export so the two cannot disagree about what counts. Measuring the
+   * rendered geometry instead would include camera frustums, which reach many
+   * metres past everything else -- a single wide-angle camera would zoom the whole
+   * view out until the actual equipment was a speck. Ducts are drawn in 3D and not
+   * on the sheet, so Fit asks for them and the drawing does not.
    */
   private contentBounds(): THREE.Box3 {
     const box = new THREE.Box3();
-    const doc = this.store.document;
-
-    for (const obj of doc.objects) {
-      const p = positionOf(obj);
+    for (const p of boundsPoints(this.store.document, { ducts: true })) {
       box.expandByPoint(new THREE.Vector3(p[0], p[1], p[2]));
-
-      if (obj.type === 'burner') {
-        const b = obj as BurnerObject;
-        const r = burnerDiameterM(b) / 2;
-        box.expandByPoint(new THREE.Vector3(p[0] - r, p[1] - r, p[2]));
-        box.expandByPoint(new THREE.Vector3(p[0] + r, p[1] + r, flameTipZM(b) ?? p[2] + 1));
-      } else if (obj.type === 'hood') {
-        // Rotated footprints, so Fit frames what is actually drawn.
-        const hood = obj as HoodObject;
-        for (const [x, y] of hoodOpeningCornersXY(hood)) {
-          box.expandByPoint(new THREE.Vector3(x, y, 0));
-          box.expandByPoint(new THREE.Vector3(x, y, hood.height_m + 1));
-        }
-      } else if (obj.type === 'wall') {
-        const wall = obj as WallObject;
-        for (const v of wall.polyline_m) {
-          const [x, y] = footprintXY(wall, v);
-          box.expandByPoint(new THREE.Vector3(x, y, p[2]));
-          box.expandByPoint(new THREE.Vector3(x, y, p[2] + wall.height_m));
-        }
-      } else if (obj.type === 'ceiling') {
-        const slab = obj as CeilingObject;
-        for (const v of slab.polygon_m) {
-          const [x, y] = footprintXY(slab, v);
-          box.expandByPoint(new THREE.Vector3(x, y, slab.height_m));
-        }
-      } else if (obj.type === 'thermocouple') {
-        // A rake reaches well above its origin, so Fit has to see the top bead
-        // or a ceiling-height tree gets framed as a point on the floor.
-        const tc = obj as ThermocoupleObject;
-        for (const offset of beadOffsetsOf(tc)) {
-          const w = toWorld(tc, [0, 0, offset]);
-          box.expandByPoint(new THREE.Vector3(w[0], w[1], w[2]));
-        }
-      }
     }
-
     if (box.isEmpty()) {
       box.setFromCenterAndSize(new THREE.Vector3(0, 0, 1), new THREE.Vector3(6, 6, 2));
     }
@@ -647,9 +606,11 @@ export class Viewport {
       case 'wall':
         return buildWall(obj as never);
       case 'ceiling':
-        // Hidden in plan mode, the way a floor plan cuts below the ceiling --
-        // otherwise the slab covers everything the top-down view is for.
-        return this.isPlanMode ? null : buildCeiling(obj as never);
+        // Always built. Plan mode hides ceilings the way a floor plan cuts below
+        // them, but by switching LAYER_CEILING off on the plan camera in `tick` --
+        // the camera preview renders this same scene, and a modelled camera has to
+        // keep seeing the ceiling above it whichever view the editor is in.
+        return buildCeiling(obj as never);
       case 'camera':
         return buildCamera(obj as never, this.options.showFrustums);
       case 'heatFluxSensor':
@@ -763,8 +724,24 @@ export class Viewport {
         } else {
           setPosition(obj, [position.x, position.y, position.z]);
         }
+
+        // Move the scene group with the document. A single-object drag moves its
+        // group because the gizmo is attached to it; here the gizmo is attached to
+        // the pivot, and `rebuild` is suppressed until the drag ends -- so without
+        // this the pivot moved alone and the members jumped to catch up on release.
+        // The document's own transform is copied back rather than the decomposed
+        // one, because `setPosition` may have re-aimed a camera at its target.
+        const group = this.objectGroups.get(id);
+        if (group) {
+          const p = positionOf(obj);
+          const q = quatOf(obj);
+          group.position.set(p[0], p[1], p[2]);
+          group.quaternion.set(q[0], q[1], q[2], q[3]);
+        }
       }
     });
+    this.refreshSelectionBox();
+    this.updatePreviewCamera();
   }
 
   /**
@@ -814,13 +791,16 @@ export class Viewport {
     // reason poses are stored in the OpenGL convention (CONVENTIONS.md section 3).
     const p = positionOf(source);
     this.previewCamera.position.set(p[0], p[1], p[2]);
-    const q = source.transform?.rotation_quat ?? [0, 0, 0, 1];
+    const q = quatOf(source);
     this.previewCamera.quaternion.set(q[0], q[1], q[2], q[3]);
+    // The projection comes from the plan's fx, fy and principal point -- the same
+    // numbers the framing verdict is computed from -- not from a vertical field of
+    // view and an aspect ratio, which agree with those only for square pixels and a
+    // centred principal point. `fov` and `aspect` are kept in step for anything
+    // that reads them, but the matrix is the plan's.
     this.previewCamera.fov = THREE.MathUtils.radToDeg(vfovRadOf(source));
     this.previewCamera.aspect = aspectOf(source);
-    this.previewCamera.near = 0.05;
-    this.previewCamera.far = 300;
-    this.previewCamera.updateProjectionMatrix();
+    applyPlanCameraProjection(this.previewCamera, source);
 
     this.previewFrame.dataset.label =
       `${displayName(source)} — ${THREE.MathUtils.radToDeg(hfovRadOf(source)).toFixed(0)}° × ` +
@@ -853,7 +833,10 @@ export class Viewport {
     const wasVisible = ownGroup?.visible ?? false;
     if (ownGroup) ownGroup.visible = false;
 
+    // What a real camera in the room sees: the physical layers, ceilings included,
+    // and none of the editor's furniture.
     this.previewCamera.layers.set(LAYER_DEFAULT);
+    this.previewCamera.layers.enable(LAYER_CEILING);
     this.renderer.setScissorTest(true);
     this.renderer.setViewport(x, y, pipWidth, pipHeight);
     this.renderer.setScissor(x, y, pipWidth, pipHeight);
@@ -895,8 +878,11 @@ export class Viewport {
     if (this.selectionBox?.visible) this.selectionBox.update();
 
     const camera = this.activeCamera;
-    // Editor furniture is on its own layer so the camera preview can drop it.
+    // Editor furniture is on its own layer so the camera preview can drop it. Plan
+    // mode drops ceilings the same way -- on this camera only -- so the top-down
+    // view is cut below them while the scene, and the preview, keep them.
     camera.layers.enableAll();
+    if (this.isPlanMode) camera.layers.disable(LAYER_CEILING);
 
     this.renderer.setClearColor(0x0f172a, 1);
     this.renderer.setViewport(0, 0, this.container.clientWidth, this.container.clientHeight);

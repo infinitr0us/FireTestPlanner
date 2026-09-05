@@ -134,10 +134,27 @@ function coerce(raw: unknown): CameraPreset | null {
     focalLength_mm: focal,
     spectralBand_um: pair(band) ? [band[0], band[1]] : null,
     framerate_hz: Number.isFinite(rate) && rate > 0 ? rate : null,
-    intrinsicsSource: oneOf(INTRINSICS_SOURCES, p.intrinsicsSource, 'nominal'),
+    intrinsicsSource: presetGrade(oneOf(INTRINSICS_SOURCES, p.intrinsicsSource, 'nominal')),
     note: typeof p.note === 'string' ? p.note : undefined,
   };
 }
+
+/**
+ * The most a preset can claim for its numbers.
+ *
+ * `calibrated` means "measured from THIS physical unit" (CONVENTIONS section 4): a
+ * principal point and distortion belong to one camera body and lens, not to the
+ * model. A preset is a reusable specification -- it is applied to whatever camera
+ * is placed next, on whatever body turns up on the day -- and it carries neither
+ * of those fields. Lifting a preset out of a calibrated camera used to keep the
+ * label while dropping the calibration, so a new camera arrived saying
+ * `calibrated` with a null principal point, and the Python reader's
+ * `is_reconstruction_ready` believed it. The label is stepped down to
+ * `datasheet`: the focal length and sensor are real figures for this model,
+ * correct to unit-to-unit variation, which is exactly what that grade means.
+ */
+export const presetGrade = (source: IntrinsicsSource): IntrinsicsSource =>
+  (source === 'calibrated' ? 'datasheet' : source);
 
 function load(): void {
   if (loaded) return;
@@ -329,7 +346,9 @@ export function applyPresetToSpec(current: CameraSpec, preset: CameraPreset): Ca
  * This is what "Save as preset" runs, and it is also how a preset crosses
  * machines — open someone else's plan, and the camera in it carries everything
  * the preset needed. `zoomFactor` is deliberately not carried: the lens belongs
- * to the preset, the zoom setting belongs to the shot.
+ * to the preset, the zoom setting belongs to the shot. Nor are the principal
+ * point and distortion, which belong to one physical unit -- and so a
+ * `calibrated` source becomes `datasheet` (see `presetGrade`).
  */
 export function presetFromCamera(cam: CameraObject, label: string, id?: string): CameraPreset {
   const spec = cam.camera;
@@ -342,7 +361,7 @@ export function presetFromCamera(cam: CameraObject, label: string, id?: string):
     focalLength_mm: spec.focalLength_mm,
     spectralBand_um: spec.spectralBand_um ? ([...spec.spectralBand_um] as Vec2) : null,
     framerate_hz: spec.framerate_hz ?? null,
-    intrinsicsSource: spec.intrinsicsSource ?? 'nominal',
+    intrinsicsSource: presetGrade(spec.intrinsicsSource ?? 'nominal'),
   };
 }
 
