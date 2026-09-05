@@ -79,6 +79,11 @@ class PlanObject:
         return self.raw.get("notes")
 
     @property
+    def linked_files(self) -> List[Dict[str, Any]]:
+        """External recordings or spreadsheets (format 1.3); never opened implicitly."""
+        return self.raw.get("linkedFiles", [])
+
+    @property
     def _transform(self) -> Dict[str, Any]:
         return self.raw.setdefault("transform", {"position_m": [0.0, 0.0, 0.0]})
 

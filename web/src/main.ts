@@ -27,6 +27,7 @@ import { FdsImportDialog } from './ui/import-fds';
 import { Inspector } from './ui/inspector';
 import { ChecksPanel, Outliner, Palette } from './ui/panels';
 import { ReportOverlay } from './ui/report-overlay';
+import { ReconstructionPlotPanel } from './ui/reconstruction-plot';
 import './styles.css';
 
 // Must run before anything mutates the DOM: 'export shareable viewer' hands
@@ -56,6 +57,7 @@ function initialDocument(): PlanDocument {
 const store = new Store(initialDocument());
 const viewport = new Viewport(qs('#viewport'), store);
 const inspector = new Inspector(qs('#inspector'), store);
+new ReconstructionPlotPanel(qs('#viewport'), store);
 const outliner = new Outliner(qs('#outliner'), store);
 const checks = new ChecksPanel(qs('#checks'), store);
 const palette = new Palette(qs('#palette'), store, (armed) => {

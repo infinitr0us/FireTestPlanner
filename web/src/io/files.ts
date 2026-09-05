@@ -8,6 +8,9 @@
 
 import { readNamelist } from '../core/namelist';
 import type { Issue } from '../core/types';
+import { mapLinkedPaths } from './link-paths';
+
+export interface PickedLinkedFile { path: string; text?: string; warning?: string; file?: File }
 
 /**
  * A plan the shell read from disk.
@@ -31,6 +34,8 @@ export interface SavedPlan {
 }
 
 export interface ShellBridge {
+  pickLinkedFiles(kind: 'spreadsheet' | 'video'): Promise<PickedLinkedFile[]>;
+  linkedFileAction(path: string, kind: 'spreadsheet' | 'video', action: 'open' | 'folder' | 'read'): Promise<{ text?: string }>;
   openPlan(): Promise<OpenedPlan | null>;
   /** Pick an FDS input and read it. The conversion happens in the shared core, so
    *  this is only the native dialog a browser tab cannot open. */
@@ -71,7 +76,7 @@ function unwrapSave(result: SaveResult): SavedPlan | null {
 }
 
 const withToken = (r: { path: string; text: string; token?: unknown } | null): OpenedPlan | null =>
-  r ? { path: r.path, text: r.text, token: typeof r.token === 'string' ? r.token : null } : null;
+  r ? { path: r.path, text: mapLinkedPaths(r.text, r.path, 'open'), token: typeof r.token === 'string' ? r.token : null } : null;
 
 let bridge: ShellBridge | undefined;
 let shellToken: string | null = null;
@@ -113,13 +118,29 @@ export function connectShell(onReady: () => void): void {
   shellToken = token;
 
   bridge = {
+    pickLinkedFiles: async (kind) => {
+      const result = await call<{ files?: PickedLinkedFile[]; error?: string }>('/api/pick-linked-files', { kind });
+      if (result?.error) throw new Error(result.error);
+      return result?.files ?? [];
+    },
+    linkedFileAction: async (path, kind, action) => {
+      const result = await call<{ text?: string; error?: string }>('/api/linked-file', { path, kind, action });
+      if (result?.error) throw new Error(result.error);
+      if (!result) throw new Error('Desktop file operation did not complete.');
+      return result;
+    },
     openPlan: () => call<{ path: string; text: string; token?: unknown } | null>('/api/open', {}).then(withToken),
     openFds: () => call<{ path: string; text: string } | null>('/api/open-fds', {}).then((r) => r ?? null),
     readFdsInclude: (name) =>
       call<{ text?: string }>('/api/read-fds-include', { name })
         .then((r) => (typeof r?.text === 'string' ? r.text : null)),
-    savePlan: (text, name, saveAs, token) =>
-      call<SaveResult>('/api/save', { text, name, saveAs, token }).then(unwrapSave),
+    savePlan: async (text, name, saveAs, token) => {
+      const target = unwrapSave(await call<SaveResult>('/api/save-target', { name, saveAs, token }));
+      if (!target) return null;
+      return unwrapSave(await call<SaveResult>('/api/save', {
+        text: mapLinkedPaths(text, target.path, 'save'), name, saveAs: false, token: target.token,
+      }));
+    },
     saveHtml: (html, name) =>
       call<SaveResult>('/api/save-html', { html, name }).then((r) => unwrapSave(r)?.path ?? null),
     recentFiles: () => call<string[]>('/api/recent').then((r) => r ?? []),

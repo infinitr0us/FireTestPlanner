@@ -36,13 +36,13 @@ const GAUGE = ['kind', 'range_kw_m2', 'viewAngle_deg', 'waterCooled', 'serial'];
 const THERMOCOUPLE = ['tcType', 'beadDiameter_mm', 'sheathed', 'maxTemperature_C'];
 
 const OBJECT_ORDER: Record<string, string[]> = {
-  camera: ['id', 'type', 'name', 'transform', 'camera', 'mount', 'recording', 'display', 'notes'],
-  burner: ['id', 'type', 'name', 'transform', 'footprint', 'rimHeight_m', 'fire', 'display', 'notes'],
+  camera: ['id', 'type', 'name', 'transform', 'camera', 'mount', 'recording', 'linkedFiles', 'display', 'notes'],
+  burner: ['id', 'type', 'name', 'transform', 'footprint', 'rimHeight_m', 'fire', 'linkedFiles', 'display', 'notes'],
   hood: ['id', 'type', 'name', 'transform', 'opening_m', 'height_m', 'skirtDepth_m', 'duct', 'display', 'notes'],
   wall: ['id', 'type', 'name', 'transform', 'polyline_m', 'height_m', 'thickness_m', 'baseHeight_m', 'openings', 'display', 'notes'],
   ceiling: ['id', 'type', 'name', 'transform', 'polygon_m', 'height_m', 'thickness_m', 'display', 'notes'],
-  heatFluxSensor: ['id', 'type', 'name', 'transform', 'gauge', 'mount', 'display', 'notes'],
-  thermocouple: ['id', 'type', 'name', 'transform', 'beadOffsets_m', 'thermocouple', 'mount', 'display', 'notes'],
+  heatFluxSensor: ['id', 'type', 'name', 'transform', 'gauge', 'mount', 'linkedFiles', 'display', 'notes'],
+  thermocouple: ['id', 'type', 'name', 'transform', 'beadOffsets_m', 'thermocouple', 'mount', 'linkedFiles', 'display', 'notes'],
   obstruction: ['id', 'type', 'name', 'transform', 'size_m', 'display', 'notes'],
 };
 
@@ -166,7 +166,18 @@ function canonObject(raw: Obj): Obj {
       break;
   }
 
-  return roundFloats(order(o, OBJECT_ORDER[String(o.type)])) as Obj;
+  if (Array.isArray(o.linkedFiles)) {
+    o.linkedFiles = o.linkedFiles.map((raw) => {
+      if (!isPlainObject(raw)) return raw;
+      const link = order(raw, ['id', 'kind', 'path', 'label', 'plot']);
+      if (isPlainObject(link.plot)) link.plot = order(link.plot, ['importedAt', 'samples']);
+      return link;
+    });
+  }
+  const result = roundFloats(order(o, OBJECT_ORDER[String(o.type)])) as Obj;
+  // Recorded measurements are not geometry: preserve their supplied precision.
+  if (Array.isArray(o.linkedFiles)) result.linkedFiles = o.linkedFiles;
+  return result;
 }
 
 /** Whether `type` is one this version defines -- an own key of the order table,

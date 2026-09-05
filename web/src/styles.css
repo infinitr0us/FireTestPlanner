@@ -158,6 +158,27 @@ body.is-measuring .viewport { cursor: cell; }
 /* -- viewport ----------------------------------------------------------- */
 
 .viewport { position: relative; min-width: 0; overflow: hidden; }
+
+.linked-files { border-bottom: 1px solid var(--border, #354152); padding-bottom: 10px; }
+.linked-file { padding: 10px 0; border-bottom: 1px solid #354152; }
+.linked-file > strong { overflow-wrap: anywhere; font-size: 12px; }
+.linked-file__path { font-size: 11px; color: #9aabbf; overflow-wrap: anywhere; margin: 4px 0 8px; }
+.linked-file__actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.linked-files__hint { font-size: 11px; color: #a3b1c4; line-height: 1.5; margin: 8px 0 0; }
+.linked-files__message { color: #ffcb87; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.linked-files button:disabled { opacity: 0.45; cursor: default; }
+.reconstruction-plot { position: absolute; top: 14px; right: 14px; z-index: 5;
+  width: min(370px, calc(100% - 28px)); max-height: calc(100% - 28px); overflow: auto;
+  background: rgba(20, 29, 43, 0.97); color: #dce5f2; border: 1px solid #526079;
+  border-radius: 8px; padding: 12px; box-shadow: 0 4px 20px #0005; }
+.reconstruction-plot[hidden] { display: none; }
+.reconstruction-plot__header { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
+.reconstruction-plot__header button { background: #29374c; color: #dce5f2; border: 1px solid #526079; border-radius: 4px; padding: 4px 7px; cursor: pointer; }
+.reconstruction-plot__source { color: #a9bbd3; font-size: 11px; margin-top: 7px; overflow-wrap: anywhere; }
+.reconstruction-plot svg { display: block; width: 100%; font: 10px system-ui, sans-serif; fill: #b7c7dc; }
+.reconstruction-plot input[type=range] { width: 100%; accent-color: #65caff; }
+.reconstruction-plot__values { display: block; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; }
+.reconstruction-plot__note { color: #a9bbd3; font-size: 10px; line-height: 1.5; margin: 7px 0 0; }
 .viewport-canvas { display: block; width: 100%; height: 100%; }
 
 .viewport-labels {

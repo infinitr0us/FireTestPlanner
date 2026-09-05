@@ -16,9 +16,9 @@ export const FORMAT = 'fire-test-plan';
  * newest this build can write -- see `requiredFormatVersion`. So `FORMAT_VERSION`
  * is the floor a new plan starts at, and `FORMAT_VERSION_LATEST` is the ceiling.
  */
-export const FORMAT_VERSIONS = ['1.0.0', '1.1.0', '1.2.0'] as const;
+export const FORMAT_VERSIONS = ['1.0.0', '1.1.0', '1.2.0', '1.3.0'] as const;
 export const FORMAT_VERSION = '1.0.0';
-export const FORMAT_VERSION_LATEST = '1.2.0';
+export const FORMAT_VERSION_LATEST = '1.3.0';
 
 export type Vec2 = [number, number];
 export type Vec3 = [number, number, number];
@@ -55,6 +55,24 @@ export interface BaseObject {
   transform?: Transform;
   display?: Display;
   notes?: string | null;
+  /** Format 1.3. External test files; paths are relative to the saved plan when possible. */
+  linkedFiles?: LinkedFile[];
+}
+
+/** A measured reconstruction snapshot, independent of the planned fire model. */
+export interface ReconstructionPlot {
+  importedAt: string;
+  /** Rows of [time in seconds, volume in m³, surface area in m²]. */
+  samples: [number, number, number][];
+}
+
+export interface LinkedFile {
+  id: string;
+  kind: 'spreadsheet' | 'video';
+  path: string;
+  label?: string;
+  /** Only burner spreadsheets can carry this portable CSV snapshot. */
+  plot?: ReconstructionPlot;
 }
 
 export interface CameraSpec {
@@ -359,6 +377,7 @@ export const maxVersion = (a: string, b: string): string =>
  * Mirror of `required_version` in python/fireplan/serialize.py.
  */
 export function requiredFormatVersion(doc: PlanDocument): string {
+  if (doc.objects?.some((o) => o.linkedFiles !== undefined)) return '1.3.0';
   let needed = '1.0.0';
   for (const o of doc.objects ?? []) {
     // The highest tier there is; nothing later in the list can raise it further.

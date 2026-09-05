@@ -421,3 +421,41 @@ Raised by M10:
 9. **Should the import read `&MESH` resolution into the plan?** Cell size decides what
    a simulation can resolve, and a plan built to compare against one might want to say
    so. Against: it is a property of the simulation, not of the test.
+
+
+## M11 — Linked test files and reconstruction results (2026-09-05)
+
+Implemented the requests archived in `docs/feature-requests/2026-09-linked-files.txt`.
+One inspector section links burner/sensor spreadsheets and multiple camera videos.
+Desktop actions open the default application, reveal the original in Explorer,
+relink or remove a reference. All link edits participate in undo/redo and saving.
+
+A burner CSV/TSV imports an explicit reconstruction snapshot and shows two aligned
+plots (m³ and m² against seconds), a shared sample slider, dataset selector and
+collapse control. The snapshot is embedded in the plan and shared HTML. Malformed
+rows are reported without silently dropping measurements; refresh failure preserves
+the existing snapshot. Workbook formats link and open but must be exported as CSV
+for plotting. Browser originals require reselection after reopening.
+
+Format 1.3.0 is additive, with mirrored schemas, validation and canonical writers.
+Measurement precision is preserved independently of geometry precision. The desktop
+chooses a Save destination before rebasing a copy of link paths; its in-memory
+absolute references keep undo and concurrent edits safe across Save As. Python
+`Plan.save` rebases references and `Plan.linked_file_path` resolves without reading.
+Neither load nor plotting launches external files automatically.
+
+The supplied CSV and MP4 now live under `fixtures/linked-files/`, together with a
+rebuildable demonstration plan. The video is a simulation illustration, not a claim
+that the reference camera captured that scene. See `docs/linked-files.md` for the
+workflow, CSV contract, portability and deliberate limits (external originals,
+no playback synchronization, no workbook parsing or automatic file watching).
+
+
+Validation of the final M11 build: 303 web tests and 362 Python tests passed;
+`npm run build` and the rebuilt `FireTestPlanner.exe --selftest` passed. Browser
+checks linked the supplied CSV and MP4, inspected the 100-point two-axis readout,
+verified collapse/expand and sensor controls, and reopened the plot in an exported
+HTML viewer without selecting the source CSV. Native Open/Show in folder dispatch
+is covered through the desktop bridge with OS-launch calls mocked; external Excel
+and video-player windows were not driven interactively. The executable startup
+self-test needed unsandboxed WebView2 initialization and then completed successfully.

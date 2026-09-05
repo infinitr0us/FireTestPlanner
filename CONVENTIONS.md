@@ -1,6 +1,6 @@
 # Conventions
 
-Normative reference for `fire-test-plan` formats 1.0.0, 1.1.0 and 1.2.0. If code and
+Normative reference for `fire-test-plan` formats 1.0.0 through 1.3.0. If code and
 this document disagree, this document is wrong and should be fixed — but check the
 tests first, because they encode these rules directly.
 
@@ -13,6 +13,11 @@ sensors through the unknown-object path in section 6.
 slab. `meta.source` is documented in the 1.2 schema but is *not* a 1.2 feature and
 does not bump anything: `meta` is open in every 1.x schema, so a plan imported from
 FDS that holds nothing past 1.0 still declares 1.0.0. Section 9 covers the import.
+
+**What 1.3 added**: `linkedFiles` on burners, cameras, heat flux sensors and
+thermocouples. These are external file references and optional burner reconstruction
+snapshots; they do not populate the reserved `camera.recording` block or alter any
+planned-fire correlation. See section 10 and [the usage guide](docs/linked-files.md).
 
 Which version a file declares is *derived*, not authored — see section 8.
 
@@ -423,9 +428,10 @@ Plans are revised by **editing into a new file**, not by storing planned-versus-
 in one file. Git history is the audit trail, so the writer optimises for readable diffs:
 
 - Keys are emitted in a **fixed order**, never hash order.
-- Floats are rounded to **1 µm** (6 decimal places) and emitted in the shortest form that
+- Geometry floats are rounded to **1 µm** (6 decimal places) and emitted in the shortest form that
   round-trips, so a value that did not change never appears in a diff as
-  `2.7432 → 2.74320000001`.
+  `2.7432 → 2.74320000001`. Recorded `linkedFiles` samples retain their supplied
+  precision (section 10).
 - Arrays of coordinates stay on one line; objects break across lines.
 - `meta.modified` updates on save, and `version` is re-derived from the contents
   (section 8). Nothing else changes without user action.
@@ -440,7 +446,8 @@ than the file already said:
 version = max(declared, required(contents))
 ```
 
-`required` is 1.2.0 if the plan holds an `obstruction`; failing that, 1.1.0 if it
+`required` is 1.3.0 if an object carries `linkedFiles`; failing that, 1.2.0 if the
+plan holds an `obstruction`; failing that, 1.1.0 if it
 holds a `heatFluxSensor`, a `thermocouple`, a camera with a `zoomFactor` or a burner
 with a `radiativeFraction`; otherwise 1.0.0. It is `requiredFormatVersion` in
 `web/src/core/types.ts`, mirrored by `required_version` in
@@ -633,3 +640,37 @@ errors, and the preview will not adopt while one is present.
 
 An import that loses half a model is worse than one that refuses, so this one neither
 loses nor refuses: it converts, and then says what it did.
+
+
+## 10. Linked test files (1.3)
+
+`linkedFiles` is an optional array of at most 100 entries per supported object.
+Each entry has `id` (unique within that object), `kind`, `path`, optional `label`
+and optional `plot`. Cameras accept `kind: "video"`; burners, heat flux sensors
+and thermocouples accept `kind: "spreadsheet"`. Other known types do not carry it.
+The IDs travel with the document; removal and relinking are undoable edits.
+
+`path` names a local file, never a URL. On disk it is relative to the plan file
+when possible, with `/` separators; absolute paths are allowed across drives or
+shares. It is a reference, not bundled content. Consumers never launch references
+automatically. Save As must preserve each target by rebasing against the destination.
+Browser-selected files have only a basename and require reselection for access.
+
+Only a burner spreadsheet may contain `plot`, an object with `importedAt` and
+`samples`. Each sample is `[time_s, volume_m3, surface_area_m2]`: three finite,
+non-negative numbers. There are 1–20,000 samples with strictly increasing times.
+These recorded numbers retain their supplied precision; geometry's six-decimal
+rounding does not apply. The snapshot is independent of the original file and
+remains available without it. Refresh is explicit and all-or-nothing; a failed
+refresh leaves the previous snapshot. Relinking to different source data replaces
+or removes the old snapshot, so it cannot be mislabeled as coming from the new file.
+
+The writer raises the declared format to at least 1.3.0 when `linkedFiles` is
+present (including an explicit empty array). Removing the final UI link omits the
+property. Existing declared versions never go downward. Both writers use entry
+key order `id, kind, path, label, plot` and plot key order `importedAt, samples`.
+
+A link does not imply a recording timebase, a particular CSV column's bead identity,
+or correspondence between a video frame and a reconstruction sample. Those remain
+future recording metadata. This avoids confusing simulation exports, reconstructed
+measurements and the plan's own predicted fire geometry.

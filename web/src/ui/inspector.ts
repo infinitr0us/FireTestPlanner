@@ -99,6 +99,7 @@ import type {
 } from '../core/types';
 import type { Store } from '../state/store';
 import { clear, h } from './dom';
+import { LinkedFilesPanel } from './linked-files';
 import {
   button,
   checkboxField,
@@ -132,6 +133,7 @@ const TONE: Record<InstrumentStatus, ReadoutTone> = {
 };
 
 export class Inspector {
+  private linkedFiles: LinkedFilesPanel;
   /**
    * Fired when the camera preset library changes.
    *
@@ -164,7 +166,7 @@ export class Inspector {
   constructor(
     private root: HTMLElement,
     private store: Store,
-  ) {}
+  ) { this.linkedFiles = new LinkedFilesPanel(store, () => this.render()); }
 
   /** Mutate the selected object as one undoable step. */
   private patch(id: string, label: string, fn: (obj: PlanObject) => void): void {
@@ -227,6 +229,8 @@ export class Inspector {
         'Stable across revisions so git diffs stay meaningful'),
     );
 
+    const linkedFiles = this.linkedFiles.render(obj);
+    if (linkedFiles) this.root.append(linkedFiles);
     this.renderTransform(obj, unit);
 
     if (isCamera(obj)) this.renderCamera(obj, unit);

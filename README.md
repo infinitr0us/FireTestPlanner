@@ -9,7 +9,7 @@ a data scientist reads the same file as a camera rig description. Everything els
 here serves that handoff.
 
 ```
-schema/      fire-test-plan-1.0.0 / -1.1.0 / -1.2.0 .schema.json — normative, one per version
+schema/      fire-test-plan-1.0.0 through -1.3.0 .schema.json — normative, one per version
 CONVENTIONS.md                                — frames, units, correlations
 presets/     camera preset library (shared by the editor and the fixture builder)
 docs/datasheets/  manufacturer PDFs behind the datasheet-grade presets
@@ -72,6 +72,21 @@ a single pasted `&OBST` or `&DEVC` into an object.
 
 `fdsreader`, the obvious library, does not help here: it reads simulation *output*
 through the `.smv` file and cannot open a `.fds` input. The reader is ours, and small.
+
+### Connecting the plan to recorded test data
+
+Select a burner, camera or sensor and use **Linked files** in its inspector.
+Cameras link multiple videos; burners, heat flux gauges and thermocouple rakes link
+spreadsheets. The desktop app provides **Open**, **Show in folder** and **Relink**.
+Save As preserves the targets, and moving a plan together with its data folder
+preserves relative links.
+
+A burner CSV with `timestamp_s`, `volume_m3` and `surface_area_m2` columns produces
+two aligned plots in the upper-right of the viewport, with a shared sample slider.
+The snapshot travels inside the plan and shared HTML; originals stay external.
+See the [usage guide](docs/linked-files.md), or open
+[`linked-test.ftp.json`](fixtures/linked-files/linked-test.ftp.json) for a working
+example using the engineers' supplied CSV and MP4.
 
 ### Cameras this build has never heard of
 
@@ -175,8 +190,8 @@ definitions in [CONVENTIONS.md](CONVENTIONS.md) section 3.
 ## Tests
 
 ```bash
-python -m pytest python/tests -q     # 338 tests, no GUI needed
-cd web && npm test                   # 271 tests
+python -m pytest python/tests -q     # 362 tests, no GUI needed
+cd web && npm test                   # 303 tests
 ```
 
 The web suite asserts that the TypeScript writer reproduces the Python-written

@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterator, List, Optional
 import numpy as np
 
 from . import correlations, serialize
+from . import linked_files
 from ._math import normalize
 from .objects import (
     Burner,
@@ -34,7 +35,7 @@ FORMAT = "fire-test-plan"
 VERSION = "1.0.0"
 
 #: Highest format version this build can write.
-VERSION_LATEST = "1.2.0"
+VERSION_LATEST = "1.3.0"
 
 #: One schema per format version, so a 1.0 file is judged by the 1.0 rules. A 1.0
 #: plan holding a camera with a zoomFactor really is invalid, and validating it
@@ -43,6 +44,7 @@ _SCHEMA_FILES = {
     "1.0.0": "fire-test-plan-1.0.0.schema.json",
     "1.1.0": "fire-test-plan-1.1.0.schema.json",
     "1.2.0": "fire-test-plan-1.2.0.schema.json",
+    "1.3.0": "fire-test-plan-1.3.0.schema.json",
 }
 
 #: Where the schemas live INSIDE the package: `fireplan/schemas/`, shipped as
@@ -204,7 +206,7 @@ class Plan:
     def load(cls, path) -> "Plan":
         with open(path, "r", encoding="utf-8") as fh:
             plan = cls.loads(fh.read())
-        plan.source_path = str(path)
+        plan.source_path = os.path.abspath(path)
         return plan
 
     def dumps(self) -> str:
@@ -237,7 +239,8 @@ class Plan:
         # about a file where it is no longer true.
         self.data["version"] = self.effective_version
         try:
-            text = self.dumps()
+            rebased = linked_files.for_destination(self.data, self.source_path, str(path))
+            text = serialize.dumps(rebased)
             _write_atomic(str(path), text)
         except Exception:
             if had_modified:
@@ -249,6 +252,16 @@ class Plan:
             else:
                 self.data.pop("version", None)
             raise
+
+        # Retain object wrapper identity while updating the base used by later saves.
+        for original, written in zip(self.data.get("objects", []), rebased.get("objects", [])):
+            if original.get("type") in linked_files.LINK_TYPES and "linkedFiles" in written:
+                original["linkedFiles"] = written["linkedFiles"]
+        self.source_path = os.path.abspath(path)
+
+    def linked_file_path(self, link: Dict[str, Any]) -> str:
+        """Resolve a linkedFiles entry against this plan without reading/launching it."""
+        return linked_files.resolve_path(link["path"], self.source_path)
 
     # -- access ----------------------------------------------------------
 
@@ -422,6 +435,9 @@ class Plan:
             if len(errors) > 10:
                 lines.append("  ... and {} more".format(len(errors) - 10))
             raise PlanError("plan failed schema validation:\n" + "\n".join(lines))
+        link_errors = list(linked_files.problems(self.data))
+        if link_errors:
+            raise PlanError("plan failed linked file validation:\n" + "\n".join(link_errors[:10]))
 
     def check(self) -> List[Issue]:
         """Semantic checks beyond what the schema can express.

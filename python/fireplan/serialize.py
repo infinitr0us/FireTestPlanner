@@ -47,13 +47,13 @@ _GAUGE = ["kind", "range_kw_m2", "viewAngle_deg", "waterCooled", "serial"]
 _THERMOCOUPLE = ["tcType", "beadDiameter_mm", "sheathed", "maxTemperature_C"]
 
 _OBJECT_ORDER = {
-    "camera": ["id", "type", "name", "transform", "camera", "mount", "recording", "display", "notes"],
-    "burner": ["id", "type", "name", "transform", "footprint", "rimHeight_m", "fire", "display", "notes"],
+    "camera": ["id", "type", "name", "transform", "camera", "mount", "recording", "linkedFiles", "display", "notes"],
+    "burner": ["id", "type", "name", "transform", "footprint", "rimHeight_m", "fire", "linkedFiles", "display", "notes"],
     "hood": ["id", "type", "name", "transform", "opening_m", "height_m", "skirtDepth_m", "duct", "display", "notes"],
     "wall": ["id", "type", "name", "transform", "polyline_m", "height_m", "thickness_m", "baseHeight_m", "openings", "display", "notes"],
     "ceiling": ["id", "type", "name", "transform", "polygon_m", "height_m", "thickness_m", "display", "notes"],
-    "heatFluxSensor": ["id", "type", "name", "transform", "gauge", "mount", "display", "notes"],
-    "thermocouple": ["id", "type", "name", "transform", "beadOffsets_m", "thermocouple", "mount", "display", "notes"],
+    "heatFluxSensor": ["id", "type", "name", "transform", "gauge", "mount", "linkedFiles", "display", "notes"],
+    "thermocouple": ["id", "type", "name", "transform", "beadOffsets_m", "thermocouple", "mount", "linkedFiles", "display", "notes"],
     "obstruction": ["id", "type", "name", "transform", "size_m", "display", "notes"],
 }
 
@@ -69,7 +69,7 @@ _TYPES_1_2 = ("obstruction",)
 #: Baseline, and the highest this build writes. Mirror of FORMAT_VERSIONS in
 #: web/src/core/types.ts.
 _VERSION_MIN = "1.0.0"
-_VERSION_LATEST = "1.2.0"
+_VERSION_LATEST = "1.3.0"
 
 
 def _version_tuple(version: str) -> Tuple[int, ...]:
@@ -96,6 +96,8 @@ def required_version(data: Dict[str, Any]) -> str:
     factor, a radiative fraction or a sensor, it says 1.1.0 and means it. Mirror of
     `requiredFormatVersion` in web/src/core/types.ts.
     """
+    if any(isinstance(o, dict) and "linkedFiles" in o for o in data.get("objects", []) or []):
+        return "1.3.0"
     needed = _VERSION_MIN
     for obj in data.get("objects", []) or []:
         if not isinstance(obj, dict):
@@ -179,6 +181,15 @@ def _drop_null_1_1(block: Any, key: str) -> Any:
     return block
 
 
+def _canon_link(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    link = _order(value, ["id", "kind", "path", "label", "plot"])
+    if isinstance(link.get("plot"), dict):
+        link["plot"] = _order(link["plot"], ["importedAt", "samples"])
+    return link
+
+
 def _canon_object(obj: Dict[str, Any]) -> Dict[str, Any]:
     o = dict(obj)
 
@@ -186,6 +197,9 @@ def _canon_object(obj: Dict[str, Any]) -> Dict[str, Any]:
         o["transform"] = _canon_sub(o["transform"], _TRANSFORM)
     if "display" in o:
         o["display"] = _canon_sub(o["display"], _DISPLAY)
+
+    if isinstance(o.get("linkedFiles"), list):
+        o["linkedFiles"] = [_canon_link(x) for x in o["linkedFiles"]]
 
     kind = o.get("type")
     if kind == "camera" and isinstance(o.get("camera"), dict):
@@ -217,7 +231,11 @@ def _canon_object(obj: Dict[str, Any]) -> Dict[str, Any]:
         if "mount" in o:
             o["mount"] = _canon_sub(o["mount"], _MOUNT)
 
-    return _round_floats(_order(o, _OBJECT_ORDER[kind]))
+    result = _round_floats(_order(o, _OBJECT_ORDER[kind]))
+    # Recorded measurements are not geometry; preserve their supplied precision.
+    if isinstance(o.get("linkedFiles"), list):
+        result["linkedFiles"] = o["linkedFiles"]
+    return result
 
 
 def _canon_unknown_object(obj: Dict[str, Any]) -> Dict[str, Any]:

@@ -34,6 +34,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
+import linked_files
 
 # webview is imported lazily, inside the functions that open windows and dialogs.
 # That keeps the file logic, settings and HTTP API importable -- and therefore
@@ -196,6 +197,60 @@ class Shell:
         self._queued_plan = path
 
     # -- files ---------------------------------------------------------
+
+    def pick_linked_files(self, kind: str) -> Dict[str, Any]:
+        if kind not in ('spreadsheet', 'video'):
+            return {"error": "Unknown linked file kind."}
+        if self.window is None:
+            return {"files": []}
+        import webview
+        extensions = linked_files.VIDEOS if kind == 'video' else linked_files.SPREADSHEETS
+        pattern = ';'.join('*' + ext for ext in sorted(extensions))
+        result = self.window.create_file_dialog(
+            webview.OPEN_DIALOG, allow_multiple=True,
+            file_types=("{} ({})".format(kind.title(), pattern),),
+            directory=self._last_directory(),
+        )
+        files = []
+        for path in result or []:
+            try:
+                resolved = linked_files.checked_path(path, kind)
+                item = {"path": resolved}
+                if os.path.splitext(resolved)[1].lower() in {'.csv', '.tsv'}:
+                    try:
+                        item['text'] = linked_files.read_csv(resolved)
+                    except (OSError, ValueError) as exc:
+                        item['warning'] = str(exc)
+                files.append(item)
+            except (OSError, ValueError) as exc:
+                return {"error": str(exc)}
+        return {"files": files}
+
+    def linked_file_action(self, path: str, kind: str, action: str) -> Dict[str, Any]:
+        try:
+            if action not in ('open', 'folder', 'read'):
+                raise ValueError('Unknown linked file action.')
+            resolved = linked_files.checked_path(path, kind)
+            if action == 'read':
+                if kind != 'spreadsheet':
+                    raise ValueError('Only CSV spreadsheets can be read for plotting.')
+                return {"text": linked_files.read_csv(resolved)}
+            linked_files.launch(resolved, folder=action == 'folder')
+            return {"ok": True}
+        except (OSError, ValueError) as exc:
+            return {"error": str(exc)}
+
+    def save_target(self, suggested_name: str, save_as: bool = False,
+                    token: Optional[str] = None) -> Optional[Dict[str, str]]:
+        """Choose the destination before the page rebases external links.
+
+        This performs no write. The returned token authorises the subsequent
+        atomic save to precisely that destination, even if another plan is opened.
+        """
+        path = None if save_as else self._writeback_path(token)
+        if path is None:
+            path = self._ask_save(suggested_name, PLAN_FILTER)
+        return {"path": os.path.abspath(path), "token": self._issue_token(path)} if path else None
 
     def open_plan(self) -> Optional[Dict[str, str]]:
         if self.window is None:
@@ -494,6 +549,15 @@ class Handler(SimpleHTTPRequestHandler):
                     save_as=bool(body.get("saveAs")),
                     token=token if isinstance(token, str) else None,
                 ))
+            elif route == "/api/save-target":
+                self._send_json(self.shell.save_target(
+                    str(body.get("name", "plan.ftp.json")), bool(body.get("saveAs")),
+                    body.get("token") if isinstance(body.get("token"), str) else None,
+                ))
+            elif route == "/api/pick-linked-files":
+                self._send_json(self.shell.pick_linked_files(body.get("kind")))
+            elif route == "/api/linked-file":
+                self._send_json(self.shell.linked_file_action(body.get("path"), body.get("kind"), body.get("action")))
             elif route == "/api/save-html":
                 self._send_json(self.shell.save_html(body.get("html", ""), body.get("name", "page.html")))
             elif route == "/api/presets":

@@ -11,6 +11,7 @@
  */
 
 import { HEX_COLOR, parsePlan } from './plan';
+import { linkedFilesProblem } from './linked-files';
 import type { Issue, PlanDocument, PlanObject } from './types';
 import { FORMAT } from './types';
 
@@ -126,6 +127,8 @@ export function validateStructure(doc: PlanDocument): Issue[] {
       }
     }
 
+    const linkProblem = linkedFilesProblem(obj);
+    if (linkProblem) err('bad-linked-files', `Object "${obj.id}": ${linkProblem}`, obj.id);
     validateByType(obj, err);
   });
 
