@@ -47,7 +47,7 @@ import {
 } from './plan';
 import { serializePlan } from './serialize';
 import { setPosition, setRotation } from './transform';
-import type { CameraObject, CeilingObject, PlanDocument, Quat, Vec3 } from './types';
+import type { BurnerObject, CameraObject, CeilingObject, PlanDocument, Quat, Vec3 } from './types';
 import { formatLength, parseLength } from './units';
 import { describeErrors, parseAndValidatePlan, validateStructure } from './validate';
 
@@ -62,6 +62,21 @@ const FWD_COMPAT = (): PlanDocument => parsePlan(FWD_COMPAT_TEXT);
 // -- serialisation parity -------------------------------------------------
 
 describe('canonical serialisation', () => {
+  it('preserves own __proto__ fields at every dictionary-copy boundary', () => {
+    const extra = JSON.parse('{"__proto__":{"retained":1.25}}');
+    // Use JSON text to create an own property rather than an object-literal prototype.
+    const raw = JSON.parse(JSON.stringify(fixture()).replace(/^{/, '{"__proto__":{"retained":1.25},'));
+    raw.meta = { ...raw.meta, ...extra };
+    raw.objects[0] = { ...raw.objects[0], ...extra };
+    raw.objects[0].transform = { ...raw.objects[0].transform, ...extra };
+    raw.objects.push({ id: 'future-proto', type: '__proto__', ...extra });
+    const back = JSON.parse(serializePlan(raw));
+    for (const block of [back, back.meta, back.objects[0], back.objects[0].transform,
+      back.objects.at(-1)]) {
+      expect(Object.hasOwn(block, '__proto__')).toBe(true);
+      expect(block.__proto__).toEqual({ retained: 1.25 });
+    }
+  });
   it('reproduces the Python-written fixture byte for byte', () => {
     // If this fails, the TypeScript and Python writers have drifted and plans will
     // diff spuriously depending on which tool last saved them.
@@ -492,6 +507,17 @@ describe('what the layout occupies', () => {
   const zs = (pts: Vec3[]): number[] => pts.map((p) => p[2]);
   const xs = (pts: Vec3[]): number[] => pts.map((p) => p[0]);
 
+  it('includes the actual rotated rectangular pan, beyond its equal-area flame diameter', () => {
+    const doc = newPlan('long pan');
+    doc.objects.push({ id: 'b', type: 'burner',
+      transform: { position_m: [0, 0, 0], rotation_quat: [0, 0, Math.SQRT1_2, Math.SQRT1_2] },
+      footprint: { shape: 'rectangle', size_m: [20, 1] }, rimHeight_m: 0.1,
+    } as BurnerObject);
+    const ys = boundsPoints(doc).map((p) => p[1]);
+    expect(Math.min(...ys)).toBeCloseTo(-10, 9);
+    expect(Math.max(...ys)).toBeCloseTo(10, 9);
+  });
+
   it('includes an obstruction by its corners, not its origin', () => {
     // Fit saw a 20 x 12 x 8 m box as the point at its base centre and put the
     // camera inside it.
@@ -891,6 +917,20 @@ describe('structural validation', () => {
     expect(codesOf(withObject(wall([{ offset_m: 0.5, width_m: 0.8, height_m: 2, sillHeight_m: -1 }])))).toContain('bad-openings');
     expect(validateStructure(withObject(wall([{ offset_m: 0.5, width_m: 0.8, height_m: 2 }])))).toEqual([]);
     expect(validateStructure(withObject(wall(null)))).toEqual([]);
+  });
+
+  it('rejects malformed principal points before they reach preview projection', () => {
+    for (const principalPoint_px of [[1], ['x', 2], {}, 'xy']) {
+      const camera = fixture().objects.find((o) => o.type === 'camera') as CameraObject;
+      camera.camera.principalPoint_px = principalPoint_px as never;
+      expect(codesOf(withObject(camera))).toContain('bad-principal-point');
+    }
+  });
+
+  it('accepts a negative wall base height allowed by every supported schema', () => {
+    expect(validateStructure(withObject({
+      id: 'w', type: 'wall', polyline_m: [[0, 0], [1, 0]], height_m: 2, baseHeight_m: -1,
+    }))).toEqual([]);
   });
 
   it('rejects the optional lengths the builders multiply into geometry', () => {

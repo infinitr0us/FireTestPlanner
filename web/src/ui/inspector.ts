@@ -26,10 +26,13 @@ import {
   beadVerdict,
   burnerDiameterM,
   burnerFlameHeightM,
+  burners,
   ceilingAreaM2,
   ceilingCoversXY,
   ceilingSoffitZM,
+  displayName,
   effectiveFocalLengthMm,
+  fireBurners,
   flameTipZM,
   framingOf,
   fxOf,
@@ -53,7 +56,6 @@ import {
   LOW_SIGNAL_FRACTION,
   plumeRadiusAtZ,
   positionOf,
-  primaryBurner,
   principalPointOf,
   radiativeFractionOf,
   standoffHorizontalM,
@@ -938,13 +940,14 @@ export class Inspector {
           }))),
     );
 
-    const burner = primaryBurner(this.store.document);
+    const sources = burners(this.store.document);
     // World space: the hood's own height plus wherever its transform puts it, which
     // is the plane the 3D view draws and the checks judge.
     const intake = hoodIntakeHeightM(hood);
     const items: HTMLElement[] = [readout('Intake plane above floor', formatLengthWithUnit(intake, unit))];
 
-    if (burner) {
+    for (const burner of sources) {
+      if (sources.length > 1) items.push(readout('Burner', displayName(burner), 'muted'));
       const bp = positionOf(burner);
       const off = hoodOpeningOffset(hood, [bp[0], bp[1]]);
       const eccentricity = Math.hypot(off.u, off.v);
@@ -957,8 +960,8 @@ export class Inspector {
 
       const tip = flameTipZM(burner);
       if (tip !== null) {
-        items.push(readout('Flame tip clearance', formatLengthWithUnit(intake - tip, unit),
-          intake - tip > 0.2 * intake ? 'good' : 'bad'));
+        items.push(readout('Flame tip clearance', off.inside ? formatLengthWithUnit(intake - tip, unit) : 'outside opening',
+          off.inside ? (intake - tip > 0.2 * intake ? 'good' : 'bad') : 'muted'));
       }
       const radius = plumeRadiusAtZ(burner, intake);
       if (radius !== null) {
@@ -1114,19 +1117,19 @@ export class Inspector {
     }
     this.root.append(h('div', { class: 'panel__actions' }, actions));
 
-    const burner = primaryBurner(this.store.document);
+    const sources = burners(this.store.document);
     // World space, as the checks and the drawing judge it.
     const soffit = ceilingSoffitZM(slab);
     const items: HTMLElement[] = [
       readout('Slab area', `${ceilingAreaM2(slab).toFixed(2)} m²`),
       readout('Soffit above floor', formatLengthWithUnit(soffit, unit)),
-      readout('Covers the fire',
-        burner && ceilingCoversXY(slab, positionOf(burner)[0], positionOf(burner)[1]) ? 'yes' : 'no',
-        'muted'),
     ];
-    if (burner) {
+    for (const burner of sources) {
+      if (sources.length > 1) items.push(readout('Burner', displayName(burner), 'muted'));
+      const covered = ceilingCoversXY(slab, positionOf(burner)[0], positionOf(burner)[1]);
+      items.push(readout('Covers the fire', covered ? 'yes' : 'no', 'muted'));
       const tip = flameTipZM(burner);
-      if (tip !== null) {
+      if (tip !== null && covered) {
         const clearance = soffit - tip;
         items.push(readout('Flame tip clearance', formatLengthWithUnit(clearance, unit),
           clearance > 0.2 * soffit ? 'good' : 'bad'));
@@ -1201,10 +1204,12 @@ export class Inspector {
         ]),
       );
     } else {
-      const burner = primaryBurner(doc);
+      const sources = fireBurners(doc);
+      const burner = sources.find((b) => b.id === estimate.sourceId);
       const range = gaugeRangeKwM2(s);
 
       const verdict = gaugeVerdict(doc, s);
+      if (burner) items.push(readout('Geometry relative to', displayName(burner), 'muted'));
       items.push(
         // The same call the report's exposure table and the Checks list use, so a
         // green readout here can no longer contradict a warning printed there.
@@ -1216,7 +1221,7 @@ export class Inspector {
         // was the same disagreement the Verdict line above exists to end.
         readout('Off the gauge axis', `${estimate.offAxisDeg.toFixed(0)}°`,
           !estimate.facesFire ? 'bad' : estimate.withinViewAngle ? 'good' : 'warn'),
-        readout('Predicted incident flux',
+        readout(sources.length > 1 ? 'Total incident flux' : 'Predicted incident flux',
           Number.isFinite(estimate.incidentKwM2)
             ? `${estimate.incidentKwM2.toFixed(2)} kW/m²`
             : 'inside the fire',
@@ -1232,13 +1237,16 @@ export class Inspector {
           frac > 1 ? 'bad' : frac < LOW_SIGNAL_FRACTION ? 'warn' : 'good'));
       }
 
-      items.push(readout('Radiative fraction used',
-        burner ? radiativeFractionOf(burner).toFixed(2) : '—', 'muted'));
+      for (const source of sources) {
+        items.push(readout(sources.length > 1 ? `Radiative fraction: ${displayName(source)}` : 'Radiative fraction used',
+          radiativeFractionOf(source).toFixed(2), 'muted'));
+      }
 
       items.push(h('p', { class: 'readout__note' }, [
         'Point source at mid-flame height: q″ = χ_r·Q̇·cos θ / (4πr²). A first-order '
         + 'estimate for sizing and placement, and it assumes an unobstructed view — it '
-        + 'knows nothing about the walls in this plan.',
+        + 'knows nothing about the walls in this plan. Flux sums all fires; distance '
+        + 'and angle refer to the source contributing most.',
       ]));
 
       if (estimate.nearField && burner) {
@@ -1335,12 +1343,12 @@ export class Inspector {
 
   private renderBeadPredictions(t: ThermocoupleObject, unit: LengthUnit): void {
     const doc = this.store.document;
-    const burner = primaryBurner(doc);
+    const sources = fireBurners(doc);
     const beads = thermocoupleBeads(doc, t);
     const limit = tcMaxTemperatureC(t);
     const items: HTMLElement[] = [];
 
-    if (!burner || flameTipZM(burner) === null) {
+    if (sources.length === 0) {
       items.push(readout('Fire region', 'needs a burner with an HRR', 'muted'));
     } else {
       for (const bead of beads) {
@@ -1358,8 +1366,10 @@ export class Inspector {
         ));
       }
 
-      const tip = flameTipZM(burner);
-      items.push(readout('Mean flame tip', formatLengthWithUnit(tip as number, unit), 'muted'));
+      for (const burner of sources) {
+        const label = burners(doc).length > 1 ? `Mean flame tip: ${displayName(burner)}` : 'Mean flame tip';
+        items.push(readout(label, formatLengthWithUnit(flameTipZM(burner)!, unit), 'muted'));
+      }
 
       items.push(h('p', { class: 'readout__note' }, [
         'Temperatures are the Heskestad PLUME CENTRELINE, quoted only for beads above the '

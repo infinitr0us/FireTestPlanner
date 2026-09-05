@@ -157,7 +157,10 @@ export function fireBurners(d: PlanDocument): BurnerObject[] {
 }
 
 /** Burners drawn with a fire that the camera framing does not judge. */
-export const secondaryBurners = (d: PlanDocument): BurnerObject[] => fireBurners(d).slice(1);
+export function secondaryBurners(d: PlanDocument): BurnerObject[] {
+  const primary = primaryBurner(d);
+  return fireBurners(d).filter((b) => b !== primary);
+}
 
 export function nextId(d: PlanDocument, prefix: string): string {
   const taken = new Set(d.objects.map((o) => o.id));
@@ -1291,6 +1294,15 @@ export function boundsPoints(d: PlanDocument, opts: { ducts?: boolean } = {}): V
       const r = burnerDiameterM(obj) / 2;
       const surface = fuelSurfaceZM(obj);
       pts.push([p[0] - r, p[1] - r, p[2]], [p[0] + r, p[1] + r, surface]);
+      if (obj.footprint.shape !== 'circle') {
+        // The equal-area diameter bounds the flame cone, not a rectangular pan.
+        // A long narrow pan can extend metres beyond that circle, especially
+        // after rotation, so Fit and the drawing need its physical corners too.
+        const [w, depth] = obj.footprint.size_m ?? [0, 0];
+        for (const x of [-w / 2, w / 2]) for (const y of [-depth / 2, depth / 2]) {
+          pts.push(toWorld(obj, [x, y, 0]), toWorld(obj, [x, y, Math.max(rimHeightM(obj), 0.02)]));
+        }
+      }
       const tip = flameTipZM(obj);
       if (tip !== null) pts.push([p[0], p[1], tip]);
     } else if (isHood(obj)) {

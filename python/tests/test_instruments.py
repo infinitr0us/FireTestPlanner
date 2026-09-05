@@ -134,6 +134,13 @@ def test_a_bead_above_a_second_burner_is_in_that_burner_fire():
     assert [i.object_id for i in secondary] == [second.id]
 
 
+def test_secondary_fire_is_reported_even_when_primary_has_no_hrr():
+    plan = _fire_plan()
+    plan.burner.raw['fire']['hrr_kw'] = None
+    second = _with_second_burner(plan)
+    assert [i.object_id for i in plan.check() if i.code == 'secondary-burner'] == [second.id]
+
+
 def test_a_bead_in_two_plumes_reads_the_hotter_centreline():
     plan = _fire_plan(hrr_kw=100.0)
     _with_second_burner(plan, position=(0.6, 0.0, 0.0), hrr_kw=1000.0)

@@ -34,7 +34,7 @@ import { NamelistError, readNamelist, readOneRecord } from './namelist';
 import { spliceFdsIncludes } from '../io/files';
 import { checkPlan, newPlan, primaryBurner } from './plan';
 import { serializePlan } from './serialize';
-import type { BurnerObject, CeilingObject, ObstructionObject, PlanObject, ThermocoupleObject, WallObject } from './types';
+import type { BurnerObject, CeilingObject, ObstructionObject, PlanObject, ThermocoupleObject, Vec3, WallObject } from './types';
 import { requiredFormatVersion } from './types';
 import { validateStructure } from './validate';
 
@@ -703,6 +703,16 @@ describe('reading a plan object as FDS spells it', () => {
     const next: Xb = [-0.1, 4.0, 3.6, 3.7, 0, 2.5];
     expect(applyXbToObject(wall, next, [0.1, 0.1, 0])).toBeNull();
     near(xbOfObject(wall, [0.1, 0.1, 0])!.xb, next);
+  });
+
+  it('round-trips a wall XB below the floor into a loadable document', () => {
+    const result = sample();
+    const wall = byId(result, 'wall-1');
+    const offset: Vec3 = [0.1, 0.1, 3];
+    const next: Xb = [0, 2, 0, 0.1, 2, 4];
+    expect(applyXbToObject(wall, next, offset)).toBeNull();
+    near(xbOfObject(wall, offset)!.xb, next);
+    expect(validateStructure(JSON.parse(serializePlan(result.doc)))).toEqual([]);
   });
 
   it('refuses an XB that would make the object one the loader rejects', () => {

@@ -17,6 +17,7 @@ import {
   ceilings,
   checkPlan,
   displayName,
+  findObject,
   flameTipZM,
   framingOf,
   gaugeRangeKwM2,
@@ -236,7 +237,7 @@ function instrumentTable(doc: PlanDocument, unit: LengthUnit): string {
     const verdict = gaugeVerdict(doc, s)!;
     rows.push('<tr>' + swatch + [
       cell('heat flux'),
-      cell(formatLength(e.distanceM, unit), 'num'),
+      cell(`${formatLength(e.distanceM, unit)} to ${displayName(findObject(doc, e.sourceId)!)}`, 'num'),
       cell(finite ? `${e.incidentKwM2.toFixed(2)} kW/m²` : 'unbounded', 'num'),
       cell(frac === null || !Number.isFinite(frac) ? '—' : `${(frac * 100).toFixed(0)}%`, 'num'),
     ].join('')
@@ -275,7 +276,8 @@ function instrumentTable(doc: PlanDocument, unit: LengthUnit): string {
     <tbody>${rows.join('')}</tbody>
   </table>
   <p class="note">Heat flux is a point-source estimate at mid-flame height,
-  q″ = χ_r·Q̇·cos θ / (4πr²), and assumes an unobstructed view — it does not account for the
+  q″ = χ_r·Q̇·cos θ / (4πr²), summed over all fires. Gauge distances refer to the dominant source.
+  It assumes an unobstructed view — it does not account for the
   walls in this plan. Thermocouple temperatures are the Heskestad plume centreline, quoted only
   for beads above the mean flame tip and inside the plume envelope; a bead off the axis reads
   lower. Both are for sizing and placement, not for calibration.</p>`;

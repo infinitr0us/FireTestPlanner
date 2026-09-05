@@ -234,6 +234,8 @@ def test_a_write_that_fails_midway_leaves_the_previous_file_intact(tmp_path, pla
     out = tmp_path / "plan.ftp.json"
     plan.save(out)
     before = out.read_bytes()
+    plan.meta['modified'] = '2000-01-01T00:00:00Z'
+    plan.data['version'] = '1.0.0'
 
     import fireplan.plan as plan_module
 
@@ -246,6 +248,8 @@ def test_a_write_that_fails_midway_leaves_the_previous_file_intact(tmp_path, pla
         plan.save(out)
     assert out.read_bytes() == before
     assert [p.name for p in tmp_path.iterdir()] == ["plan.ftp.json"]
+    assert plan.meta['modified'] == '2000-01-01T00:00:00Z'
+    assert plan.data['version'] == '1.0.0'
 
 
 def test_files_are_written_with_unix_newlines(tmp_path, plan):

@@ -73,7 +73,7 @@ function roundFloats(value: Json): Json {
   }
   if (Array.isArray(value)) return value.map(roundFloats);
   if (isPlainObject(value)) {
-    const out: Obj = {};
+    const out: Obj = Object.create(null);
     for (const k of Object.keys(value)) out[k] = roundFloats(value[k]);
     return out;
   }
@@ -83,7 +83,8 @@ function roundFloats(value: Json): Json {
 /** Known keys in order, then anything else in its existing order.
  *  The tail is what keeps unknown keys from a newer format version alive. */
 function order(d: Obj, keys: string[]): Obj {
-  const out: Obj = {};
+  // A JSON key named __proto__ is data, not the legacy prototype setter.
+  const out: Obj = Object.create(null);
   const emitted = new Set<string>();
   for (const k of keys) {
     if (hasOwn(d, k)) {
@@ -228,7 +229,7 @@ export function canonicalize(data: PlanDocument): Obj {
   // Objects have already been through the rounding their own type warrants; the
   // rest of the document is all format 1.0 and rounds wholesale.
   const ordered = order(d, TOP);
-  const out: Obj = {};
+  const out: Obj = Object.create(null);
   for (const k of Object.keys(ordered)) {
     out[k] = k === 'objects' ? ordered[k] : roundFloats(ordered[k]);
   }

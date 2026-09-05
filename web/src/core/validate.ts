@@ -46,15 +46,15 @@ const isStated = (v: unknown): boolean => v !== undefined && v !== null;
  */
 const checkOptionalLength = (
   raw: Record<string, unknown>, key: string, id: string, err: Reporter,
-  { positive = false, label }: { positive?: boolean; label: string },
+  { positive = false, signed = false, label }: { positive?: boolean; signed?: boolean; label: string },
 ): void => {
   const v = raw[key];
   if (!isStated(v)) return;
-  const ok = positive ? isPositive(v) : isFiniteNumber(v) && v >= 0;
+  const ok = positive ? isPositive(v) : isFiniteNumber(v) && (signed || v >= 0);
   if (!ok) {
     err(`bad-${key.replace(/_m$/, '').replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`,
       `${label} "${id}" has ${key} ${JSON.stringify(v)}; expected a `
-      + `${positive ? 'positive' : 'non-negative'} number, or null.`, id);
+      + `${positive ? 'positive' : signed ? 'finite' : 'non-negative'} number, or null.`, id);
   }
 };
 
@@ -172,6 +172,10 @@ function validateByType(obj: PlanObject, err: Reporter): void {
         // Without this, every derived quantity is NaN and the frustum vanishes.
         err('bad-focal-length', `Camera "${id}" has no positive focalLength_mm.`, id);
       }
+      if (isStated(cam.principalPoint_px) && !isNumberArray(cam.principalPoint_px, 2)) {
+        err('bad-principal-point',
+          `Camera "${id}" has an invalid principalPoint_px; expected two numbers, or null.`, id);
+      }
       // Zero or negative would take the effective focal length to zero and every
       // derived quantity with it, exactly as a bad focal length would.
       if (cam.zoomFactor !== undefined && cam.zoomFactor !== null && !isPositive(cam.zoomFactor)) {
@@ -239,7 +243,8 @@ function validateByType(obj: PlanObject, err: Reporter): void {
       }
       if (!isPositive(raw.height_m)) err('bad-height', `Wall "${id}" needs a positive height_m.`, id);
       checkOptionalLength(raw, 'thickness_m', id, err, { positive: true, label: 'Wall' });
-      checkOptionalLength(raw, 'baseHeight_m', id, err, { label: 'Wall' });
+      // All supported schemas allow walls to start below the floor.
+      checkOptionalLength(raw, 'baseHeight_m', id, err, { signed: true, label: 'Wall' });
       // The builder slices, sorts and subtracts these. A wall whose `openings` is
       // an object rather than a list passed structural validation, was installed,
       // and then threw out of the builder -- leaving a broken document on screen

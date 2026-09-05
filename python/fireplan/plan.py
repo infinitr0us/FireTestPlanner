@@ -221,8 +221,8 @@ class Plan:
         crash mid-write left an empty file where the user's plan had been.
 
         The bookkeeping this method does in memory -- the `modified` timestamp and
-        the derived version -- is undone if serialisation fails, so a plan that could
-        not be written does not go on claiming a save time it never had.
+        the derived version -- is undone if serialisation or writing fails, so a
+        plan that could not be written does not claim a save time it never had.
         """
         meta = self.data.setdefault("meta", {})
         had_modified = "modified" in meta
@@ -238,6 +238,7 @@ class Plan:
         self.data["version"] = self.effective_version
         try:
             text = self.dumps()
+            _write_atomic(str(path), text)
         except Exception:
             if had_modified:
                 meta["modified"] = old_modified
@@ -248,8 +249,6 @@ class Plan:
             else:
                 self.data.pop("version", None)
             raise
-
-        _write_atomic(str(path), text)
 
     # -- access ----------------------------------------------------------
 
@@ -366,7 +365,10 @@ class Plan:
     @property
     def secondary_burners(self) -> List[Burner]:
         """Burners drawn with a fire that the camera framing does not judge."""
-        return self.fire_burners[1:]
+        if not self.burners:
+            return []
+        primary = self.burner
+        return [b for b in self.fire_burners if b.raw is not primary.raw]
 
     def cameras_by_modality(self, modality: str) -> List[Camera]:
         return [c for c in self.cameras.values() if c.modality == modality]

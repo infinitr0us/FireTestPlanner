@@ -274,6 +274,13 @@ describe('camera zoom', () => {
 // -- the point source -----------------------------------------------------
 
 describe('a second fire', () => {
+  it('still names the secondary fire when the primary has no HRR', () => {
+    const doc = firePlan(100);
+    (doc.objects[0] as BurnerObject).fire!.hrr_kw = null;
+    const second = withSecondBurner(doc);
+    expect(checkPlan(doc).filter((i) => i.code === 'secondary-burner').map((i) => i.objectId))
+      .toEqual([second.id]);
+  });
   const withSecondBurner = (
     doc: PlanDocument, position: Vec3 = [5, 0, 0], hrrKw = 1000, id = 'burner-2',
   ): BurnerObject => {
