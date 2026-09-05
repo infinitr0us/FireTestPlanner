@@ -9,6 +9,7 @@
 import { readNamelist } from '../core/namelist';
 import type { Issue } from '../core/types';
 import { mapLinkedPaths } from './link-paths';
+import { LINK_TYPES, fileName } from '../core/linked-files';
 
 export interface PickedLinkedFile { path: string; text?: string; warning?: string; file?: File }
 
@@ -426,7 +427,16 @@ export const escapeJsonForScript = (json: string): string => json.replace(/</g, 
  * thin wrapper that supplies the page captured at boot.
  */
 export function embedPlanInHtml(boot: string, planJson: string, title: string): string {
-  const safe = escapeJsonForScript(planJson);
+  // A shared viewer cannot use desktop directories. Keep only attachment names,
+  // labels and snapshots, including for cross-drive, UNC and relative paths.
+  const shared = JSON.parse(planJson);
+  for (const obj of shared.objects ?? []) {
+    if (!LINK_TYPES.includes(obj?.type) || !Array.isArray(obj.linkedFiles)) continue;
+    for (const link of obj.linkedFiles) {
+      if (typeof link?.path === 'string') link.path = fileName(link.path);
+    }
+  }
+  const safe = escapeJsonForScript(JSON.stringify(shared));
   let html = boot.replace(
     new RegExp(`(<script[^>]*id="${EMBED_ID}"[^>]*>)([\\s\\S]*?)(</script>)`, 'i'),
     (_m, open: string, _body: string, close: string) => `${open}\n${safe}\n${close}`,

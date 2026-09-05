@@ -20,6 +20,17 @@ const embedded = (html: string): string =>
   /<script type="application\/json" id="embedded-plan">([\s\S]*?)<\/script>/.exec(html)![1].trim();
 
 describe('embedding a plan in the shared viewer', () => {
+  it('shares only linked basenames while preserving labels, snapshots and the source document', () => {
+    const paths = ['E:/Users/name/data.csv', '//private-server/share/video.mp4', '../private/run.tsv', 'D:\\secret\\book.xlsx'];
+    const links = paths.map((path, i) => ({ id: String(i), kind: 'spreadsheet', path, label: 'Run ' + i,
+      plot: { importedAt: 'date', samples: [[-1, 1.234567891, 2]] } }));
+    const source = JSON.stringify({ objects: [{ type: 'burner', linkedFiles: links }] });
+    const html = embedPlanInHtml(BOOT, source, 'T');
+    const shared = JSON.parse(embedded(html)).objects[0].linkedFiles;
+    expect(shared).toEqual(links.map((link, i) => ({ ...link, path: ['data.csv', 'video.mp4', 'run.tsv', 'book.xlsx'][i] })));
+    expect(html).not.toMatch(/private-server|private\/|secret|Users/);
+    expect(JSON.parse(source).objects[0].linkedFiles).toEqual(links);
+  });
   it('keeps every closing-tag spelling the HTML parser accepts out of the script', () => {
     // The exact string `</script>` used to be the only thing escaped. The parser
     // also ends the element at `</script >`, `</SCRIPT\t>` and `</script/>`, and

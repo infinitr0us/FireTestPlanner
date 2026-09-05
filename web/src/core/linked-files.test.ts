@@ -9,11 +9,21 @@ import { Store } from '../state/store';
 
 const CSV = readFileSync(new URL('../../../fixtures/linked-files/volumes.csv', import.meta.url), 'utf8');
 const DATE = '2026-09-05T18:00:00Z';
+const cases = JSON.parse(readFileSync(new URL('../../../fixtures/linked-files/csv-cases.json', import.meta.url), 'utf8')) as
+  { name: string; text: string; samples?: number[][]; error?: string }[];
 const header = 'timestamp_s,volume_m3,surface_area_m2\n';
 const burner = (): BurnerObject => ({ id: 'fire', type: 'burner', footprint: { shape: 'circle', diameter_m: 1 },
   linkedFiles: [{ id: 'data', kind: 'spreadsheet', path: 'data/volumes.csv', plot: parseReconstructionCsv(CSV, DATE) }] });
 
 describe('reconstruction CSV', () => {
+  it.each(cases)('matches the shared Python CSV case: $name', (c) => {
+    if (c.error) expect(() => parseReconstructionCsv(c.text, DATE)).toThrow(c.error);
+    else expect(parseReconstructionCsv(c.text, DATE)).toEqual({ importedAt: DATE, samples: c.samples });
+  });
+  it('reproduces the complete engineer snapshot', () => {
+    const doc = JSON.parse(readFileSync(new URL('../../../fixtures/linked-files/linked-test.ftp.json', import.meta.url), 'utf8')) as PlanDocument;
+    expect(parseReconstructionCsv(CSV, DATE)).toEqual(doc.objects.find((o) => o.id === 'burner-main')!.linkedFiles![0].plot);
+  });
   it('reads all engineer measurements in SI with the expected endpoints', () => {
     const plot = parseReconstructionCsv(CSV, DATE);
     expect(plot.samples).toHaveLength(100);
@@ -46,6 +56,16 @@ describe('reconstruction CSV', () => {
 });
 
 describe('linked records', () => {
+  it.each(['link', 'plot'])('rejects unknown keys in the closed %s block', (block) => {
+    const doc = newPlan(), obj = burner(); doc.objects.push(obj);
+    Object.assign(block === 'link' ? obj.linkedFiles![0] : obj.linkedFiles![0].plot!, { extra: 1 });
+    expect(() => parseAndValidatePlan(serializePlan(doc))).toThrow(/unsupported field/);
+  });
+  it('accepts pre-ignition times through the load and canonical write gates', () => {
+    const doc = newPlan(), obj = burner(); doc.objects.push(obj);
+    obj.linkedFiles![0].plot = parseReconstructionCsv(header + '-5,0,0\n0,1,2', DATE);
+    expect(parseAndValidatePlan(serializePlan(doc)).objects[0].linkedFiles![0].plot!.samples).toEqual([[-5, 0, 0], [0, 1, 2]]);
+  });
   it('bumps only plans that use the feature, even if an obstruction precedes the links', () => {
     const doc = newPlan();
     expect(requiredFormatVersion(doc)).toBe('1.0.0');

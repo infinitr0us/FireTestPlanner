@@ -1,0 +1,9 @@
+[
+  { "source": "E:/tests/day 1/plan.json", "path": "data/volumes.csv", "destination": "E:/tests/revisions/plan.json", "absolute": "E:/tests/day 1/data/volumes.csv", "saved": "../day 1/data/volumes.csv" },
+  { "source": "E:/test/p.json", "path": "e:\\Test\\測定.csv", "destination": "E:/test/p.json", "absolute": "e:/Test/測定.csv", "saved": "測定.csv" },
+  { "source": "E:/test/p.json", "path": "D:/data/../video.mp4", "destination": "E:/test/p.json", "absolute": "D:/video.mp4", "saved": "D:/video.mp4" },
+  { "source": "//server/share/test/p.json", "path": "../video.mp4", "destination": "//SERVER/share/revisions/p.json", "absolute": "//server/share/video.mp4", "saved": "../video.mp4" },
+  { "source": "//server/share/p.json", "path": "//server/other/video.mp4", "destination": "//server/share/p.json", "absolute": "//server/other/video.mp4", "saved": "//server/other/video.mp4" },
+  { "source": "/tests/day1/p.json", "path": "../data.csv", "destination": "/tests/day2/p.json", "absolute": "/tests/data.csv", "saved": "../data.csv" },
+  { "source": "/test/p.json", "path": "/Test/data.csv", "destination": "/test/p.json", "absolute": "/Test/data.csv", "saved": "../Test/data.csv" }
+]

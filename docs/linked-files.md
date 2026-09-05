@@ -28,7 +28,8 @@ timestamp_s,volume_m3,surface_area_m2
 
 Extra columns are retained in the external file and ignored by the plot. Quoted
 fields, BOM, CRLF, comma, tab and semicolon delimiters are supported. The three
-plotted fields must be finite, non-negative numbers with strictly increasing times.
+plotted fields must be finite numbers, with non-negative volume and area. Times must
+increase strictly and may be negative for pre-ignition measurements.
 Missing values, duplicate timestamps, invalid rows and missing headers are reported;
 the importer does not silently drop measurements. A plot accepts up to 20,000
 samples from a file of up to 5 MiB. Larger files can still be linked and opened.
@@ -69,10 +70,13 @@ application, or reveal Explorer. It saves the file name and plot snapshot. Its
 after reopening, select the original using **Relink…**. For a portable folder of
 external files, save it once in the desktop app and relink originals there.
 
-Shared HTML carries the plan, reference paths and plot snapshots. It does not
-bundle videos or workbooks. References can contain local directory names, so review
-them if that matters for your recipient. No external file opens or refreshes
-automatically when a plan is loaded.
+Shared HTML carries the plan, linked file names, labels and plot snapshots. Directory
+components are removed from linked paths in the exported copy, including paths on
+other drives or network shares. Relink originals to access them in the viewer. It
+does not bundle videos or workbooks. Names, labels and other plan text are retained;
+review those before sharing if they contain private information.
+No external file opens or refreshes automatically when a plan is loaded. Explicit
+Open, Show in folder, Refresh and Relink actions on network paths contact that host.
 
 ## Python and the file format
 
@@ -83,6 +87,7 @@ from these file references.
 
 ```python
 from fireplan import Plan
+from fireplan.linked_files import parse_reconstruction_csv
 
 plan = Plan.load("fixtures/linked-files/linked-test.ftp.json")
 link = plan.burners[0].linked_files[0]
@@ -90,6 +95,14 @@ path = plan.linked_file_path(link)  # resolves; never opens the source
 samples = link["plot"]["samples"]  # [seconds, m³, m²]
 plan.save("revision.ftp.json")     # rebase references for the new location
 ```
+
+`linked_files` is a read-only tuple of live link dictionaries. Edit a dictionary to
+update a link, or use `burner.add_linked_file({"id": "run2", "kind": "spreadsheet",
+"path": "run2.csv"})` to append a copied record. Reading an empty collection does not
+change the plan version. Call `plan.validate_schema()` after editing.
+`parse_reconstruction_csv(text, imported_at=None)` imports the same strict CSV/TSV
+format as the editor and returns a plot dictionary; assign it to `link["plot"]`
+only after parsing succeeds. An omitted import date uses the current UTC time.
 
 `Plan.loads()` has no file location: relative references need a `source_path` or a
 first Save destination. `Plan.dumps()` emits references as held; `Plan.save()`

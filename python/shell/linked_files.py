@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import re
 import subprocess
 import sys
@@ -19,12 +20,17 @@ def checked_path(path, kind):
     if not os.path.isabs(path) or re.match(r'^[a-z][a-z0-9+.-]*:', re.sub(r'^[a-z]:[/\\]', '', path, flags=re.I), re.I):
         raise ValueError('Choose a local file; URLs and relative paths cannot be opened here.')
     allowed = VIDEOS if kind == 'video' else SPREADSHEETS
-    resolved = os.path.realpath(path)
+    try:
+        resolved = os.path.realpath(path)
+    except OSError as exc:
+        logging.getLogger(__name__).debug('Could not resolve linked file %r', path, exc_info=True)
+        raise FileNotFoundError('Linked file is missing or unavailable. Use Relink to choose its new location: ' + path) from exc
     if os.path.splitext(path)[1].lower() not in allowed or os.path.splitext(resolved)[1].lower() not in allowed:
         raise ValueError('Unsupported file type. Relink a spreadsheet or video file.')
     if not os.path.isfile(resolved):
         raise FileNotFoundError('Linked file is missing. Use Relink to choose its new location: ' + path)
-    return resolved
+    # Validate the resolved target but preserve the alias the user selected.
+    return os.path.normpath(os.path.abspath(path))
 
 
 def read_csv(path):

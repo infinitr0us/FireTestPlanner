@@ -1,0 +1,21 @@
+[
+  { "name": "pre-ignition", "text": "timestamp_s,volume_m3,surface_area_m2\n-2,0,0\n0,1.23456789123,7.89e-9", "samples": [[-2,0,0],[0,1.23456789123,7.89e-9]] },
+  { "name": "quoted BOM CRLF reordered extra", "text": "﻿\"surface_area_m2\",\"description\",\"timestamp_s\",\"volume_m3\"\r\n2,\"a, b \"\"quoted\"\"\",0,1\r\n", "samples": [[0,1,2]] },
+  { "name": "TSV", "text": "timestamp_s\tvolume_m3\tsurface_area_m2\n0\t1\t2", "samples": [[0,1,2]] },
+  { "name": "semicolon", "text": "timestamp_s;volume_m3;surface_area_m2\n0;1;2", "samples": [[0,1,2]] },
+  { "name": "blank rows and exponent", "text": "\nTIMESTAMP_S,volume_m3,surface_area_m2\n,,\n-1e-8,+.5,2.\n\n", "samples": [[-1e-8,0.5,2]] },
+  { "name": "duplicate", "text": "timestamp_s,volume_m3,surface_area_m2\n0,1,2\n0,1,2", "error": "CSV row 3: timestamps must increase strictly." },
+  { "name": "backwards", "text": "timestamp_s,volume_m3,surface_area_m2\n1,1,2\n0,1,2", "error": "CSV row 3: timestamps must increase strictly." },
+  { "name": "negative volume", "text": "timestamp_s,volume_m3,surface_area_m2\n0,-1,2", "error": "CSV row 2: volume_m3 must be finite and non-negative." },
+  { "name": "overflow time", "text": "timestamp_s,volume_m3,surface_area_m2\n1e999,1,2", "error": "CSV row 2: timestamp_s must be finite." },
+  { "name": "overflow area", "text": "timestamp_s,volume_m3,surface_area_m2\n0,1,1e999", "error": "CSV row 2: surface_area_m2 must be finite and non-negative." },
+  { "name": "NaN", "text": "timestamp_s,volume_m3,surface_area_m2\n0,NaN,2", "error": "CSV row 2: volume_m3 is not a number." },
+  { "name": "hex", "text": "timestamp_s,volume_m3,surface_area_m2\n0,0x10,2", "error": "CSV row 2: volume_m3 is not a number." },
+  { "name": "missing value", "text": "timestamp_s,volume_m3,surface_area_m2\n0,,2", "error": "CSV row 2: volume_m3 is not a number." },
+  { "name": "missing header", "text": "time,volume_m3,surface_area_m2\n0,1,2", "error": "CSV needs exactly one \"timestamp_s\" column." },
+  { "name": "duplicate header", "text": "timestamp_s,volume_m3,surface_area_m2,volume_m3\n0,1,2,3", "error": "CSV needs exactly one \"volume_m3\" column." },
+  { "name": "no rows", "text": "timestamp_s,volume_m3,surface_area_m2\n", "error": "CSV contains no measurements." },
+  { "name": "wrong width", "text": "timestamp_s,volume_m3,surface_area_m2\n0,1,2,3", "error": "CSV row 2 has 4 fields; expected 3." },
+  { "name": "unclosed quote", "text": "timestamp_s,volume_m3,surface_area_m2\n0,\"1,2", "error": "CSV has an unclosed quoted field." },
+  { "name": "text after quote", "text": "timestamp_s,volume_m3,surface_area_m2\n0,\"1\"x,2", "error": "Malformed CSV quoting." }
+]

@@ -1,6 +1,7 @@
 /** Portable local path arithmetic. Works with Windows drives/UNC and POSIX paths,
  * without treating a URL or a foreign drive as relative to the current plan. */
 import { LINK_TYPES, isLocalPath } from '../core/linked-files';
+import { serializePlan } from '../core/serialize';
 
 function parts(path: string): { root: string; segments: string[] } {
   const p = path.replace(/\\/g, '/');
@@ -16,7 +17,11 @@ function parts(path: string): { root: string; segments: string[] } {
 
 export function absoluteLinkPath(path: string, planPath: string): string {
   if (!isLocalPath(path)) return path;
-  if (/^(?:[a-z]:[/\\]|[/\\])/i.test(path)) return path.replace(/\\/g, '/');
+  if (/^(?:[a-z]:[/\\]|[/\\])/i.test(path)) {
+    const p = parts(path);
+    return `${p.root}/${p.segments.join('/')}`;
+  }
+  if (!isLocalPath(planPath) || !/^(?:[a-z]:[/\\]|[/\\])/i.test(planPath)) return path;
   const directory = planPath.replace(/\\/g, '/').replace(/\/[^/]*$/, '');
   const p = parts(`${directory}/${path}`);
   return `${p.root}/${p.segments.join('/')}`;
@@ -24,6 +29,7 @@ export function absoluteLinkPath(path: string, planPath: string): string {
 
 export function relativeLinkPath(path: string, planPath: string): string {
   if (!isLocalPath(path) || !/^(?:[a-z]:[/\\]|[/\\])/i.test(path)) return path;
+  if (!isLocalPath(planPath) || !/^(?:[a-z]:[/\\]|[/\\])/i.test(planPath)) return path;
   const target = parts(path), base = parts(planPath);
   const fold = (s: string): string => /^[a-z]:$|^\/\//i.test(base.root) ? s.toLowerCase() : s;
   if (fold(target.root) !== fold(base.root)) return path.replace(/\\/g, '/');
@@ -49,5 +55,5 @@ export function mapLinkedPaths(text: string, planPath: string, mode: 'open' | 's
       if (path !== link.path) { link.path = path; changed = true; }
     }
   }
-  return changed ? JSON.stringify(doc, null, 2) + '\n' : text;
+  return changed ? (mode === 'save' ? serializePlan(doc) : JSON.stringify(doc, null, 2) + '\n') : text;
 }

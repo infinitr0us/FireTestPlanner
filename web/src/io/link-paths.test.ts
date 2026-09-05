@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { absoluteLinkPath, mapLinkedPaths, relativeLinkPath } from './link-paths';
 
 describe('portable linked paths', () => {
+  const cases = JSON.parse(readFileSync(new URL('../../../fixtures/linked-files/path-cases.json', import.meta.url), 'utf8')) as
+    { source: string; path: string; destination: string; absolute: string; saved: string }[];
+  it.each(cases)('matches Python rebasing: $path from $source', (c) => {
+    const absolute = absoluteLinkPath(c.path, c.source);
+    expect(absolute).toBe(c.absolute);
+    expect(relativeLinkPath(absolute, c.destination)).toBe(c.saved);
+  });
+  it.each(['fixtures/plan.ftp.json', 'plan.ftp.json'])('does not invent a root from %s', (source) => {
+    expect(absoluteLinkPath('volumes.csv', source)).toBe('volumes.csv');
+    expect(relativeLinkPath('/data/volumes.csv', source)).toBe('/data/volumes.csv');
+    const disk = '{"objects":[{"type":"burner","linkedFiles":[{"path":"volumes.csv"}]}]}';
+    expect(mapLinkedPaths(disk, source, 'open')).toBe(disk);
+  });
   it('rebases Save As without changing which local file is referenced', () => {
     const original = 'E:/test/day 1/plan.ftp.json';
     const target = absoluteLinkPath('data/volumes.csv', original);

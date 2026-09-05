@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { connectShell, shell } from './files';
+import { readFileSync } from 'node:fs';
+import { serializePlan } from '../core/serialize';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -12,6 +14,27 @@ function bridge(responses: unknown[]) {
 }
 
 describe('desktop link/save bridge', () => {
+  it('writes canonical geometry and measurements after Save and Save As', async () => {
+    const disk = readFileSync(new URL('../../../fixtures/linked-files/linked-test.ftp.json', import.meta.url), 'utf8');
+    const { api, fetch } = bridge([
+      { path: 'E:/original/plan.json', text: disk, token: 'original' },
+      { path: 'E:/original/plan.json', token: 'same' }, { path: 'E:/original/plan.json', token: 'saved' },
+      { path: 'E:/revisions/plan.json', token: 'new' }, { path: 'E:/revisions/plan.json', token: 'saved-as' },
+    ]);
+    const opened = (await api.openPlan())!;
+    const working = serializePlan(JSON.parse(opened.text));
+    await api.savePlan(working, 'plan.json', false, opened.token);
+    await api.savePlan(working, 'plan.json', true, opened.token);
+    const calls = fetch.mock.calls as unknown as [string, { body: string }][];
+    const writes = calls.filter(([url]) => url === '/api/save').map(([, init]) => JSON.parse(init.body).text as string);
+    expect(writes).toHaveLength(2);
+    for (const text of writes) {
+      expect(text).toBe(serializePlan(JSON.parse(text)));
+      expect(text).toContain('[2, 0.13565, 2.455]');
+    }
+    expect(writes[0]).toBe(disk);
+    expect(serializePlan(JSON.parse(opened.text))).toBe(working);
+  });
   it('hydrates relative links on open and rebases only the saved copy after choosing a destination', async () => {
     const disk = JSON.stringify({ objects: [{ type: 'burner', linkedFiles: [{ path: 'data.csv' }] }] });
     const { api, fetch } = bridge([

@@ -1,9 +1,9 @@
 /**
  * Document store: state, selection, and undo/redo.
  *
- * Undo is snapshot-based rather than a command log. Plans are a few tens of KB, so
- * a deep copy per edit is free, and it makes undo correct by construction for edits
- * that touch several objects at once (delete a burner, re-aim every camera).
+ * Undo uses document snapshots, including recorded measurements, so edits touching
+ * several objects restore together. Consecutive drag updates share one history
+ * entry; large reconstruction snapshots still contribute to history memory use.
  */
 
 import { newPlan } from '../core/plan';

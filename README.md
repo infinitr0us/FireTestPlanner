@@ -190,8 +190,8 @@ definitions in [CONVENTIONS.md](CONVENTIONS.md) section 3.
 ## Tests
 
 ```bash
-python -m pytest python/tests -q     # 362 tests, no GUI needed
-cd web && npm test                   # 303 tests
+python -m pytest python/tests -q     # 397 tests, no GUI needed
+cd web && npm test                   # 337 tests
 ```
 
 The web suite asserts that the TypeScript writer reproduces the Python-written

@@ -67,7 +67,7 @@ export function parseReconstructionCsv(text: string, importedAt = new Date().toI
         throw new Error(`CSV row ${index + 2}: ${required[i]} is not a number.`);
       }
       const value = Number(cell);
-      if (!Number.isFinite(value) || value < 0) throw new Error(`CSV row ${index + 2}: ${required[i]} must be finite and non-negative.`);
+      if (!Number.isFinite(value) || (i > 0 && value < 0)) throw new Error(`CSV row ${index + 2}: ${required[i]} must be finite${i > 0 ? ' and non-negative' : ''}.`);
       return value;
     }) as [number, number, number];
     if (values[0] <= previous) throw new Error(`CSV row ${index + 2}: timestamps must increase strictly.`);
@@ -87,16 +87,18 @@ export function linkedFilesProblem(obj: PlanObject): string | null {
   for (const link of obj.linkedFiles) {
     if (!link || typeof link !== 'object' || typeof link.id !== 'string' || !link.id || ids.has(link.id)) return 'Linked file IDs must be non-empty and unique within their object.';
     ids.add(link.id);
+    if (Object.keys(link).some((key) => !['id', 'kind', 'path', 'label', 'plot'].includes(key))) return 'Linked files contain an unsupported field.';
     if (typeof link.path !== 'string' || !isLocalPath(link.path)) return 'Linked files need a local file path, not a URL.';
     if (link.kind !== (obj.type === 'camera' ? 'video' : 'spreadsheet')) return 'Cameras link videos; burners and sensors link spreadsheets.';
     if (link.label !== undefined && typeof link.label !== 'string') return 'Linked file labels must be text.';
     if (link.plot !== undefined) {
       if (obj.type !== 'burner' || !link.plot || typeof link.plot.importedAt !== 'string' || !link.plot.importedAt) return 'Only burner spreadsheets can hold reconstruction plots, with an import date.';
+      if (Object.keys(link.plot).some((key) => !['importedAt', 'samples'].includes(key))) return 'Reconstruction plots contain an unsupported field.';
       const samples = link.plot.samples;
       if (!Array.isArray(samples) || !samples.length || samples.length > MAX_PLOT_SAMPLES) return 'A plot needs 1–20,000 samples.';
       let previous = -Infinity;
       for (const sample of samples) {
-        if (!Array.isArray(sample) || sample.length !== 3 || !sample.every((x) => typeof x === 'number' && Number.isFinite(x) && x >= 0) || sample[0] <= previous) return 'Plot samples need increasing non-negative times and finite, non-negative volume and area.';
+        if (!Array.isArray(sample) || sample.length !== 3 || !sample.every((x, i) => typeof x === 'number' && Number.isFinite(x) && (i === 0 || x >= 0)) || sample[0] <= previous) return 'Plot samples need strictly increasing finite times and finite, non-negative volume and area.';
         previous = sample[0];
       }
     }

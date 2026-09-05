@@ -451,7 +451,7 @@ workflow, CSV contract, portability and deliberate limits (external originals,
 no playback synchronization, no workbook parsing or automatic file watching).
 
 
-Validation of the final M11 build: 303 web tests and 362 Python tests passed;
+Validation of the initial M11 build: 303 web tests and 362 Python tests passed;
 `npm run build` and the rebuilt `FireTestPlanner.exe --selftest` passed. Browser
 checks linked the supplied CSV and MP4, inspected the 100-point two-axis readout,
 verified collapse/expand and sensor controls, and reopened the plot in an exported

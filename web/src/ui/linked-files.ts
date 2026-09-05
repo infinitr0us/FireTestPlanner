@@ -11,10 +11,25 @@ async function pickFiles(kind: LinkedFile['kind']): Promise<PickedLinkedFile[]> 
   const files = await new Promise<File[]>((resolve) => {
     const input = h('input', { type: 'file', multiple: true, hidden: true,
       accept: (kind === 'video' ? VIDEO_EXTENSIONS : SPREADSHEET_EXTENSIONS).map((e) => `.${e}`).join(',') });
-    const done = (files: File[]): void => { input.remove(); resolve(files); };
+    let settled = false;
+    let focusTimer: ReturnType<typeof setTimeout> | undefined;
+    const done = (files: File[]): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(focusTimer);
+      window.removeEventListener('focus', onFocus);
+      input.remove(); resolve(files);
+    };
+    // Older browsers may only return focus on dismissal. Give change/files time
+    // to arrive before the fallback settles, and clean up both paths together.
+    const onFocus = (): void => {
+      clearTimeout(focusTimer);
+      focusTimer = setTimeout(() => done(Array.from(input.files ?? [])), 500);
+    };
     input.addEventListener('change', () => done(Array.from(input.files ?? [])), { once: true });
     input.addEventListener('cancel', () => done([]), { once: true });
     document.body.append(input);
+    window.addEventListener('focus', onFocus);
     input.click();
   });
   return Promise.all(files.map(async (file): Promise<PickedLinkedFile> => {

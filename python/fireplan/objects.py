@@ -7,6 +7,7 @@ mutations round-trip on save and unknown keys are never dropped.
 from __future__ import annotations
 
 import math
+from copy import deepcopy
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -79,9 +80,21 @@ class PlanObject:
         return self.raw.get("notes")
 
     @property
-    def linked_files(self) -> List[Dict[str, Any]]:
-        """External recordings or spreadsheets (format 1.3); never opened implicitly."""
-        return self.raw.get("linkedFiles", [])
+    def linked_files(self) -> Tuple[Dict[str, Any], ...]:
+        """Read-only collection of live link records; use add_linked_file to append.
+
+        Reading an unlinked object does not change its format version.
+        """
+        return tuple(self.raw.get("linkedFiles", []))
+
+    def add_linked_file(self, link: Dict[str, Any]) -> Dict[str, Any]:
+        """Append a copied recording reference; validate the plan before saving."""
+        from .linked_files import LINK_TYPES
+        if self.type not in LINK_TYPES:
+            raise ValueError('This object type does not support linked files.')
+        record = deepcopy(link)
+        self.raw.setdefault("linkedFiles", []).append(record)
+        return record
 
     @property
     def _transform(self) -> Dict[str, Any]:

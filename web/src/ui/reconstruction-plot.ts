@@ -13,7 +13,7 @@ function svgElement(tag: string, attrs: Record<string, string | number>, text?: 
 }
 
 /** Two aligned plots keep volume and area in their own units and scales. */
-function chart(plot: ReconstructionPlot, column: 1 | 2, index: number): SVGElement {
+function chart(plot: ReconstructionPlot, column: 1 | 2): { svg: SVGElement; select: (index: number) => void } {
   const samples = plot.samples;
   const title = column === 1 ? 'Volume (m³)' : 'Surface area (m²)';
   const color = column === 1 ? '#65caff' : '#ffbe66';
@@ -36,10 +36,14 @@ function chart(plot: ReconstructionPlot, column: 1 | 2, index: number): SVGEleme
   }
   svg.append(svgElement('text', { x: 192, y: 133, 'text-anchor': 'middle' }, 'Time (s)'));
   svg.append(svgElement('path', { d: samples.map((s, i) => `${i ? 'L' : 'M'}${x(s[0]).toFixed(2)},${y(s[column]).toFixed(2)}`).join(' '), fill: 'none', stroke: color, 'stroke-width': 1.5 }));
-  const selected = samples[index];
-  svg.append(svgElement('line', { x1: x(selected[0]), x2: x(selected[0]), y1: 28, y2: 103, stroke: '#cbd5e1', 'stroke-dasharray': '3 3' }));
-  svg.append(svgElement('circle', { cx: x(selected[0]), cy: y(selected[column]), r: 3, fill: color }));
-  return svg;
+  const cursor = svgElement('line', { y1: 28, y2: 103, stroke: '#cbd5e1', 'stroke-dasharray': '3 3' });
+  const point = svgElement('circle', { r: 3, fill: color });
+  svg.append(cursor, point);
+  return { svg, select: (index) => {
+    const selected = samples[index], xx = String(x(selected[0]));
+    cursor.setAttribute('x1', xx); cursor.setAttribute('x2', xx);
+    point.setAttribute('cx', xx); point.setAttribute('cy', String(y(selected[column])));
+  } };
 }
 
 export class ReconstructionPlotPanel {
@@ -49,6 +53,8 @@ export class ReconstructionPlotPanel {
   private index = 0;
   private key = '';
   private signature = '';
+  private snapshots = new WeakMap<ReconstructionPlot['samples'], number>();
+  private nextSnapshot = 0;
 
   constructor(container: HTMLElement, private store: Store) {
     container.append(this.root);
@@ -66,7 +72,13 @@ export class ReconstructionPlotPanel {
     if (key !== this.key) { this.key = key; this.selectedLink = ''; this.index = 0; }
     const link = links.find((l) => l.id === this.selectedLink) ?? links[0];
     this.selectedLink = link.id;
-    const signature = JSON.stringify([key, obj.name, links, this.collapsed]);
+    // Imports replace the sample array; undo/redo also restore new arrays. Identity
+    // catches replacements even when timestamps and sample counts are unchanged.
+    const signature = JSON.stringify([key, obj.name, links.map((l) => {
+      const samples = l.plot!.samples;
+      if (!this.snapshots.has(samples)) this.snapshots.set(samples, ++this.nextSnapshot);
+      return [l.id, l.label, l.path, l.plot!.importedAt, samples.length, this.snapshots.get(samples)];
+    }), this.collapsed]);
     if (signature === this.signature) return;
     this.signature = signature;
     const plot = link.plot!;
@@ -81,9 +93,11 @@ export class ReconstructionPlotPanel {
       onchange: (e: Event) => { this.selectedLink = (e.target as HTMLSelectElement).value; this.index = 0; this.signature = ''; this.render(); } },
     links.map((l) => h('option', { value: l.id, selected: l.id === link.id }, [l.label || fileName(l.path)]))));
     const charts = h('div');
+    const volume = chart(plot, 1), area = chart(plot, 2);
+    charts.append(volume.svg, area.svg);
     const value = h('output', { class: 'reconstruction-plot__values', 'aria-live': 'polite' });
     const draw = (): void => {
-      charts.replaceChildren(chart(plot, 1, this.index), chart(plot, 2, this.index));
+      volume.select(this.index); area.select(this.index);
       const sample = plot.samples[this.index];
       value.textContent = `${fmt(sample[0])} s · ${fmt(sample[1])} m³ · ${fmt(sample[2])} m²`;
     };

@@ -350,6 +350,7 @@ class Shell:
         on screen. A rejected `case.ftp.json` therefore cannot become the target of
         the next Ctrl+S on the `case.ftp.json` that was open before it.
         """
+        path = os.path.abspath(path)
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 text = fh.read()

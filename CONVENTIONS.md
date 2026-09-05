@@ -657,8 +657,10 @@ automatically. Save As must preserve each target by rebasing against the destina
 Browser-selected files have only a basename and require reselection for access.
 
 Only a burner spreadsheet may contain `plot`, an object with `importedAt` and
-`samples`. Each sample is `[time_s, volume_m3, surface_area_m2]`: three finite,
-non-negative numbers. There are 1–20,000 samples with strictly increasing times.
+`samples`. Each sample is `[time_s, volume_m3, surface_area_m2]`: three finite
+numbers, with non-negative volume and area. Time may be negative for pre-ignition
+measurements. There are 1–20,000 samples with strictly increasing times; duplicates,
+including identical rows, are rejected so measurements are never silently merged.
 These recorded numbers retain their supplied precision; geometry's six-decimal
 rounding does not apply. The snapshot is independent of the original file and
 remains available without it. Refresh is explicit and all-or-nothing; a failed
