@@ -9,6 +9,7 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
+import struct
 
 import numpy as np
 import pytest
@@ -216,6 +217,22 @@ def test_unpack_refuses_an_empty_frame_with_a_box_and_frames_out_of_order(tmp_pa
         FlameSequence.unpack(seq.pack())
     seq.frames.reverse()
     assert FlameSequence.unpack(seq.pack()).manifest('x') == seq.manifest('x')
+
+
+def test_unpack_refuses_bounds_off_the_lattice(tmp_path):
+    """Mirror of 'refuses bounds that are not on the lattice' in web.
+
+    The two centres are at x = -1 and x = -0.9, pitch 0.1. With the maximum x
+    rewritten to -0.94 (the f64 at byte 53) the extent used to round 0.6 up to 1,
+    which admitted the second cell at -0.9: outside the bounds it declared.
+    """
+    packed = bytearray(_two_cells(tmp_path).pack())
+    struct.pack_into('<d', packed, 53, -0.94)
+    with pytest.raises(ValueError, match='its bounds are not on its lattice'):
+        FlameSequence.unpack(bytes(packed))
+    # Float noise the size real frames carry is not a misalignment.
+    struct.pack_into('<d', packed, 53, -0.9 + 1e-9)
+    assert FlameSequence.unpack(bytes(packed)).bounds[1][0] == pytest.approx(-0.9, abs=1e-8)
 
 
 def test_pack_refuses_an_axis_the_u16_field_cannot_hold(tmp_path):

@@ -616,13 +616,22 @@ async function embeddableFlames(doc: PlanDocument): Promise<EmbeddedFlames | nul
 
 // -- keyboard -------------------------------------------------------------
 
+/**
+ * Whether a focused form control is one the user types into, as opposed to one
+ * they operate -- a slider, a checkbox, a select. A text field has an edit history
+ * and a pending value of its own; the others have neither.
+ */
+function isTextControl(el: HTMLElement): boolean {
+  if (el.tagName === 'TEXTAREA') return true;
+  if (el.tagName !== 'INPUT') return false;
+  return !/^(range|checkbox|radio|color|file|button|submit|reset|image)$/.test((el as HTMLInputElement).type);
+}
+
 window.addEventListener('keydown', (e) => {
   const target = e.target as HTMLElement | null;
-  // Never hijack typing in a form control.
-  if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) {
-    if (e.key === 'Escape') target.blur();
-    return;
-  }
+  const control = target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName) ? target : null;
+  // Escape hands the keyboard back to the editor.
+  if (control && e.key === 'Escape') { control.blur(); return; }
 
   // A modal owns the keyboard while it is up.
   if (fdsImport.isOpen) {
@@ -635,6 +644,27 @@ window.addEventListener('keydown', (e) => {
   }
 
   const ctrl = e.ctrlKey || e.metaKey;
+  const key = e.key.toLowerCase();
+  const textField = control && isTextControl(control) ? control : null;
+
+  // Document shortcuts. Save and Open are the document's from any control: none
+  // uses them, and the browser's own Ctrl+S and Ctrl+O -- Save Page As, Open
+  // File -- are the wrong dialogs, which is where they went after a click on the
+  // playback scrubber, speed or Loop. Undo, redo and duplicate are the document's
+  // too, unless a text field has focus: its Ctrl+Z is its own edit history. A text
+  // field commits what is typed in it before a save or an open (`change` fires on
+  // blur), so the file holds the value on screen and a discard is asked about.
+  if (ctrl && key === 's') { e.preventDefault(); textField?.blur(); void savePlan(e.shiftKey); return; }
+  if (ctrl && key === 'o') { e.preventDefault(); textField?.blur(); void openPlan(); return; }
+  if (ctrl && !textField) {
+    if (key === 'z' && !e.shiftKey) { e.preventDefault(); store.undo(); return; }
+    if (key === 'y' || (key === 'z' && e.shiftKey)) { e.preventDefault(); store.redo(); return; }
+    if (key === 'd') { e.preventDefault(); store.duplicateSelected(); return; }
+  }
+  // Every other key in a form control is the control's: typing, arrows on a
+  // slider, type-ahead on a select, Space on a checkbox.
+  if (control) return;
+
   // Transport keys, only while there is something to play. Space on a focused
   // button is the button's: the browser activates it on keyup, and toggling the
   // clock as well would press two things at once.
@@ -648,13 +678,6 @@ window.addEventListener('keydown', (e) => {
       default: break;
     }
   }
-  if (ctrl && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); store.undo(); return; }
-  if (ctrl && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
-    e.preventDefault(); store.redo(); return;
-  }
-  if (ctrl && e.key.toLowerCase() === 's') { e.preventDefault(); void savePlan(e.shiftKey); return; }
-  if (ctrl && e.key.toLowerCase() === 'o') { e.preventDefault(); void openPlan(); return; }
-  if (ctrl && e.key.toLowerCase() === 'd') { e.preventDefault(); store.duplicateSelected(); return; }
 
   switch (e.key) {
     case 'Delete':

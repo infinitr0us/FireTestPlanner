@@ -246,6 +246,20 @@ describe('the packed form, refusing what pack could not have written', () => {
     expect(FlameSequence.unpack(two().pack()).manifest('x')).toEqual(two().manifest('x'));
   });
 
+  it('refuses bounds that are not on the lattice, so no cell can decode past them', () => {
+    // The two centres are at x = -1 and x = -0.9, pitch 0.1. With the maximum x
+    // rewritten to -0.94 (the f64 at byte 53) the extent used to round 0.6 up to
+    // 1, which admitted the second cell at -0.9: outside the bounds it declared.
+    // Mirror of `test_unpack_refuses_bounds_off_the_lattice` in Python.
+    const packed = two().pack();
+    new DataView(packed.buffer).setFloat64(53, -0.94, true);
+    expect(() => FlameSequence.unpack(packed)).toThrow('its bounds are not on its lattice');
+    // Float noise the size real frames carry is not a misalignment.
+    const noisy = two().pack();
+    new DataView(noisy.buffer).setFloat64(53, -0.9 + 1e-9, true);
+    expect(FlameSequence.unpack(noisy).bounds[1][0]).toBeCloseTo(-0.9, 8);
+  });
+
   it('refuses to pack a box axis the u16 field cannot hold, rather than wrapping it', () => {
     // 65,536 cells on one axis packed to 0 and unpacked to a frame with no surface.
     const seq = FlameSequence.fromFrames([synthetic(0, [[0, 0, 0], [1, 0, 0], [0, 0, 65535]])]);

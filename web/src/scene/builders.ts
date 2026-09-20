@@ -432,7 +432,9 @@ export function buildObstruction(o: ObstructionObject): THREE.Group {
  * The box is the envelope of every frame, not a surface anyone can see, so it is
  * marked `selectionOnly`: a click selects the flame through it, but the measure
  * tool looks past it to the room, or the ruler would snap to the top of an
- * invisible box over an empty frame.
+ * invisible box over an empty frame. The placeholder is marked the same way: it
+ * is an editor marker for a link not yet made, not a 0.25 m cube in the room, and
+ * a ruler that landed on its top read 0.25 m where the floor is.
  */
 export function buildFlameProxy(f: ReconstructedFlameObject): THREE.Group {
   const group = new THREE.Group();
@@ -460,6 +462,7 @@ export function buildFlameProxy(f: ReconstructedFlameObject): THREE.Group {
       new THREE.MeshStandardMaterial({ color: COLORS.flame, wireframe: true }),
     );
     mesh.position.z = 0.125;
+    mesh.userData.selectionOnly = true;
     group.add(mesh);
     const label = makeLabel(displayName(f), 'object');
     label.position.set(0, 0, 0.4);

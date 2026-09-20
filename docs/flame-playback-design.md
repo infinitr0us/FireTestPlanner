@@ -484,3 +484,23 @@ seams the build left:
   went to the browser); the inspector follows the frame cache; the large-flame
   preview fallback blanks the frame and says why instead of showing the main view;
   the drawing's equipment list has a row for the flame.
+
+The reviewer's verification of that pass (2026-09-20) closed fourteen findings and
+narrowed three, which were then finished:
+
+- **The unlinked placeholder is selection-only too.** The manifest-backed envelope
+  had the flag; the 0.25 m wireframe for a link not yet made did not, and a
+  measurement at its centre read z = 0.25 m where the floor is.
+- **Document shortcuts work from any form control.** The window handler returned
+  for every `INPUT`/`SELECT`, so after a click on the scrubber, the speed select or
+  the Loop checkbox, Ctrl+S went to the browser's Save Page As. Save and Open are
+  now the document's from any control (a text field commits what is typed in it
+  first, so the file holds the value on screen); undo, redo and duplicate are the
+  document's from every control but a text field, whose Ctrl+Z is its own; every
+  other key stays with the control (type-ahead on the select, arrows on the
+  slider). The scrubber itself takes Space, `,` and `.` for the transport, since
+  it keeps the focus after a drag.
+- **Both packed readers check that the bounds sit a whole number of pitches
+  apart** (within the lattice tolerance the frames are held to) before rounding
+  to an integer extent. A maximum rewritten to 0.6 of a pitch past the origin
+  rounded up to one cell and admitted a box whose last cell decoded past it.

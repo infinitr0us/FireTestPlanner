@@ -450,7 +450,14 @@ export class FlameSequence {
     const sequence = new FlameSequence(grid, bounds, frames);
     const problem = voxelSequenceProblem(sequence.manifest('packed'));
     if (problem) throw new Error(`packed flame sequence is inconsistent: ${problem}`);
-    const extent = [0, 1, 2].map((a) => Math.round((bounds[1][a] - bounds[0][a]) / grid.pitch_m));
+    // The bounds are voxel centres, so they sit a whole number of pitches apart;
+    // rounding a maximum that does not would admit a box whose last cell decodes
+    // past it. Real bounds land within 1e-9 of a lattice point, like the frames.
+    const extent = [0, 1, 2].map((a) => {
+      const cells = (bounds[1][a] - bounds[0][a]) / grid.pitch_m;
+      if (Math.abs(cells - Math.round(cells)) > LATTICE_TOLERANCE) throw new Error('packed flame sequence is inconsistent: its bounds are not on its lattice');
+      return Math.round(cells);
+    });
     for (const frame of frames) {
       const bad = frameProblem(frame, extent);
       if (bad) throw new Error(`packed flame sequence is inconsistent: the frame at ${frame.timestamp_s} s ${bad}`);

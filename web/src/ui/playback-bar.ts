@@ -44,9 +44,9 @@ export class PlaybackBar {
   ) {
     container.append(this.root);
     // The bar sits over the canvas; a click on it must not select, place or measure.
-    // Keys are not stopped: the editor's shortcuts (Ctrl+S, Undo, the transport
-    // keys themselves) are handled on the window and already leave form controls
-    // alone, and stopping them here only handed Ctrl+S to the browser.
+    // Keys are not stopped: the editor's shortcuts are handled on the window, which
+    // takes Ctrl+S and the like from these controls and leaves them the rest, and
+    // stopping them here only handed Ctrl+S to the browser.
     for (const event of ['pointerdown', 'click', 'dblclick', 'wheel']) {
       this.root.addEventListener(event, (e) => e.stopPropagation());
     }
@@ -93,6 +93,16 @@ export class PlaybackBar {
       oninput: (e: Event) => {
         const index = Number((e.target as HTMLInputElement).value);
         if (marks[index] !== undefined) this.playhead.seek(marks[index]);
+      },
+      // The scrubber keeps the focus after a drag, and the window's shortcuts leave
+      // a form control's keys to it. Space, ',' and '.' are the transport's here: a
+      // slider has no use for them, and whoever has just scrubbed expects Space to
+      // play. Home, End and the arrows are the slider's own, and seek through `input`.
+      onkeydown: (e: KeyboardEvent) => {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        if (e.key === ' ') { e.preventDefault(); this.playhead.toggle(); }
+        else if (e.key === ',') this.playhead.step(-1);
+        else if (e.key === '.') this.playhead.step(1);
       },
     }) as HTMLInputElement;
     this.slider.disabled = !ready;

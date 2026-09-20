@@ -357,7 +357,15 @@ class FlameSequence:
         problem = sequence_problem(sequence.manifest('packed'))
         if problem:
             raise ValueError('packed flame sequence is inconsistent: {}'.format(problem))
-        extent = [int(round((bounds[1][a] - bounds[0][a]) / pitch)) for a in range(3)]
+        # The bounds are voxel centres, so they sit a whole number of pitches apart;
+        # rounding a maximum that does not would admit a box whose last cell decodes
+        # past it. Real bounds land within 1e-9 of a lattice point, like the frames.
+        extent = []
+        for a in range(3):
+            cells = (bounds[1][a] - bounds[0][a]) / pitch
+            if abs(cells - round(cells)) > LATTICE_TOLERANCE:
+                raise ValueError('packed flame sequence is inconsistent: its bounds are not on its lattice')
+            extent.append(int(round(cells)))
         for frame in frames:
             bad = frame_problem(frame, extent)
             if bad:
