@@ -22,3 +22,4 @@
 *.mpeg binary
 *.mts binary
 *.m2ts binary
+*.npz binary

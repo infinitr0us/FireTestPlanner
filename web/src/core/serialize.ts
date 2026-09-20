@@ -21,7 +21,7 @@ const COORD = ['convention', 'origin', 'northAzimuth_rad'];
 const ENV = ['floorSize_m', 'ceilingHeight_m', 'ambientTemperature_C', 'notes'];
 
 const TRANSFORM = ['position_m', 'rotation_quat', 'aimTarget_m'];
-const DISPLAY = ['color', 'visible', 'locked'];
+const DISPLAY = ['color', 'visible', 'locked', 'opacity', 'colorMode'];
 const CAMERA_SPEC = [
   'modality', 'presetId', 'resolution_px', 'sensor_mm', 'focalLength_mm', 'zoomFactor',
   'principalPoint_px', 'distortion', 'intrinsicsSource', 'spectralBand_um', 'framerate_hz',
@@ -34,6 +34,10 @@ const DUCT = ['diameter_m', 'length_m'];
 const OPENING = ['id', 'offset_m', 'width_m', 'height_m', 'sillHeight_m'];
 const GAUGE = ['kind', 'range_kw_m2', 'viewAngle_deg', 'waterCooled', 'serial'];
 const THERMOCOUPLE = ['tcType', 'beadDiameter_mm', 'sheathed', 'maxTemperature_C'];
+const LINK = ['id', 'kind', 'path', 'label', 'timeOffset_s', 'plot', 'sequence'];
+const PLOT = ['importedAt', 'samples'];
+const SEQUENCE = ['importedAt', 'grid', 'bounds_m', 'frames'];
+const GRID = ['voxelSize_m', 'pitch_m', 'resolution'];
 
 const OBJECT_ORDER: Record<string, string[]> = {
   camera: ['id', 'type', 'name', 'transform', 'camera', 'mount', 'recording', 'linkedFiles', 'display', 'notes'],
@@ -44,6 +48,7 @@ const OBJECT_ORDER: Record<string, string[]> = {
   heatFluxSensor: ['id', 'type', 'name', 'transform', 'gauge', 'mount', 'linkedFiles', 'display', 'notes'],
   thermocouple: ['id', 'type', 'name', 'transform', 'beadOffsets_m', 'thermocouple', 'mount', 'linkedFiles', 'display', 'notes'],
   obstruction: ['id', 'type', 'name', 'transform', 'size_m', 'display', 'notes'],
+  reconstructedFlame: ['id', 'type', 'name', 'transform', 'burnerId', 'representation', 'linkedFiles', 'display', 'notes'],
 };
 
 type Json = unknown;
@@ -169,8 +174,16 @@ function canonObject(raw: Obj): Obj {
   if (Array.isArray(o.linkedFiles)) {
     o.linkedFiles = o.linkedFiles.map((raw) => {
       if (!isPlainObject(raw)) return raw;
-      const link = order(raw, ['id', 'kind', 'path', 'label', 'plot']);
-      if (isPlainObject(link.plot)) link.plot = order(link.plot, ['importedAt', 'samples']);
+      const link = order(raw, LINK);
+      // Reserved, and 0 is its absence: a link that carries no offset must not be
+      // told apart from one that carries an offset of nothing.
+      if (link.timeOffset_s === null || link.timeOffset_s === 0) delete link.timeOffset_s;
+      if (isPlainObject(link.plot)) link.plot = order(link.plot, PLOT);
+      if (isPlainObject(link.sequence)) {
+        const sequence = order(link.sequence, SEQUENCE);
+        if (isPlainObject(sequence.grid)) sequence.grid = order(sequence.grid, GRID);
+        link.sequence = sequence;
+      }
       return link;
     });
   }

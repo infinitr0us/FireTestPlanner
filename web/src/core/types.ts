@@ -16,9 +16,9 @@ export const FORMAT = 'fire-test-plan';
  * newest this build can write -- see `requiredFormatVersion`. So `FORMAT_VERSION`
  * is the floor a new plan starts at, and `FORMAT_VERSION_LATEST` is the ceiling.
  */
-export const FORMAT_VERSIONS = ['1.0.0', '1.1.0', '1.2.0', '1.3.0'] as const;
+export const FORMAT_VERSIONS = ['1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0'] as const;
 export const FORMAT_VERSION = '1.0.0';
-export const FORMAT_VERSION_LATEST = '1.3.0';
+export const FORMAT_VERSION_LATEST = '1.4.0';
 
 export type Vec2 = [number, number];
 export type Vec3 = [number, number, number];
@@ -42,10 +42,16 @@ export interface Transform {
   aimTarget_m?: Vec3 | null;
 }
 
+export type FlameColorMode = 'height' | 'solid';
+
 export interface Display {
   color?: string | null;
   visible?: boolean;
   locked?: boolean;
+  /** Format 1.4. How opaque a reconstructed flame is drawn; absent means 1. Advisory. */
+  opacity?: number;
+  /** Format 1.4. The pipeline's height ramp on a fixed scale, or one flame colour. Advisory. */
+  colorMode?: FlameColorMode;
 }
 
 export interface BaseObject {
@@ -66,13 +72,47 @@ export interface ReconstructionPlot {
   samples: [number, number, number][];
 }
 
+/**
+ * What a folder of reconstructed voxel frames held when it was linked. Format 1.4.
+ *
+ * A manifest, not the voxels: enough to describe the run without the folder, to
+ * notice when the folder no longer matches, and to run the placement checks with
+ * the data absent. Recorded data, so it keeps its supplied precision like `plot`.
+ */
+export interface VoxelSequenceManifest {
+  importedAt: string;
+  grid: {
+    /** The pipeline's own `voxel_size`: volume edge / resolution. */
+    voxelSize_m: number;
+    /**
+     * Distance between neighbouring voxel centres, inferred from the coordinates.
+     * NOT voxelSize_m: the pipeline's grid is an endpoint-inclusive linspace, so
+     * the pitch is volume edge / (resolution - 1), half a percent larger.
+     */
+    pitch_m: number;
+    /** Voxels per axis of the full grid, inferred from pitch and voxel size; null
+     *  when the two are equal and the grid was built some other way. */
+    resolution: number | null;
+  };
+  /** Over every voxel centre in the sequence, in the sequence's own frame. */
+  bounds_m: [Vec3, Vec3];
+  /** One [timestamp_s, occupiedVoxels] per frame, strictly increasing in time. */
+  frames: [number, number][];
+}
+
+export type LinkedFileKind = 'spreadsheet' | 'video' | 'voxelSequence';
+
 export interface LinkedFile {
   id: string;
-  kind: 'spreadsheet' | 'video';
+  kind: LinkedFileKind;
   path: string;
   label?: string;
+  /** Format 1.4, RESERVED. Seconds from this file's timebase to the test clock. Omitted at 0. */
+  timeOffset_s?: number;
   /** Only burner spreadsheets can carry this portable CSV snapshot. */
   plot?: ReconstructionPlot;
+  /** Only a reconstructed flame's voxelSequence link carries this. */
+  sequence?: VoxelSequenceManifest;
 }
 
 export interface CameraSpec {
@@ -219,6 +259,24 @@ export interface ObstructionObject extends BaseObject {
   size_m: Vec3;
 }
 
+/**
+ * A measured flame: the visual hull reconstructed from the test's cameras, one
+ * voxel frame per timestep, played back in the layout. Format 1.4.
+ *
+ * World-anchored, not a burner attachment: the voxels are in the reconstruction
+ * rig's frame, and this object's transform maps that frame onto the plan's. It is
+ * the identity when the rig was set up from this plan, and the correction when it
+ * was not. The data itself stays in its folder; `linkedFiles[0].sequence` is the
+ * manifest. Recorded data: it changes no prediction, check or verdict.
+ */
+export interface ReconstructedFlameObject extends BaseObject {
+  type: 'reconstructedFlame';
+  /** The burner this flame was reconstructed from. Null or absent: the primary. */
+  burnerId?: string | null;
+  /** RESERVED. Voxels are the only representation in 1.4. */
+  representation?: 'voxels';
+}
+
 /** Any type this build does not know. Held so it survives a load/save cycle. */
 export interface UnknownObject extends BaseObject {
   [key: string]: unknown;
@@ -233,6 +291,7 @@ export type PlanObject =
   | HeatFluxSensorObject
   | ThermocoupleObject
   | ObstructionObject
+  | ReconstructedFlameObject
   | UnknownObject;
 
 export interface PlanMeta {
@@ -321,6 +380,8 @@ export const isThermocouple = (o: PlanObject): o is ThermocoupleObject =>
   o.type === 'thermocouple';
 export const isObstruction = (o: PlanObject): o is ObstructionObject =>
   o.type === 'obstruction';
+export const isReconstructedFlame = (o: PlanObject): o is ReconstructedFlameObject =>
+  o.type === 'reconstructedFlame';
 
 /** Objects whose orientation means "what it is pointed at", so they get an aim
  *  target, an aim-at-fire button, and the aim-mismatch check. */
@@ -342,7 +403,7 @@ export const isMounted = (
 
 export const KNOWN_TYPES = [
   'camera', 'burner', 'hood', 'wall', 'ceiling', 'heatFluxSensor', 'thermocouple',
-  'obstruction',
+  'obstruction', 'reconstructedFlame',
 ] as const;
 export const isKnownType = (t: string): boolean =>
   (KNOWN_TYPES as readonly string[]).includes(t);
@@ -354,6 +415,9 @@ const TYPES_1_1: readonly string[] = ['heatFluxSensor', 'thermocouple'];
  *  declaring 1.0.0. Provenance is not a feature a reader must understand to read
  *  the file correctly. */
 const TYPES_1_2: readonly string[] = ['obstruction'];
+/** And after 1.3. A reconstructed flame carries its data as a `linkedFiles` entry,
+ *  which alone would say 1.3; the object type is what a 1.3 reader cannot know. */
+const TYPES_1_4: readonly string[] = ['reconstructedFlame'];
 
 const compareVersions = (a: string, b: string): number => {
   const pa = a.split('.').map(Number);
@@ -377,6 +441,7 @@ export const maxVersion = (a: string, b: string): string =>
  * Mirror of `required_version` in python/fireplan/serialize.py.
  */
 export function requiredFormatVersion(doc: PlanDocument): string {
+  if (doc.objects?.some((o) => TYPES_1_4.includes(o.type))) return '1.4.0';
   if (doc.objects?.some((o) => o.linkedFiles !== undefined)) return '1.3.0';
   let needed = '1.0.0';
   for (const o of doc.objects ?? []) {

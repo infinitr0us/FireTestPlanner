@@ -7,7 +7,7 @@
  */
 
 import { readNamelist } from '../core/namelist';
-import type { Issue } from '../core/types';
+import type { Issue, LinkedFileKind } from '../core/types';
 import { mapLinkedPaths } from './link-paths';
 import { LINK_TYPES, fileName } from '../core/linked-files';
 
@@ -35,8 +35,8 @@ export interface SavedPlan {
 }
 
 export interface ShellBridge {
-  pickLinkedFiles(kind: 'spreadsheet' | 'video'): Promise<PickedLinkedFile[]>;
-  linkedFileAction(path: string, kind: 'spreadsheet' | 'video', action: 'open' | 'folder' | 'read'): Promise<{ text?: string }>;
+  pickLinkedFiles(kind: LinkedFileKind): Promise<PickedLinkedFile[]>;
+  linkedFileAction(path: string, kind: LinkedFileKind, action: 'open' | 'folder' | 'read'): Promise<{ text?: string }>;
   openPlan(): Promise<OpenedPlan | null>;
   /** Pick an FDS input and read it. The conversion happens in the shared core, so
    *  this is only the native dialog a browser tab cannot open. */

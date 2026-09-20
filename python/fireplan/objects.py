@@ -837,6 +837,64 @@ class Obstruction(PlanObject):
         ]
 
 
+class ReconstructedFlame(PlanObject):
+    """A measured flame: the visual hull reconstructed from the test's cameras, one
+    voxel frame per timestep. Format 1.4.
+
+    World-anchored, not a burner attachment: the voxels are in the reconstruction
+    rig's frame, and this object's transform maps that frame onto the plan's. It is
+    the identity when the rig was set up from this plan. The data itself stays in its
+    folder; the one `linkedFiles` entry carries the manifest. Recorded data: it
+    changes no prediction, check or verdict. Mirror of the `reconstructedFlame`
+    helpers in web/src/core/plan.ts.
+    """
+
+    @property
+    def burner_id(self) -> Optional[str]:
+        """The burner this flame was reconstructed from; None means the primary."""
+        return self.raw.get("burnerId") or None
+
+    @property
+    def representation(self) -> str:
+        return self.raw.get("representation") or "voxels"
+
+    @property
+    def sequence_link(self) -> Optional[Dict[str, Any]]:
+        """The one link a flame carries: the folder of voxel frames, with its manifest."""
+        for link in self.raw.get("linkedFiles") or []:
+            if isinstance(link, dict) and link.get("kind") == "voxelSequence":
+                return link
+        return None
+
+    @property
+    def manifest(self) -> Optional[Dict[str, Any]]:
+        link = self.sequence_link
+        return link.get("sequence") if link else None
+
+    @property
+    def opacity(self) -> float:
+        value = (self.raw.get("display") or {}).get("opacity")
+        return 1.0 if value is None else float(value)
+
+    @property
+    def color_mode(self) -> str:
+        return (self.raw.get("display") or {}).get("colorMode") or "height"
+
+    def bounds_corners(self) -> np.ndarray:
+        """The eight corners of the manifest's box in world space, `(8, 3)`, or
+        `(0, 3)` without a manifest.
+
+        Corners rather than the two extremes because the transform may rotate the
+        rig frame onto the plan's, and a rotated box is bounded by its corners.
+        """
+        manifest = self.manifest
+        if not manifest:
+            return np.zeros((0, 3), dtype=float)
+        lo, hi = manifest["bounds_m"]
+        corners = [self.to_world([x, y, z]) for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])]
+        return np.array(corners, dtype=float)
+
+
 class UnknownObject(PlanObject):
     """An object type this version does not recognise.
 
@@ -853,6 +911,7 @@ TYPE_MAP = {
     "heatFluxSensor": HeatFluxSensor,
     "thermocouple": Thermocouple,
     "obstruction": Obstruction,
+    "reconstructedFlame": ReconstructedFlame,
 }
 
 

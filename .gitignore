@@ -27,3 +27,7 @@ selftest*.log
 
 # Code review reports: working notes about the code, not part of it
 review/
+
+# Reconstructed flame fixture: the PLY point clouds are a convenience output of the
+# pipeline (ten times the NPZ, same points); the NPZ files are the format the tool reads.
+fixtures/flame/voxels/*.ply

@@ -32,7 +32,7 @@ _COORD = ["convention", "origin", "northAzimuth_rad"]
 _ENV = ["floorSize_m", "ceilingHeight_m", "ambientTemperature_C", "notes"]
 
 _TRANSFORM = ["position_m", "rotation_quat", "aimTarget_m"]
-_DISPLAY = ["color", "visible", "locked"]
+_DISPLAY = ["color", "visible", "locked", "opacity", "colorMode"]
 _CAMERA_SPEC = [
     "modality", "presetId", "resolution_px", "sensor_mm", "focalLength_mm", "zoomFactor",
     "principalPoint_px", "distortion", "intrinsicsSource", "spectralBand_um", "framerate_hz",
@@ -45,6 +45,10 @@ _DUCT = ["diameter_m", "length_m"]
 _OPENING = ["id", "offset_m", "width_m", "height_m", "sillHeight_m"]
 _GAUGE = ["kind", "range_kw_m2", "viewAngle_deg", "waterCooled", "serial"]
 _THERMOCOUPLE = ["tcType", "beadDiameter_mm", "sheathed", "maxTemperature_C"]
+_LINK = ["id", "kind", "path", "label", "timeOffset_s", "plot", "sequence"]
+_PLOT = ["importedAt", "samples"]
+_SEQUENCE = ["importedAt", "grid", "bounds_m", "frames"]
+_GRID = ["voxelSize_m", "pitch_m", "resolution"]
 
 _OBJECT_ORDER = {
     "camera": ["id", "type", "name", "transform", "camera", "mount", "recording", "linkedFiles", "display", "notes"],
@@ -55,6 +59,7 @@ _OBJECT_ORDER = {
     "heatFluxSensor": ["id", "type", "name", "transform", "gauge", "mount", "linkedFiles", "display", "notes"],
     "thermocouple": ["id", "type", "name", "transform", "beadOffsets_m", "thermocouple", "mount", "linkedFiles", "display", "notes"],
     "obstruction": ["id", "type", "name", "transform", "size_m", "display", "notes"],
+    "reconstructedFlame": ["id", "type", "name", "transform", "burnerId", "representation", "linkedFiles", "display", "notes"],
 }
 
 #: Object types introduced after format 1.0, and therefore version-bumping.
@@ -66,10 +71,14 @@ _TYPES_1_1 = ("heatFluxSensor", "thermocouple")
 #: reader has to understand in order to read the file correctly.
 _TYPES_1_2 = ("obstruction",)
 
+#: And after 1.3. A reconstructed flame carries its data as a `linkedFiles` entry,
+#: which alone would say 1.3; the object type is what a 1.3 reader cannot know.
+_TYPES_1_4 = ("reconstructedFlame",)
+
 #: Baseline, and the highest this build writes. Mirror of FORMAT_VERSIONS in
 #: web/src/core/types.ts.
 _VERSION_MIN = "1.0.0"
-_VERSION_LATEST = "1.3.0"
+_VERSION_LATEST = "1.4.0"
 
 
 def _version_tuple(version: str) -> Tuple[int, ...]:
@@ -96,7 +105,10 @@ def required_version(data: Dict[str, Any]) -> str:
     factor, a radiative fraction or a sensor, it says 1.1.0 and means it. Mirror of
     `requiredFormatVersion` in web/src/core/types.ts.
     """
-    if any(isinstance(o, dict) and "linkedFiles" in o for o in data.get("objects", []) or []):
+    objects = [o for o in data.get("objects", []) or [] if isinstance(o, dict)]
+    if any(o.get("type") in _TYPES_1_4 for o in objects):
+        return "1.4.0"
+    if any("linkedFiles" in o for o in objects):
         return "1.3.0"
     needed = _VERSION_MIN
     for obj in data.get("objects", []) or []:
@@ -184,9 +196,20 @@ def _drop_null_1_1(block: Any, key: str) -> Any:
 def _canon_link(value: Any) -> Any:
     if not isinstance(value, dict):
         return value
-    link = _order(value, ["id", "kind", "path", "label", "plot"])
+    link = _order(value, _LINK)
+    # Reserved, and 0 is its absence: a link that carries no offset must not be told
+    # apart from one that carries an offset of nothing. `is not True` keeps a bool
+    # out of the numeric comparison, as `_round_floats` does.
+    offset = link.get("timeOffset_s", False)
+    if offset is None or (offset is not True and offset is not False and offset == 0):
+        link.pop("timeOffset_s")
     if isinstance(link.get("plot"), dict):
-        link["plot"] = _order(link["plot"], ["importedAt", "samples"])
+        link["plot"] = _order(link["plot"], _PLOT)
+    if isinstance(link.get("sequence"), dict):
+        sequence = _order(link["sequence"], _SEQUENCE)
+        if isinstance(sequence.get("grid"), dict):
+            sequence["grid"] = _order(sequence["grid"], _GRID)
+        link["sequence"] = sequence
     return link
 
 

@@ -36,6 +36,7 @@ import {
   isHeatFluxSensor,
   isHood,
   isObstruction,
+  isReconstructedFlame,
   isThermocouple,
   isWall,
   maxVersion,
@@ -46,14 +47,17 @@ import {
   type HeatFluxSensorObject,
   type HoodObject,
   type Issue,
+  type LinkedFile,
   type Modality,
   type ObstructionObject,
   type PlanDocument,
   type PlanObject,
   type Quat,
+  type ReconstructedFlameObject,
   type TcType,
   type ThermocoupleObject,
   type Vec3,
+  type VoxelSequenceManifest,
   type WallObject,
 } from './types';
 
@@ -61,7 +65,7 @@ import {
 // having to know that narrowing helpers live next door in types.ts.
 export {
   isAimable, isBurner, isCamera, isCeiling, isHeatFluxSensor, isHood, isObstruction,
-  isThermocouple, isWall,
+  isReconstructedFlame, isThermocouple, isWall,
 } from './types';
 
 export const MODALITY_COLORS: Record<Modality, string> = {
@@ -127,6 +131,8 @@ export const thermocouples = (d: PlanDocument): ThermocoupleObject[] =>
 
 export const obstructions = (d: PlanDocument): ObstructionObject[] =>
   d.objects.filter(isObstruction);
+export const reconstructedFlames = (d: PlanDocument): ReconstructedFlameObject[] =>
+  d.objects.filter(isReconstructedFlame);
 
 export const findObject = (d: PlanDocument, id: string): PlanObject | undefined =>
   d.objects.find((o) => o.id === id);
@@ -160,6 +166,41 @@ export function fireBurners(d: PlanDocument): BurnerObject[] {
 export function secondaryBurners(d: PlanDocument): BurnerObject[] {
   const primary = primaryBurner(d);
   return fireBurners(d).filter((b) => b !== primary);
+}
+
+// -- reconstructed flames (1.4) ------------------------------------------
+
+/** The one link a flame carries: the folder of voxel frames, with its manifest. */
+export const flameSequenceLink = (f: ReconstructedFlameObject): LinkedFile | undefined =>
+  f.linkedFiles?.find((l) => l.kind === 'voxelSequence');
+
+export const flameManifest = (f: ReconstructedFlameObject): VoxelSequenceManifest | undefined =>
+  flameSequenceLink(f)?.sequence;
+
+/** The burner a flame was reconstructed from: the one it names, else the primary. */
+export function flameBurner(d: PlanDocument, f: ReconstructedFlameObject): BurnerObject | undefined {
+  if (f.burnerId) {
+    const named = findObject(d, f.burnerId);
+    if (named && isBurner(named)) return named;
+  }
+  return primaryBurner(d);
+}
+
+/**
+ * The eight corners of the manifest's bounding box, in world space.
+ *
+ * Corners rather than the two extremes because the object's transform may rotate
+ * the rig frame onto the plan's, and a rotated box is bounded by its corners.
+ */
+export function flameBoundsCorners(f: ReconstructedFlameObject): Vec3[] {
+  const bounds = flameManifest(f)?.bounds_m;
+  if (!bounds) return [];
+  const [lo, hi] = bounds;
+  const out: Vec3[] = [];
+  for (const x of [lo[0], hi[0]]) for (const y of [lo[1], hi[1]]) for (const z of [lo[2], hi[2]]) {
+    out.push(toWorld(f, [x, y, z]));
+  }
+  return out;
 }
 
 export function nextId(d: PlanDocument, prefix: string): string {
@@ -1264,7 +1305,80 @@ export function checkPlan(d: PlanDocument): Issue[] {
     }
   }
 
-  return out.concat(hoodChecks(d), ceilingChecks(d), instrumentChecks(d));
+  return out.concat(hoodChecks(d), ceilingChecks(d), instrumentChecks(d), flameChecks(d));
+}
+
+/**
+ * Placement checks for reconstructed flames, from the manifest alone.
+ *
+ * The voxels are in the reconstruction rig's frame and this format's frame is the
+ * burner's. When the rig was set up from this plan the two coincide; when they do
+ * not, the hull lands somewhere a flame cannot be -- under the floor, or metres
+ * from the pan -- and the object's transform is the correction. Both checks read the
+ * transformed bounds, so a corrected object passes. The third notices a CSV linked
+ * to the burner that was not produced by the same reconstruction run.
+ */
+export function flameChecks(d: PlanDocument): Issue[] {
+  const out: Issue[] = [];
+  for (const f of reconstructedFlames(d)) {
+    const manifest = flameManifest(f);
+    if (!manifest) continue;
+    const corners = flameBoundsCorners(f);
+    if (f.burnerId && !(findObject(d, f.burnerId) && isBurner(findObject(d, f.burnerId)!))) {
+      out.push(issue('warning', 'flame-burner-unknown',
+        `burnerId "${f.burnerId}" names no burner in this plan; the primary burner is used instead.`, f.id));
+    }
+    const burner = flameBurner(d, f);
+    const floor = burner ? positionOf(burner)[2] : 0;
+    const lowest = Math.min(...corners.map((c) => c[2]));
+    if (lowest < floor - manifest.grid.pitch_m) {
+      out.push(issue('warning', 'flame-below-floor',
+        `The reconstructed hull reaches ${(floor - lowest).toFixed(2)} m below the floor. ` +
+        'The reconstruction frame is probably offset from the plan frame; correct the object\'s position.', f.id));
+    }
+    if (burner) {
+      const bp = positionOf(burner);
+      const cx = corners.reduce((a, c) => a + c[0], 0) / corners.length;
+      const cy = corners.reduce((a, c) => a + c[1], 0) / corners.length;
+      const offset = Math.hypot(cx - bp[0], cy - bp[1]);
+      const allowed = Math.max(burnerDiameterM(burner), 0.25);
+      if (offset > allowed) {
+        out.push(issue('warning', 'flame-off-burner',
+          `The reconstructed hull is centred ${offset.toFixed(2)} m from "${displayName(burner)}". ` +
+          'The reconstruction frame is probably not the plan frame; correct the object\'s transform.', f.id));
+      }
+      for (const link of burner.linkedFiles ?? []) {
+        if (!link.plot) continue;
+        const mismatch = plotSequenceMismatch(link.plot.samples, manifest);
+        if (mismatch) {
+          out.push(issue('info', 'flame-csv-mismatch',
+            `"${link.label || link.path}" on "${displayName(burner)}" ${mismatch}, so it is not this reconstruction's volumes.csv.`, f.id));
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Why a burner's CSV snapshot and a flame's manifest are not from one run, or null.
+ *
+ * Timestamps must be the same set; then each row's volume must be the frame's voxel
+ * count times the voxel volume, to within a voxel -- the CSV rounds to a microlitre
+ * and a 10 mm voxel is one, so the tolerance is a voxel rather than exactness.
+ */
+export function plotSequenceMismatch(
+  samples: readonly [number, number, number][], manifest: VoxelSequenceManifest,
+): string | null {
+  const frames = manifest.frames;
+  if (samples.length !== frames.length) return `has ${samples.length} samples against ${frames.length} frames`;
+  const voxelVolume = manifest.grid.voxelSize_m ** 3;
+  for (let i = 0; i < frames.length; i += 1) {
+    if (samples[i][0] !== frames[i][0]) return `is sampled at ${samples[i][0]} s where the sequence has a frame at ${frames[i][0]} s`;
+    const count = samples[i][1] / voxelVolume;
+    if (Math.abs(count - frames[i][1]) > 1) return `records ${samples[i][1]} m³ at ${frames[i][0]} s where the frame holds ${frames[i][1]} voxels`;
+  }
+  return null;
 }
 
 // -- extents --------------------------------------------------------------
@@ -1336,6 +1450,9 @@ export function boundsPoints(d: PlanDocument, opts: { ducts?: boolean } = {}): V
       pts.push([p[0], p[1], 0]);
     } else if (isCamera(obj) || isHeatFluxSensor(obj)) {
       pts.push([p[0], p[1], 0]); // the tripod foot
+    } else if (isReconstructedFlame(obj)) {
+      // The manifest's box, so Fit and the drawing frame the hull without a frame loaded.
+      pts.push(...flameBoundsCorners(obj));
     }
   }
   return pts;

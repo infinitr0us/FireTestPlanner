@@ -21,6 +21,7 @@ from .objects import (
     HeatFluxSensor,
     Hood,
     Obstruction,
+    ReconstructedFlame,
     PlanObject,
     Thermocouple,
     Wall,
@@ -35,7 +36,7 @@ FORMAT = "fire-test-plan"
 VERSION = "1.0.0"
 
 #: Highest format version this build can write.
-VERSION_LATEST = "1.3.0"
+VERSION_LATEST = "1.4.0"
 
 #: One schema per format version, so a 1.0 file is judged by the 1.0 rules. A 1.0
 #: plan holding a camera with a zoomFactor really is invalid, and validating it
@@ -45,6 +46,7 @@ _SCHEMA_FILES = {
     "1.1.0": "fire-test-plan-1.1.0.schema.json",
     "1.2.0": "fire-test-plan-1.2.0.schema.json",
     "1.3.0": "fire-test-plan-1.3.0.schema.json",
+    "1.4.0": "fire-test-plan-1.4.0.schema.json",
 }
 
 #: Where the schemas live INSIDE the package: `fireplan/schemas/`, shipped as
@@ -132,6 +134,34 @@ def _write_atomic(path: str, text: str) -> None:
         except OSError:
             pass
         raise
+
+
+def plot_sequence_mismatch(samples, manifest) -> Optional[str]:
+    """Why a burner's CSV snapshot and a flame's manifest are not from one run, or None.
+
+    Timestamps must be the same set; then each row's volume must be the frame's
+    voxel count times the voxel volume, to within a voxel -- the CSV rounds to a
+    microlitre and a 10 mm voxel is one, so the tolerance is a voxel rather than
+    exactness. Mirror of `plotSequenceMismatch` in web/src/core/plan.ts.
+    """
+    frames = manifest["frames"]
+    if len(samples) != len(frames):
+        return "has {} samples against {} frames".format(len(samples), len(frames))
+    voxel_volume = float(manifest["grid"]["voxelSize_m"]) ** 3
+    for sample, frame in zip(samples, frames):
+        if sample[0] != frame[0]:
+            return "is sampled at {} s where the sequence has a frame at {} s".format(
+                _plain(sample[0]), _plain(frame[0]))
+        if abs(sample[1] / voxel_volume - frame[1]) > 1:
+            return "records {} m\u00b3 at {} s where the frame holds {} voxels".format(
+                _plain(sample[1]), _plain(frame[0]), frame[1])
+    return None
+
+
+def _plain(value) -> str:
+    """A number as a message spells it: `5`, not `5.0`; the same as JavaScript's `${x}`."""
+    number = float(value)
+    return str(int(number)) if number.is_integer() and abs(number) < 1e15 else repr(number)
 
 
 class Plan:
@@ -332,6 +362,66 @@ class Plan:
     @property
     def obstructions(self) -> List[Obstruction]:
         return list(self._of_type("obstruction"))
+
+    @property
+    def reconstructed_flames(self) -> List[ReconstructedFlame]:
+        return list(self._of_type("reconstructedFlame"))
+
+    def flame_sequence(self, flame: ReconstructedFlame):
+        """Load the frames a reconstructed flame links, resolved like any linked
+        file. Reads the folder; never launches anything."""
+        from .flame import FlameSequence
+        link = flame.sequence_link
+        if link is None:
+            raise PlanError("reconstructed flame {!r} links no voxel sequence".format(flame.id))
+        return FlameSequence.load(self.linked_file_path(link))
+
+    def add_reconstructed_flame(self, path: str, folder: Optional[str] = None, *,
+                                object_id: Optional[str] = None, name: Optional[str] = None,
+                                burner_id: Optional[str] = None, label: Optional[str] = None,
+                                imported_at: Optional[str] = None) -> ReconstructedFlame:
+        """Scan a folder of frames and add the flame object that links it.
+
+        `path` is what the plan stores -- relative to the plan file when possible;
+        `folder` is where to read the frames from now, defaulting to `path` resolved
+        against this plan's location. The object is created locked, at the identity,
+        the way the editor creates one: the frames are in the rig's frame, and the
+        rig was set up from this plan.
+        """
+        from .flame import FlameSequence
+        sequence = FlameSequence.load(folder if folder is not None else self.linked_file_path({"path": path}))
+        raw = {
+            "id": object_id or self._next_id("flame"),
+            "type": "reconstructedFlame",
+            "name": name or "Reconstructed flame",
+            "transform": {"position_m": [0.0, 0.0, 0.0], "rotation_quat": [0.0, 0.0, 0.0, 1.0]},
+            "burnerId": burner_id,
+            "representation": "voxels",
+            "linkedFiles": [{"id": "voxels", "kind": "voxelSequence", "path": path,
+                             **({"label": label} if label else {}),
+                             "sequence": sequence.manifest(imported_at)}],
+            "display": {"visible": True, "locked": True},
+        }
+        return self.add(raw)
+
+    def _next_id(self, prefix: str) -> str:
+        taken = {o.get("id") for o in self.data.get("objects", [])}
+        n = 1
+        while "{}-{}".format(prefix, n) in taken:
+            n += 1
+        return "{}-{}".format(prefix, n)
+
+    def flame_burner(self, flame: ReconstructedFlame) -> Optional[Burner]:
+        """The burner a flame was reconstructed from: the one it names, else the
+        primary. None only when the plan has no burner at all."""
+        if flame.burner_id:
+            for b in self.burners:
+                if b.id == flame.burner_id:
+                    return b
+        try:
+            return self.burner
+        except PlanError:
+            return None
 
     @property
     def burner(self) -> Burner:
@@ -537,6 +627,61 @@ class Plan:
         issues.extend(self.hood_checks())
         issues.extend(self.ceiling_checks())
         issues.extend(self.instrument_checks())
+        issues.extend(self.flame_checks())
+        return issues
+
+    def flame_checks(self) -> List[Issue]:
+        """Placement checks for reconstructed flames, from the manifest alone.
+
+        The voxels are in the reconstruction rig's frame and this format's frame is
+        the burner's. When the rig was set up from this plan the two coincide; when
+        they do not, the hull lands somewhere a flame cannot be -- under the floor,
+        or metres from the pan -- and the object's transform is the correction. Both
+        checks read the transformed bounds, so a corrected object passes. The third
+        notices a CSV linked to the burner that was not produced by the same
+        reconstruction run. Mirror of `flameChecks` in web/src/core/plan.ts.
+        """
+        issues: List[Issue] = []
+        for flame in self.reconstructed_flames:
+            manifest = flame.manifest
+            if not manifest:
+                continue
+            corners = flame.bounds_corners()
+            if flame.burner_id and not any(b.id == flame.burner_id for b in self.burners):
+                issues.append(Issue(
+                    "warning", "flame-burner-unknown",
+                    "burnerId {!r} names no burner in this plan; the primary burner is used instead"
+                    .format(flame.burner_id), flame.id))
+            burner = self.flame_burner(flame)
+            floor = float(burner.position[2]) if burner else 0.0
+            lowest = float(corners[:, 2].min())
+            if lowest < floor - float(manifest["grid"]["pitch_m"]):
+                issues.append(Issue(
+                    "warning", "flame-below-floor",
+                    "the reconstructed hull reaches {:.2f} m below the floor. The reconstruction "
+                    "frame is probably offset from the plan frame; correct the object's position"
+                    .format(floor - lowest), flame.id))
+            if burner is None:
+                continue
+            centre = corners[:, :2].mean(axis=0)
+            offset = float(np.linalg.norm(centre - burner.position[:2]))
+            allowed = max(burner.diameter_m, 0.25)
+            if offset > allowed:
+                issues.append(Issue(
+                    "warning", "flame-off-burner",
+                    "the reconstructed hull is centred {:.2f} m from {!r}. The reconstruction "
+                    "frame is probably not the plan frame; correct the object's transform"
+                    .format(offset, burner.name), flame.id))
+            for link in burner.linked_files:
+                plot = link.get("plot")
+                if not plot:
+                    continue
+                mismatch = plot_sequence_mismatch(plot["samples"], manifest)
+                if mismatch:
+                    issues.append(Issue(
+                        "info", "flame-csv-mismatch",
+                        "{!r} on {!r} {}, so it is not this reconstruction's volumes.csv"
+                        .format(link.get("label") or link["path"], burner.name, mismatch), flame.id))
         return issues
 
     # -- fire geometry ---------------------------------------------------

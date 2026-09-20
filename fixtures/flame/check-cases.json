@@ -1,0 +1,73 @@
+[
+  {
+    "name": "as-built",
+    "note": "The fixture as written: the rig frame is the plan frame, the CSV is the same run.",
+    "expect": []
+  },
+  {
+    "name": "sunk-below-floor",
+    "flame": { "transform": { "position_m": [0, 0, -0.5], "rotation_quat": [0, 0, 0, 1] } },
+    "expect": ["flame-below-floor"]
+  },
+  {
+    "name": "one-pitch-below-floor-tolerated",
+    "note": "The lowest voxel centre is half a voxel above z=0; a pitch of slack covers a hull that touches the floor.",
+    "flame": { "transform": { "position_m": [0, 0, -0.02], "rotation_quat": [0, 0, 0, 1] } },
+    "expect": []
+  },
+  {
+    "name": "displaced-from-burner",
+    "flame": { "transform": { "position_m": [1.0, 0, 0], "rotation_quat": [0, 0, 0, 1] } },
+    "expect": ["flame-off-burner"]
+  },
+  {
+    "name": "within-a-diameter-tolerated",
+    "note": "0.2 m off a 0.344 m effective-diameter pan is flicker, not a frame mismatch.",
+    "flame": { "transform": { "position_m": [0.2, 0, 0], "rotation_quat": [0, 0, 0, 1] } },
+    "expect": []
+  },
+  {
+    "name": "yawed-a-quarter-turn",
+    "note": "Bounds are checked through the transform: a rotated box is still centred on the pan.",
+    "flame": { "transform": { "position_m": [0, 0, 0], "rotation_quat": [0, 0, 0.7071067811865476, 0.7071067811865476] } },
+    "expect": []
+  },
+  {
+    "name": "both-offsets-at-once",
+    "flame": { "transform": { "position_m": [-2, 1, -1], "rotation_quat": [0, 0, 0, 1] } },
+    "expect": ["flame-below-floor", "flame-off-burner"]
+  },
+  {
+    "name": "primary-burner-when-unnamed",
+    "flame": { "burnerId": null },
+    "expect": []
+  },
+  {
+    "name": "unknown-burner-named",
+    "flame": { "burnerId": "burner-that-is-not-there" },
+    "expect": ["flame-burner-unknown"]
+  },
+  {
+    "name": "csv-with-fewer-rows",
+    "plotSamples": [[0, 0, 0], [5, 0.0000610, 0.002], [10, 0.034027, 1.1]],
+    "expect": ["flame-csv-mismatch"]
+  },
+  {
+    "name": "csv-on-another-timebase",
+    "note": "Same row count, every timestamp two seconds later: a different run.",
+    "plotShiftSeconds": 2,
+    "expect": ["flame-csv-mismatch"]
+  },
+  {
+    "name": "csv-volume-disagrees",
+    "note": "One row's volume off by ten voxels.",
+    "plotVolumeDelta": { "row": 11, "voxels": 10 },
+    "expect": ["flame-csv-mismatch"]
+  },
+  {
+    "name": "csv-volume-within-a-voxel",
+    "note": "The CSV rounds to a microlitre (an eighth of a voxel here); a voxel of slack is the tolerance.",
+    "plotVolumeDelta": { "row": 11, "voxels": 0.5 },
+    "expect": []
+  }
+]

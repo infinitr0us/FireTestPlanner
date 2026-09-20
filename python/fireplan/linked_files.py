@@ -9,9 +9,44 @@ import os
 import posixpath
 import re
 
-LINK_TYPES = {'burner', 'camera', 'heatFluxSensor', 'thermocouple'}
+LINK_TYPES = {'burner', 'camera', 'heatFluxSensor', 'thermocouple', 'reconstructedFlame'}
 MAX_CSV_BYTES = 5 * 1024 * 1024
 MAX_PLOT_SAMPLES = 20_000
+#: Also the cap on a voxel sequence's frames: the manifest is one row per frame.
+MAX_SEQUENCE_FRAMES = 20_000
+
+
+def link_kind_for(object_type):
+    """The one kind of file each linking type accepts. A flame links a folder of frames."""
+    if object_type == 'camera':
+        return 'video'
+    if object_type == 'reconstructedFlame':
+        return 'voxelSequence'
+    return 'spreadsheet'
+
+
+def sequence_problem(sequence):
+    """What is wrong with a voxel sequence manifest beyond its schema shape, or None.
+
+    Mirror of `voxelSequenceProblem` in web/src/core/linked-files.ts: strictly
+    increasing times, a box whose minimum is its minimum, a pitch no smaller than
+    the voxel size (the grid is endpoint-inclusive, so it cannot be).
+    """
+    grid = sequence.get('grid', {})
+    if not all(math.isfinite(grid.get(k, math.nan)) and grid[k] > 0 for k in ('voxelSize_m', 'pitch_m')) or grid['pitch_m'] < grid['voxelSize_m']:
+        return 'a voxel sequence needs a positive voxel size and a pitch no smaller than it'
+    lo, hi = sequence.get('bounds_m', ([], []))
+    if len(lo) != 3 or len(hi) != 3 or not all(math.isfinite(x) for x in (*lo, *hi)) or any(a > b for a, b in zip(lo, hi)):
+        return 'a voxel sequence needs finite bounds with the minimum corner first'
+    frames = sequence.get('frames', [])
+    if not 1 <= len(frames) <= MAX_SEQUENCE_FRAMES:
+        return 'a voxel sequence needs 1-20,000 frames'
+    previous = -math.inf
+    for frame in frames:
+        if not math.isfinite(frame[0]) or frame[0] <= previous or frame[1] < 0:
+            return 'voxel sequence frames need strictly increasing finite times and non-negative voxel counts'
+        previous = frame[0]
+    return None
 
 
 def _csv_rows(text, separator):
@@ -160,6 +195,14 @@ def problems(data):
             seen.add(link['id'])
             if not local_path(link['path']):
                 yield '{}: linked files need a local path, not a URL'.format(obj['id'])
+            if link.get('kind') != link_kind_for(obj.get('type')):
+                yield '{}: cameras link videos; burners and sensors link spreadsheets; a reconstructed flame links a voxel sequence'.format(obj['id'])
+            if 'timeOffset_s' in link and not (isinstance(link['timeOffset_s'], (int, float)) and not isinstance(link['timeOffset_s'], bool) and math.isfinite(link['timeOffset_s'])):
+                yield '{}: a linked file time offset must be a finite number of seconds'.format(obj['id'])
+            if 'sequence' in link:
+                problem = sequence_problem(link['sequence'])
+                if problem:
+                    yield '{}: {}'.format(obj['id'], problem)
             previous = -math.inf
             for sample in link.get('plot', {}).get('samples', []):
                 if not all(math.isfinite(x) and (i == 0 or x >= 0) for i, x in enumerate(sample)) or sample[0] <= previous:

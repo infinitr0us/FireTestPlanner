@@ -333,6 +333,26 @@ function validateByType(obj: PlanObject, err: Reporter): void {
       break;
     }
 
+    case 'reconstructedFlame': {
+      // The manifest itself is checked with the link (linkedFilesProblem); what is
+      // left is the two fields that name things.
+      if (isStated(raw.burnerId) && (typeof raw.burnerId !== 'string' || !raw.burnerId)) {
+        err('bad-burner-id', `Reconstructed flame "${id}" has a burnerId that is not a name.`, id);
+      }
+      if (isStated(raw.representation) && raw.representation !== 'voxels') {
+        err('bad-representation',
+          `Reconstructed flame "${id}" has representation ${JSON.stringify(raw.representation)}; this build knows only "voxels".`, id);
+      }
+      const display = raw.display as Record<string, unknown> | undefined;
+      if (isStated(display?.opacity) && !(isFiniteNumber(display!.opacity) && display!.opacity >= 0 && display!.opacity <= 1)) {
+        err('bad-opacity', `Reconstructed flame "${id}" has display.opacity outside 0–1.`, id);
+      }
+      if (isStated(display?.colorMode) && !['height', 'solid'].includes(String(display!.colorMode))) {
+        err('bad-color-mode', `Reconstructed flame "${id}" has display.colorMode ${JSON.stringify(display!.colorMode)}; expected "height" or "solid".`, id);
+      }
+      break;
+    }
+
     default:
       // Unknown types are legitimate and round-trip verbatim; nothing to check.
       break;
