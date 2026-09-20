@@ -1361,6 +1361,28 @@ export function flameChecks(d: PlanDocument): Issue[] {
 }
 
 /**
+ * Whether a burner's CSV snapshot is a reconstruction in this plan: its burner's,
+ * matching that flame's manifest sample for frame, and -- when the caller can say
+ * -- with that flame's frames loaded, so the clock's range is this run's.
+ *
+ * This is what lets the plot follow the playback clock. A CSV from some other
+ * run -- another burner's, or an earlier test on this one -- keeps its own slider,
+ * or the clock would drag its cursor to times it has no samples at; so does the
+ * right CSV while only some other flame is loaded and the clock runs on its time.
+ */
+export function plotFollowsFlame(
+  d: PlanDocument, burner: BurnerObject, link: LinkedFile,
+  loaded: (flame: ReconstructedFlameObject) => boolean = () => true,
+): boolean {
+  if (!link.plot) return false;
+  return reconstructedFlames(d).some((f) => {
+    const manifest = flameManifest(f);
+    return manifest !== undefined && flameBurner(d, f) === burner && loaded(f)
+      && plotSequenceMismatch(link.plot!.samples, manifest) === null;
+  });
+}
+
+/**
  * Why a burner's CSV snapshot and a flame's manifest are not from one run, or null.
  *
  * Timestamps must be the same set; then each row's volume must be the frame's voxel

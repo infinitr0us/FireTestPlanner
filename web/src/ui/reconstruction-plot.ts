@@ -1,5 +1,7 @@
 import { fileName } from '../core/linked-files';
-import type { LinkedFile, ReconstructionPlot } from '../core/types';
+import { flameSequenceLink, plotFollowsFlame } from '../core/plan';
+import { isBurner, type LinkedFile, type ReconstructionPlot } from '../core/types';
+import type { FlameStore } from '../state/flame-store';
 import type { Playhead } from '../state/playhead';
 import type { Store } from '../state/store';
 import { h } from './dom';
@@ -59,14 +61,18 @@ export class ReconstructionPlotPanel {
   /** Redraw the cursor for the current index; set while the plot is on screen. */
   private draw: (() => void) | null = null;
   private samples: ReconstructionPlot['samples'] | null = null;
+  /** Whether the plot on screen is one the clock drives. */
+  private following = false;
 
   /**
-   * The plot follows the playback clock when there is one to follow: the cursor
-   * sits on the last sample at or before the clock's time, and dragging the slider
-   * seeks the clock. With no flame loaded the clock has no range and the slider is
-   * the plot's own, exactly as in format 1.3.
+   * The plot follows the playback clock when it is this reconstruction's own
+   * data: the burner's flame is loaded and the CSV matches its manifest. Then the
+   * cursor sits on the last sample at or before the clock's time, and dragging
+   * the slider seeks the clock. Any other dataset -- another run's, another
+   * burner's, or with no flame loaded at all -- keeps the slider to itself,
+   * exactly as in format 1.3.
    */
-  constructor(container: HTMLElement, private store: Store, private playhead?: Playhead) {
+  constructor(container: HTMLElement, private store: Store, private playhead?: Playhead, private flames?: FlameStore) {
     container.append(this.root);
     for (const event of ['pointerdown', 'click', 'dblclick', 'wheel']) this.root.addEventListener(event, (e) => e.stopPropagation());
     store.subscribe(() => this.render());
@@ -74,12 +80,21 @@ export class ReconstructionPlotPanel {
       if (event === 'time') this.follow();
       else this.render();
     });
+    // A sequence arriving or leaving decides whether this plot's flame is loaded,
+    // and need not move the clock's range (a second run with the same timestamps).
+    flames?.subscribe(() => this.render());
     this.render();
   }
 
+  /** Whether a flame's frames are in the session, for `plotFollowsFlame`. */
+  private loaded = (flame: Parameters<typeof flameSequenceLink>[0]): boolean => {
+    const link = flameSequenceLink(flame);
+    return Boolean(link && this.flames?.sequenceOf(link));
+  };
+
   /** The clock moved: put the cursor on the sample it is at, if it is on any. */
   private follow(): void {
-    if (!this.playhead?.hasRange || !this.samples || !this.draw) return;
+    if (!this.following || !this.playhead?.hasRange || !this.samples || !this.draw) return;
     const t = this.playhead.time_s;
     let lo = 0, hi = this.samples.length;
     while (lo < hi) {
@@ -93,23 +108,26 @@ export class ReconstructionPlotPanel {
   }
 
   render(): void {
-    const obj = this.store.soleSelected;
-    const links = obj?.type === 'burner' ? obj.linkedFiles?.filter((f) => f.plot) ?? [] : [];
+    const sole = this.store.soleSelected;
+    const obj = sole && isBurner(sole) ? sole : undefined;
+    const links = obj?.linkedFiles?.filter((f) => f.plot) ?? [];
     this.root.hidden = !links.length;
     if (!obj || !links.length) { this.signature = ''; this.draw = null; this.samples = null; return; }
     const key = `${this.store.documentId}/${obj.id}`;
     if (key !== this.key) { this.key = key; this.selectedLink = ''; this.index = 0; }
     const link = links.find((l) => l.id === this.selectedLink) ?? links[0];
     this.selectedLink = link.id;
+    const following = Boolean(this.playhead?.hasRange) && plotFollowsFlame(this.store.document, obj, link, this.loaded);
     // Imports replace the sample array; undo/redo also restore new arrays. Identity
     // catches replacements even when timestamps and sample counts are unchanged.
     const signature = JSON.stringify([key, obj.name, links.map((l) => {
       const samples = l.plot!.samples;
       if (!this.snapshots.has(samples)) this.snapshots.set(samples, ++this.nextSnapshot);
       return [l.id, l.label, l.path, l.plot!.importedAt, samples.length, this.snapshots.get(samples)];
-    }), this.collapsed, Boolean(this.playhead?.hasRange)]);
+    }), this.collapsed, following]);
     if (signature === this.signature) return;
     this.signature = signature;
+    this.following = following;
     const plot = link.plot!;
     this.index = Math.min(this.index, plot.samples.length - 1);
     const title = h('strong', {}, ['Reconstruction results']);
@@ -131,7 +149,7 @@ export class ReconstructionPlotPanel {
         this.index = Number((e.target as HTMLInputElement).value);
         // Seeking the clock brings the cursor back here through `follow`; drawing
         // now as well keeps the plot responsive when there is no clock to seek.
-        if (this.playhead?.hasRange) this.playhead.seek(plot.samples[this.index][0]);
+        if (following) this.playhead!.seek(plot.samples[this.index][0]);
         draw();
       } });
     const draw = (): void => {
@@ -144,11 +162,15 @@ export class ReconstructionPlotPanel {
     this.samples = plot.samples;
     this.follow();
     draw();
-    this.root.append(charts, slider, value, h('p', { class: 'reconstruction-plot__note' }, [this.caption(link, Boolean(this.playhead?.hasRange))]));
+    this.root.append(charts, slider, value, h('p', { class: 'reconstruction-plot__note' }, [this.caption(link, following)]));
   }
 
   private caption(link: LinkedFile, following: boolean): string {
     return `CSV snapshot · ${link.plot!.samples.length.toLocaleString()} samples · ${link.plot!.importedAt.replace('T', ' ').replace(/(?:\.\d+)?Z$/, ' UTC')}. `
-      + (following ? 'The cursor follows the flame playback; dragging it seeks the playback.' : 'Refresh or relink from Linked files after the source changes.');
+      + (following
+        ? 'The cursor follows the flame playback; dragging it seeks the playback.'
+        : this.playhead?.hasRange
+          ? 'Not this burner\'s reconstruction, so the cursor is its own. Refresh or relink from Linked files after the source changes.'
+          : 'Refresh or relink from Linked files after the source changes.');
   }
 }

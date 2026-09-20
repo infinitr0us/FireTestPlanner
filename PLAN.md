@@ -503,6 +503,7 @@ preview showed the hull.
 - **A browser tab reloads the folder by hand.** It cannot keep a folder across a
   reload; the desktop app reads the linked folder as the plan opens.
 - **Above 400,000 cubes the camera preview pauses while playing.** The second
-  render pass per tick is what a laptop does not have; it resumes on pause.
+  render pass per tick is what a laptop does not have; the frame is blanked and
+  says so, and it resumes on pause.
 - **The PNG snapshot has no labels.** Object labels are HTML over the canvas, and
   the snapshot is the canvas.

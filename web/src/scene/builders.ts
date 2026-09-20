@@ -428,6 +428,11 @@ export function buildObstruction(o: ObstructionObject): THREE.Group {
  * `pick` treat the flame as an object, and it carries an invisible box over the
  * manifest's bounds so those three have something to hit and to fit. Without a
  * manifest -- a link not yet made -- a small wireframe marks the spot.
+ *
+ * The box is the envelope of every frame, not a surface anyone can see, so it is
+ * marked `selectionOnly`: a click selects the flame through it, but the measure
+ * tool looks past it to the room, or the ruler would snap to the top of an
+ * invisible box over an empty frame.
  */
 export function buildFlameProxy(f: ReconstructedFlameObject): THREE.Group {
   const group = new THREE.Group();
@@ -444,6 +449,7 @@ export function buildFlameProxy(f: ReconstructedFlameObject): THREE.Group {
     );
     hit.position.set((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2);
     hit.renderOrder = -1;
+    hit.userData.selectionOnly = true;
     group.add(hit);
     const label = makeLabel(displayName(f), 'object');
     label.position.set((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, hi[2] + 0.15);

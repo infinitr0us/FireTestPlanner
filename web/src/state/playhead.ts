@@ -28,7 +28,8 @@ export class Playhead {
   /** Every instant a follower has a sample at, sorted and unique. */
   private _marks: number[] = [];
 
-  get time_s(): number { return this._time; }
+  /** The clock's time. Never past the last mark: the last frame is held, not exceeded. */
+  get time_s(): number { return this._marks.length ? Math.min(this._time, this.end) : this._time; }
   get playing(): boolean { return this._playing; }
   get speed(): number { return this._speed; }
   get loop(): boolean { return this._loop; }
@@ -36,6 +37,17 @@ export class Playhead {
   get start(): number { return this._marks.length ? this._marks[0] : 0; }
   get end(): number { return this._marks.length ? this._marks[this._marks.length - 1] : 0; }
   get hasRange(): boolean { return this._marks.length > 0; }
+
+  /**
+   * How long the last frame is held before a loop starts over: the previous
+   * interval, since a frame holds until the next and the last has no next. The
+   * last mark itself is an instant; wrapping the moment time passed it never
+   * showed the final frame at all.
+   */
+  get holdAfterEnd(): number {
+    const n = this._marks.length;
+    return n >= 2 ? this._marks[n - 1] - this._marks[n - 2] : 0;
+  }
 
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
@@ -56,9 +68,10 @@ export class Playhead {
   setMarks(marks: Iterable<number>): void {
     const next = [...new Set(marks)].filter(Number.isFinite).sort((a, b) => a - b);
     if (next.length === this._marks.length && next.every((t, i) => t === this._marks[i])) return;
+    const time = this.time_s; // clamped: a clock holding the old last frame is at that frame
     this._marks = next;
     if (!next.length) this.pause();
-    else if (this._time < this.start || this._time > this.end) this._time = this.start;
+    else this._time = time < this.start || time > this.end ? this.start : time;
     this.emit('range');
   }
 
@@ -127,9 +140,12 @@ export class Playhead {
     if (!this._playing || !(elapsed_s > 0)) return;
     let t = this._time + elapsed_s * this._speed;
     if (t > this.end) {
-      const span = this.end - this.start;
-      if (this._loop) t = span > 0 ? this.start + ((t - this.start) % span) : this.start;
-      else { t = this.end; this._playing = false; this.emit('state'); }
+      // Internally time runs on past the last mark for `holdAfterEnd`, so the last
+      // frame gets its turn; `time_s` reports it clamped to the mark meanwhile.
+      const wrapAt = this.end + this.holdAfterEnd;
+      const period = wrapAt - this.start;
+      if (!this._loop) { t = this.end; this._playing = false; this.emit('state'); }
+      else if (t >= wrapAt) t = period > 0 ? this.start + ((t - this.start) % period) : this.start;
     }
     this._time = t;
     this.emit('time');

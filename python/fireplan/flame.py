@@ -26,6 +26,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from .linked_files import sequence_problem
+from .serialize import _js_number
+
 FRAME_NAME = re.compile(r'^t_(\d+(?:\.\d+)?)s\.npz$')
 
 #: A frame whose coordinates land further than this fraction of a pitch from a
@@ -37,6 +40,8 @@ PACK_MAGIC = b'FTPV'
 PACK_VERSION = 1
 #: Per-frame record: f64 timestamp, u32 count, i32[3] origin, u16[3] dims, u32 byte length.
 FRAME_HEADER = '<dI3i3HI'
+#: A frame box axis is a u16 in the packed form; a longer one has no representation.
+MAX_FRAME_DIM = 0xFFFF
 
 
 def frame_timestamp(name: str) -> Optional[float]:
@@ -163,6 +168,39 @@ class Frame:
         return np.argwhere(surface).astype(np.int64)
 
 
+def frame_problem(frame: Frame, extent: Sequence[int]) -> Optional[str]:
+    """Why a packed frame is not one `pack_frame` could have produced, or None.
+
+    The editor sizes its instance buffer from `count` and fills it with the cells
+    actually set, and the surface walk trusts `dims` to address `bits`: a frame
+    that claims one and holds the other overruns a buffer instead of drawing.
+    `extent` is the sequence lattice's last index per axis, which every box has to
+    fit inside. Mirror of `frameProblem` in web/src/core/flame.ts.
+    """
+    count, origin, dims, bits = frame.count, frame.origin, frame.dims, frame.bits
+    if not math.isfinite(frame.timestamp):
+        return 'has a non-finite timestamp'
+    if count == 0:
+        if any(d != 0 for d in dims) or any(o != 0 for o in origin) or len(bits) != 0:
+            return 'is empty but carries a box'
+        return None
+    if any(d <= 0 for d in dims):
+        return 'declares {} voxels in a box with no cells'.format(count)
+    cells = dims[0] * dims[1] * dims[2]
+    if len(bits) != (cells + 7) // 8:
+        return 'holds {} bytes for a box of {} cells'.format(len(bits), cells)
+    padding = len(bits) * 8 - cells
+    if padding and bits[-1] & ((1 << padding) - 1):
+        return 'has bits set past its last cell'
+    held = int(np.unpackbits(np.frombuffer(bits, dtype=np.uint8)).sum())
+    if held != count:
+        return 'declares {} voxels but holds {}'.format(count, held)
+    for a in range(3):
+        if origin[a] < 0 or origin[a] + dims[a] - 1 > extent[a]:
+            return 'has a box outside the sequence bounds'
+    return None
+
+
 def pack_frame(timestamp: float, voxels: np.ndarray, origin_m: Sequence[float], pitch: float) -> Frame:
     if not len(voxels):
         return Frame(timestamp, 0, (0, 0, 0), (0, 0, 0), b'')
@@ -266,6 +304,13 @@ class FlameSequence:
             f64 voxelSize f64 pitch i32 resolution (-1 = unknown) f64[6] bounds
             per frame: f64 timestamp u32 count i32[3] origin u16[3] dims u32 nbytes bytes
         """
+        # Refused with the editor's message rather than struct's: the two engines
+        # have to agree on what cannot be packed as well as on what can. The
+        # timestamp is spelled as JavaScript spells it, so the sentences match.
+        for f in self.frames:
+            if any(d > MAX_FRAME_DIM for d in f.dims):
+                raise ValueError('frame at {} s spans {} cells on one axis; the packed form holds at most {}'.format(
+                    _js_number(f.timestamp), max(f.dims), MAX_FRAME_DIM))
         out = bytearray(PACK_MAGIC)
         out += struct.pack('<BI', PACK_VERSION, len(self.frames))
         out += struct.pack('<ddi', self.voxel_size, self.pitch, -1 if self.resolution is None else self.resolution)
@@ -277,7 +322,14 @@ class FlameSequence:
 
     @classmethod
     def unpack(cls, data: bytes) -> 'FlameSequence':
-        if data[:4] != PACK_MAGIC:
+        """Read the packed form back, refusing anything `pack` could not have written.
+
+        The container is checked as it is walked; then the manifest rules -- grid,
+        bounds, 1-20,000 frames in strictly increasing time -- and each frame's own
+        consistency, so a payload that lies about its cells is refused here rather
+        than in whatever reads the frames.
+        """
+        if data[:4] != PACK_MAGIC or len(data) < 77:
             raise ValueError('not a packed flame sequence')
         version, count = struct.unpack_from('<BI', data, 4)
         if version != PACK_VERSION:
@@ -288,14 +340,29 @@ class FlameSequence:
         bounds = np.array(struct.unpack_from('<6d', data, offset), dtype=np.float64).reshape(2, 3)
         offset += struct.calcsize('<6d')
         frames = []
+        header = struct.calcsize(FRAME_HEADER)
         for _ in range(count):
+            if offset + header > len(data):
+                raise ValueError('packed flame sequence is truncated')
             t, n, ox, oy, oz, dx, dy, dz, nbytes = struct.unpack_from(FRAME_HEADER, data, offset)
-            offset += struct.calcsize(FRAME_HEADER)
-            frames.append(Frame(t, n, (ox, oy, oz), (dx, dy, dz), bytes(data[offset:offset + nbytes])))
+            offset += header
+            bits = bytes(data[offset:offset + nbytes])
+            if len(bits) != nbytes:
+                raise ValueError('packed flame sequence is truncated')
+            frames.append(Frame(t, n, (ox, oy, oz), (dx, dy, dz), bits))
             offset += nbytes
         if offset != len(data):
             raise ValueError('packed flame sequence has {} trailing byte(s)'.format(len(data) - offset))
-        return cls(voxel_size, pitch, None if resolution < 0 else resolution, bounds, frames)
+        sequence = cls(voxel_size, pitch, None if resolution < 0 else resolution, bounds, frames)
+        problem = sequence_problem(sequence.manifest('packed'))
+        if problem:
+            raise ValueError('packed flame sequence is inconsistent: {}'.format(problem))
+        extent = [int(round((bounds[1][a] - bounds[0][a]) / pitch)) for a in range(3)]
+        for frame in frames:
+            bad = frame_problem(frame, extent)
+            if bad:
+                raise ValueError('packed flame sequence is inconsistent: the frame at {} s {}'.format(_js_number(frame.timestamp), bad))
+        return sequence
 
 
 def scan_folder(folder: str, imported_at: Optional[str] = None) -> Dict[str, Any]:

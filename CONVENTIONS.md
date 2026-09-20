@@ -739,7 +739,14 @@ header (grid, bounds, frame count) and per frame a bounding box on the lattice w
 one bit per cell, in numpy `packbits` order — held byte for byte by
 `fixtures/flame/expected.json`. It is what a shared page embeds (gzipped, base64,
 under `linkedFiles[].embedded` in the page's plan copy only; a saved plan never holds
-that key) and what the bundled Example carries.
+that key) and what the bundled Example carries. A frame's box is `u16` per axis, so
+an axis longer than 65,535 cells cannot be packed and both writers refuse it with
+the same sentence. Both readers refuse the same streams — anything the writer could
+not have produced: a count that is not the number of set bits, bits that do not fit
+the box or are set past its last cell, a box outside the bounds, frames out of time
+order, or a grid the manifest rules reject — so a corrupt payload is a load error,
+never a frame. The per-frame refusals are worded identically in both engines, with
+the timestamp spelled as JavaScript spells a number.
 
 **Display.** `display.opacity` (0–1, default 1) and `display.colorMode` (`height`,
 the pipeline's ramp on a fixed scale over the sequence, or `solid`) are advisory and

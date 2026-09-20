@@ -502,18 +502,22 @@ export function buildShareableHtml(planJson: string, title: string, flames?: Emb
  * Lift embedded flame payloads out of a plan's text before it is validated.
  *
  * Returns the plan without them and the payloads by `objectId/linkId`. Text that
- * is not JSON, or carries none, comes back untouched, so the normal load gate
- * reports whatever is wrong with it.
+ * is not JSON, is not shaped like a plan, or carries none, comes back untouched,
+ * so the normal load gate reports whatever is wrong with it. This runs ahead of
+ * that gate, so nothing here may assume a shape: `objects` that is a map rather
+ * than a list is the gate's `bad-objects` to report, not an exception to throw.
  */
 export function splitEmbeddedFlames(text: string): { text: string; flames: EmbeddedFlames } {
   const flames: EmbeddedFlames = new Map();
-  let doc: { objects?: { id?: unknown; linkedFiles?: { id?: unknown; embedded?: unknown }[] }[] };
+  let doc: { objects?: unknown };
   try { doc = JSON.parse(text); } catch { return { text, flames }; }
-  for (const obj of doc?.objects ?? []) {
-    if (!Array.isArray(obj?.linkedFiles)) continue;
-    for (const link of obj.linkedFiles) {
+  const objects = doc !== null && typeof doc === 'object' && Array.isArray(doc.objects) ? doc.objects as unknown[] : [];
+  for (const obj of objects) {
+    const links = (obj as { linkedFiles?: unknown } | null)?.linkedFiles;
+    if (!Array.isArray(links)) continue;
+    for (const link of links as ({ id?: unknown; embedded?: unknown } | null)[]) {
       if (typeof link?.embedded !== 'string') continue;
-      flames.set(embeddedFlameKey(String(obj.id), String(link.id)), link.embedded);
+      flames.set(embeddedFlameKey(String((obj as { id?: unknown }).id), String(link.id)), link.embedded);
       delete link.embedded;
     }
   }

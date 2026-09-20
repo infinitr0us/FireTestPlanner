@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { FlameSequence, frameTimestamp, parseFrameFile } from '../core/flame';
 import { flameSequenceLink, reconstructedFlames } from '../core/plan';
 import type { PlanDocument, ReconstructedFlameObject } from '../core/types';
-import { FlameStore, flameKey, manifestDrift } from '../state/flame-store';
+import { FlameStore, flameKey, manifestDrift, type FlameSource } from '../state/flame-store';
 import { Playhead } from '../state/playhead';
 import { FlameLayer, FlameMesh } from './flame';
 
@@ -92,6 +92,60 @@ describe('FlameStore', () => {
     store.clear();
     expect(store.sequenceOf(link)).toBeUndefined();
   });
+
+  it('notices a folder whose voxels moved, even with every timestamp and count intact', () => {
+    // A re-run that translated the hull kept the manifest's frames and grid, so
+    // the placement checks -- which read the plan's bounds -- described a hull
+    // that was no longer where the folder put it, and nothing said so.
+    const manifest = flameSequenceLink(flameOf(load()))!.sequence!;
+    const [lo, hi] = manifest.bounds_m;
+    const moved = { ...manifest, bounds_m: [[lo[0] + 10, lo[1], lo[2] - 2], [hi[0] + 10, hi[1], hi[2] - 2]] as typeof manifest.bounds_m };
+    expect(manifestDrift(sequence, moved)).toMatch(/different region/);
+    const regridded = { ...manifest, grid: { ...manifest.grid, resolution: 96 } };
+    expect(manifestDrift(sequence, regridded)).toMatch(/voxel grid/);
+    expect(manifestDrift(sequence, manifest)).toBeNull();
+  });
+
+  it('lets a cancelled read finish without touching the read that replaced it', async () => {
+    // Close a plan and reopen it before its frames are in: the first read is
+    // cancelled, the second starts under the same key. The first read's clean-up
+    // used to delete the second's cancel and pending promise, so a later clear
+    // could not stop the second and it repopulated a cache it had been told to drop.
+    const link = flameSequenceLink(flameOf(load()))!;
+    const names = readdirSync(FOLDER).filter((n) => frameTimestamp(n) !== null);
+    const gate = (): { promise: Promise<void>; release: () => void } => {
+      let release!: () => void;
+      const promise = new Promise<void>((resolve) => { release = resolve; });
+      return { promise, release };
+    };
+    const source = (opened: Promise<void>): FlameSource => ({
+      kind: 'shell', path: 'voxels',
+      list: async () => { await opened; return names; },
+      read: async (name) => new Uint8Array(readFileSync(FOLDER + name)),
+    });
+    const store = new FlameStore();
+    const first = gate(), second = gate();
+    const a = store.load(link, source(first.promise));
+    store.clear();
+    const b = store.load(link, source(second.promise));
+    expect(store.get(link)?.status).toBe('loading');
+    first.release();
+    await expect(a).rejects.toThrow('cancelled');
+    // The second read is still the one a joiner shares the fate of, and still
+    // the one clear stops: the joiner used to resolve to nothing at all.
+    const joined = store.load(link, source(Promise.resolve()));
+    store.clear();
+    second.release();
+    await expect(b).rejects.toThrow('cancelled');
+    await expect(joined).rejects.toThrow('cancelled');
+    expect(store.sequenceOf(link)).toBeUndefined();
+    // Left alone, a read lands, and a joiner gets the same sequence.
+    const c = store.load(link, source(Promise.resolve()));
+    const d = store.load(link, source(Promise.resolve()));
+    expect((await c).frames).toHaveLength(80);
+    expect(await d).toBe(await c);
+    expect(store.get(link)?.status).toBe('ready');
+  });
 });
 
 describe('Playhead', () => {
@@ -120,8 +174,11 @@ describe('Playhead', () => {
     expect(clock.playing).toBe(true);
     clock.advance(0.3); // 3 s of test time
     expect(clock.time_s).toBeCloseTo(3);
-    clock.advance(1); // past the end: loops
-    expect(clock.time_s).toBeCloseTo(3);
+    clock.advance(1); // past the end: the last frame holds for the previous interval (5 s)
+    expect(clock.time_s).toBe(10);
+    expect(clock.markIndexAt(clock.time_s)).toBe(2);
+    clock.advance(0.3); // 16 s on a 15 s period: wrapped to 1 s
+    expect(clock.time_s).toBeCloseTo(1);
     clock.setLoop(false);
     clock.seek(9);
     clock.advance(1);
@@ -136,5 +193,34 @@ describe('Playhead', () => {
     expect(events).toContain('range');
     expect(events).toContain('state');
     expect(events).toContain('time');
+  });
+
+  it('shows the last frame when looping at an ordinary tick rate', () => {
+    // The last mark is an instant; wrapping the moment time passed it meant a
+    // 60 Hz loop over [0, 5, 10] only ever showed frames 1 and 2.
+    const clock = new Playhead();
+    clock.setMarks([0, 5, 10]);
+    clock.play();
+    const seen = new Set<number>();
+    let peak = -Infinity;
+    for (let i = 0; i < 10_000; i += 1) {
+      clock.advance(1 / 60);
+      seen.add(clock.markIndexAt(clock.time_s));
+      peak = Math.max(peak, clock.time_s);
+    }
+    expect([...seen].sort()).toEqual([0, 1, 2]);
+    expect(peak).toBe(10); // held at the mark, never reported past it
+    expect(clock.holdAfterEnd).toBe(5);
+    // A single frame has nothing to loop over and stays put.
+    clock.setMarks([7]);
+    clock.play();
+    clock.advance(1);
+    expect(clock.time_s).toBe(7);
+    // New marks while the old last frame is held: the clock is at that frame, not past it.
+    clock.setMarks([0, 5, 10]);
+    clock.seek(10);
+    clock.advance(0.2); // 12 s internally, held at 10
+    clock.setMarks([0, 5, 10, 12]);
+    expect(clock.time_s).toBe(10);
   });
 });

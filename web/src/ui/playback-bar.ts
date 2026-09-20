@@ -44,7 +44,10 @@ export class PlaybackBar {
   ) {
     container.append(this.root);
     // The bar sits over the canvas; a click on it must not select, place or measure.
-    for (const event of ['pointerdown', 'click', 'dblclick', 'wheel', 'keydown']) {
+    // Keys are not stopped: the editor's shortcuts (Ctrl+S, Undo, the transport
+    // keys themselves) are handled on the window and already leave form controls
+    // alone, and stopping them here only handed Ctrl+S to the browser.
+    for (const event of ['pointerdown', 'click', 'dblclick', 'wheel']) {
       this.root.addEventListener(event, (e) => e.stopPropagation());
     }
     store.subscribe(() => this.render());
@@ -154,11 +157,13 @@ export class PlaybackBar {
     const name = flame.name || flame.id;
     const line = (text: string, kind: 'info' | 'warn' | 'error', action?: HTMLElement): HTMLElement =>
       h('div', { class: `playback-bar__status playback-bar__status--${kind}`, role: kind === 'info' ? undefined : 'status' }, [text, action ?? null]);
+    // Unlinked first: nothing below has a link to ask the cache about, and this
+    // runs inside the document event that removes the link.
+    if (!link) return line(`${name}: no voxel folder linked. Link one in the inspector.`, 'warn');
     const load = this.host.loadFrames
       ? h('button', { type: 'button', class: 'playback-bar__btn', onclick: () => this.host.loadFrames!(flame) },
-        [this.flames.get(link!)?.status === 'error' ? 'Try again' : 'Load frames…'])
+        [status.startsWith('error') ? 'Try again' : 'Load frames…'])
       : null;
-    if (!link) return line(`${name}: no voxel folder linked. Link one in the inspector.`, 'warn');
     if (status === 'absent') {
       return line(`${name}: ${link.sequence?.frames.length ?? 0} frames in ${fileName(link.path)} are not loaded.`, 'info', load ?? undefined);
     }

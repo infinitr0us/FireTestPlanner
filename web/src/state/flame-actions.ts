@@ -64,15 +64,19 @@ export function flameActions(store: Store, flames: FlameStore, host: FlameAction
 
   const assertSame = (documentId: number, revision: number): void => {
     if (store.documentId !== documentId || store.revision !== revision) {
-      throw new Error('The plan changed while the folder was being read. Please try again.');
+      throw new Error('The plan changed while the folder was being linked. Please try again.');
     }
   };
 
   return {
     async link(flame, burnerId = null) {
+      // Taken before the picker, not after it: the dialog is an await like any
+      // other, and a plan that arrives while it is up -- one named on the shell's
+      // command line, say -- must not receive the folder chosen for the last one.
+      const identity = store.identity();
       const picked = await pickFolder();
       if (!picked) return;
-      const identity = store.identity();
+      assertSame(identity.documentId, identity.revision);
       host.onProgress?.('Listing the folder…');
       let sequence;
       try {

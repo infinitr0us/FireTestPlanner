@@ -51,8 +51,9 @@ export class LinkedFilesPanel {
   private message: { documentId: number; objectId: string; text: string } | null = null;
   private browserFiles = new Map<string, File>();
   private cacheDocumentId = -1;
-  /** Set by the app: a burner's section offers to link the same run's 3D flame. */
-  linkFlame: ((burnerId: string) => void) | null = null;
+  /** Set by the app: a burner's section offers to link the same run's 3D flame.
+   *  Runs under this panel's guard, so its failure is shown under the burner. */
+  linkFlame: ((burnerId: string) => Promise<void> | void) | null = null;
 
   constructor(private store: Store, private rerender: () => void) {}
 
@@ -126,9 +127,8 @@ export class LinkedFilesPanel {
       'CSV / TSV plot columns: timestamp_s, volume_m3, surface_area_m2. Excel workbooks can be linked; export to CSV to plot.',
     ]));
     if (obj.type === 'burner' && this.linkFlame) {
-      const flameButton = button('Link 3D flame sequence…', () => this.linkFlame!(obj.id));
-      flameButton.disabled = this.busy;
-      flameButton.title = 'The same run\'s voxels/ folder, played back in the layout as a reconstructed flame object';
+      const flameButton = action('Link 3D flame sequence…', () => this.linkFlame!(obj.id),
+        'The same run\'s voxels/ folder, played back in the layout as a reconstructed flame object');
       section.append(h('div', { class: 'linked-file__actions' }, [flameButton]));
     }
     if (this.busy) section.append(h('p', { role: 'status' }, ['Working…']));

@@ -387,10 +387,17 @@ export class Viewport {
     return shownHits(this.raycaster.intersectObjects(this.contentRoot.children, true), this.contentRoot);
   }
 
-  /** Exact surface point under the cursor, falling back to the floor plane. */
+  /**
+   * Exact surface point under the cursor, falling back to the floor plane.
+   *
+   * Only physical surfaces count. A selection-only proxy -- the invisible box a
+   * reconstructed flame carries over the envelope of all its frames -- is what a
+   * click selects by, not a face a ruler can land on: it is there whether the
+   * frame on screen is full or empty.
+   */
   private pickPoint(clientX: number, clientY: number): THREE.Vector3 | null {
-    const hits = this.hitsUnder(clientX, clientY);
-    if (hits.length > 0) return hits[0].point.clone();
+    const hit = this.hitsUnder(clientX, clientY).find((h) => !h.object.userData.selectionOnly);
+    if (hit) return hit.point.clone();
     return this.screenToGround(clientX, clientY);
   }
 
@@ -851,10 +858,6 @@ export class Viewport {
   private renderPreview(): void {
     const source = this.previewSource;
     if (!source || !this.options.showPreview) return;
-    // The preview renders the scene a second time. Above a cube count, while the
-    // flame is playing, that second pass is what a laptop does not have; the
-    // preview freezes on its last frame and catches up when playback pauses.
-    if (this.playhead.playing && this.flames.cubeCount > PREVIEW_CUBE_LIMIT) return;
 
     const width = this.container.clientWidth;
     const height = this.container.clientHeight;
@@ -871,27 +874,37 @@ export class Viewport {
       bottom: `${margin + this.previewInset}px`,
     });
 
-    // Hide the camera's own body: it sits exactly at the eye point and would fill
-    // the frame. Other cameras stay visible, which is useful -- it answers 'is the
-    // GoPro standing in the thermal camera's shot?'
-    const ownGroup = this.objectGroups.get(source.id);
-    const wasVisible = ownGroup?.visible ?? false;
-    if (ownGroup) ownGroup.visible = false;
-
-    // What a real camera in the room sees: the physical layers, ceilings included,
-    // and none of the editor's furniture.
-    this.previewCamera.layers.set(LAYER_DEFAULT);
-    this.previewCamera.layers.enable(LAYER_CEILING);
     this.renderer.setScissorTest(true);
     this.renderer.setViewport(x, y, pipWidth, pipHeight);
     this.renderer.setScissor(x, y, pipWidth, pipHeight);
     this.renderer.setClearColor(0x000000, 1);
     this.renderer.clear();
-    this.renderer.render(this.scene, this.previewCamera);
+
+    // The preview renders the scene a second time. Above a cube count, while the
+    // flame is playing, that second pass is what a laptop does not have. The main
+    // view has already been drawn across the whole canvas this tick, so the frame
+    // is blanked and says why rather than presenting a corner of the main view as
+    // the camera's; it resumes the moment playback pauses.
+    const paused = this.playhead.playing && this.flames.cubeCount > PREVIEW_CUBE_LIMIT;
+    this.previewFrame.classList.toggle('viewport-preview-frame--paused', paused);
+    if (!paused) {
+      // Hide the camera's own body: it sits exactly at the eye point and would
+      // fill the frame. Other cameras stay visible, which is useful -- it answers
+      // 'is the GoPro standing in the thermal camera's shot?'
+      const ownGroup = this.objectGroups.get(source.id);
+      const wasVisible = ownGroup?.visible ?? false;
+      if (ownGroup) ownGroup.visible = false;
+
+      // What a real camera in the room sees: the physical layers, ceilings
+      // included, and none of the editor's furniture.
+      this.previewCamera.layers.set(LAYER_DEFAULT);
+      this.previewCamera.layers.enable(LAYER_CEILING);
+      this.renderer.render(this.scene, this.previewCamera);
+
+      if (ownGroup) ownGroup.visible = wasVisible;
+    }
     this.renderer.setScissorTest(false);
     this.renderer.setViewport(0, 0, width, height);
-
-    if (ownGroup) ownGroup.visible = wasVisible;
   }
 
   // -- loop --------------------------------------------------------------

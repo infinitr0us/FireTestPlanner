@@ -174,6 +174,62 @@ def test_fixture_packs_to_the_pinned_bytes(sequence):
         FlameSequence.unpack(b'\0' * 100)
     with pytest.raises(ValueError, match='trailing'):
         FlameSequence.unpack(packed + b'\0')
+    with pytest.raises(ValueError, match='truncated'):
+        FlameSequence.unpack(packed[:1000])
+
+
+def _two_cells(tmp_path):
+    """Two occupied cells in a 2x1x1 box: the smallest sequence a payload can lie about."""
+    write_frames(tmp_path, [synthetic(0, [[0, 0, 0], [1, 0, 0]])])
+    return FlameSequence.load(str(tmp_path))
+
+
+@pytest.mark.parametrize('edit, message', [
+    # The editor sizes its instance buffer from `count` and fills it with the cells
+    # actually set; this used to unpack cleanly and overrun there.
+    (lambda f: setattr(f, 'count', 1), 'declares 1 voxels but holds 2'),
+    (lambda f: setattr(f, 'count', 3), 'declares 3 voxels but holds 2'),
+    (lambda f: setattr(f, 'dims', (1, 1, 9)), 'holds 1 bytes for a box of 9 cells'),
+    (lambda f: setattr(f, 'bits', bytes([0b11000001])), 'has bits set past its last cell'),
+    (lambda f: setattr(f, 'origin', (1, 0, 0)), 'has a box outside the sequence bounds'),
+    (lambda f: setattr(f, 'origin', (-1, 0, 0)), 'has a box outside the sequence bounds'),
+    (lambda f: (setattr(f, 'dims', (0, 0, 0)), setattr(f, 'bits', b'')), 'declares 2 voxels in a box with no cells'),
+])
+def test_unpack_refuses_inconsistent_frames(tmp_path, edit, message):
+    """Mirror of 'the packed form, refusing what pack could not have written' in web."""
+    seq = _two_cells(tmp_path)
+    edit(seq.frames[0])
+    # Spelled as the editor spells it (`0 s`, not `0.0 s`), so the two engines' sentences match.
+    with pytest.raises(ValueError, match='inconsistent: the frame at 0 s ' + message):
+        FlameSequence.unpack(seq.pack())
+
+
+def test_unpack_refuses_an_empty_frame_with_a_box_and_frames_out_of_order(tmp_path):
+    write_frames(tmp_path, [synthetic(0, [[0, 0, 0], [1, 0, 0]]), synthetic(5, [])])
+    seq = FlameSequence.load(str(tmp_path))
+    seq.frames[1].dims = (1, 1, 1)
+    with pytest.raises(ValueError, match='is empty but carries a box'):
+        FlameSequence.unpack(seq.pack())
+    seq.frames[1].dims = (0, 0, 0)
+    seq.frames.reverse()
+    with pytest.raises(ValueError, match='strictly increasing'):
+        FlameSequence.unpack(seq.pack())
+    seq.frames.reverse()
+    assert FlameSequence.unpack(seq.pack()).manifest('x') == seq.manifest('x')
+
+
+def test_pack_refuses_an_axis_the_u16_field_cannot_hold(tmp_path):
+    """The same message as the editor's, rather than struct's; the editor used to
+    wrap 65,536 to 0 silently."""
+    write_frames(tmp_path, [synthetic(0, [[0, 0, 0], [1, 0, 0], [0, 0, 65535]])])
+    seq = FlameSequence.load(str(tmp_path))
+    assert seq.frames[0].dims == (2, 1, 65536)
+    with pytest.raises(ValueError, match='spans 65536 cells on one axis; the packed form holds at most 65535'):
+        seq.pack()
+    # The limit itself packs and reads back.
+    write_frames(tmp_path, [synthetic(0, [[0, 0, 0], [1, 0, 0], [0, 0, 65534]])])
+    limit = FlameSequence.load(str(tmp_path))
+    assert FlameSequence.unpack(limit.pack()).frames[0].dims == (2, 1, 65535)
 
 
 def test_fixture_surface_cells_match_the_pinned_digest(sequence):
@@ -212,6 +268,8 @@ def test_fixture_is_canonical_valid_and_declares_1_4(flame_plan):
     assert len(flame.manifest['frames']) == 80
     assert flame.opacity == 1.0 and flame.color_mode == 'height'
     assert flame_plan.flame_burner(flame).id == 'burner-main'
+    # The HRR is the test record's, not the reference layout's 130 kW.
+    assert flame_plan.burners[0].hrr_kw == 80
     assert flame.bounds_corners().shape == (8, 3)
     assert not [i for i in flame_plan.check() if i.code.startswith('flame-')]
 
@@ -270,6 +328,8 @@ def test_link_rules_are_enforced_beyond_the_schema(flame_plan, bad, message):
     (lambda s: s.update(frames=[]), '1-20,000 frames'),
     (lambda s: s.update(frames=[[5, 1], [5, 2]]), 'strictly increasing'),
     (lambda s: s.update(frames=[[5, -1]]), 'non-negative'),
+    (lambda s: s['grid'].update(resolution=1), 'resolution of at least 2'),
+    (lambda s: s['grid'].update(resolution=192.5), 'resolution of at least 2'),
 ])
 def test_manifest_rules_are_enforced_beyond_the_schema(flame_plan, edit, message):
     sequence = deepcopy(flame_plan.reconstructed_flames[0].manifest)

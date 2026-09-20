@@ -82,6 +82,7 @@ export function validateStructure(doc: PlanDocument): Issue[] {
     err('bad-convention',
       `Unsupported coordinate convention "${String(doc.coordinateSystem?.convention)}".`);
   }
+  validateTopLevel(doc, err);
   if (!Array.isArray(doc.objects)) {
     err('bad-objects',
       'The "objects" field is missing or is not a list. Nothing in it can be read, '
@@ -136,6 +137,76 @@ export function validateStructure(doc: PlanDocument): Issue[] {
 }
 
 type Reporter = (code: string, message: string, objectId?: string) => void;
+
+const LENGTH_UNITS = ['m', 'cm', 'mm', 'ft', 'in'];
+const ANGLE_UNITS = ['deg', 'rad'];
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * The blocks above `objects` that the UI consumes without looking.
+ *
+ * Object geometry was gated from the start, but the top level was not: a display
+ * unit the conversion table has no row for turns every length on screen into NaN,
+ * an ambient temperature spelled as a string reaches `numberField` and throws out
+ * of the inspector before the toolbar exists, and a title that is not text breaks
+ * the file name a save suggests. The schema rejects all of these; so does this.
+ */
+function validateTopLevel(doc: PlanDocument, err: Reporter): void {
+  const raw = doc as unknown as Record<string, unknown>;
+
+  const display = (raw.units as Record<string, unknown> | undefined)?.display;
+  if (isStated(display)) {
+    if (!isPlainObject(display)) {
+      err('bad-display-units', 'units.display should be an object with optional length and angle.');
+    } else {
+      if (isStated(display.length) && !LENGTH_UNITS.includes(String(display.length))) {
+        err('bad-display-units',
+          `Display length unit "${String(display.length)}" is not one of ${LENGTH_UNITS.join(', ')}.`);
+      }
+      if (isStated(display.angle) && !ANGLE_UNITS.includes(String(display.angle))) {
+        err('bad-display-units',
+          `Display angle unit "${String(display.angle)}" is not one of ${ANGLE_UNITS.join(', ')}.`);
+      }
+    }
+  }
+
+  const azimuth = (raw.coordinateSystem as Record<string, unknown> | undefined)?.northAzimuth_rad;
+  if (isStated(azimuth) && !isFiniteNumber(azimuth)) {
+    err('bad-north-azimuth', `coordinateSystem.northAzimuth_rad should be a number or null, found ${JSON.stringify(azimuth)}.`);
+  }
+
+  const meta = raw.meta;
+  if (isStated(meta)) {
+    if (!isPlainObject(meta)) {
+      err('bad-meta', 'The "meta" block should be an object.');
+    } else if (isStated(meta.title) && typeof meta.title !== 'string') {
+      err('bad-meta', `meta.title should be text, found ${JSON.stringify(meta.title)}.`);
+    }
+  }
+
+  const env = raw.environment;
+  if (!isStated(env)) return;
+  if (!isPlainObject(env)) {
+    err('bad-environment', 'The "environment" block should be an object.');
+    return;
+  }
+  // Two numbers, as the schema's vec2 says; a zero floor draws nothing and hurts
+  // nothing, while NaN or text becomes a NaN plane geometry.
+  if (isStated(env.floorSize_m) && !isNumberArray(env.floorSize_m, 2)) {
+    err('bad-environment', 'environment.floorSize_m should be two numbers.');
+  }
+  if (isStated(env.ceilingHeight_m) && !isPositive(env.ceilingHeight_m)) {
+    err('bad-environment', `environment.ceilingHeight_m should be a positive number or null, found ${JSON.stringify(env.ceilingHeight_m)}.`);
+  }
+  if (isStated(env.ambientTemperature_C) && !isFiniteNumber(env.ambientTemperature_C)) {
+    err('bad-environment', `environment.ambientTemperature_C should be a number or null, found ${JSON.stringify(env.ambientTemperature_C)}.`);
+  }
+  if (isStated(env.notes) && typeof env.notes !== 'string') {
+    err('bad-environment', 'environment.notes should be text or null.');
+  }
+}
 
 /** `mount.type` for whichever enum this object's type is held to. Advisory data,
  *  but it is printed on the equipment table and it is closed in the schema, so a

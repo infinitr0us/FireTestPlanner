@@ -18,6 +18,10 @@ import {
   checkPlan,
   displayName,
   findObject,
+  flameBoundsCorners,
+  flameBurner,
+  flameManifest,
+  flameSequenceLink,
   flameTipZM,
   framingOf,
   gaugeRangeKwM2,
@@ -33,6 +37,7 @@ import {
   objectColor,
   obstructions,
   positionOf,
+  reconstructedFlames,
   standoffHorizontalM,
   standoffM,
   tcMaxTemperatureC,
@@ -44,6 +49,7 @@ import {
   walls,
   zoomOf,
 } from '../core/plan';
+import { fileName } from '../core/linked-files';
 import { formatLength, formatLengthWithUnit } from '../core/units';
 import type { Issue, LengthUnit, PlanDocument } from '../core/types';
 import { buildViewSvg, escapeXml } from './drawing';
@@ -165,6 +171,42 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
         : `to ${tcMaxTemperatureC(tc)} °C`),
       cell(formatLength(Math.hypot(positionOf(tc)[0], positionOf(tc)[1]), unit), 'num'),
       cell(formatLength(Math.max(...heights), unit), 'num'),
+      cell('—'),
+    ].join('') + '</tr>');
+  }
+
+  // Recorded data, listed beside the equipment it was recorded with. The hull
+  // itself is time-varying and is not drawn (see docs/flame-playback.md); the row
+  // says which run it is, its span, and where its envelope stands relative to the
+  // burner it was reconstructed from.
+  for (const f of reconstructedFlames(doc)) {
+    const link = flameSequenceLink(f);
+    const manifest = flameManifest(f);
+    const burner = flameBurner(doc, f);
+    const corners = flameBoundsCorners(f);
+    const frames = manifest?.frames ?? [];
+    const detail = manifest
+      ? `${frames.length} frames, ${frames[0][0]}–${frames[frames.length - 1][0]} s, `
+        + `${(manifest.grid.pitch_m * 1000).toFixed(1)} mm voxels`
+      : 'no voxel folder linked';
+    const notes = [
+      link ? `run ${link.label || fileName(link.path)}` : null,
+      burner ? `on ${displayName(burner)}` : null,
+    ].filter((s): s is string => s !== null).join(', ');
+    let offset = '—';
+    if (burner && corners.length) {
+      const bp = positionOf(burner);
+      const cx = corners.reduce((a, c) => a + c[0], 0) / corners.length;
+      const cy = corners.reduce((a, c) => a + c[1], 0) / corners.length;
+      offset = formatLength(Math.hypot(cx - bp[0], cy - bp[1]), unit);
+    }
+    rows.push('<tr>' + [
+      `<td>${esc(displayName(f))}</td>`,
+      cell('reconstructed flame'),
+      cell(detail),
+      cell(notes || '—'),
+      cell(offset, 'num'),
+      cell(corners.length ? formatLength(Math.max(...corners.map((c) => c[2])), unit) : '—', 'num'),
       cell('—'),
     ].join('') + '</tr>');
   }

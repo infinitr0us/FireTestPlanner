@@ -228,6 +228,20 @@ body.is-measuring .viewport { cursor: cell; }
   border-radius: 3px;
   white-space: nowrap;
 }
+/* The second render pass is skipped for a very large flame while it plays; the
+   frame is blanked by the viewport and says so, rather than showing the main view. */
+.viewport-preview-frame--paused::before {
+  content: 'Preview paused while a large flame plays';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  text-align: center;
+  font: 11px var(--mono);
+  color: var(--text-dim);
+}
 
 /* -- palette ------------------------------------------------------------ */
 

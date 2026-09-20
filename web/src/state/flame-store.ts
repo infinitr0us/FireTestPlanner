@@ -48,9 +48,12 @@ export function flameKey(link: LinkedFile): string {
 /**
  * How a freshly read sequence differs from the manifest a plan carries, or null.
  *
- * Timestamps and counts are compared exactly: the manifest was computed by this
+ * Every manifest field is compared, and exactly: the manifest was computed by this
  * same code (or its Python mirror) from the folder as it was, so any difference is
- * a folder that changed since -- frames added, dropped or re-run.
+ * a folder that changed since -- frames added, dropped or re-run. The bounds count
+ * as much as the frames: a re-run that kept every timestamp and count but moved
+ * the hull is a folder the placement checks, which read the plan's bounds, no
+ * longer describe.
  */
 export function manifestDrift(sequence: FlameSequence, manifest: VoxelSequenceManifest): string | null {
   const now = sequence.manifest(manifest.importedAt);
@@ -59,7 +62,17 @@ export function manifestDrift(sequence: FlameSequence, manifest: VoxelSequenceMa
     if (now.frames[i][0] !== manifest.frames[i][0]) return `the folder has a frame at ${now.frames[i][0]} s where the plan expected ${manifest.frames[i][0]} s`;
     if (now.frames[i][1] !== manifest.frames[i][1]) return `the frame at ${now.frames[i][0]} s holds ${now.frames[i][1]} voxels; the plan expected ${manifest.frames[i][1]}`;
   }
-  if (now.grid.pitch_m !== manifest.grid.pitch_m || now.grid.voxelSize_m !== manifest.grid.voxelSize_m) return 'the folder\'s voxel grid is not the one the plan expected';
+  if (now.grid.pitch_m !== manifest.grid.pitch_m || now.grid.voxelSize_m !== manifest.grid.voxelSize_m
+      || (now.grid.resolution ?? null) !== (manifest.grid.resolution ?? null)) {
+    return 'the folder\'s voxel grid is not the one the plan expected';
+  }
+  for (let corner = 0; corner < 2; corner += 1) {
+    for (let a = 0; a < 3; a += 1) {
+      if (now.bounds_m[corner][a] !== manifest.bounds_m[corner][a]) {
+        return 'the folder\'s voxels occupy a different region from the one the plan expected';
+      }
+    }
+  }
   return null;
 }
 
@@ -122,18 +135,27 @@ export class FlameStore {
    * Read a link's frames from `source`. Resolves to the sequence, or rejects with
    * the first frame's problem; either way the entry is updated and announced. A
    * second call for the same link while one is in flight joins it.
+   *
+   * A read owns the bookkeeping it registered and nothing else: a cancelled read
+   * of the same key can finish after a fresh one has started -- close a plan and
+   * reopen it -- and must not take the new read's cancel or pending promise down
+   * with it, or the next `clear` would leave that read alive to repopulate the
+   * cache it was told to forget.
    */
   async load(link: LinkedFile, source: FlameSource): Promise<FlameSequence> {
     const key = flameKey(link);
     const existing = this.entries.get(key);
     if (existing?.status === 'ready' && existing.sequence) return existing.sequence;
-    if (existing?.status === 'loading') return this.pending.get(key)!;
+    const inFlight = existing?.status === 'loading' ? this.pending.get(key) : undefined;
+    if (inFlight) return inFlight;
     const entry: FlameEntry = { status: 'loading', progress: { done: 0, total: 0 } };
     this.entries.set(key, entry);
     this.emit();
     let cancelled = false;
-    this.cancels.set(key, () => { cancelled = true; });
-    const promise = (async () => {
+    const cancel = (): void => { cancelled = true; };
+    this.cancels.set(key, cancel);
+    let promise!: Promise<FlameSequence>;
+    promise = (async () => {
       try {
         const sequence = await this.read(source, entry, () => cancelled);
         if (cancelled) throw new Error('cancelled');
@@ -147,8 +169,9 @@ export class FlameStore {
         }
         throw err;
       } finally {
-        this.cancels.delete(key);
-        this.pending.delete(key);
+        // Reached after at least one await, so `promise` is assigned by now.
+        if (this.cancels.get(key) === cancel) this.cancels.delete(key);
+        if (this.pending.get(key) === promise) this.pending.delete(key);
       }
     })();
     this.pending.set(key, promise);

@@ -1011,6 +1011,43 @@ describe('structural validation', () => {
     }))).toEqual([]);
   });
 
+  it('rejects top-level values the panels consume without looking', () => {
+    // A string temperature reached `numberField().toFixed` and threw out of the
+    // inspector before the toolbar existed; a display unit with no conversion row
+    // turned every length on screen into NaN. The schema rejects all of these.
+    const withEnv = (environment: unknown): PlanDocument => ({ ...newPlan('env'), environment } as PlanDocument);
+    expect(codesOf(withEnv({ ambientTemperature_C: '20' }))).toContain('bad-environment');
+    expect(codesOf(withEnv({ floorSize_m: [20] }))).toContain('bad-environment');
+    expect(codesOf(withEnv({ floorSize_m: ['20', 20] }))).toContain('bad-environment');
+    expect(codesOf(withEnv({ floorSize_m: [20, Number.NaN] }))).toContain('bad-environment');
+    expect(codesOf(withEnv({ ceilingHeight_m: 0 }))).toContain('bad-environment');
+    expect(codesOf(withEnv({ notes: 5 }))).toContain('bad-environment');
+    expect(codesOf(withEnv([]))).toContain('bad-environment');
+    // Null and absent both mean "unstated", as everywhere else in the format.
+    expect(validateStructure(withEnv({ ambientTemperature_C: null, ceilingHeight_m: null, notes: null }))).toEqual([]);
+    expect(validateStructure(withEnv(null))).toEqual([]);
+
+    const withUnits = (display: unknown): PlanDocument => {
+      const doc = newPlan('units');
+      (doc.units as unknown as Record<string, unknown>).display = display;
+      return doc;
+    };
+    expect(codesOf(withUnits({ length: 'yards' }))).toContain('bad-display-units');
+    expect(codesOf(withUnits({ angle: 'grad' }))).toContain('bad-display-units');
+    expect(codesOf(withUnits('ft'))).toContain('bad-display-units');
+    expect(validateStructure(withUnits({ length: 'ft', angle: 'deg' }))).toEqual([]);
+
+    const withMeta = (meta: unknown): PlanDocument => ({ ...newPlan('meta'), meta } as PlanDocument);
+    expect(codesOf(withMeta({ title: 7 }))).toContain('bad-meta');
+    expect(codesOf(withMeta('plan'))).toContain('bad-meta');
+    expect(validateStructure(withMeta({ title: 'Plan', source: { tool: 'fds' }, anything: 1 }))).toEqual([]);
+
+    const azimuth = newPlan('north');
+    (azimuth.coordinateSystem as unknown as Record<string, unknown>).northAzimuth_rad = 'north';
+    expect(codesOf(azimuth)).toContain('bad-north-azimuth');
+    expect(validateStructure(fixture())).toEqual([]);
+  });
+
   it('summarises errors for a dialog without dumping all of them', () => {
     const doc = newPlan('many');
     for (let i = 0; i < 20; i += 1) {

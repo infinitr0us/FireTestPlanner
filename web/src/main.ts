@@ -6,9 +6,10 @@
 import examplePlan from '../../fixtures/flame/flame-test.ftp.json';
 import exampleFlameUrl from '../../fixtures/flame/flame-test.fvs?url';
 
+import type { FlameSequence } from './core/flame';
 import { flameSequenceLink, newPlan, reconstructedFlames } from './core/plan';
 import { adoptShellPresets } from './core/presets';
-import type { LengthUnit, PlanDocument } from './core/types';
+import { isReconstructedFlame, type LengthUnit, type PlanDocument } from './core/types';
 import { describeErrors, parseAndValidatePlan, validateStructure } from './core/validate';
 import {
   announceReady,
@@ -46,19 +47,26 @@ import './styles.css';
 // someone this page with a plan baked in, and it has to be the pristine page.
 captureBootHtml();
 
-const embedded = splitEmbeddedFlames(embeddedPlanText() ?? '');
-
 /** True once an embedded plan has actually been adopted -- which is not the same as
  *  the page carrying one, because it still has to survive validation. */
 let sharedPlanAdopted = false;
+/** The packed frames a shared page carried for its plan, attached once the app is up. */
+let embeddedFlames: EmbeddedFlames = new Map();
 
-/** A shared page's plan, if it survives validation. A broken one opens an empty
- *  editor with a console note rather than a half-built scene. */
+/**
+ * A shared page's plan, if it survives validation. A broken one opens an empty
+ * editor with a console note rather than a half-built scene -- and that includes
+ * lifting the embedded frames out of it, which reads the plan's shape before the
+ * validator has said anything about it.
+ */
 function initialDocument(): PlanDocument {
-  if (!embedded.text) return newPlan('Untitled fire test');
+  const text = embeddedPlanText() ?? '';
+  if (!text) return newPlan('Untitled fire test');
   try {
+    const embedded = splitEmbeddedFlames(text);
     const doc = parseAndValidatePlan(embedded.text);
     sharedPlanAdopted = true;
+    embeddedFlames = embedded.flames;
     return doc;
   } catch (err) {
     console.warn(`Embedded plan rejected:\n${(err as Error).message}`);
@@ -71,7 +79,7 @@ const flameStore = new FlameStore();
 const playhead = new Playhead();
 const viewport = new Viewport(qs('#viewport'), store, flameStore, playhead);
 const inspector = new Inspector(qs('#inspector'), store);
-new ReconstructionPlotPanel(qs('#viewport'), store, playhead);
+new ReconstructionPlotPanel(qs('#viewport'), store, playhead, flameStore);
 // Linking, relinking, refreshing and reading a flame's frames, shared by the
 // palette, the burner's Linked files section, the flame's inspector and the bar.
 const flameHost: FlameActionsHost = {};
@@ -141,7 +149,28 @@ function downloadDataUrl(url: string, name: string): void {
   anchor.remove();
 }
 
-flameStore.subscribe(() => { syncPlayback(); });
+/** The selected flame's cache state the inspector last painted, so a progress
+ *  tick can be told from a change of state. */
+let flameInspectorState = '';
+flameStore.subscribe(() => {
+  syncPlayback();
+  // The flame's inspector says whether its frames are loaded; frames arriving
+  // through the bar, an auto-load or an embedded payload have to reach it too. A
+  // change of state always repaints; a per-frame progress tick repaints only when
+  // no field in the inspector has the keyboard, so a name being typed during a
+  // long read is not rebuilt from under the cursor eighty times.
+  const sole = store.soleSelected;
+  if (!sole || !isReconstructedFlame(sole)) return;
+  const link = flameSequenceLink(sole);
+  const entry = link ? flameStore.get(link) : undefined;
+  const state = `${store.documentId}/${sole.id}/${entry?.status ?? 'absent'}/${entry?.changed ?? ''}/${entry?.error ?? ''}`;
+  const active = document.activeElement;
+  const typing = active instanceof HTMLElement && /^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName) && qs('#inspector').contains(active);
+  if (state !== flameInspectorState || !typing) {
+    flameInspectorState = state;
+    inspector.render();
+  }
+});
 let flameDocumentId = store.documentId;
 const outliner = new Outliner(qs('#outliner'), store);
 const checks = new ChecksPanel(qs('#checks'), store);
@@ -150,7 +179,13 @@ const palette = new Palette(qs('#palette'), store, (armed) => {
   document.body.classList.toggle('is-placing', armed);
   if (armed && measuring) toggleMeasure();
 });
-palette.linkFlame = () => { void flameOps.link(null); };
+// The palette has no panel to show a failure under, so a folder that cannot be
+// read is reported the way a plan that cannot be opened is.
+palette.linkFlame = () => {
+  flameOps.link(null).catch((err) => {
+    window.alert(`The voxel folder was not linked:\n\n${(err as Error).message}`);
+  });
+};
 
 // The camera preset library is not part of the document, so adding or removing a
 // preset emits no store event. Both panels list it, so both repaint here.
@@ -515,35 +550,52 @@ async function exportShareable(): Promise<void> {
     );
     return;
   }
+  // One snapshot, taken before the first await: the plan text, its title, the
+  // file name and which loaded sequences go with it. Compressing the frames
+  // yields to the page, and a plan opened or edited meanwhile would otherwise be
+  // serialised under the old title with the old plan's frames.
+  const identity = store.identity();
   const title = store.document.meta?.title ?? 'Fire test plan';
-  const flames = await embeddableFlames();
+  const name = suggestFileName().replace(/\.ftp\.json$/, '') + '-viewer.html';
+  const planJson = store.serialize();
+  const flames = await embeddableFlames(store.document);
   if (flames === null) return;
-  const html = buildShareableHtml(store.serialize(), title, flames);
-  await saveHtml(html, suggestFileName().replace(/\.ftp\.json$/, '') + '-viewer.html');
+  if (store.documentId !== identity.documentId || store.revision !== identity.revision) {
+    window.alert('The plan changed while the page was being built. Nothing was exported; please Share again.');
+    return;
+  }
+  const html = buildShareableHtml(planJson, title, flames);
+  await saveHtml(html, name);
 }
 
 /** A shared page carries at most this much packed flame data, gzipped. */
 const EMBED_CAP_BYTES = 25 * 1024 * 1024;
 
 /**
- * The loaded sequences a shared page can carry, or null if the user backed out.
+ * The loaded sequences a shared page can carry for `doc`, or null if the user
+ * backed out.
  *
  * Under the cap, every loaded flame goes in and the viewer plays with nothing on
  * disk. Over it, the page is exported without them and says so up front rather
- * than producing a file nobody can open.
+ * than producing a file nobody can open. The sequences are looked up before the
+ * first await, so they are the ones loaded for the document handed in.
  */
-async function embeddableFlames(): Promise<EmbeddedFlames | null> {
+async function embeddableFlames(doc: PlanDocument): Promise<EmbeddedFlames | null> {
   const payloads: EmbeddedFlames = new Map();
   const unloaded: string[] = [];
-  let bytes = 0;
-  for (const flame of reconstructedFlames(store.document)) {
+  const loaded: Array<{ key: string; sequence: FlameSequence }> = [];
+  for (const flame of reconstructedFlames(doc)) {
     const link = flameSequenceLink(flame);
     if (!link) continue;
     const sequence = flameStore.sequenceOf(link);
     if (!sequence) { unloaded.push(flame.name || flame.id); continue; }
+    loaded.push({ key: embeddedFlameKey(flame.id, link.id), sequence });
+  }
+  let bytes = 0;
+  for (const { key, sequence } of loaded) {
     const encoded = await encodeEmbedded(sequence);
     bytes += encoded.length * 0.75;
-    payloads.set(embeddedFlameKey(flame.id, link.id), encoded);
+    payloads.set(key, encoded);
   }
   if (bytes > EMBED_CAP_BYTES) {
     const proceed = window.confirm(
@@ -651,7 +703,7 @@ viewport.frameAll();
 if (sharedPlanAdopted) {
   store.markSaved(`${(store.document.meta?.title ?? 'plan')}.ftp.json`, store.identity());
   document.body.classList.add('is-shared-view');
-  if (embedded.flames.size) void attachEmbedded(embedded.flames);
+  if (embeddedFlames.size) void attachEmbedded(embeddedFlames);
 }
 
 // Adopt the desktop bridge if we are inside the pywebview shell, then report in.

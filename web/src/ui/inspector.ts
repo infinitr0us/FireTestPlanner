@@ -178,8 +178,10 @@ export class Inspector {
   /** The flame sections need the session's loaded sequences and the link actions. */
   attachFlames(flames: FlameStore, actions: FlameActions): FlamePanel {
     this.flamePanel = new FlamePanel(this.store, flames, actions, () => this.render());
-    // A burner's Linked files section offers the same run's frames as a new flame.
-    this.linkedFiles.linkFlame = (burnerId) => { void actions.link(null, burnerId); };
+    // A burner's Linked files section offers the same run's frames as a new flame;
+    // it runs the link through its own guard, so a folder that cannot be read is
+    // reported under the burner like any other failed link.
+    this.linkedFiles.linkFlame = (burnerId) => actions.link(null, burnerId);
     return this.flamePanel;
   }
 

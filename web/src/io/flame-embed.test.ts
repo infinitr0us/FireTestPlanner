@@ -56,6 +56,19 @@ describe('embedded flames', () => {
     expect(splitEmbeddedFlames('not json')).toEqual({ text: 'not json', flames: new Map() });
   });
 
+  it('leaves a plan of the wrong shape for the load gate to reject, rather than throwing', () => {
+    // This runs before validation, at module scope on a shared page: `objects`
+    // that was a map threw "object is not iterable" and the page never built.
+    for (const text of [
+      JSON.stringify({ format: 'fire-test-plan', objects: {} }),
+      JSON.stringify({ format: 'fire-test-plan', objects: 5 }),
+      JSON.stringify({ format: 'fire-test-plan', objects: [null, 7, { linkedFiles: {} }, { linkedFiles: [null, 'x'] }] }),
+      'null', '7', '"text"', '[]',
+    ]) {
+      expect(splitEmbeddedFlames(text)).toEqual({ text, flames: new Map() });
+    }
+  });
+
   it('strips directories from the folder path like any link', () => {
     const doc = JSON.parse(PLAN) as PlanDocument;
     flameSequenceLink(reconstructedFlames(doc)[0])!.path = 'D:/tests/run3/voxels';

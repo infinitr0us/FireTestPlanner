@@ -24,11 +24,15 @@ def main():
     data['meta']['title'] = 'Reconstructed flame demonstration'
     data['meta']['notes'] = ('The reference layout with the flame reconstructed from a test on this site: '
                              '80 visual-hull frames at 5 s in voxels/, and the same run\'s volumes.csv on the burner. '
-                             'Recorded data; it changes no planned HRR, prediction or verdict.')
+                             'The burner carries the HRR recorded for that test, 80 kW, rather than the reference '
+                             'layout\'s 130 kW. Recorded data; it changes no prediction or verdict.')
     plot = parse_reconstruction_csv((ROOT / 'fixtures/flame/volumes.csv').read_text(encoding='utf-8'),
                                     imported_at=IMPORTED_AT)
     for obj in data['objects']:
         if obj['id'] == 'burner-main':
+            # The test record for this reconstruction: 80 kW on the 1 ft pan, not the
+            # reference layout's 130 kW steady-state figure.
+            obj['fire']['hrr_kw'] = 80.0
             obj['linkedFiles'] = [{'id': 'volumes', 'kind': 'spreadsheet', 'path': 'volumes.csv',
                                    'label': 'Visual hull volumes', 'plot': plot}]
     plan = Plan(data)

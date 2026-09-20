@@ -30,12 +30,14 @@ npm run dev                 # editor at localhost:5173
 ```
 
 Click **Example** to load the reference plan reconstructed from `example.jpg` — with
-the flame reconstructed from a test on that site, so press play — then
-click a camera in the object list. The coverage panel and the picture-in-picture
-preview show what that lens will actually get. Select **East wall gauge** for the
-same argument about instruments: at 1.5 m from a 130 kW fire it sees 1.7 kW/m², which
-is 3% of a 50 kW/m² gauge and lost in its noise, while the 10 kW/m² gauge further away
-on the north wall reads usefully.
+the flame reconstructed from a test on that site, and that test's recorded 80 kW on
+the burner, so press play — then click a camera in the object list. The coverage
+panel and the picture-in-picture preview show what that lens will actually get.
+Select **East wall gauge** for the same argument about instruments: at 1.5 m from an
+80 kW fire it sees 1.0 kW/m², which is 2% of a 50 kW/m² gauge and lost in its noise,
+while the 10 kW/m² gauge further away on the north wall still reads above its noise
+floor (0.6 kW/m², 6% of scale). The reference layout itself, `fixtures/
+pool-fire-camera-row.ftp.json`, keeps the 130 kW steady-state figure for a 1 ft pan.
 
 ### What you can put in a plan
 

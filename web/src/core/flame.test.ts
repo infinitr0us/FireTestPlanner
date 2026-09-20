@@ -209,3 +209,49 @@ describe('the fixture, against Python', () => {
     expect(() => FlameSequence.unpack(new Uint8Array(100))).toThrow('not a packed flame sequence');
   });
 });
+
+describe('the packed form, refusing what pack could not have written', () => {
+  // Two occupied cells in a 2x1x1 box; the fields below are what a payload can
+  // lie about. Mirror of `test_unpack_refuses_inconsistent_frames` in Python.
+  const two = (): FlameSequence => FlameSequence.fromFrames([synthetic(0, [[0, 0, 0], [1, 0, 0]])]);
+  const withFrame = (edit: (f: ReturnType<typeof packFrame>) => void): Uint8Array => {
+    const seq = two();
+    edit(seq.frames[0]);
+    return seq.pack();
+  };
+
+  it('refuses a frame whose count disagrees with its bits, instead of overrunning the renderer', () => {
+    // The renderer sizes its instance buffer from `count` and fills it with the
+    // cells actually set; this used to unpack cleanly and throw a RangeError there.
+    expect(() => FlameSequence.unpack(withFrame((f) => { f.count = 1; }))).toThrow('declares 1 voxels but holds 2');
+    expect(() => FlameSequence.unpack(withFrame((f) => { f.count = 3; }))).toThrow('declares 3 voxels but holds 2');
+  });
+
+  it('refuses a box whose bits do not fit it, bits past the last cell, and a box off the lattice', () => {
+    expect(() => FlameSequence.unpack(withFrame((f) => { f.dims = [1, 1, 9]; }))).toThrow('holds 1 bytes for a box of 9 cells');
+    expect(() => FlameSequence.unpack(withFrame((f) => { f.bits = Uint8Array.from([0b11000001]); }))).toThrow('bits set past its last cell');
+    expect(() => FlameSequence.unpack(withFrame((f) => { f.origin = [1, 0, 0]; }))).toThrow('outside the sequence bounds');
+    expect(() => FlameSequence.unpack(withFrame((f) => { f.origin = [-1, 0, 0]; }))).toThrow('outside the sequence bounds');
+    expect(() => FlameSequence.unpack(withFrame((f) => { f.dims = [0, 0, 0]; f.bits = new Uint8Array(0); }))).toThrow('a box with no cells');
+  });
+
+  it('refuses an empty frame that carries a box, and a sequence out of time order', () => {
+    const seq = FlameSequence.fromFrames([synthetic(0, [[0, 0, 0], [1, 0, 0]]), synthetic(5, [])]);
+    seq.frames[1].dims = [1, 1, 1];
+    expect(() => FlameSequence.unpack(seq.pack())).toThrow('is empty but carries a box');
+    const backwards = FlameSequence.fromFrames([synthetic(0, [[0, 0, 0], [1, 0, 0]]), synthetic(5, [[0, 0, 1]])]);
+    backwards.frames.reverse();
+    expect(() => FlameSequence.unpack(backwards.pack())).toThrow('strictly increasing');
+    // What pack wrote still reads back.
+    expect(FlameSequence.unpack(two().pack()).manifest('x')).toEqual(two().manifest('x'));
+  });
+
+  it('refuses to pack a box axis the u16 field cannot hold, rather than wrapping it', () => {
+    // 65,536 cells on one axis packed to 0 and unpacked to a frame with no surface.
+    const seq = FlameSequence.fromFrames([synthetic(0, [[0, 0, 0], [1, 0, 0], [0, 0, 65535]])]);
+    expect(seq.frames[0].dims).toEqual([2, 1, 65536]);
+    expect(() => seq.pack()).toThrow('spans 65536 cells on one axis; the packed form holds at most 65535');
+    const limit = FlameSequence.fromFrames([synthetic(0, [[0, 0, 0], [1, 0, 0], [0, 0, 65534]])]);
+    expect(FlameSequence.unpack(limit.pack()).frames[0].dims).toEqual([2, 1, 65535]);
+  });
+});

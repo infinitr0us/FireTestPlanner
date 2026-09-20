@@ -21,6 +21,7 @@
  * pipeline said.
  */
 
+import { voxelSequenceProblem } from './linked-files';
 import type { VoxelSequenceManifest } from './types';
 
 export const FRAME_NAME = /^t_(\d+(?:\.\d+)?)s\.npz$/;
@@ -33,6 +34,8 @@ const PACK_MAGIC = [0x46, 0x54, 0x50, 0x56]; // 'FTPV'
 const PACK_VERSION = 1;
 /** f64 timestamp, u32 count, i32[3] origin, u16[3] dims, u32 byte length. */
 const FRAME_HEADER_BYTES = 8 + 4 + 12 + 6 + 4;
+/** A frame box axis is a u16 in the packed form; a longer one has no representation. */
+export const MAX_FRAME_DIM = 0xffff;
 
 // -- .npz / .npy -----------------------------------------------------------
 
@@ -228,6 +231,41 @@ export function packFrame(timestamp_s: number, voxels: Float64Array, originM: Ar
 
 const isSet = (frame: PackedFrame, flat: number): boolean => (frame.bits[flat >> 3] & (0x80 >> (flat & 7))) !== 0;
 
+const POPCOUNT = Uint8Array.from({ length: 256 }, (_, b) => {
+  let n = 0;
+  for (let v = b; v; v >>= 1) n += v & 1;
+  return n;
+});
+
+/**
+ * Why a packed frame is not one `packFrame` could have produced, or null.
+ *
+ * The renderer sizes its instance buffer from `count` and fills it with the cells
+ * actually set, and the surface walk trusts `dims` to address `bits`: a frame that
+ * claims one and holds the other overruns a buffer instead of drawing. `extent` is
+ * the sequence lattice's last index per axis, which every box has to fit inside.
+ * Mirror of `frame_problem` in flame.py.
+ */
+export function frameProblem(frame: PackedFrame, extent: ArrayLike<number>): string | null {
+  const { count, origin, dims, bits } = frame;
+  if (!Number.isFinite(frame.timestamp_s)) return 'has a non-finite timestamp';
+  if (count === 0) {
+    return dims.some((d) => d !== 0) || origin.some((o) => o !== 0) || bits.length !== 0 ? 'is empty but carries a box' : null;
+  }
+  if (dims.some((d) => d <= 0)) return `declares ${count} voxels in a box with no cells`;
+  const cells = dims[0] * dims[1] * dims[2];
+  if (bits.length !== Math.ceil(cells / 8)) return `holds ${bits.length} bytes for a box of ${cells} cells`;
+  const padding = bits.length * 8 - cells;
+  if (padding && (bits[bits.length - 1] & ((1 << padding) - 1))) return 'has bits set past its last cell';
+  let set = 0;
+  for (let i = 0; i < bits.length; i += 1) set += POPCOUNT[bits[i]];
+  if (set !== count) return `declares ${count} voxels but holds ${set}`;
+  for (let a = 0; a < 3; a += 1) {
+    if (origin[a] < 0 || origin[a] + dims[a] - 1 > extent[a]) return 'has a box outside the sequence bounds';
+  }
+  return null;
+}
+
 /**
  * Box-local `(i, j, k)` of every cell with an empty 6-neighbour, in flat order --
  * the cubes the editor draws. The box boundary counts as empty. `Uint8Array` when
@@ -341,6 +379,13 @@ export class FlameSequence {
    *     per frame: f64 timestamp u32 count i32[3] origin u16[3] dims u32 nbytes bytes
    */
   pack(): Uint8Array {
+    // Refused rather than truncated: `setUint16` would silently wrap a longer
+    // axis, and Python's struct writer refuses it, so the two would disagree.
+    for (const f of this.frames) {
+      if (f.dims.some((d) => d > MAX_FRAME_DIM)) {
+        throw new Error(`frame at ${f.timestamp_s} s spans ${Math.max(...f.dims)} cells on one axis; the packed form holds at most ${MAX_FRAME_DIM}`);
+      }
+    }
     const total = 4 + 5 + 20 + 48 + this.frames.reduce((n, f) => n + FRAME_HEADER_BYTES + f.bits.length, 0);
     const out = new Uint8Array(total);
     const view = new DataView(out.buffer);
@@ -368,6 +413,14 @@ export class FlameSequence {
     return out;
   }
 
+  /**
+   * Read the packed form back, refusing anything `pack` could not have written.
+   *
+   * The container is checked as it is walked; then the manifest rules -- grid,
+   * bounds, 1–20,000 frames in strictly increasing time -- and each frame's own
+   * consistency, so a payload that lies about its cells is refused here rather
+   * than overrunning the instance buffer in the renderer.
+   */
   static unpack(data: Uint8Array): FlameSequence {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
     if (data.length < 77 || PACK_MAGIC.some((b, i) => data[i] !== b)) throw new Error('not a packed flame sequence');
@@ -394,7 +447,15 @@ export class FlameSequence {
       offset += FRAME_HEADER_BYTES + nbytes;
     }
     if (offset !== data.length) throw new Error(`packed flame sequence has ${data.length - offset} trailing byte(s)`);
-    return new FlameSequence(grid, bounds, frames);
+    const sequence = new FlameSequence(grid, bounds, frames);
+    const problem = voxelSequenceProblem(sequence.manifest('packed'));
+    if (problem) throw new Error(`packed flame sequence is inconsistent: ${problem}`);
+    const extent = [0, 1, 2].map((a) => Math.round((bounds[1][a] - bounds[0][a]) / grid.pitch_m));
+    for (const frame of frames) {
+      const bad = frameProblem(frame, extent);
+      if (bad) throw new Error(`packed flame sequence is inconsistent: the frame at ${frame.timestamp_s} s ${bad}`);
+    }
+    return sequence;
   }
 }
 

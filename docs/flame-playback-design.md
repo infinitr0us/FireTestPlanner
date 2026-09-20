@@ -455,4 +455,32 @@ The first draft ended in eight open questions. They were answered on 2026-09-19:
 - **No frames-per-second mode** (section 6 already dropped it), and no
   "centre on burner" action (section 12, decision 2).
 - **The fixture moved** to `fixtures/flame/`, with the run's own `volumes.csv` and
-  a `flame-test.fvs` (the packed frames, gzipped) that the Example imports.
+  a `flame-test.fvs` (the packed frames, gzipped) that the Example imports. Its
+  burner carries the test record's 80 kW, not the reference layout's 130 kW.
+
+The review pass of 2026-09-19 (seventeen findings, all taken) then tightened the
+seams the build left:
+
+- **The loop holds the last frame** for the previous interval before wrapping
+  (section 6 said a frame holds until the next; the last had no next and was never
+  shown). `Playhead.time_s` never reports past the last mark.
+- **The plot follows the clock only for the reconstruction's own CSV**
+  (`plotFollowsFlame`: the flame's burner, and rows matching the manifest), not
+  for any burner plot the moment any flame is loaded.
+- **The flame proxy is selection-only.** The measure tool skips it and lands on the
+  room behind; it is the envelope of every frame, not a surface.
+- **The packed reader refuses what the writer could not have written** — count
+  against set bits, bytes against the box, bits past the last cell, boxes outside
+  the bounds, frames out of order — in both engines with one message, and both
+  writers refuse a box axis past the u16 field rather than one wrapping it.
+- **Drift detection compares the whole manifest**, bounds and resolution included.
+- **Share serialises the plan before it compresses the frames** and aborts if the
+  document changed meanwhile; folder linking takes the document's identity before
+  the picker, not after; a cancelled read owns only its own bookkeeping.
+- **The load gate covers the top-level blocks** (`environment`, `units.display`,
+  `meta.title`, `northAzimuth_rad`), and lifting embedded frames out of a shared
+  page's plan happens inside the startup boundary that rejects a bad plan.
+- **Smaller:** the bar no longer swallows keys (Ctrl+S from a focused Play button
+  went to the browser); the inspector follows the frame cache; the large-flame
+  preview fallback blanks the frame and says why instead of showing the main view;
+  the drawing's equipment list has a row for the flame.

@@ -18,6 +18,8 @@ import { PRINT_CSS, REPORT_CSS, buildReportBody, buildReportHtml } from './repor
 
 const FIXTURE_PATH = fileURLToPath(new URL('../../../fixtures/pool-fire-camera-row.ftp.json', import.meta.url));
 const fixture = (): PlanDocument => parsePlan(readFileSync(FIXTURE_PATH, 'utf8'));
+const FLAME_PATH = fileURLToPath(new URL('../../../fixtures/flame/flame-test.ftp.json', import.meta.url));
+const flameFixture = (): PlanDocument => parsePlan(readFileSync(FLAME_PATH, 'utf8'));
 
 /** The exposure table's row for one instrument. Scoped to that table: the same
  *  name also appears in the drawing labels and in the equipment list above it. */
@@ -111,6 +113,26 @@ describe('report content', () => {
       const without = buildViewSvg(fixture(), view, 'm');
       expect(svg).not.toBe(without);
     }
+  });
+
+  it('lists a reconstructed flame: the run, its span and where its envelope stands', () => {
+    // The hull is not drawn (docs/flame-playback.md says so), but the equipment
+    // list has to name it, and a flame-only plan is not a plan with no objects.
+    const doc = flameFixture();
+    const body = buildReportBody(doc, 'm');
+    const row = body.split('<tr>').find((r) => r.includes('Visual hull')) as string;
+    expect(row).toContain('<td>reconstructed flame</td>');
+    expect(row).toContain('80 frames, 0–395 s, 15.7 mm voxels');
+    expect(row).toContain('run Visual hull frames, on Heptane pan, 1 ft square');
+    expect(row).toMatch(/<td class="num">0\.\d+<\/td>/); // the envelope's offset from the pan, and its top
+    expect(row).toContain('<td class="num">0.905</td>');
+
+    doc.objects = doc.objects.filter((o) => o.type === 'reconstructedFlame');
+    const alone = buildReportBody(doc, 'm');
+    expect(alone).not.toContain('No objects in this plan');
+    expect(alone).toContain('Visual hull');
+    delete doc.objects[0].linkedFiles;
+    expect(buildReportBody(doc, 'm')).toContain('no voxel folder linked');
   });
 
   it('gives instruments their own exposure table', () => {

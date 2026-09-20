@@ -23,7 +23,9 @@ Pick the pipeline's `voxels/` folder. The desktop app opens a folder dialog; a
 browser tab asks for the folder through the file picker (Chrome and Edge) and
 takes the `.npz` files in it. The frames are read first — the bar shows the
 progress — and only then does the plan gain the object, so a folder that cannot
-be read links nothing. Reading the 80-frame example takes well under a second.
+be read links nothing: the reason is shown under the burner or the flame it was
+linked from, or in a dialog from the palette. Reading the 80-frame example takes
+well under a second.
 
 The object is created **at the identity and locked**: the voxels are in the
 reconstruction rig's frame, and when the rig was set up from this plan (the
@@ -40,7 +42,7 @@ A bar docks along the bottom of the viewport whenever the plan holds a flame:
 | ⏮ ◀ ▶ ▶\| ⏭ | First frame, previous, play/pause, next, last. Keys: Home, `,`, Space, `.`, End |
 | Scrubber | Snaps to the frames. `t = 55.0 s · frame 12/80 · 6,132 cubes` is the readout |
 | ×1 … ×60 | Playback speed as a multiple of test time. ×1 shows one 5 s frame every 5 s; ×10 is the default |
-| Loop | Start over at the end |
+| Loop | Start over at the end. The last frame is held for one interval first — a frame holds until the next, and the last has no next — so a loop never skips it |
 | PNG | Save the viewport at 3× resolution, for a figure. Object labels are HTML and are not in it |
 
 A frame **holds until the next timestamp**; nothing is interpolated between
@@ -50,8 +52,18 @@ the measurement.
 
 Select the burner and its **volumes.csv** plot follows the same clock: the cursor
 sits on the sample at the playback time, and dragging the plot's slider seeks the
-playback. Select a camera and the picture-in-picture shows the hull from that
-camera's own view at that moment.
+playback. That is only for the reconstruction's own CSV — the one on the flame's
+burner whose rows match the manifest frame for frame, while that flame's frames
+are loaded; a CSV from another run, or on another burner, keeps its own slider
+and says so under the chart. Select a
+camera and the picture-in-picture shows the hull from that camera's own view at
+that moment; above 400,000 cubes it is blanked while the flame plays and resumes
+on pause.
+
+The measure tool looks past the flame. The object is picked through an invisible
+box over the envelope of every frame, which is not a surface a ruler can land on,
+so a measurement aimed at the hull lands on whatever is behind it — the pan, the
+floor — rather than on the top of that box.
 
 ## The inspector
 
@@ -123,7 +135,9 @@ for the reasoning.
 
 ## Deliberate limits
 
-- **The drawing export does not draw the flame.** The equipment list names it; the
+- **The drawing export does not draw the flame.** The equipment list has a row for
+  it — the run, its span and voxel pitch, the burner it belongs to, how far its
+  envelope stands from that burner's centre and how high it reaches — but the
   elevations do not show the hull. A time-invariant envelope beside the predicted
   cone is the natural addition.
 - **No video sync.** Linked videos are still files to find and open; the clock is

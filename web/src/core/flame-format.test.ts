@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { linkedFilesProblem, linkKindFor, maxLinksFor, voxelSequenceProblem } from './linked-files';
 import {
   boundsPoints, checkPlan, flameBoundsCorners, flameBurner, flameChecks, flameManifest, newPlan,
-  plotSequenceMismatch, reconstructedFlames,
+  plotFollowsFlame, plotSequenceMismatch, reconstructedFlames,
 } from './plan';
 import { serializePlan } from './serialize';
 import {
@@ -61,6 +61,8 @@ describe('the flame fixture', () => {
     expect(manifest.frames).toHaveLength(80);
     expect(manifest.frames[11]).toEqual([55, 35960]);
     expect(flameBurner(doc, flame)!.id).toBe('burner-main');
+    // The HRR is the test record's, not the reference layout's 130 kW.
+    expect(burnerOf(doc).fire!.hrr_kw).toBe(80);
     expect(checkPlan(doc).filter((i) => i.code.startsWith('flame-'))).toEqual([]);
   });
 
@@ -223,5 +225,30 @@ describe('checks', () => {
     expect(flameChecks(doc)).toEqual([]);
     flameOf(doc).transform!.position_m = [0, 0, -1];
     expect(flameChecks(doc).map((i) => i.code)).toEqual(['flame-below-floor']);
+  });
+
+  it('lets only the reconstruction\'s own CSV follow the playback clock', () => {
+    // Any loaded flame used to drive every burner plot: a CSV sampled at 1000 s on
+    // another burner had its slider dragged back to 0 by a clock clamped at 395.
+    const doc = load();
+    const burner = burnerOf(doc), link = burner.linkedFiles![0];
+    expect(plotFollowsFlame(doc, burner, link)).toBe(true);
+    const other: BurnerObject = {
+      ...JSON.parse(JSON.stringify(burner)), id: 'burner-2', transform: { position_m: [5, 0, 0] },
+      linkedFiles: [{ id: 'v2', kind: 'spreadsheet', path: 'other.csv', plot: { importedAt: 'x', samples: [[1000, 0.1, 1], [1005, 0.1, 1]] } }],
+    };
+    doc.objects.push(other);
+    expect(plotFollowsFlame(doc, other, other.linkedFiles![0])).toBe(false);
+    // The flame's burner with a CSV from another run keeps its own slider too.
+    const shifted = { ...link, plot: { ...link.plot!, samples: link.plot!.samples.map(([t, v, a]): [number, number, number] => [t + 1, v, a]) } };
+    expect(plotFollowsFlame(doc, burner, shifted)).toBe(false);
+    // Nothing to follow while this burner's own flame is not loaded: the clock
+    // would be running on some other flame's time.
+    expect(plotFollowsFlame(doc, burner, link, () => false)).toBe(false);
+    expect(plotFollowsFlame(doc, burner, link, (f) => f.id === 'flame-main')).toBe(true);
+    // Nothing to follow without a manifest, and a link without a plot never follows.
+    expect(plotFollowsFlame(doc, burner, { ...link, plot: undefined })).toBe(false);
+    delete flameOf(doc).linkedFiles;
+    expect(plotFollowsFlame(doc, burner, link)).toBe(false);
   });
 });

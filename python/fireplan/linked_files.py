@@ -5,6 +5,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import math
 import ntpath
+import numbers
 import os
 import posixpath
 import re
@@ -35,6 +36,10 @@ def sequence_problem(sequence):
     grid = sequence.get('grid', {})
     if not all(math.isfinite(grid.get(k, math.nan)) and grid[k] > 0 for k in ('voxelSize_m', 'pitch_m')) or grid['pitch_m'] < grid['voxelSize_m']:
         return 'a voxel sequence needs a positive voxel size and a pitch no smaller than it'
+    resolution = grid.get('resolution')
+    if resolution is not None and (isinstance(resolution, bool) or not isinstance(resolution, numbers.Real)
+                                   or not math.isfinite(resolution) or resolution != int(resolution) or resolution < 2):
+        return 'a voxel sequence needs an integer grid resolution of at least 2, or null'
     lo, hi = sequence.get('bounds_m', ([], []))
     if len(lo) != 3 or len(hi) != 3 or not all(math.isfinite(x) for x in (*lo, *hi)) or any(a > b for a, b in zip(lo, hi)):
         return 'a voxel sequence needs finite bounds with the minimum corner first'
