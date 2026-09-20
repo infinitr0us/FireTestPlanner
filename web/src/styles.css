@@ -587,3 +587,27 @@ body.is-measuring .viewport { cursor: cell; }
 .fdspaste__error { margin: 0; color: var(--bad); font-size: 11px; white-space: pre-wrap; }
 /* The same voice anywhere a typed value is refused with a reason. */
 .panel__error { margin: 4px 0 8px; color: var(--bad); font-size: 11px; white-space: pre-wrap; }
+
+/* -- flame playback ------------------------------------------------------ */
+
+.playback-bar { position: absolute; left: 14px; right: 14px; bottom: 14px; z-index: 5;
+  background: rgba(20, 29, 43, 0.97); color: #dce5f2; border: 1px solid #526079;
+  border-radius: 8px; padding: 8px 12px; box-shadow: 0 4px 20px #0005; font-size: 12px; }
+.playback-bar[hidden] { display: none; }
+.playback-bar__controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.playback-bar__btn { background: #29374c; color: #dce5f2; border: 1px solid #526079; border-radius: 4px;
+  padding: 4px 8px; cursor: pointer; font-size: 12px; line-height: 1.2; min-width: 32px; }
+.playback-bar__btn:disabled { opacity: 0.45; cursor: default; }
+.playback-bar__slider { flex: 1 1 160px; min-width: 120px; accent-color: #f59e0b; }
+.playback-bar__readout { font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 220px; }
+.playback-bar__select { background: #29374c; color: #dce5f2; border: 1px solid #526079; border-radius: 4px; padding: 3px 4px; font-size: 12px; }
+.playback-bar__loop { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.playback-bar__legend { display: inline-flex; align-items: center; gap: 6px; color: #a9bbd3; white-space: nowrap; }
+.playback-bar__ramp { display: inline-block; width: 56px; height: 8px; border-radius: 2px;
+  background: linear-gradient(90deg, #0000ff, #ffff00, #ff0000); }
+.playback-bar__status { margin-top: 6px; color: #a9bbd3; line-height: 1.5; overflow-wrap: anywhere;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.playback-bar__status--warn { color: #ffcb87; }
+.playback-bar__status--error { color: #ff9b9b; }
+.field__inline { display: flex; align-items: center; gap: 8px; }
+.field__range { flex: 1; accent-color: #f59e0b; min-width: 80px; }

@@ -32,6 +32,7 @@ const TYPE_ICON: Record<string, string> = {
   heatFluxSensor: '◉',
   thermocouple: '⋮',
   obstruction: '▢',
+  reconstructedFlame: '✶',
 };
 
 export class Palette {
@@ -42,6 +43,8 @@ export class Palette {
    *  repaint -- which every object added causes -- does not wipe what was typed. */
   private fdsDraft = '';
   private fdsError: string | null = null;
+  /** Set by the app: link a folder of reconstructed frames as a new flame object. */
+  linkFlame: (() => void) | null = null;
 
   constructor(
     private root: HTMLElement,
@@ -65,6 +68,11 @@ export class Palette {
         'Gauge, aimed at the fire on drop. Its inspector predicts what it will read.'),
       this.tile('⋮', 'Thermocouple', () => createThermocouple(this.store.document),
         'One bead on drop; add more in the inspector to make it a rake.'),
+      h('button', {
+        class: 'palette__tile', type: 'button',
+        title: 'A flame reconstructed from the test\'s cameras: pick the pipeline\'s voxels/ folder and play it back in the layout.',
+        onclick: () => this.linkFlame?.(),
+      }, [h('span', { class: 'palette__icon' }, ['✶']), h('span', {}, ['3D flame…'])]),
     ]));
 
     this.root.append(h('h3', { class: 'panel__section' }, ['Cameras']));

@@ -27,6 +27,7 @@ import {
   rimHeightM,
   standoffM,
   displayName,
+  flameManifest,
   hasObjectColor,
   objectColor,
 } from '../core/plan';
@@ -38,6 +39,7 @@ import type {
   HoodObject,
   ObstructionObject,
   PlanObject,
+  ReconstructedFlameObject,
   ThermocoupleObject,
   WallObject,
 } from '../core/types';
@@ -412,6 +414,51 @@ export function buildObstruction(o: ObstructionObject): THREE.Group {
   label.position.set(0, 0, dz + 0.15);
   group.add(label);
 
+  return group;
+}
+
+// -- reconstructed flame ------------------------------------------------------
+
+/**
+ * The light half of a reconstructed flame: what the content root holds.
+ *
+ * The voxels are drawn by `FlameLayer` (scene/flame.ts), which survives rebuilds;
+ * this group is what a rebuild is allowed to throw away. It is placed at the
+ * object's transform like any other group, so the gizmo, the selection box and
+ * `pick` treat the flame as an object, and it carries an invisible box over the
+ * manifest's bounds so those three have something to hit and to fit. Without a
+ * manifest -- a link not yet made -- a small wireframe marks the spot.
+ */
+export function buildFlameProxy(f: ReconstructedFlameObject): THREE.Group {
+  const group = new THREE.Group();
+  applyTransform(group, f);
+
+  const bounds = flameManifest(f)?.bounds_m;
+  if (bounds) {
+    const [lo, hi] = bounds;
+    const size = [0, 1, 2].map((a) => Math.max(hi[a] - lo[a], 1e-3));
+    const hit = new THREE.Mesh(
+      new THREE.BoxGeometry(size[0], size[1], size[2]),
+      // Never drawn, only picked: colour and depth both stay untouched.
+      new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }),
+    );
+    hit.position.set((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2);
+    hit.renderOrder = -1;
+    group.add(hit);
+    const label = makeLabel(displayName(f), 'object');
+    label.position.set((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, hi[2] + 0.15);
+    group.add(label);
+  } else {
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.25, 0.25, 0.25),
+      new THREE.MeshStandardMaterial({ color: COLORS.flame, wireframe: true }),
+    );
+    mesh.position.z = 0.125;
+    group.add(mesh);
+    const label = makeLabel(displayName(f), 'object');
+    label.position.set(0, 0, 0.4);
+    group.add(label);
+  }
   return group;
 }
 

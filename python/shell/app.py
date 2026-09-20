@@ -33,7 +33,7 @@ import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 import linked_files
 
 # webview is imported lazily, inside the functions that open windows and dialogs.
@@ -125,6 +125,8 @@ class Shell:
         # Folder of the last FDS input opened, which is where its `&CATF` includes
         # live. Not a document: an import produces an unsaved plan.
         self.fds_directory: Optional[str] = None
+        #: Voxel folders the page has listed this run; the frame route serves only these.
+        self._flame_folders: set = set()
 
     # -- settings ------------------------------------------------------
 
@@ -225,6 +227,40 @@ class Shell:
             except (OSError, ValueError) as exc:
                 return {"error": str(exc)}
         return {"files": files}
+
+    def pick_folder(self) -> Optional[Dict[str, str]]:
+        """Native folder dialog, for a reconstructed flame's voxels/ folder."""
+        if self.window is None:
+            return None
+        import webview
+        result = self.window.create_file_dialog(
+            webview.FileDialog.FOLDER, directory=self._last_directory())
+        if not result:
+            return None
+        path = result[0] if isinstance(result, (list, tuple)) else result
+        try:
+            return {"path": linked_files.checked_path(str(path), 'voxelSequence')}
+        except (OSError, ValueError) as exc:
+            return {"error": str(exc)}
+
+    def list_flame_frames(self, path: Any) -> Dict[str, Any]:
+        """The frames a linked voxel folder holds. Registers the folder, so the
+        frame route can serve from it and from nowhere else."""
+        try:
+            folder = linked_files.checked_path(path, 'voxelSequence')
+            frames = linked_files.list_frames(folder)
+            self._flame_folders.add(os.path.normcase(folder))
+            return {"frames": frames}
+        except (OSError, ValueError, TypeError) as exc:
+            return {"error": str(exc)}
+
+    def read_flame_frame(self, path: Any, name: Any) -> bytes:
+        """One frame's bytes from a folder the page has listed. Raises on anything
+        else: the route turns that into an error response."""
+        folder = linked_files.checked_path(path, 'voxelSequence')
+        if os.path.normcase(folder) not in self._flame_folders:
+            raise PermissionError('List the voxel folder before reading its frames.')
+        return linked_files.read_frame(folder, name)
 
     def linked_file_action(self, path: str, kind: str, action: str) -> Dict[str, Any]:
         try:
@@ -557,6 +593,10 @@ class Handler(SimpleHTTPRequestHandler):
                 ))
             elif route == "/api/pick-linked-files":
                 self._send_json(self.shell.pick_linked_files(body.get("kind")))
+            elif route == "/api/pick-folder":
+                self._send_json(self.shell.pick_folder())
+            elif route == "/api/flame/list":
+                self._send_json(self.shell.list_flame_frames(body.get("path")))
             elif route == "/api/linked-file":
                 self._send_json(self.shell.linked_file_action(body.get("path"), body.get("kind"), body.get("action")))
             elif route == "/api/save-html":
@@ -578,10 +618,30 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json(self.shell.recent_files())
             elif route == "/api/presets":
                 self._send_json(self.shell.camera_presets())
+            elif route == "/api/flame/frame":
+                self._send_flame_frame()
             else:
                 self._send_json({"error": "unknown route"}, 404)
             return
         super().do_GET()
+
+    def _send_flame_frame(self) -> None:
+        """One frame's bytes, for a folder the page has listed. Errors are JSON so
+        the page can show them; success is the raw file, which the page parses."""
+        query = parse_qs(urlparse(self.path).query)
+        path = (query.get("path") or [""])[0]
+        name = (query.get("name") or [""])[0]
+        try:
+            data = self.shell.read_flame_frame(path, name)
+        except (OSError, ValueError, TypeError, PermissionError) as exc:
+            self._send_json({"error": str(exc)}, 404 if isinstance(exc, FileNotFoundError) else 400)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
 
 
 def start_server(shell: Shell, root: str, token: str, on_ready: Any) -> ThreadingHTTPServer:

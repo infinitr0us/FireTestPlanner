@@ -1,4 +1,4 @@
-import { canLinkFiles, extension, fileName, MAX_CSV_BYTES, parseReconstructionCsv, SPREADSHEET_EXTENSIONS, VIDEO_EXTENSIONS } from '../core/linked-files';
+import { canLinkFiles, extension, fileName, linkKindFor, MAX_CSV_BYTES, parseReconstructionCsv, SPREADSHEET_EXTENSIONS, VIDEO_EXTENSIONS } from '../core/linked-files';
 import type { LinkedFile, PlanObject } from '../core/types';
 import { shell, type PickedLinkedFile } from '../io/files';
 import type { Store } from '../state/store';
@@ -51,6 +51,8 @@ export class LinkedFilesPanel {
   private message: { documentId: number; objectId: string; text: string } | null = null;
   private browserFiles = new Map<string, File>();
   private cacheDocumentId = -1;
+  /** Set by the app: a burner's section offers to link the same run's 3D flame. */
+  linkFlame: ((burnerId: string) => void) | null = null;
 
   constructor(private store: Store, private rerender: () => void) {}
 
@@ -123,6 +125,12 @@ export class LinkedFilesPanel {
     if (obj.type === 'burner') section.append(h('p', { class: 'linked-files__hint' }, [
       'CSV / TSV plot columns: timestamp_s, volume_m3, surface_area_m2. Excel workbooks can be linked; export to CSV to plot.',
     ]));
+    if (obj.type === 'burner' && this.linkFlame) {
+      const flameButton = button('Link 3D flame sequence…', () => this.linkFlame!(obj.id));
+      flameButton.disabled = this.busy;
+      flameButton.title = 'The same run\'s voxels/ folder, played back in the layout as a reconstructed flame object';
+      section.append(h('div', { class: 'linked-file__actions' }, [flameButton]));
+    }
     if (this.busy) section.append(h('p', { role: 'status' }, ['Working…']));
     if (this.message?.documentId === this.store.documentId && this.message.objectId === obj.id) {
       section.append(h('p', { class: 'linked-files__message', role: 'status' }, [this.message.text]));
@@ -159,7 +167,8 @@ export class LinkedFilesPanel {
 
   private async choose(obj: PlanObject, replace?: LinkedFile): Promise<void> {
     const identity = this.store.identity();
-    const kind = obj.type === 'camera' ? 'video' : 'spreadsheet';
+    const kind = linkKindFor(obj.type);
+    if (kind === 'voxelSequence') throw new Error('A reconstructed flame links a folder from its own section.');
     const picked = await pickFiles(kind);
     if (!picked.length) return;
     this.assertUnchanged(identity.documentId, identity.revision);

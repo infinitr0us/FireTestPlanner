@@ -5,6 +5,7 @@ The reference layout, its burner linked to the run's `volumes.csv`, and a
 Python reader computes. `web/src/core/flame.test.ts` and `python/tests/test_flame.py`
 hold both engines to this file byte for byte.
 """
+import gzip
 import json
 from pathlib import Path
 import sys
@@ -12,6 +13,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'python'))
 from fireplan import Plan
+from fireplan.flame import FlameSequence
 from fireplan.linked_files import parse_reconstruction_csv
 
 IMPORTED_AT = '2026-09-19T20:00:00Z'
@@ -36,6 +38,11 @@ def main():
     plan.validate_schema()
     assert not [i for i in plan.check() if i.code.startswith('flame-')], plan.check()
     plan.save(ROOT / 'fixtures/flame/flame-test.ftp.json', update_modified=False)
+    # The packed frames, gzipped: what the bundled Example and a shared page carry.
+    # gzip is the transport; the packed stream inside is the canonical, engine-
+    # identical form the tests pin.
+    packed = FlameSequence.load(str(ROOT / 'fixtures/flame/voxels')).pack()
+    (ROOT / 'fixtures/flame/flame-test.fvs').write_bytes(gzip.compress(packed, mtime=0))
 
 
 if __name__ == '__main__':

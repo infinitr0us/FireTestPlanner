@@ -58,6 +58,13 @@ export interface ShellBridge {
   loadPresets(): Promise<unknown[]>;
   /** Replace the library. Resolves to true only when the write reached the disk. */
   savePresets(presets: unknown[]): Promise<boolean>;
+  /** Native folder dialog for a voxel sequence. Null when cancelled. */
+  pickFolder(): Promise<string | null>;
+  /** The frame files a linked voxel folder holds, by name. The shell registers the
+   *  folder so `readFlameFrame` can serve from it, and from nowhere else. */
+  listFlameFrames(path: string): Promise<string[]>;
+  /** One frame's bytes from a registered folder. */
+  readFlameFrame(path: string, name: string): Promise<Uint8Array>;
 }
 
 /** What the shell's save routes answer: a destination, a reason, or null for cancel. */
@@ -150,6 +157,27 @@ export function connectShell(onReady: () => void): void {
     loadPresets: () => call<unknown[]>('/api/presets').then((r) => (Array.isArray(r) ? r : [])),
     savePresets: (presets) =>
       call<{ saved?: boolean }>('/api/presets', { presets }).then((r) => Boolean(r?.saved)),
+    pickFolder: async () => {
+      const result = await call<{ path?: string; error?: string } | null>('/api/pick-folder', {});
+      if (result?.error) throw new Error(result.error);
+      return result?.path ?? null;
+    },
+    listFlameFrames: async (path) => {
+      const result = await call<{ frames?: string[]; error?: string }>('/api/flame/list', { path });
+      if (result?.error) throw new Error(result.error);
+      return result?.frames ?? [];
+    },
+    readFlameFrame: async (path, name) => {
+      const response = await fetch(`/api/flame/frame?${new URLSearchParams({ path, name })}`, {
+        headers: { 'X-Shell-Token': shellToken ?? '' },
+      });
+      if (!response.ok) {
+        let message = `Shell could not read ${name}: ${response.status}`;
+        try { message = ((await response.json()) as { error?: string }).error ?? message; } catch { /* not JSON */ }
+        throw new Error(message);
+      }
+      return new Uint8Array(await response.arrayBuffer());
+    },
   };
   onReady();
 }
@@ -426,7 +454,18 @@ export const escapeJsonForScript = (json: string): string => json.replace(/</g, 
  * Pure, so the escaping can be tested without a DOM; `buildShareableHtml` is the
  * thin wrapper that supplies the page captured at boot.
  */
-export function embedPlanInHtml(boot: string, planJson: string, title: string): string {
+/**
+ * Packed flame sequences a shared page carries, keyed by `objectId/linkId`.
+ *
+ * They ride inside the plan copy as `linkedFiles[].embedded`, a key no saved plan
+ * ever holds: `splitEmbeddedFlames` lifts them out before the plan is validated,
+ * so the viewer's document is an ordinary one and a Save from it writes no blob.
+ */
+export type EmbeddedFlames = Map<string, string>;
+
+export const embeddedFlameKey = (objectId: string, linkId: string): string => `${objectId}/${linkId}`;
+
+export function embedPlanInHtml(boot: string, planJson: string, title: string, flames: EmbeddedFlames = new Map()): string {
   // A shared viewer cannot use desktop directories. Keep only attachment names,
   // labels and snapshots, including for cross-drive, UNC and relative paths.
   const shared = JSON.parse(planJson);
@@ -434,6 +473,8 @@ export function embedPlanInHtml(boot: string, planJson: string, title: string): 
     if (!LINK_TYPES.includes(obj?.type) || !Array.isArray(obj.linkedFiles)) continue;
     for (const link of obj.linkedFiles) {
       if (typeof link?.path === 'string') link.path = fileName(link.path);
+      const payload = flames.get(embeddedFlameKey(String(obj.id), String(link?.id)));
+      if (payload) link.embedded = payload;
     }
   }
   const safe = escapeJsonForScript(JSON.stringify(shared));
@@ -452,9 +493,31 @@ export function embedPlanInHtml(boot: string, planJson: string, title: string): 
  * the whole application inline. A split dev build produces a page that cannot find
  * its own assets, so the caller warns instead.
  */
-export function buildShareableHtml(planJson: string, title: string): string {
+export function buildShareableHtml(planJson: string, title: string, flames?: EmbeddedFlames): string {
   if (!bootHtml) throw new Error('Boot HTML was never captured');
-  return embedPlanInHtml(bootHtml, planJson, title);
+  return embedPlanInHtml(bootHtml, planJson, title, flames);
+}
+
+/**
+ * Lift embedded flame payloads out of a plan's text before it is validated.
+ *
+ * Returns the plan without them and the payloads by `objectId/linkId`. Text that
+ * is not JSON, or carries none, comes back untouched, so the normal load gate
+ * reports whatever is wrong with it.
+ */
+export function splitEmbeddedFlames(text: string): { text: string; flames: EmbeddedFlames } {
+  const flames: EmbeddedFlames = new Map();
+  let doc: { objects?: { id?: unknown; linkedFiles?: { id?: unknown; embedded?: unknown }[] }[] };
+  try { doc = JSON.parse(text); } catch { return { text, flames }; }
+  for (const obj of doc?.objects ?? []) {
+    if (!Array.isArray(obj?.linkedFiles)) continue;
+    for (const link of obj.linkedFiles) {
+      if (typeof link?.embedded !== 'string') continue;
+      flames.set(embeddedFlameKey(String(obj.id), String(link.id)), link.embedded);
+      delete link.embedded;
+    }
+  }
+  return { text: flames.size ? JSON.stringify(doc) : text, flames };
 }
 
 const escapeHtml = (s: string): string =>

@@ -12,6 +12,7 @@ import type {
   HoodObject,
   ObstructionObject,
   PlanDocument,
+  ReconstructedFlameObject,
   ThermocoupleObject,
   Vec3,
   WallObject,
@@ -196,4 +197,24 @@ export function createCamera(
 export function defaultCameraPosition(doc: PlanDocument): Vec3 {
   const existing = doc.objects.filter((o) => o.type === 'camera').length;
   return [-3, (existing % 5) * 0.5 - 1, 1.5];
+}
+
+/**
+ * A reconstructed flame, before its frames are linked.
+ *
+ * At the identity, because the voxels are in the reconstruction rig's frame and
+ * the rig was set up from this plan; locked, because the gizmo would otherwise
+ * let an accidental drag shift measured data. Both are the editor's defaults, not
+ * rules: the inspector unlocks and moves one whose rig was not.
+ */
+export function createReconstructedFlame(doc: PlanDocument, burnerId: string | null = null): ReconstructedFlameObject {
+  return {
+    id: nextId(doc, 'flame'),
+    type: 'reconstructedFlame',
+    name: 'Reconstructed flame',
+    transform: { position_m: [0, 0, 0], rotation_quat: [0, 0, 0, 1] },
+    burnerId,
+    representation: 'voxels',
+    display: { visible: true, locked: true },
+  };
 }

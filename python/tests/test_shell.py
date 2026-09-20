@@ -571,3 +571,98 @@ def test_an_fds_file_with_a_stray_byte_still_reads(tmp_path):
 
     result = shell_app.Shell().read_fds(str(fds))
     assert "CHID" in result["text"]
+
+
+# -- reconstructed flame folders -------------------------------------------------
+
+@pytest.fixture
+def voxel_folder(tmp_path):
+    """A tiny run the way the pipeline writes one, plus files that are not frames."""
+    import numpy as np
+    folder = tmp_path / "voxels"
+    folder.mkdir()
+    for t, n in ((0.0, 0), (5.0, 2)):
+        np.savez_compressed(folder / "t_{:09.1f}s.npz".format(t),
+                            voxels=np.zeros((n, 3)) + [[0.0, 0.0, 0.1 * i] for i in range(n)] if n else np.zeros((0, 3)),
+                            voxel_size=0.1)
+    (folder / "t_0000005.0s.ply").write_text("ply\n", encoding="utf-8")
+    (folder / "notes.txt").write_text("not a frame", encoding="utf-8")
+    return str(folder)
+
+
+def test_a_voxel_folder_lists_only_its_frames(voxel_folder):
+    import linked_files
+    assert linked_files.list_frames(voxel_folder) == ["t_0000000.0s.npz", "t_0000005.0s.npz"]
+    assert linked_files.checked_path(voxel_folder, "voxelSequence") == os.path.normpath(voxel_folder)
+    with pytest.raises(FileNotFoundError, match="voxel folder is missing"):
+        linked_files.checked_path(os.path.join(voxel_folder, "gone"), "voxelSequence")
+    with pytest.raises(ValueError, match="relative"):
+        linked_files.checked_path("voxels", "voxelSequence")
+
+
+def test_a_frame_is_served_only_by_its_own_name(voxel_folder):
+    import linked_files
+    data = linked_files.read_frame(voxel_folder, "t_0000005.0s.npz")
+    assert data[:2] == b"PK"
+    for name in ("notes.txt", "../demo.ftp.json", "t_0000005.0s.ply", "t_0000009.0s.npz", "", None):
+        with pytest.raises((ValueError, FileNotFoundError)):
+            linked_files.read_frame(voxel_folder, name)
+
+
+def test_the_frame_route_serves_a_listed_folder_and_nothing_else(server, voxel_folder):
+    shell, _, base, _ = server
+    # Reading before listing is refused: the page must register the folder first.
+    req = urllib.request.Request(base + "/api/flame/frame?path={}&name=t_0000005.0s.npz".format(
+        urllib.request.quote(voxel_folder)))
+    req.add_header("X-Shell-Token", "test-token")
+    with pytest.raises(urllib.error.HTTPError) as refused:
+        urllib.request.urlopen(req, timeout=10)
+    assert refused.value.code == 400
+    assert "List the voxel folder" in json.loads(refused.value.read().decode("utf-8"))["error"]
+
+    _, listed = request(base, "/api/flame/list", "test-token", {"path": voxel_folder})
+    assert listed == {"frames": ["t_0000000.0s.npz", "t_0000005.0s.npz"]}
+    with urllib.request.urlopen(req, timeout=10) as response:
+        assert response.headers["Content-Type"] == "application/octet-stream"
+        body = response.read()
+    assert body == open(os.path.join(voxel_folder, "t_0000005.0s.npz"), "rb").read()
+
+    # A missing frame is a 404 with a message; a name that is not a frame is a 400.
+    for name, code in (("t_0000009.0s.npz", 404), ("notes.txt", 400)):
+        bad = urllib.request.Request(base + "/api/flame/frame?path={}&name={}".format(urllib.request.quote(voxel_folder), name))
+        bad.add_header("X-Shell-Token", "test-token")
+        with pytest.raises(urllib.error.HTTPError) as err:
+            urllib.request.urlopen(bad, timeout=10)
+        assert err.value.code == code
+
+    # Listing a folder that is not one says so instead of raising.
+    _, payload = request(base, "/api/flame/list", "test-token", {"path": os.path.join(voxel_folder, "notes.txt")})
+    assert "voxel folder is missing" in payload["error"]
+    _, payload = request(base, "/api/flame/list", "test-token", {"path": None})
+    assert "error" in payload
+
+
+def test_the_frame_route_needs_the_token(server, voxel_folder):
+    _, _, base, _ = server
+    req = urllib.request.Request(base + "/api/flame/frame?path=x&name=y")
+    with pytest.raises(urllib.error.HTTPError) as err:
+        urllib.request.urlopen(req, timeout=10)
+    assert err.value.code == 403
+
+
+def test_folder_actions_show_and_open_a_checked_folder(voxel_folder, monkeypatch):
+    import linked_files
+    launched = []
+    monkeypatch.setattr(linked_files, "launch", lambda path, folder=False: launched.append((path, folder)))
+    shell = shell_app.Shell()
+    assert shell.linked_file_action(voxel_folder, "voxelSequence", "folder") == {"ok": True}
+    assert shell.linked_file_action(voxel_folder, "voxelSequence", "open") == {"ok": True}
+    assert launched == [(os.path.normpath(voxel_folder), True), (os.path.normpath(voxel_folder), False)]
+    assert "error" in shell.linked_file_action(voxel_folder, "voxelSequence", "read")
+    assert "error" in shell.linked_file_action(os.path.join(voxel_folder, "gone"), "voxelSequence", "folder")
+
+
+def test_pick_folder_is_inert_without_a_window(server):
+    _, _, base, _ = server
+    _, payload = request(base, "/api/pick-folder", "test-token", {})
+    assert payload is None

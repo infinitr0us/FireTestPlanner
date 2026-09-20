@@ -29,6 +29,8 @@ import { setPosition, setRotation } from '../core/transform';
 import { formatLengthWithUnit, gridStep } from '../core/units';
 import { makeLabel } from './labels';
 import type { CameraObject, PlanObject } from '../core/types';
+import type { FlameStore } from '../state/flame-store';
+import type { Playhead } from '../state/playhead';
 import { isOrthoMode, type Store } from '../state/store';
 import {
   LAYER_CEILING,
@@ -37,6 +39,7 @@ import {
   buildBurner,
   buildCamera,
   buildCeiling,
+  buildFlameProxy,
   buildHeatFluxSensor,
   buildHood,
   buildStandoffDimension,
@@ -45,6 +48,7 @@ import {
   buildWall,
 } from './builders';
 import { applyPlanCameraProjection, shownHits } from './camera-model';
+import { FlameLayer, PREVIEW_CUBE_LIMIT } from './flame';
 
 export type GizmoMode = 'translate' | 'rotate';
 
@@ -94,6 +98,9 @@ export class Viewport {
 
   private previewCamera = new THREE.PerspectiveCamera();
   private previewFrame: HTMLElement;
+  /** Pixels the preview is lifted by, so a bar docked along the bottom edge does
+   *  not cover it. Set by whoever owns the bar. */
+  private previewInset = 0;
 
   private raycaster = new THREE.Raycaster();
   private groundPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
@@ -107,6 +114,12 @@ export class Viewport {
   private dragStart = new Map<string, { position: THREE.Vector3; quaternion: THREE.Quaternion }>();
 
   private measureRoot = new THREE.Group();
+  /**
+   * Reconstructed flames, kept out of `contentRoot` so `rebuild()` never disposes
+   * them: a sequence is megabytes of instance data, and a rebuild runs per edit.
+   */
+  private flames: FlameLayer;
+  private lastTick = 0;
   private measurePoints: THREE.Vector3[] = [];
   /** Completed measurements, kept out of the document: this is a ruler, not a
    *  drawing annotation, and it should not survive a save. */
@@ -119,9 +132,10 @@ export class Viewport {
   placementMode = false;
   onPlace: (point: THREE.Vector3) => void = () => {};
 
-  constructor(container: HTMLElement, store: Store) {
+  constructor(container: HTMLElement, store: Store, flameStore: FlameStore, private playhead: Playhead) {
     this.container = container;
     this.store = store;
+    this.flames = new FlameLayer(flameStore);
 
     // Z-up must be set before any camera is constructed, or the cameras bake in
     // Three's default Y-up and OrbitControls orbits about the wrong axis.
@@ -143,7 +157,7 @@ export class Viewport {
     container.appendChild(this.previewFrame);
 
     this.scene.background = new THREE.Color(0x0f172a);
-    this.scene.add(this.contentRoot, this.furnitureRoot, this.dimensionRoot, this.measureRoot);
+    this.scene.add(this.contentRoot, this.furnitureRoot, this.dimensionRoot, this.measureRoot, this.flames.root);
     this.scene.add(this.pivot);
 
     this.perspective = new THREE.PerspectiveCamera(50, 1, 0.05, 500);
@@ -174,6 +188,12 @@ export class Viewport {
 
     this.setupLights();
     this.bindEvents();
+    // Frames follow the clock the instant it moves, not on the next animation
+    // frame: the bar reads the cube count in its own subscription, registered
+    // after this one, and a readout one step behind the scrubber reads as broken.
+    this.playhead.subscribe((event) => {
+      if (event === 'time') this.flames.setTime(this.playhead.time_s, this.store.document);
+    });
 
     this.resize();
     this.rebuild(); // builds the furniture too, so there is no separate first pass
@@ -594,7 +614,24 @@ export class Viewport {
     this.setupFurniture();
     this.applySnap(); // the step follows the grid, and the grid follows the display unit
     this.redrawMeasurements(); // labels are rebuilt with the current display unit
+    this.flames.sync(doc);
     this.syncSelection();
+  }
+
+  /** The loaded sequences changed: bind them without touching anything else. */
+  syncFlames(): void {
+    this.flames.sync(this.store.document);
+    this.flames.setTime(this.playhead.time_s, this.store.document);
+  }
+
+  /** Cubes the flames are drawing this instant, for the bar's readout. */
+  get flameCubeCount(): number {
+    return this.flames.cubeCount;
+  }
+
+  /** Lift the camera preview clear of something docked along the bottom edge. */
+  setPreviewInset(px: number): void {
+    this.previewInset = Math.max(0, px);
   }
 
   private buildObject(obj: PlanObject): THREE.Group | null {
@@ -619,6 +656,10 @@ export class Viewport {
         return buildThermocouple(obj as never);
       case 'obstruction':
         return buildObstruction(obj as never);
+      case 'reconstructedFlame':
+        // The voxels themselves are drawn by the flame layer; this is the object's
+        // pickable, selectable, labelled stand-in.
+        return buildFlameProxy(obj as never);
       default:
         // Unknown types still get a placeholder so they can be selected, inspected
         // and deleted rather than being invisible in a plan that clearly has them.
@@ -810,6 +851,10 @@ export class Viewport {
   private renderPreview(): void {
     const source = this.previewSource;
     if (!source || !this.options.showPreview) return;
+    // The preview renders the scene a second time. Above a cube count, while the
+    // flame is playing, that second pass is what a laptop does not have; the
+    // preview freezes on its last frame and catches up when playback pauses.
+    if (this.playhead.playing && this.flames.cubeCount > PREVIEW_CUBE_LIMIT) return;
 
     const width = this.container.clientWidth;
     const height = this.container.clientHeight;
@@ -817,13 +862,13 @@ export class Viewport {
     const pipHeight = Math.round(pipWidth / aspectOf(source));
     const margin = 16;
     const x = width - pipWidth - margin;
-    const y = margin; // WebGL viewport origin is bottom-left
+    const y = margin + this.previewInset; // WebGL viewport origin is bottom-left
 
     Object.assign(this.previewFrame.style, {
       width: `${pipWidth}px`,
       height: `${pipHeight}px`,
       right: `${margin}px`,
-      bottom: `${margin}px`,
+      bottom: `${margin + this.previewInset}px`,
     });
 
     // Hide the camera's own body: it sits exactly at the eye point and would fill
@@ -874,6 +919,15 @@ export class Viewport {
     if (this.disposed) return;
     this.frameHandle = requestAnimationFrame(this.tick);
 
+    // The clock advances here, from wall time, so a dropped frame skips ahead
+    // rather than slowing the playback down, and the frames follow through the
+    // clock's own subscription. A stall longer than a second -- a background tab
+    // coming back -- is not replayed; time resumes from where it was.
+    const now = performance.now();
+    if (this.lastTick) this.playhead.advance(Math.min((now - this.lastTick) / 1000, 1));
+    this.lastTick = now;
+    this.flames.follow(this.objectGroups);
+
     this.activeOrbit.update();
     if (this.selectionBox?.visible) this.selectionBox.update();
 
@@ -892,6 +946,37 @@ export class Viewport {
 
     this.renderPreview();
   };
+
+  // -- snapshot ----------------------------------------------------------
+
+  /**
+   * The main view as a PNG at `scale` times the screen's pixel density -- a figure,
+   * not a screenshot. Rendered synchronously into the live canvas and read back
+   * before the next frame, so no second context is needed; the size is restored
+   * before anyone sees it. Screen-space labels are HTML and are not in it.
+   */
+  snapshotPng(scale = 3): string {
+    const width = this.container.clientWidth;
+    const height = this.container.clientHeight;
+    const ratio = this.renderer.getPixelRatio();
+    this.renderer.setPixelRatio(Math.min(scale, 4));
+    this.renderer.setSize(width, height, false);
+    const camera = this.activeCamera;
+    camera.layers.enableAll();
+    if (this.isPlanMode) camera.layers.disable(LAYER_CEILING);
+    this.renderer.setClearColor(0x0f172a, 1);
+    this.renderer.setViewport(0, 0, width, height);
+    this.renderer.clear();
+    this.renderer.render(this.scene, camera);
+    let url = '';
+    try {
+      url = this.renderer.domElement.toDataURL('image/png');
+    } finally {
+      this.renderer.setPixelRatio(ratio);
+      this.renderer.setSize(width, height, false);
+    }
+    return url;
+  }
 
   // -- teardown ----------------------------------------------------------
 
@@ -920,6 +1005,7 @@ export class Viewport {
     this.disposeTree(this.dimensionRoot);
     this.disposeTree(this.furnitureRoot);
     this.disposeTree(this.measureRoot);
+    this.flames.dispose();
     // The selection box hangs off the scene rather than one of the roots above.
     this.selectionBox?.geometry.dispose();
     (this.selectionBox?.material as THREE.Material | undefined)?.dispose();

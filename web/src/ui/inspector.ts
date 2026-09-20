@@ -51,6 +51,7 @@ import {
   isHeatFluxSensor,
   isHood,
   isObstruction,
+  isReconstructedFlame,
   isThermocouple,
   isWall,
   LOW_SIGNAL_FRACTION,
@@ -91,6 +92,7 @@ import type {
   LengthUnit,
   Modality,
   ObstructionObject,
+  ReconstructedFlameObject,
   PlanObject,
   TcType,
   ThermocoupleObject,
@@ -99,7 +101,10 @@ import type {
 } from '../core/types';
 import type { Store } from '../state/store';
 import { clear, h } from './dom';
+import { FlamePanel } from './flame-panel';
 import { LinkedFilesPanel } from './linked-files';
+import type { FlameActions } from '../state/flame-actions';
+import type { FlameStore } from '../state/flame-store';
 import {
   button,
   checkboxField,
@@ -118,6 +123,7 @@ import {
  *  panel title is uppercased by CSS, and "HEATFLUXSENSOR" is not a phrase. */
 const TYPE_LABEL: Record<string, string> = {
   heatFluxSensor: 'heat flux gauge',
+  reconstructedFlame: 'reconstructed flame',
 };
 
 /** Which coordinate vocabulary the Position section is showing.
@@ -134,6 +140,7 @@ const TONE: Record<InstrumentStatus, ReadoutTone> = {
 
 export class Inspector {
   private linkedFiles: LinkedFilesPanel;
+  private flamePanel: FlamePanel | null = null;
   /**
    * Fired when the camera preset library changes.
    *
@@ -167,6 +174,14 @@ export class Inspector {
     private root: HTMLElement,
     private store: Store,
   ) { this.linkedFiles = new LinkedFilesPanel(store, () => this.render()); }
+
+  /** The flame sections need the session's loaded sequences and the link actions. */
+  attachFlames(flames: FlameStore, actions: FlameActions): FlamePanel {
+    this.flamePanel = new FlamePanel(this.store, flames, actions, () => this.render());
+    // A burner's Linked files section offers the same run's frames as a new flame.
+    this.linkedFiles.linkFlame = (burnerId) => { void actions.link(null, burnerId); };
+    return this.flamePanel;
+  }
 
   /** Mutate the selected object as one undoable step. */
   private patch(id: string, label: string, fn: (obj: PlanObject) => void): void {
@@ -229,8 +244,12 @@ export class Inspector {
         'Stable across revisions so git diffs stay meaningful'),
     );
 
-    const linkedFiles = this.linkedFiles.render(obj);
+    // A flame's one link is a folder with a manifest, and has its own sections.
+    const linkedFiles = isReconstructedFlame(obj) ? null : this.linkedFiles.render(obj);
     if (linkedFiles) this.root.append(linkedFiles);
+    if (isReconstructedFlame(obj) && this.flamePanel) {
+      this.root.append(...this.flamePanel.render(obj, (label, fn) => this.patch(obj.id, label, (o) => fn(o as ReconstructedFlameObject))));
+    }
     this.renderTransform(obj, unit);
 
     if (isCamera(obj)) this.renderCamera(obj, unit);
@@ -241,6 +260,7 @@ export class Inspector {
     else if (isHeatFluxSensor(obj)) this.renderHeatFluxSensor(obj, unit);
     else if (isThermocouple(obj)) this.renderThermocouple(obj, unit);
     else if (isObstruction(obj)) this.renderObstruction(obj, unit);
+    else if (isReconstructedFlame(obj)) { /* its sections are above the transform */ }
     else this.renderUnknown(obj);
 
     this.root.append(sectionTitle('Display'));

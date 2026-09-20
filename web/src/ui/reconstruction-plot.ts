@@ -1,5 +1,6 @@
 import { fileName } from '../core/linked-files';
 import type { LinkedFile, ReconstructionPlot } from '../core/types';
+import type { Playhead } from '../state/playhead';
 import type { Store } from '../state/store';
 import { h } from './dom';
 
@@ -55,19 +56,47 @@ export class ReconstructionPlotPanel {
   private signature = '';
   private snapshots = new WeakMap<ReconstructionPlot['samples'], number>();
   private nextSnapshot = 0;
+  /** Redraw the cursor for the current index; set while the plot is on screen. */
+  private draw: (() => void) | null = null;
+  private samples: ReconstructionPlot['samples'] | null = null;
 
-  constructor(container: HTMLElement, private store: Store) {
+  /**
+   * The plot follows the playback clock when there is one to follow: the cursor
+   * sits on the last sample at or before the clock's time, and dragging the slider
+   * seeks the clock. With no flame loaded the clock has no range and the slider is
+   * the plot's own, exactly as in format 1.3.
+   */
+  constructor(container: HTMLElement, private store: Store, private playhead?: Playhead) {
     container.append(this.root);
     for (const event of ['pointerdown', 'click', 'dblclick', 'wheel']) this.root.addEventListener(event, (e) => e.stopPropagation());
     store.subscribe(() => this.render());
+    playhead?.subscribe((event) => {
+      if (event === 'time') this.follow();
+      else this.render();
+    });
     this.render();
+  }
+
+  /** The clock moved: put the cursor on the sample it is at, if it is on any. */
+  private follow(): void {
+    if (!this.playhead?.hasRange || !this.samples || !this.draw) return;
+    const t = this.playhead.time_s;
+    let lo = 0, hi = this.samples.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.samples[mid][0] <= t) lo = mid + 1; else hi = mid;
+    }
+    const index = Math.max(lo - 1, 0);
+    if (index === this.index) return;
+    this.index = index;
+    this.draw();
   }
 
   render(): void {
     const obj = this.store.soleSelected;
     const links = obj?.type === 'burner' ? obj.linkedFiles?.filter((f) => f.plot) ?? [] : [];
     this.root.hidden = !links.length;
-    if (!obj || !links.length) { this.signature = ''; return; }
+    if (!obj || !links.length) { this.signature = ''; this.draw = null; this.samples = null; return; }
     const key = `${this.store.documentId}/${obj.id}`;
     if (key !== this.key) { this.key = key; this.selectedLink = ''; this.index = 0; }
     const link = links.find((l) => l.id === this.selectedLink) ?? links[0];
@@ -78,7 +107,7 @@ export class ReconstructionPlotPanel {
       const samples = l.plot!.samples;
       if (!this.snapshots.has(samples)) this.snapshots.set(samples, ++this.nextSnapshot);
       return [l.id, l.label, l.path, l.plot!.importedAt, samples.length, this.snapshots.get(samples)];
-    }), this.collapsed]);
+    }), this.collapsed, Boolean(this.playhead?.hasRange)]);
     if (signature === this.signature) return;
     this.signature = signature;
     const plot = link.plot!;
@@ -96,19 +125,30 @@ export class ReconstructionPlotPanel {
     const volume = chart(plot, 1), area = chart(plot, 2);
     charts.append(volume.svg, area.svg);
     const value = h('output', { class: 'reconstruction-plot__values', 'aria-live': 'polite' });
+    const slider = h('input', { type: 'range', min: 0, max: plot.samples.length - 1, step: 1, value: this.index,
+      'aria-label': 'Measurement sample', disabled: plot.samples.length === 1,
+      oninput: (e: Event) => {
+        this.index = Number((e.target as HTMLInputElement).value);
+        // Seeking the clock brings the cursor back here through `follow`; drawing
+        // now as well keeps the plot responsive when there is no clock to seek.
+        if (this.playhead?.hasRange) this.playhead.seek(plot.samples[this.index][0]);
+        draw();
+      } });
     const draw = (): void => {
       volume.select(this.index); area.select(this.index);
       const sample = plot.samples[this.index];
+      slider.value = String(this.index);
       value.textContent = `${fmt(sample[0])} s · ${fmt(sample[1])} m³ · ${fmt(sample[2])} m²`;
     };
-    const slider = h('input', { type: 'range', min: 0, max: plot.samples.length - 1, step: 1, value: this.index,
-      'aria-label': 'Measurement sample', disabled: plot.samples.length === 1,
-      oninput: (e: Event) => { this.index = Number((e.target as HTMLInputElement).value); draw(); } });
+    this.draw = draw;
+    this.samples = plot.samples;
+    this.follow();
     draw();
-    this.root.append(charts, slider, value, h('p', { class: 'reconstruction-plot__note' }, [this.caption(link)]));
+    this.root.append(charts, slider, value, h('p', { class: 'reconstruction-plot__note' }, [this.caption(link, Boolean(this.playhead?.hasRange))]));
   }
 
-  private caption(link: LinkedFile): string {
-    return `CSV snapshot · ${link.plot!.samples.length.toLocaleString()} samples · ${link.plot!.importedAt.replace('T', ' ').replace(/(?:\.\d+)?Z$/, ' UTC')}. Refresh or relink from Linked files after the source changes.`;
+  private caption(link: LinkedFile, following: boolean): string {
+    return `CSV snapshot · ${link.plot!.samples.length.toLocaleString()} samples · ${link.plot!.importedAt.replace('T', ' ').replace(/(?:\.\d+)?Z$/, ' UTC')}. `
+      + (following ? 'The cursor follows the flame playback; dragging it seeks the playback.' : 'Refresh or relink from Linked files after the source changes.');
   }
 }
