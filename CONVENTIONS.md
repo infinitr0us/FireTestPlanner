@@ -1,6 +1,6 @@
 # Conventions
 
-Normative reference for `fire-test-plan` formats 1.0.0 through 1.3.0. If code and
+Normative reference for `fire-test-plan` formats 1.0.0 through 1.4.0. If code and
 this document disagree, this document is wrong and should be fixed — but check the
 tests first, because they encode these rules directly.
 
@@ -18,6 +18,12 @@ FDS that holds nothing past 1.0 still declares 1.0.0. Section 9 covers the impor
 thermocouples. These are external file references and optional burner reconstruction
 snapshots; they do not populate the reserved `camera.recording` block or alter any
 planned-fire correlation. See section 10 and [the usage guide](docs/linked-files.md).
+
+**What 1.4 added**: the `reconstructedFlame` object type — a measured flame, the
+visual hull the pipeline reconstructs from the test's cameras, played back in the
+layout — and the `voxelSequence` link kind that carries its manifest. `display`
+gains the advisory `opacity` and `colorMode`; `timeOffset_s` is reserved on links.
+Section 11.
 
 Which version a file declares is *derived*, not authored — see section 8.
 
@@ -446,7 +452,8 @@ than the file already said:
 version = max(declared, required(contents))
 ```
 
-`required` is 1.3.0 if an object carries `linkedFiles`; failing that, 1.2.0 if the
+`required` is 1.4.0 if the plan holds a `reconstructedFlame`; failing that, 1.3.0 if
+an object carries `linkedFiles`; failing that, 1.2.0 if the
 plan holds an `obstruction`; failing that, 1.1.0 if it
 holds a `heatFluxSensor`, a `thermocouple`, a camera with a `zoomFactor` or a burner
 with a `radiativeFraction`; otherwise 1.0.0. It is `requiredFormatVersion` in
@@ -676,3 +683,80 @@ A link does not imply a recording timebase, a particular CSV column's bead ident
 or correspondence between a video frame and a reconstruction sample. Those remain
 future recording metadata. This avoids confusing simulation exports, reconstructed
 measurements and the plan's own predicted fire geometry.
+
+
+## 11. Reconstructed flames (1.4)
+
+A `reconstructedFlame` is recorded data drawn beside the plan: the visual hull the
+reconstruction pipeline (`fixtures/flame/reconstruct_revised.py`) computes from the
+test's cameras, one `t_<seconds>s.npz` per timestep holding the world coordinates
+of the occupied voxel centres and the pipeline's `voxel_size`. It changes no planned
+HRR, predicted flame geometry, hood check or instrument verdict.
+
+**It is an object, not a burner attachment**, because the hull is world-anchored:
+the voxels are in the reconstruction rig's frame, and the object's `transform` maps
+that frame onto the plan's. It is the identity when the rig was set up from this
+plan — the cameras' `extrinsics()` fed to the pipeline — and the correction when it
+was not. The editor creates one locked, so the gizmo cannot shift measured data by
+accident. `burnerId` names the fire it belongs to; null or absent means the
+primary. `representation` is reserved and `"voxels"`.
+
+**Its data is a `linkedFiles` entry of `kind: "voxelSequence"`**, at most one, whose
+`path` names the **folder** of frames and obeys every rule in section 10 —
+relative to the plan when possible, rebased on Save As, basename-only in a browser
+and in a shared page, never opened automatically. Holding it as a link rather than
+a bespoke field is what makes Save As rebase it: `mapLinkedPaths` and
+`for_destination` know only `linkedFiles`. The link carries a `sequence` manifest
+the way a burner's spreadsheet carries `plot`:
+
+```jsonc
+"sequence": {
+  "importedAt": "2026-09-19T20:00:00Z",
+  "grid": { "voxelSize_m": 0.015625, "pitch_m": 0.015707, "resolution": 192 },
+  "bounds_m": [[-0.401, -0.401, 0.01], [0.401, 0.401, 0.905]],
+  "frames": [[0, 0], [5, 16], [10, 8920], "…"]        // [timestamp_s, occupiedVoxels]
+}
+```
+
+A manifest, never the voxels: the plan stays diffable, and the manifest is enough to
+describe the run without the folder, to notice when the folder no longer matches,
+and to run the placement checks with the data absent. `frames` timestamps strictly
+increase and come from the file names; counts are non-negative integers; 1–20,000
+frames. Recorded data keeps its supplied precision, as `plot` does.
+
+**The pitch is not `voxel_size`.** The pipeline builds its grid with an
+endpoint-inclusive `linspace`, so neighbouring centres are `volume / (res − 1)`
+apart while `voxel_size` is `volume / res` — half a percent less, and enough to
+mis-index a voxel a hundred cells from the origin. Readers infer `pitch_m` from the
+coordinates (the smallest gap between distinct x values of the fullest frame) and
+`resolution` from the two (`pitch / (pitch − voxel_size)`, null when they are
+equal); cubes are drawn at the pitch. `voxelSize_m` is carried as what the pipeline
+said. A frame whose centres are not on the sequence's lattice, or two frames with
+one timestamp, fail the import by name.
+
+**Packed form.** Both engines pack a sequence to identical bytes — a little-endian
+header (grid, bounds, frame count) and per frame a bounding box on the lattice with
+one bit per cell, in numpy `packbits` order — held byte for byte by
+`fixtures/flame/expected.json`. It is what a shared page embeds (gzipped, base64,
+under `linkedFiles[].embedded` in the page's plan copy only; a saved plan never holds
+that key) and what the bundled Example carries.
+
+**Display.** `display.opacity` (0–1, default 1) and `display.colorMode` (`height`,
+the pipeline's ramp on a fixed scale over the sequence, or `solid`) are advisory and
+live in `display` because that is what `display` is for. Cubes over the surface
+cells are the representation: a visual hull is a set of voxels and the blockiness is
+the resolution.
+
+**Checks**, from the manifest alone, in both engines: `flame-below-floor` (the
+transformed bounds reach more than a pitch below the burner's floor),
+`flame-off-burner` (the transformed bounds are centred further than the pan's
+effective diameter, or 0.25 m, from the burner), `flame-csv-mismatch` (a burner
+plot's timestamps or voxel counts — volume over voxel volume, to within a voxel —
+are not this sequence's), `flame-burner-unknown`.
+
+Writer key order: object `id, type, name, transform, burnerId, representation,
+linkedFiles, display, notes`; link `id, kind, path, label, timeOffset_s, plot,
+sequence`; sequence `importedAt, grid, bounds_m, frames`; grid `voxelSize_m,
+pitch_m, resolution`; display `color, visible, locked, opacity, colorMode`.
+`timeOffset_s` is reserved for clock synchronisation — the same question the
+reserved `camera.recording` is about — and is dropped by both writers at null or 0.

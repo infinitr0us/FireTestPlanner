@@ -1,9 +1,12 @@
 # Reconstructed flame playback — design (M12, format 1.4)
 
-Status: **decided, 2026-09-19; not yet implemented.** The open questions of the first
-draft were answered the same day and are recorded as decisions in section 12.
-A second opinion (a separate model, reading the same code) was taken on the first
-draft; where it changed a decision the reason is given inline.
+Status: **implemented, 2026-09-19** (commits `4db780c`, `a21df3a` and the docs that
+followed). The open questions of the first draft were answered the same day and
+are recorded as decisions in section 12; section 13 records where the build
+departed from this text. A second opinion (a separate model, reading the same
+code) was taken on the first draft; where it changed a decision the reason is
+given inline. `docs/flame-playback.md` is the usage guide; CONVENTIONS.md
+section 11 is the normative statement of the format.
 
 This is the last major feature in `ideas.md` and the milestone PLAN.md has carried as
 M8 since M0: *import reconstructed 3D flame; time sequence playback — blocked on
@@ -430,3 +433,26 @@ The first draft ended in eight open questions. They were answered on 2026-09-19:
    videos is managing and finding the recordings of a test; the visualisation is
    about the reconstructed flame. `timeOffset_s` is reserved so that step is
    additive.
+
+
+## 13. What the build changed
+
+- **No worker.** Section 4 planned a Web Worker with `?worker&inline`. Frames are
+  parsed on the main thread with a yield between them: the fixture's 80 frames take
+  a tenth of a second, and a worker inside the single-file build was a spike not
+  worth making before a run that needs it exists. PLAN.md lists it as a limitation.
+- **The embedded payload rides on the link**, as `linkedFiles[].embedded`, not on a
+  `source.embedded` — there is no `source` block, per section 3's own revision.
+- **One instance buffer per flame, refilled on a frame switch**, rather than one
+  attribute per frame resident on the GPU (section 5). Three.js frees a geometry's
+  buffers when the geometry is disposed and never frees a swapped-out attribute's,
+  so per-frame attributes would have leaked GPU memory on every sequence change.
+  Six bytes a cube refilled per switch costs nothing at any scale seen.
+- **The clock applies frames synchronously on its own event**, not from the render
+  loop, so the bar's readout — registered after the viewport — never lags a step.
+- **The transport keys leave a focused button alone.** Space on the toolbar's
+  Example button activated it *and* toggled playback, which reloaded the plan.
+- **No frames-per-second mode** (section 6 already dropped it), and no
+  "centre on burner" action (section 12, decision 2).
+- **The fixture moved** to `fixtures/flame/`, with the run's own `volumes.csv` and
+  a `flame-test.fvs` (the packed frames, gzipped) that the Example imports.

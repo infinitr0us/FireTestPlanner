@@ -1,6 +1,6 @@
 # Fire Test Plan 3D Visualization — Implementation Plan
 
-Status: **Phase 1 complete; format 1.2 and the FDS bridge landed** (2026-08-29)
+Status: **Phase 2 landed: format 1.4 and reconstructed flame playback** (2026-09-19)
 Supersedes nothing; complements `ideas.md`.
 
 ---
@@ -26,8 +26,8 @@ Supersedes nothing; complements `ideas.md`.
 | Secondary deliverable | Dimensioned plan + elevation drawing, and equipment table |
 | Origin | Burner centre at floor level = `(0,0,0)`, +Z up, right-handed |
 | Reader default convention | OpenCV / COLMAP (X right, Y down, Z forward); others opt-in |
-| Recorded-data references | Key reserved in schema, design deferred |
-| Deferred to Phase 2 | Reconstructed 3D flame import (format TBD) |
+| Recorded-data references | Format 1.3 `linkedFiles`; `camera.recording` stays reserved |
+| Reconstructed flame | Format 1.4 `reconstructedFlame` object, its data a `voxelSequence` link with a manifest; the pipeline's NPZ folder read directly, no numpy in the exe; surface voxels as instanced cubes; one session clock for flame, plot and bar. `docs/flame-playback-design.md` |
 
 ## 2. Why one core, two shells
 
@@ -211,11 +211,11 @@ tool to exist.
 | M5 | **Share** | Save/load, single-file HTML export with plan embedded, standoff dimensions | **done** — measure tool still to do |
 | M6 | **Drawing** | Dimensioned plan + elevations, equipment list, coverage table, print to PDF | **done** |
 | M7 | **Desktop** | pywebview shell, native dialogs, recent files, PyInstaller exe | **done** — 9.9 MB exe |
-| M8 | **Flame** *(Phase 2)* | Import reconstructed 3D flame; time sequence playback | blocked on format decision |
+| M8 | **Flame** *(Phase 2)* | Import reconstructed 3D flame; time sequence playback | **done** as M12, format 1.4 |
 | M9 | **Instruments** | Format 1.1: camera zoom, heat flux gauges, thermocouple rakes, predicted exposure, user-added camera presets | **done** |
 | M10 | **FDS bridge** | Namelist reader, FDS → plan import with a preview, format 1.2 obstructions, FDS-style coordinate entry | **done** |
 
-Phase 1 is complete. 338 Python tests, 271 web tests.
+Phase 1 is complete and Phase 2 has landed. 444 Python tests, 397 web tests.
 
 ### M9, from fire safety engineer feedback
 
@@ -459,3 +459,50 @@ HTML viewer without selecting the source CSV. Native Open/Show in folder dispatc
 is covered through the desktop bridge with OS-launch calls mocked; external Excel
 and video-player windows were not driven interactively. The executable startup
 self-test needed unsandboxed WebView2 initialization and then completed successfully.
+
+
+## M12 — Reconstructed flame playback, format 1.4 (2026-09-19)
+
+M8 as planned, once the pipeline's output format was settled: a visual hull per
+timestep in `t_<seconds>s.npz`, and the same run's `volumes.csv` that M11 already
+plots. The design was written first (`docs/flame-playback-design.md`), taken to a
+second opinion, and the two decisions that opinion changed are recorded there.
+
+| Decision | Choice |
+|---|---|
+| Where it plays | In the viewport, with a bar docked along its bottom edge. The camera preview shows the hull from the camera's view for free, the elevations show it under the predicted cone, the burner's plot follows the same clock |
+| Document model | A `reconstructedFlame` object — world-anchored, its transform the rig-frame correction, created locked — whose data is a `voxelSequence` link carrying a manifest. A link, not a bespoke `source.path`, because only `linkedFiles` is rebased on Save As |
+| What the file holds | The reference and the manifest, never the voxels. A shared page embeds the packed frames under a 25 MB cap; the Example carries the fixture's (49 KB) |
+| Reading | The pipeline's NPZ directly in the page — ZIP central directory, `DecompressionStream`, the `.npy` header — so the exe still has no numpy. The desktop shell lists and serves a linked folder; a browser tab picks it |
+| The lattice | Pitch inferred from the coordinates, never from `voxel_size`: an endpoint-inclusive `linspace` puts them half a percent apart, enough to mis-index a voxel a hundred cells out |
+| Rendering | Surface cells (a fifth of the voxels) as instanced cubes at the pitch, the pipeline's height ramp on a fixed sequence-wide scale, hashed transparency, no shadows. Not points (a cloud, not a volume), not an isosurface (smoother than the data), not ray-marching (nothing to march) |
+| Time | A `Playhead` outside the store; frames hold until the next timestamp; ×1–×60 real time, ×10 default |
+
+Held together by `fixtures/flame/`: the fixture plan byte-identical from both
+writers, `expected.json` pinning the Python reader's manifest, packed bytes and
+surface cells for the TypeScript reader, `check-cases.json` run by both suites.
+Verified in Chrome against the dev server and against the built bundle served by
+the shell's own bridge with the fixture plan queued: 80 frames read through
+`/api/flame`, Refresh re-read them, the plot cursor followed the clock, the GoPro's
+preview showed the hull.
+
+### Known limitations (M12)
+
+- **The drawing export does not draw the flame.** The equipment list names the
+  object; the elevations show the predicted cone only. A time-invariant envelope
+  of the frames beside the cone is the natural addition.
+- **No video sync.** Linked videos remain files to find and open. The clock takes a
+  fourth follower without change, and `timeOffset_s` is reserved on links.
+- **Large runs are read on every open.** The fixture's scale — 80 frames, 36k
+  voxels at most — reads in a tenth of a second; a 200³ run with two million voxels
+  a frame would take tens of seconds and a few hundred megabytes. The packed form
+  exists; a packed-file source or a desktop cache is the step if such runs appear.
+- **No worker.** Frames are parsed on the main thread with a yield between them;
+  at the fixture's scale nothing stalls, and a worker inside the single-file build
+  is a spike not yet made.
+- **A browser tab reloads the folder by hand.** It cannot keep a folder across a
+  reload; the desktop app reads the linked folder as the plan opens.
+- **Above 400,000 cubes the camera preview pauses while playing.** The second
+  render pass per tick is what a laptop does not have; it resumes on pause.
+- **The PNG snapshot has no labels.** Object labels are HTML over the canvas, and
+  the snapshot is the canvas.

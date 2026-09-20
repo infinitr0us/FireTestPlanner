@@ -9,11 +9,12 @@ a data scientist reads the same file as a camera rig description. Everything els
 here serves that handoff.
 
 ```
-schema/      fire-test-plan-1.0.0 through -1.3.0 .schema.json — normative, one per version
+schema/      fire-test-plan-1.0.0 through -1.4.0 .schema.json — normative, one per version
 CONVENTIONS.md                                — frames, units, correlations
 presets/     camera preset library (shared by the editor and the fixture builder)
 docs/datasheets/  manufacturer PDFs behind the datasheet-grade presets
-fixtures/    reference plans, and fixtures/fds/ — a real FDS case and its conversion
+fixtures/    reference plans; fixtures/fds/ — a real FDS case and its conversion;
+             fixtures/flame/ — a reconstructed flame, its pipeline and the plan that plays it
 python/      fireplan — reader, validator, exporters
 python/shell/  desktop shell (pywebview + PyInstaller)
 web/         the 3D editor
@@ -28,7 +29,8 @@ cd web && npm install
 npm run dev                 # editor at localhost:5173
 ```
 
-Click **Example** to load the reference plan reconstructed from `example.jpg`, then
+Click **Example** to load the reference plan reconstructed from `example.jpg` — with
+the flame reconstructed from a test on that site, so press play — then
 click a camera in the object list. The coverage panel and the picture-in-picture
 preview show what that lens will actually get. Select **East wall gauge** for the
 same argument about instruments: at 1.5 m from a 130 kW fire it sees 1.7 kW/m², which
@@ -87,6 +89,30 @@ The snapshot travels inside the plan and shared HTML; originals stay external.
 See the [usage guide](docs/linked-files.md), or open
 [`linked-test.ftp.json`](fixtures/linked-files/linked-test.ftp.json) for a working
 example using the engineers' supplied CSV and MP4.
+
+### Playing back the reconstructed flame
+
+The reconstruction pipeline turns the cameras' footage into a visual hull, one
+`t_<seconds>s.npz` of occupied voxel centres per timestep. Link that folder — the
+**3D flame…** tile, or **Link 3D flame sequence…** on the burner whose `volumes.csv`
+came from the same run — and a playback bar docks along the viewport: the hull
+plays back inside the layout, under the hood and inside the frustums of the cameras
+that produced it, with the predicted Heskestad cone over it for comparison. The
+burner's volume plot follows the same clock, and a selected camera's
+picture-in-picture shows the hull from its own view at that moment.
+
+The plan stores a reference and a manifest, never the voxels; the desktop app reads
+the frames as the plan opens, and **Share…** embeds them in the exported page (the
+example is 49 KB packed). Placement checks say when a hull sits below the floor or
+away from its burner — the reconstruction frame was not the plan frame — and the
+object's transform is the correction. See [docs/flame-playback.md](docs/flame-playback.md).
+
+```python
+from fireplan import Plan
+plan = Plan.load("fixtures/flame/flame-test.ftp.json")
+seq = plan.flame_sequence(plan.reconstructed_flames[0])
+seq.voxels(55.0)                     # (35960, 3) centres at t = 55 s
+```
 
 ### Cameras this build has never heard of
 
@@ -190,12 +216,14 @@ definitions in [CONVENTIONS.md](CONVENTIONS.md) section 3.
 ## Tests
 
 ```bash
-python -m pytest python/tests -q     # 397 tests, no GUI needed
-cd web && npm test                   # 337 tests
+python -m pytest python/tests -q     # 444 tests, no GUI needed
+cd web && npm test                   # 397 tests
 ```
 
 The web suite asserts that the TypeScript writer reproduces the Python-written
-fixture byte for byte, and that the TypeScript FDS importer reproduces the
+fixture byte for byte, that the TypeScript flame reader produces the manifest, the
+packed bytes and the surface cells the Python reader pinned on the 80-frame fixture,
+and that the TypeScript FDS importer reproduces the
 Python-written conversion of `fixtures/fds/IR401_0.fds` the same way — two importers
 that agree about the syntax but not about which box is a wall would hand an engineer
 and a data scientist two different rooms from one file. A plan saved from the editor and the same plan saved from
