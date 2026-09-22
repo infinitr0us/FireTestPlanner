@@ -36,6 +36,7 @@ import { Playhead } from './state/playhead';
 import { Store } from './state/store';
 import { h, qs } from './ui/dom';
 import { FdsImportDialog } from './ui/import-fds';
+import { FdsResultsDialog } from './ui/fds-results';
 import { Inspector } from './ui/inspector';
 import { ChecksPanel, Outliner, Palette } from './ui/panels';
 import { PlaybackBar } from './ui/playback-bar';
@@ -201,6 +202,7 @@ viewport.onMeasureChange = (count) => {
 
 const reportOverlay = new ReportOverlay((html, name) => { void saveHtml(html, name); });
 const fdsImport = new FdsImportDialog();
+const fdsResults = new FdsResultsDialog();
 
 /** Write an HTML export, and say so if it fails rather than doing nothing visible. */
 async function saveHtml(html: string, name: string): Promise<void> {
@@ -303,6 +305,7 @@ function renderToolbar(): void {
       btn('Save as…', () => { void savePlan(true); }),
       btn('Import FDS…', () => { void importFds(); },
         'Build a plan from an FDS input file — geometry, the burner and the devices'),
+      btn('FDS results…', () => { playhead.pause(); fdsResults.open(); }, 'Visualize and play recorded FDS simulation output'),
       btn('Example', loadExample, 'Load the reference plan built from the hand sketch'),
     ]),
 
@@ -628,6 +631,7 @@ function isTextControl(el: HTMLElement): boolean {
 }
 
 window.addEventListener('keydown', (e) => {
+  if (fdsResults.isOpen) return;
   const target = e.target as HTMLElement | null;
   const control = target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName) ? target : null;
   // Escape hands the keyboard back to the editor.

@@ -24,6 +24,8 @@ browser does well and a JS bridge does badly.
 from __future__ import annotations
 
 import argparse
+import base64
+import tempfile
 import json
 import os
 import secrets
@@ -35,6 +37,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 import linked_files
+from fds_results import ResultFiles
 
 # webview is imported lazily, inside the functions that open windows and dialogs.
 # That keeps the file logic, settings and HTTP API importable -- and therefore
@@ -127,6 +130,7 @@ class Shell:
         self.fds_directory: Optional[str] = None
         #: Voxel folders the page has listed this run; the frame route serves only these.
         self._flame_folders: set = set()
+        self.results = ResultFiles()
 
     # -- settings ------------------------------------------------------
 
@@ -227,6 +231,18 @@ class Shell:
             except (OSError, ValueError) as exc:
                 return {"error": str(exc)}
         return {"files": files}
+
+    def open_results(self) -> Optional[Dict[str, Any]]:
+        if self.window is None:
+            return None
+        import webview
+        selected = self.window.create_file_dialog(
+            webview.OPEN_DIALOG, allow_multiple=False,
+            file_types=("FDS results (*.smv)",), directory=self._last_directory())
+        if not selected:
+            return None
+        path = selected[0] if isinstance(selected, (list, tuple)) else selected
+        return self.results.open(str(path))
 
     def pick_folder(self) -> Optional[Dict[str, str]]:
         """Native folder dialog, for a reconstructed flame's voxels/ folder."""
@@ -451,6 +467,39 @@ class Shell:
         error = self._write(path, html)
         return {"error": error} if error else {"path": path}
 
+    def save_results_png(self, data_url: Any) -> Optional[Dict[str, str]]:
+        if not isinstance(data_url, str) or not data_url.startswith('data:image/png;base64,') or len(data_url) > 48 * 1024 * 1024:
+            return {"error": "Invalid or oversized PNG snapshot."}
+        try:
+            data = base64.b64decode(data_url.split(',', 1)[1], validate=True)
+        except ValueError:
+            return {"error": "Invalid PNG encoding."}
+        if not data.startswith(bytes([137, 80, 78, 71, 13, 10, 26, 10])):
+            return {"error": "Invalid PNG signature."}
+        path = self._ask_save('fds-results.png', ('PNG image (*.png)',))
+        if not path:
+            return None
+        if not path.lower().endswith('.png'):
+            path += '.png'
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=os.path.dirname(os.path.abspath(path)), prefix='.fds-snapshot-', delete=False) as stream:
+                temporary = stream.name
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+            temporary = None
+            return {"path": path}
+        except OSError as exc:
+            return {"error": str(exc)}
+        finally:
+            if temporary is not None:
+                try:
+                    os.remove(temporary)
+                except OSError:
+                    pass
+
     def take_queued_plan(self) -> Optional[Dict[str, str]]:
         queued, self._queued_plan = self._queued_plan, None
         return self.read_plan(queued) if queued else None
@@ -576,6 +625,13 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json(self.shell.read_fds_include(body.get("name", "")))
             elif route == "/api/open-fds":
                 self._send_json(self.shell.open_fds())
+            elif route == "/api/results/open":
+                self._send_json(self.shell.open_results())
+            elif route == "/api/results/png":
+                self._send_json(self.shell.save_results_png(body.get("data")))
+            elif route == "/api/results/close":
+                self.shell.results.close(str(body.get("token", "")))
+                self._send_json({"closed": True})
             elif route == "/api/open-recent":
                 self._send_json(self.shell.read_plan(str(body.get("path", ""))))
             elif route == "/api/save":
@@ -620,10 +676,29 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json(self.shell.camera_presets())
             elif route == "/api/flame/frame":
                 self._send_flame_frame()
+            elif route == "/api/results/read":
+                self._send_result_range()
             else:
                 self._send_json({"error": "unknown route"}, 404)
             return
         super().do_GET()
+
+    def _send_result_range(self) -> None:
+        query = parse_qs(urlparse(self.path).query)
+        def value(key: str) -> str:
+            return (query.get(key) or [""])[0]
+        try:
+            data = self.shell.results.read(value("token"), value("name"),
+                                           int(value("offset")), int(value("length")))
+        except (OSError, ValueError, TypeError) as exc:
+            self._send_json({"error": str(exc)}, 400)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
 
     def _send_flame_frame(self) -> None:
         """One frame's bytes, for a folder the page has listed. Errors are JSON so

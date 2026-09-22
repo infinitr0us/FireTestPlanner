@@ -625,3 +625,51 @@ body.is-measuring .viewport { cursor: cell; }
 .playback-bar__status--error { color: #ff9b9b; }
 .field__inline { display: flex; align-items: center; gap: 8px; }
 .field__range { flex: 1; accent-color: #f59e0b; min-width: 80px; }
+
+
+/* Simulation results has its own scene and clock, outside the plan's edit state. */
+.fds-results { color: #dbe7f5; background: #101b2c; border: 1px solid #3b526f; border-radius: 10px; padding: 0; width: calc(100vw - 32px); height: calc(100vh - 32px); max-width: none; max-height: none; }
+.fds-results::backdrop { background: #030812c9; }
+.fds-results > header { height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-bottom: 1px solid #304157; }
+.fds-results button, .fds-results select, .fds-results input[type=number] { background: #20324a; color: #edf5ff; border: 1px solid #49617e; border-radius: 5px; padding: 7px 9px; font: inherit; }
+.fds-results button { cursor: pointer; white-space: nowrap; }
+.fds-results button:hover { background: #304863; }
+.fds-results button:disabled { opacity: .45; cursor: default; }
+.fds-results :focus-visible { outline: 2px solid #67e8f9; outline-offset: 2px; }
+.fds-results__body { display: flex; height: calc(100% - 53px); min-height: 0; }
+.fds-results__welcome { margin: auto; max-width: 600px; padding: 24px; line-height: 1.7; }
+.fds-results__sidebar { width: 320px; flex-shrink: 0; padding: 18px; box-sizing: border-box; overflow: auto; border-right: 1px solid #304157; display: flex; flex-direction: column; gap: 14px; }
+.fds-results__sidebar label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #bacde3; }
+.fds-results__sidebar select { width: 100%; min-width: 0; font-size: 12px; }
+.fds-results__title { font-size: 15px; line-height: 1.45; }
+.fds-results__note, .fds-results__info, .fds-results__warnings { font-size: 12px; line-height: 1.5; color: #a6bbd3; overflow-wrap: anywhere; }
+.fds-results__warnings summary { color: #c6d6e9; cursor: pointer; }
+.fds-results__main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.fds-results__view { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+.fds-results__view canvas { display: block; }
+.fds-results__transport { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 12px; border-top: 1px solid #304157; font-size: 12px; }
+.fds-results__transport input[type=range] { flex: 1; min-width: 100px; accent-color: #67e8f9; }
+.fds-results__transport output { min-width: 130px; font-variant-numeric: tabular-nums; }
+.fds-results__status { padding: 8px 12px; min-height: 18px; color: #bbd8ef; font-size: 12px; overflow-wrap: anywhere; }
+.fds-results__scale { display: flex; gap: 12px; }
+.fds-results__scale label { width: 50%; }
+.fds-results__scale input { width: 100%; box-sizing: border-box; }
+.fds-results__legend { font-size: 12px; font-variant-numeric: tabular-nums; }
+.fds-results__ramp { height: 12px; border-radius: 3px; margin-bottom: 6px; background: linear-gradient(90deg, #000080, #0080ff, #80ff80, #ff8000, #800000); }
+.fds-results__reading { font-size: 13px; color: #8eeaf5; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.fds-results__graph { width: 100%; height: auto; }
+@media (max-width: 850px) { .fds-results__sidebar { width: 255px; padding: 12px; } .fds-results__transport { gap: 5px; padding: 6px; } }
+@media (max-width: 600px) { .fds-results__body { flex-direction: column; overflow: auto; } .fds-results__sidebar { width: 100%; max-height: 38%; } .fds-results__main { min-height: 60%; } }
+
+.fds-results__devices-overlay { position: absolute; inset: 0; pointer-events: none; }
+.fds-results__devices { display: flex; flex-direction: column; gap: 10px; }
+.fds-results__devices > strong { font-size: 14px; }
+.fds-results__device-filters { display: flex; flex-direction: column; gap: 7px; }
+.fds-results__sidebar .fds-results__check { flex-direction: row; align-items: center; gap: 7px; }
+.fds-results__check input { margin: 0; accent-color: #67e8f9; }
+.fds-results__device-detail { font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; color: #c5d4e5; }
+.fds-results__device-detail strong { color: #fff; }
+.fds-results__device-choices { display: flex; flex-direction: column; gap: 5px; max-height: 180px; overflow: auto; }
+.fds-results__device-choices:empty, .fds-results__device-detail:empty { display: none; }
+.fds-results__device-choices p { margin: 0; font-size: 12px; }
+.fds-results__device-choices button { text-align: left; white-space: normal; font-size: 12px; }

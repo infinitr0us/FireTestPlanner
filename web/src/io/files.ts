@@ -536,3 +536,37 @@ export async function saveShareableHtml(html: string, suggestedName: string): Pr
 
 export const isSingleFileBuild = (): boolean =>
   bootHtml.length > 200_000 && !bootHtml.includes('/@vite/client');
+
+
+export interface OpenedResults { token: string; smv: string; files: { name: string; size: number }[] }
+export async function openShellResults(): Promise<OpenedResults | null> {
+  const result = await call<OpenedResults & { error?: string }>('/api/results/open', {});
+  if (result?.error) throw new Error(result.error);
+  return result;
+}
+export async function readShellResult(token: string, name: string, offset: number, length: number): Promise<Uint8Array> {
+  const url = `/api/results/read?${new URLSearchParams({ token, name, offset: String(offset), length: String(length) })}`;
+  // A short successful response is a transport failure, not corrupt Fortran data.
+  // Retry this idempotent range once; never decode incomplete bytes or retry a
+  // server rejection (which may mean a changed file or a closed session).
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await fetch(url, { headers: { 'X-Shell-Token': shellToken ?? '' }, cache: 'no-store' });
+    if (!response.ok) {
+      const body = await response.json() as { error?: string };
+      throw new Error(body.error ?? `Could not read ${name}.`);
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length === length) return bytes;
+    if (attempt === 1) throw new Error(`Incomplete read of ${name} at byte ${offset}: expected ${length} bytes, received ${bytes.length}. Retry the frame.`);
+  }
+  throw new Error(`Could not read ${name}.`);
+}
+export function closeShellResults(token: string): void {
+  void call('/api/results/close', { token }).catch(err => console.warn('Results session close failed', err));
+}
+
+
+/** Desktop snapshots use a native Save dialog, independent of WebView downloads. */
+export async function saveResultPng(data: string): Promise<string | null> {
+  return unwrapSave(await call<SaveResult>('/api/results/png', { data }))?.path ?? null;
+}

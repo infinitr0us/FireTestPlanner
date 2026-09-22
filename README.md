@@ -77,6 +77,25 @@ a single pasted `&OBST` or `&DEVC` into an object.
 `fdsreader`, the obvious library, does not help here: it reads simulation *output*
 through the `.smv` file and cannot open a `.fds` input. The reader is ours, and small.
 
+### Playing back FDS simulation output
+
+**FDS results…** opens a separate results workspace. In the desktop app, select the
+simulation's `.smv` file; in the browser, choose its output folder. The viewer reads
+individual frames locally, including multi-gigabyte simulations, without importing
+those results into the editable plan.
+
+Replay temperature and velocity-component slices, wall temperature and heat-flux
+maps, quantized 3D smoke/fire previews, and device/HRR histories. Controls include
+play/pause, frame stepping, scrubbing, playback speed, mesh selection, stable color
+scales, an adjustable cutaway for interior surfaces, and a labeled PNG snapshot.
+Simulation probes have type filters, optional labels, recorded direction arrows,
+and a chooser for overlapping positions. Selecting a probe opens its recorded
+history; the PNG snapshot includes the visible probe markers.
+
+The engineers' case in `fixtures/fds_2/` has 20 meshes and 3,001 recorded frames.
+See [supported outputs, usage and limitations](docs/fds-results.md). Results stay
+external: plan Save and Share HTML do not embed the simulation output.
+
 ### Connecting the plan to recorded test data
 
 Select a burner, camera or sensor and use **Linked files** in its inspector.
