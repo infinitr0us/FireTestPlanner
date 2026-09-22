@@ -3,5 +3,5 @@
 export const DEVICE_COLORS = {
   temperature: '#10b981',
   heatFlux: '#ef4444',
-  other: '#94a3b8',
+  other: '#e2e8f0',
 } as const;

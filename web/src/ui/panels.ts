@@ -14,7 +14,7 @@ import {
 import { deviceFromRecord, obstructionFromRecord } from '../core/fds';
 import { fdsFrame } from '../core/fdsview';
 import { NamelistError, readOneRecord } from '../core/namelist';
-import { checkPlan, displayName, hasObjectColor, nextId, objectColor } from '../core/plan';
+import { checkPlan, displayName, hasObjectColor, MODALITY_COLORS, nextId, objectColor } from '../core/plan';
 import { isMounted } from '../core/types';
 import { cameraPresets, isCustomPreset, presetsArePersistent } from '../core/presets';
 import { setPosition } from '../core/transform';
@@ -85,7 +85,7 @@ export class Palette {
           onclick: () => this.arm(() =>
             createCamera(this.store.document, preset, defaultCameraPosition(this.store.document))),
         }, [
-          h('span', { class: 'palette__swatch', style: { background: modalityColor(preset.modality) } }),
+          h('span', { class: 'palette__swatch', style: { background: MODALITY_COLORS[preset.modality] ?? MODALITY_COLORS.other } }),
           h('span', { class: 'palette__row-label' }, [preset.label]),
           isCustomPreset(preset.id)
             ? h('span', { class: 'palette__badge', title: 'Your own preset. Delete it from a camera that uses it.' }, ['mine'])
@@ -233,9 +233,6 @@ export class Palette {
     this.cancel();
   }
 }
-
-const modalityColor = (m: string): string =>
-  ({ RGB: '#3b82f6', LWIR: '#f97316', MWIR: '#a855f7', SWIR: '#14b8a6', NIR: '#eab308' })[m] ?? '#94a3b8';
 
 export class Outliner {
   constructor(

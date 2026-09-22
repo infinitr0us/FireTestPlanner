@@ -27,7 +27,7 @@ PLAN.md      milestones, decisions and known limitations
 
 ```bash
 cd web && npm install
-npm run dev                 # editor at localhost:5173
+npm run dev                 # open the local URL and port Vite prints
 ```
 
 Click **Example** to load the reference plan reconstructed from `example.jpg` — with
@@ -237,11 +237,34 @@ Storage matches the editor (Three.js), reading matches reconstruction tooling.
 Both ends are explicit; neither has to remember the other's choice. Full
 definitions in [CONVENTIONS.md](CONVENTIONS.md) section 3.
 
+## Development
+
+[CONVENTIONS.md](CONVENTIONS.md) defines plan data and interchange behavior.
+[Visual language](docs/visual-language.md#developing-a-new-feature) defines the
+design requirements for every new or changed UI, scene, plot and exported figure.
+Apply its workflow before implementation and its checklist before completion;
+visual consistency belongs in the feature's own work.
+
+Reuse shared colors, device identities and transport controls. Extend their shared
+definitions when a new meaning is needed, and document justified differences in
+the visual-language exceptions table in the same change. Existing agreement does
+not need to be restated for each feature. Repository automation instructions in
+[AGENTS.md](AGENTS.md) point to the same reference.
+
+For web code changes, run `npm test` and `npm run build` in `web/`.
+For visual or interaction changes, also run `npm run test:browser` (which includes
+the build), extend coverage for the new path, and inspect the affected UI states.
+See [browser checks](web/browser-tests/README.md) for setup and coverage boundaries.
+Use `build.bat` when handing off an updated desktop executable; its startup
+self-test is separate from interaction and native file-dialog checks.
+
 ## Tests
 
 ```bash
-python -m pytest python/tests -q     # 444 tests, no GUI needed
-cd web && npm test                   # 397 tests
+python -m pytest python/tests -q     # Python suite, no GUI needed
+cd web && npm test                   # Web unit suite
+npm run build                       # TypeScript + single-file bundle
+npm run test:browser                 # Build + DOM/WebGL and real input checks
 ```
 
 The web suite asserts that the TypeScript writer reproduces the Python-written

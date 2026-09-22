@@ -104,6 +104,7 @@ export class FdsResultsDialog {
   private boundaryCoverage = h('p', { class: 'fds-results__warning' });
   private coverage?: HTMLDetailsElement;
   private focusBefore?: HTMLElement;
+  private theme = visualTheme();
 
   constructor(private onOpenChange: (open: boolean) => void = () => {}) {
     this.dialog.append(h('header', {}, [this.title, button('Back to plan', () => this.close())]), this.body);
@@ -810,7 +811,7 @@ export class FdsResultsDialog {
     );
     const x = (t: number) => 62 + ((w - 82) * (t - start)) / (end - start || 1);
     const y = (v: number) => height - 35 - ((height - 64) * (v - min)) / (max - min || 1);
-    const theme = visualTheme(this.graph);
+    const theme = this.theme;
     ctx.font = '20px ' + theme.font;
     ctx.fillStyle = theme.textDim;
     ctx.fillText(numeric(max), 3, 22);
@@ -855,7 +856,7 @@ export class FdsResultsDialog {
     const staticGeometry = this.data?.warnings.some((w) => w.includes('geometry events are not animated'));
     canvas.height = view.height + (staticGeometry ? 90 : 65);
     const ctx = canvas.getContext('2d')!;
-    const theme = visualTheme(this.dialog);
+    const theme = this.theme;
     ctx.fillStyle = theme.background;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(view, 0, 0);

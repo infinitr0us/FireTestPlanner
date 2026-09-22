@@ -1,0 +1,177 @@
+// Browser regressions without an additional automation dependency.
+// Uses Chromium's DevTools protocol for real keyboard/mouse default actions.
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createServer } from 'vite';
+
+const web = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const waitFor = async (predicate, label, timeout = 15000) => {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const result = await predicate();
+    if (result) return result;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  throw new Error('Timed out: ' + label);
+};
+const candidates = [
+  process.env.BROWSER_BIN,
+  'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome',
+].filter(Boolean);
+let executable;
+for (const candidate of candidates) {
+  try { await access(candidate); executable = candidate; break; } catch {}
+}
+if (!executable) throw new Error('Set BROWSER_BIN to a Chromium, Chrome or Edge executable.');
+const profile = await mkdtemp(join(tmpdir(), 'fireplan-browser-'));
+const server = await createServer({ root: web, server: { host: '127.0.0.1', port: 0, open: false } });
+let browser, socket, send;
+const checks = [], errors = [];
+const check = (name, ok) => {
+  if (!ok) throw new Error(name);
+  checks.push({ name, passed: true });
+};
+try {
+  await server.listen();
+  const address = server.httpServer.address();
+  const origin = 'http://127.0.0.1:' + address.port;
+  browser = spawn(executable, [
+    '--headless=new', '--no-first-run', '--no-default-browser-check',
+    '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--remote-debugging-port=0',
+    '--user-data-dir=' + profile, 'about:blank',
+  ], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+  let browserLog = '';
+  browser.stderr.on('data', chunk => { browserLog += chunk; });
+  browser.on('error', error => errors.push(error.message));
+  const portFile = await waitFor(async () => {
+    try { return await readFile(join(profile, 'DevToolsActivePort'), 'utf8'); } catch { return false; }
+  }, 'Chromium DevTools endpoint');
+  const [port, path] = portFile.trim().split(/\r?\n/);
+  socket = new WebSocket('ws://127.0.0.1:' + port + path);
+  await once(socket, 'open');
+  let id = 0, sessionId;
+  const pending = new Map();
+  socket.addEventListener('message', ({ data }) => {
+    const message = JSON.parse(data);
+    if (message.id) {
+      const request = pending.get(message.id);
+      if (!request) return;
+      pending.delete(message.id); clearTimeout(request.timer);
+      if (message.error) request.reject(new Error(JSON.stringify(message.error)));
+      else request.resolve(message.result);
+    } else if (message.method === 'Runtime.exceptionThrown') {
+      const detail = message.params.exceptionDetails;
+      errors.push(detail.exception?.description ?? detail.text);
+    }
+  });
+  send = (method, params = {}, session = sessionId) => new Promise((resolve, reject) => {
+    const next = ++id;
+    const timer = setTimeout(() => { pending.delete(next); reject(new Error('CDP timeout: ' + method + '\n' + browserLog)); }, 15000);
+    pending.set(next, { resolve, reject, timer });
+    socket.send(JSON.stringify({ id: next, method, params, ...(session ? { sessionId: session } : {}) }));
+  });
+  const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
+  ({ sessionId } = await send('Target.attachToTarget', { targetId, flatten: true }));
+  await send('Runtime.enable');
+  await send('Page.enable');
+  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  const evaluate = async expression => {
+    const response = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+    if (response.exceptionDetails) throw new Error(response.exceptionDetails.exception?.description ?? response.exceptionDetails.text);
+    return response.result.value;
+  };
+  const screenshot = async name => {
+    if (!process.env.BROWSER_TEST_OUTPUT) return;
+    const folder = dirname(resolve(process.env.BROWSER_TEST_OUTPUT));
+    await mkdir(folder, { recursive: true });
+    const { data } = await send('Page.captureScreenshot', { format: 'png' });
+    await writeFile(join(folder, name + '.png'), Buffer.from(data, 'base64'));
+  };
+  const key = async (key, code, keyCode) => {
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode,
+      ...(key === ' ' ? { text: ' ' } : {}) });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: keyCode });
+  };
+  const click = async expression => {
+    const point = await evaluate('(() => { const e = ' + expression + '; e.scrollIntoView({block:"center"}); const r=e.getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; })()');
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
+  };
+  await send('Page.navigate', { url: origin + '/browser-tests/visual-consistency.html?interactive=1' });
+  const report = await waitFor(async () => {
+    const text = await evaluate('document.querySelector("#report")?.textContent ?? ""');
+    if (text.includes('FAILED:')) throw new Error(text);
+    try { const result = JSON.parse(text); return result.passed ? result : false; } catch { return false; }
+  }, 'DOM/WebGL regression page');
+  checks.push(...report.checks);
+  await evaluate('document.querySelector("dialog details").open=false; document.querySelector("dialog summary").focus()');
+  await key(' ', 'Space', 32);
+  check('native Space opens coverage without playing', await evaluate('document.querySelector("dialog details").open && !!document.querySelector("button[aria-label=\\"Play (Space)\\"]")'));
+  await key(' ', 'Space', 32);
+  check('native Space closes coverage without playing', await evaluate('!document.querySelector("dialog details").open && !!document.querySelector("button[aria-label=\\"Play (Space)\\"]")'));
+  const first = 'document.querySelector("dialog button[aria-label=\\"First frame (Home)\\"]")';
+  await click(first);
+  await key('.', 'Period', 190);
+  await waitFor(() => evaluate('document.querySelector("[aria-label=\\"Simulation frame\\"]").value==="1"'), 'results step after mouse click');
+  check('results period works after mouse click on transport', true);
+  await evaluate('document.querySelector("[aria-label=\\"Simulation frame\\"]").focus()');
+  await key('End', 'End', 35);
+  await waitFor(() => evaluate('document.querySelector("[aria-label=\\"Simulation frame\\"]").value==="2"'), 'native slider End');
+  await key('Home', 'Home', 36);
+  await waitFor(() => evaluate('document.querySelector("[aria-label=\\"Simulation frame\\"]").value==="0"'), 'native slider Home');
+  check('native results slider Home/End seek frames', true);
+  const resultsSpeeds = await evaluate('[...document.querySelector("dialog [aria-label=\\"Playback speed\\"]").options].map(o=>[o.value,o.textContent])');
+  await screenshot('results');
+  const resultsStyle = await evaluate('(() => { const s=getComputedStyle(document.querySelector("dialog .playback-bar__btn")); return [s.fontFamily,s.fontSize,s.lineHeight,s.padding,s.borderRadius]; })()');
+
+  // Exercise the built single-file editor, including its window-level key routing.
+  await send('Page.navigate', { url: origin + '/dist/index.html' });
+  await waitFor(() => evaluate('[...document.querySelectorAll("button")].some(b=>b.textContent==="Example")'), 'built editor');
+  await click('[...document.querySelectorAll("button")].find(b=>b.textContent==="Example")');
+  await waitFor(() => evaluate('!!document.querySelector(".playback-bar:not([hidden]) input[aria-label=\\"Frame\\"]:not(:disabled)")'), 'example flame');
+  const editorFirst = 'document.querySelector(".playback-bar button[aria-label=\\"First frame (Home)\\"]")';
+  await click(editorFirst);
+  await key('.', 'Period', 190);
+  await waitFor(() => evaluate('document.querySelector(".playback-bar input[aria-label=\\"Frame\\"]").value==="1"'), 'editor step after mouse click');
+  check('built editor period works after mouse click on transport', true);
+  await key('End', 'End', 35);
+  await waitFor(() => evaluate('(() => {const e=document.querySelector(".playback-bar input[aria-label=\\"Frame\\"]");return e.value===e.max;})()'), 'editor last frame');
+  await key('Home', 'Home', 36);
+  await waitFor(() => evaluate('document.querySelector(".playback-bar input[aria-label=\\"Frame\\"]").value==="0"'), 'editor first frame');
+  check('built editor Home/End work with transport button focused', true);
+  const editorStyle = await evaluate('(() => { const s=getComputedStyle(document.querySelector(".playback-bar__btn")); return [s.fontFamily,s.fontSize,s.lineHeight,s.padding,s.borderRadius]; })()');
+  check('editor and results transport typography and dimensions match', JSON.stringify(resultsStyle)===JSON.stringify(editorStyle));
+  const editorSpeeds = await evaluate('[...document.querySelector(".playback-bar [aria-label=\\"Playback speed\\"]").options].map(o=>[o.value,o.textContent])');
+  check('editor and results expose identical playback speeds', JSON.stringify(resultsSpeeds)===JSON.stringify(editorSpeeds));
+  await screenshot('editor');
+  check('no uncaught browser exceptions', errors.length===0);
+  const result = { browser: executable, passed: checks.length, checks };
+  if (process.env.BROWSER_TEST_OUTPUT) {
+    const output = resolve(process.env.BROWSER_TEST_OUTPUT);
+    await mkdir(dirname(output), { recursive: true });
+    await writeFile(output, JSON.stringify(result, null, 2) + '\n');
+  }
+  console.log(JSON.stringify(result, null, 2));
+} finally {
+  if (send && socket?.readyState === WebSocket.OPEN) {
+    try { await send('Browser.close', {}, null); } catch {}
+  }
+  socket?.close();
+  if (browser && browser.exitCode === null) {
+    await Promise.race([once(browser, 'exit'), new Promise(r => setTimeout(r, 3000))]);
+    if (browser.exitCode === null) browser.kill();
+  }
+  await server.close();
+  // Only remove the unique temporary profile created above.
+  if (dirname(profile) !== resolve(tmpdir()) || !profile.startsWith(join(resolve(tmpdir()), 'fireplan-browser-'))) {
+    throw new Error('Unexpected browser profile path: ' + profile);
+  }
+  await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+}

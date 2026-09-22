@@ -38,7 +38,7 @@ export class FdsDeviceLayer {
     private camera: THREE.Camera,
     private target: HTMLCanvasElement
   ) {
-    this.theme = visualTheme(target);
+    this.theme = visualTheme();
     this.canvas.className = 'fds-results__devices-overlay';
     this.canvas.setAttribute('aria-hidden', 'true');
     target.parentElement!.append(this.canvas);

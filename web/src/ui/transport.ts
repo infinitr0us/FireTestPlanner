@@ -1,11 +1,11 @@
 import { h } from './dom';
 
 const controls = {
-  first: ['⏮', 'First frame (Home)'],
+  first: ['⏮\uFE0E', 'First frame (Home)'],
   previous: ['◀', 'Previous frame (,)'],
   play: ['▶', 'Play (Space)'],
   next: ['▶|', 'Next frame (.)'],
-  last: ['⏭', 'Last frame (End)'],
+  last: ['⏭\uFE0E', 'Last frame (End)'],
 } as const;
 type TransportAction = keyof typeof controls;
 export type TransportCommands = Record<TransportAction, () => void>;
@@ -33,18 +33,25 @@ export function setTransportPlaying(button: HTMLButtonElement, playing: boolean)
   button.setAttribute('aria-label', label);
 }
 
-/** Form controls retain their native keys. Only the frame scrubber borrows
- * Space/comma/period; Home/End and arrows still produce native input events. */
+/** Editable controls retain native keys; buttons, links and disclosure summaries
+ * retain Space. Only the frame scrubber borrows Space/comma/period; Home/End and
+ * arrows still produce native input events. Step/jump keys work from buttons. */
 export function handleTransportKey(
   e: KeyboardEvent,
   commands: TransportCommands,
   frameSlider?: HTMLInputElement
 ): boolean {
   if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return false;
-  const target = e.target instanceof HTMLElement ? e.target : null;
+  // Read only the element capabilities we need, including descendants of buttons.
+  // This also allows the key policy to run in Node without a DOM constructor.
+  const target = e.target as (Element & { isContentEditable?: boolean }) | null;
+  const control = target?.closest?.('input, select, textarea, button, summary, a, [role]') ?? target;
   const isFrameSlider = target === frameSlider;
   if (target?.isContentEditable) return false;
-  if (target && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(target.tagName) && !isFrameSlider) return false;
+  if (control && /^(INPUT|SELECT|TEXTAREA)$/.test(control.tagName) && !isFrameSlider) return false;
+  if (e.key === ' ' && !isFrameSlider && control &&
+      (/^(BUTTON|SUMMARY|A)$/.test(control.tagName) || control.hasAttribute?.('role') ||
+       (control.hasAttribute?.('tabindex') && control.tagName !== 'CANVAS'))) return false;
   const action = (
     {
       ' ': 'play',

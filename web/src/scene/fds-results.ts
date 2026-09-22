@@ -137,7 +137,7 @@ export class FdsResultScene {
   private bounds = new THREE.Box3();
   private clipZ = 1e20;
   constructor(readonly host: HTMLElement) {
-    this.scene.background = new THREE.Color(visualTheme(host).background);
+    this.scene.background = new THREE.Color(visualTheme().background);
     this.camera.up.set(0, 0, 1);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;

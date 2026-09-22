@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:browser": "npm run build && node browser-tests/run.mjs"
   },
   "dependencies": {
     "three": "^0.185.1"

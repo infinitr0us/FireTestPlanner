@@ -3,10 +3,10 @@
 // The Example is the reference layout with a flame reconstructed from a test on
 // its site: the plan, and the packed frames the page carries so nothing has to be
 // on disk. Both come from fixtures/flame/ via tools/build_flame_fixture.py.
-import { handleTransportKey } from './ui/transport';
 import examplePlan from '../../fixtures/flame/flame-test.ftp.json';
 import exampleFlameUrl from '../../fixtures/flame/flame-test.fvs?url';
 
+import { handleTransportKey } from './ui/transport';
 import type { FlameSequence } from './core/flame';
 import { flameSequenceLink, newPlan, reconstructedFlames } from './core/plan';
 import { adoptShellPresets } from './core/presets';

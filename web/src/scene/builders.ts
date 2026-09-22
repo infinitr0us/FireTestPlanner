@@ -57,8 +57,8 @@ export const COLORS = {
   ceiling: 0xcbd5e1,
   obstruction: 0x78716c,
   cameraBody: 0x334155,
-  heatFlux: Number(DEVICE_COLORS.heatFlux.replace('#', '0x')),
-  thermocouple: Number(DEVICE_COLORS.temperature.replace('#', '0x')),
+  heatFlux: parseInt(DEVICE_COLORS.heatFlux.slice(1), 16),
+  thermocouple: parseInt(DEVICE_COLORS.temperature.slice(1), 16),
   instrumentBody: 0x334155,
 };
 

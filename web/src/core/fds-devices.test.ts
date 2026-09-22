@@ -13,8 +13,8 @@ const probes: ResultDevice[] = [
 ];
 
 describe('simulation probe identity and visibility', () => {
-  it('distinguishes surface measurements and numerical gas probes from thermocouples', () => {
-    expect(probes.map(deviceKind)).toEqual(['surface', 'flux', 'thermocouple', 'other']);
+  it('groups gas temperatures with thermocouples while distinguishing surface measurements', () => {
+    expect(probes.map(deviceKind)).toEqual(['surface', 'flux', 'thermocouple', 'thermocouple']);
   });
   it('groups exact coincident positions without changing or rounding source coordinates', () => {
     const before = structuredClone(probes), sites = deviceSites(probes, all());

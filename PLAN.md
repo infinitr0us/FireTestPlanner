@@ -10,6 +10,7 @@ Supersedes nothing; complements `ideas.md`.
 | Decision | Choice |
 |---|---|
 | Architecture | Shared TypeScript/Three.js core; two shells (single-file HTML, pywebview+PyInstaller exe) |
+| Visual language | New UI, scenes and exports follow [docs/visual-language.md](docs/visual-language.md) during feature development; extend shared definitions, document intentional exceptions and verify affected states in the same change |
 | Units | SI internal (metres, kW, °C, radians in file / degrees in UI), imperial display toggle |
 | v1 objects | Cameras, burner + hood + duct, walls, ceilings |
 | v1.1 objects | Heat flux gauges, thermocouples (single bead or rake) |

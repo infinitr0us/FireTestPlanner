@@ -158,7 +158,7 @@ export class Viewport {
     this.previewFrame.hidden = true;
     container.appendChild(this.previewFrame);
 
-    this.scene.background = new THREE.Color(visualTheme(container).background);
+    this.scene.background = new THREE.Color(visualTheme().background);
     this.scene.add(this.contentRoot, this.furnitureRoot, this.dimensionRoot, this.measureRoot, this.flames.root);
     this.scene.add(this.pivot);
 
@@ -812,7 +812,7 @@ export class Viewport {
     }
 
     if (!this.selectionBox) {
-      this.selectionBox = new THREE.BoxHelper(group, visualTheme(this.container).accent);
+      this.selectionBox = new THREE.BoxHelper(group, visualTheme().accent);
       this.selectionBox.layers.set(LAYER_EDITOR);
       this.scene.add(this.selectionBox);
     } else {

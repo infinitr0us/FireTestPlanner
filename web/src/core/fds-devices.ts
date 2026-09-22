@@ -2,7 +2,7 @@ import { DEVICE_COLORS } from './visual';
 import type { ResultDevice, ResultSeries, XYZ } from './fds-results';
 
 export const DEVICE_KINDS = {
-  thermocouple: { label: 'Thermocouples', color: DEVICE_COLORS.temperature, symbol: '●' },
+  thermocouple: { label: 'Gas temperatures / thermocouples', color: DEVICE_COLORS.temperature, symbol: '●' },
   surface: { label: 'Surface temperatures', color: DEVICE_COLORS.temperature, symbol: '◇' },
   flux: { label: 'Heat-flux probes', color: DEVICE_COLORS.heatFlux, symbol: '■' },
   other: { label: 'Other probes', color: DEVICE_COLORS.other, symbol: '○' },
@@ -11,7 +11,9 @@ export type DeviceKind = keyof typeof DEVICE_KINDS;
 export const deviceKinds = Object.keys(DEVICE_KINDS) as DeviceKind[];
 export function deviceKind(device: ResultDevice): DeviceKind {
   const q = device.quantity.trim().toUpperCase();
-  if (q === 'THERMOCOUPLE') return 'thermocouple';
+  // Match the importer's temperature proxy visually; the recorded quantity still
+  // distinguishes a numerical gas temperature from a modelled thermocouple.
+  if (q === 'THERMOCOUPLE' || q === 'TEMPERATURE') return 'thermocouple';
   if (
     [
       'WALL TEMPERATURE',
@@ -22,7 +24,7 @@ export function deviceKind(device: ResultDevice): DeviceKind {
   )
     return 'surface';
   if (q.includes('HEAT FLUX') || q === 'RADIOMETER') return 'flux';
-  return 'other'; // A numerical gas-temperature probe is not necessarily a thermocouple.
+  return 'other';
 }
 
 export interface DeviceDisplay {
