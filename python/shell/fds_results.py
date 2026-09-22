@@ -20,20 +20,16 @@ class ResultFiles:
             raise ValueError('Choose a Smokeview metadata (.smv) file.')
         root = smv.parent
         files = {}
-        for directory, dirs, names in os.walk(root, followlinks=False):
-            dirs[:] = [d for d in dirs if not Path(directory, d).is_symlink()
-                       and Path(directory, d).resolve().is_relative_to(root)]
-            for name in names:
-                p = Path(directory, name)
-                if p.suffix.lower() not in EXTENSIONS or p.is_symlink():
-                    continue
-                resolved = p.resolve(strict=True)
-                if not resolved.is_relative_to(root):
-                    continue
-                stat = p.stat()
-                files[p.relative_to(root).as_posix()] = (p, stat.st_size, stat.st_mtime_ns)
-                if len(files) > 20000:
-                    raise ValueError('Result folder exceeds 20000 files.')
+        for p in root.iterdir():
+            if p.suffix.lower() not in EXTENSIONS or p.is_symlink() or not p.is_file():
+                continue
+            resolved = p.resolve(strict=True)
+            if not resolved.is_relative_to(root):
+                continue
+            stat = p.stat()
+            files[p.name] = (p, stat.st_size, stat.st_mtime_ns)
+            if len(files) > 20000:
+                raise ValueError('Result folder exceeds 20000 files.')
         token = secrets.token_urlsafe(24)
         if len(self.sessions) >= 4:
             self.sessions.pop(next(iter(self.sessions)))  # release abandoned/reloaded pages

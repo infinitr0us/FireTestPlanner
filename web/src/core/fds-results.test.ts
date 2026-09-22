@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs';
+import { readdirSync, statSync, readFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { decodeRle, parseResultCsv, parseSmv, Records, ResultReader, safeResultPath, type ResultSource, type ResultMesh, type ResultField } from './fds-results';
@@ -91,10 +91,12 @@ describe('FDS histories', () => {
   });
 });
 
-const folder = fileURLToPath(new URL('../../../fixtures/fds_2/', import.meta.url));
-describe.skipIf(!existsSync(folder + '/RC_BS_2.smv'))('engineers supplied FDS 6.9.1 run', () => {
+const portableFolder = fileURLToPath(new URL('../../../fixtures/fds-results/', import.meta.url));
+const runs = [{ name: 'portable real FDS 6.9.1 samples', folder: portableFolder, full: false }];
+if (process.env.FDS_FULL_RESULTS_DIR) runs.push({ name: 'explicit full external FDS inventory', folder: process.env.FDS_FULL_RESULTS_DIR, full: true });
+describe.each(runs)('$name', ({ folder, full }) => {
   const caseSource: ResultSource = {
-    files: existsSync(folder) ? new Map(readdirSync(folder).map(name => [name, statSync(folder + '/' + name).size])) : new Map(),
+    files: new Map(readdirSync(folder).map(name => [name, statSync(folder + '/' + name).size])),
     async read(name, offset, length) {
       const f = await open(folder + '/' + name, 'r');
       try { const bytes = new Uint8Array(length); const { bytesRead } = await f.read(bytes, 0, length, offset); expect(bytesRead).toBe(length); return bytes; }
@@ -104,23 +106,23 @@ describe.skipIf(!existsSync(folder + '/RC_BS_2.smv'))('engineers supplied FDS 6.
   it('inventories every actual field and decodes first, middle and last frames in every file', async () => {
     const data = parseSmv(readFileSync(folder + '/RC_BS_2.smv', 'utf8'));
     expect(data.version).toContain('6.9.1'); expect(data.meshes.length).toBe(20);
-    expect(data.fields.filter(f => f.kind === 'slice').length).toBe(72);
-    expect(data.fields.filter(f => f.kind === 'boundary').length).toBe(80);
-    expect(data.fields.filter(f => f.kind === 'smoke').length).toBe(60);
+    expect(data.fields.filter(f => f.kind === 'slice').length).toBe(full ? 72 : 2);
+    expect(data.fields.filter(f => f.kind === 'boundary').length).toBe(full ? 80 : 2);
+    expect(data.fields.filter(f => f.kind === 'smoke').length).toBe(full ? 60 : 6);
     expect(data.devices.length).toBe(67); expect(data.warnings).toEqual([]);
     for (const f of data.fields) {
       const r = await new ResultReader(caseSource, f, data.meshes[f.mesh]).init();
-      expect(r.count, f.file).toBe(3001);
-      for (const i of [0, 1500, 3000]) {
+      expect(r.count, f.file).toBe(full ? 3001 : 3);
+      for (const i of [0, full ? 1500 : 1, r.count - 1]) {
         const frame = await r.frame(i);
         expect(frame.values.length).toBeGreaterThan(0); expect(Number.isFinite(frame.time)).toBe(true);
         if (i === 0) expect(frame.time).toBe(0);
-        if (i === 3000) expect(frame.time).toBeGreaterThanOrEqual(1199);
+        if (i === r.count - 1) expect(frame.time).toBeGreaterThanOrEqual(1199);
       }
       if (f.kind !== 'smoke' && (f.kind === 'slice' || r.patches.some(p => p.obstruction > 0))) expect(resultSurface(data.meshes[f.mesh], f, r.patches).positions.length, f.file).toBeGreaterThan(0);
       // Independent FDSreader 1.11.7 reference, with its low ghost row/column removed.
       if (f.file === 'RC_BS_2_1_1.sf') {
-        const frame = await r.frame(1500);
+        const frame = await r.frame(full ? 1500 : 1);
         const used: number[] = [];
         for (let k = 1; k <= 66; k++) for (let j = 1; j <= 34; j++) used.push(frame.values[j + k * 35]);
         expect(frame.time).toBe(600.00341796875);
@@ -134,4 +136,18 @@ describe.skipIf(!existsSync(folder + '/RC_BS_2.smv'))('engineers supplied FDS 6.
       r.clearFrame();
     }
   }, 30000);
+});
+
+it('decodes a BNDC file and preserves sample offsets after omitted exterior patches', async () => {
+  const patches = [0, 1].map(obstruction => record(binary([1, 1, 0, 2, 0, 2, 1, obstruction, 1])));
+  const bytes = join(...['TEMPERATURE', 'temp', 'C'].map(s => record(new TextEncoder().encode(s.padEnd(30)))),
+    record(binary([2])), ...patches, record(binary([0], true)),
+    record(binary(Array(9).fill(-100), true)), record(binary([10, 20, 99, 30, 40, 99, 99, 99, 99], true)));
+  const boundaryField: ResultField = { ...field, kind: 'boundary' };
+  const reader = await new ResultReader(source(bytes), boundaryField, mesh).init();
+  const frame = await reader.frame(0);
+  expect(reader.patches.map(p => p.obstruction)).toEqual([0, 1]);
+  const surface = resultSurface(mesh, boundaryField, frame.patches);
+  expect(surface.indices.length).toBe(24);
+  expect([...new Set(surface.indices)].map(i => frame.values[i])).toEqual([10, 20, 30, 40]);
 });

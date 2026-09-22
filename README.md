@@ -13,6 +13,7 @@ schema/      fire-test-plan-1.0.0 through -1.4.0 .schema.json — normative, one
 CONVENTIONS.md                                — frames, units, correlations
 presets/     camera preset library (shared by the editor and the fixture builder)
 docs/datasheets/  manufacturer PDFs behind the datasheet-grade presets
+docs/visual-language.md  the editor's colours, labels, transport and print palette; the checklist for a new scene or panel
 fixtures/    reference plans; fixtures/fds/ — a real FDS case and its conversion;
              fixtures/flame/ — a reconstructed flame, its pipeline and the plan that plays it
 python/      fireplan — reader, validator, exporters
@@ -92,7 +93,9 @@ Simulation probes have type filters, optional labels, recorded direction arrows,
 and a chooser for overlapping positions. Selecting a probe opens its recorded
 history; the PNG snapshot includes the visible probe markers.
 
-The engineers' case in `fixtures/fds_2/` has 20 meshes and 3,001 recorded frames.
+The engineers' external case has 20 meshes and 3,001 recorded frames; its local
+`fixtures/fds_2/` folder is ignored and is not included in a clone. A small real-data
+subset in `fixtures/fds-results/` keeps regression tests reproducible.
 See [supported outputs, usage and limitations](docs/fds-results.md). Results stay
 external: plan Save and Share HTML do not embed the simulation output.
 

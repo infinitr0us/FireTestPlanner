@@ -107,6 +107,7 @@ export class Viewport {
   private dragging = false;
   private frameHandle = 0;
   private disposed = false;
+  private suspended = false;
 
   /** Proxy the gizmo drives when more than one object is selected. */
   private pivot = new THREE.Object3D();
@@ -928,8 +929,17 @@ export class Viewport {
     this.ortho.updateProjectionMatrix();
   };
 
+  /** Hold the plan clock and GPU work while a separate workspace covers it. */
+  setSuspended(suspended: boolean): void {
+    if (this.suspended === suspended || this.disposed) return;
+    this.suspended = suspended;
+    this.lastTick = 0;
+    if (suspended) cancelAnimationFrame(this.frameHandle);
+    else this.tick();
+  }
+
   private tick = (): void => {
-    if (this.disposed) return;
+    if (this.disposed || this.suspended) return;
     this.frameHandle = requestAnimationFrame(this.tick);
 
     // The clock advances here, from wall time, so a dropped frame skips ahead

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { deviceHistory, deviceKind, deviceKinds, deviceSites, pickDevices, type DeviceDisplay } from './fds-devices';
 import { parseSmv, type ResultDevice, type ResultSeries } from './fds-results';
@@ -55,11 +55,42 @@ describe('SMV probe directions', () => {
   });
 });
 
-const path = fileURLToPath(new URL('../../../fixtures/fds_2/RC_BS_2.smv', import.meta.url));
-it.skipIf(!existsSync(path))('retains all 67 supplied probes at 23 locations, including the upward floor gauge', () => {
+const path = fileURLToPath(new URL('../../../fixtures/fds-results/RC_BS_2.smv', import.meta.url));
+it('retains all 67 supplied probes at 23 locations, including the upward floor gauge', () => {
   const data = parseSmv(readFileSync(path, 'utf8'));
   expect(deviceKinds.map(k => data.devices.filter(d => deviceKind(d) === k).length)).toEqual([22, 22, 23, 0]);
   const sites = deviceSites(data.devices, all());
   expect(sites).toHaveLength(23); expect(sites.filter(s => s.devices.length === 3)).toHaveLength(22);
   expect(data.devices.find(d => d.id === 'HF_23')).toMatchObject({ position: [1.1995, 1.8, 0], orientation: [0, 0, 1] });
+});
+
+it.each(['THERMOCOUPLE', 'TEMPERATURE', 'PRESSURE'])('does not mistake the default SMV normal for a facing on %s', quantity => {
+  const device = parseSmv(metadata + `DEVICE
+probe % ${quantity}
+0 0 0 0 0 -1
+`).devices[0];
+  expect(device.orientation).toBeUndefined();
+});
+it.each(['GAUGE HEAT FLUX', 'WALL TEMPERATURE'])('retains a real downward normal for %s', quantity => {
+  const device = parseSmv(metadata + `DEVICE
+probe % ${quantity}
+0 0 0 0 0 -1
+`).devices[0];
+  expect(device.orientation).toEqual([0, 0, -1]);
+});
+it('opens supported data with a counted warning for all geometry event types', () => {
+  const data = parseSmv(metadata + ['SHOW_OBST', 'HIDE_OBST', 'OPEN_VENT', 'CLOSE_VENT'].map(tag => tag + ' 1\n1 0\n').join('') + 'CSVF\ndevc\ncase_devc.csv\n');
+  expect(data.meshes).toHaveLength(1);
+  expect(data.csv).toEqual([{ kind: 'devc', file: 'case_devc.csv' }]);
+  expect(data.warnings).toHaveLength(1);
+  expect(data.warnings[0]).toContain('4 geometry events are not animated');
+});
+it('parses the counted HRRPUVCUT record even after the field inventory', () => {
+  const fields = 'SMOKF3D 1 0\nfire.s3d\nHRRPUV\nhrrpuv\nkW/m3\nSMOKF3D 1 0\ntemp.s3d\nTEMPERATURE\ntemp\nC\n';
+  const data = parseSmv(metadata + fields + 'HRRPUVCUT\n1\n200\n');
+  expect(data.fields[0].fireCutoff).toBe(200);
+  expect(data.fields[1].fireCutoff).toBeUndefined();
+  expect(data.warnings).toEqual([]);
+  expect(parseSmv(metadata + fields).warnings[0]).toContain('No HRRPUVCUT');
+  expect(() => parseSmv(metadata + 'HRRPUVCUT\n1\nNaN')).toThrow('Invalid HRRPUVCUT');
 });

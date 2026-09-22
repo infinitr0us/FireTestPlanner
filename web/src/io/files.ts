@@ -552,11 +552,12 @@ export async function readShellResult(token: string, name: string, offset: numbe
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await fetch(url, { headers: { 'X-Shell-Token': shellToken ?? '' }, cache: 'no-store' });
     if (!response.ok) {
-      const body = await response.json() as { error?: string };
-      throw new Error(body.error ?? `Could not read ${name}.`);
+      const body = await response.json().catch(() => null) as { error?: string } | null;
+      throw new Error(body?.error ?? `Could not read ${name}: HTTP ${response.status}.`);
     }
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.length === length) return bytes;
+    console.warn(`Incomplete results response for ${name} at byte ${offset}: expected ${length} bytes, received ${bytes.length} (attempt ${attempt + 1}/2).`);
     if (attempt === 1) throw new Error(`Incomplete read of ${name} at byte ${offset}: expected ${length} bytes, received ${bytes.length}. Retry the frame.`);
   }
   throw new Error(`Could not read ${name}.`);

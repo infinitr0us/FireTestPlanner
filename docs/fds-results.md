@@ -3,9 +3,10 @@
 This workspace is for inspecting recorded simulation output. The existing **Import
 FDS…** command still converts input geometry into an editable test plan.
 
-## Design and supplied case (2026-09-21)
+## External results and coordinate system
 
-`fixtures/fds_2/RC_BS_2.smv` describes an FDS 6.9.1 room-corner simulation with
+The external engineer-supplied `RC_BS_2.smv` (locally kept in the ignored
+`fixtures/fds_2/` directory; not included in a clone) describes an FDS 6.9.1 room-corner simulation with
 20 meshes and a requested duration of 1200 seconds. The folder contains about
 9.3 GiB: 72 slice files, 80 boundary files, 60 smoke files, and device/HRR CSVs.
 The metadata, rather than filename numbering or the requested end time, determines
@@ -53,12 +54,13 @@ solver or an assessment of the simulation's physical validity.
 ## Use it
 
 1. Click **FDS results…** in the main toolbar.
-2. Desktop: choose `fixtures/fds_2/RC_BS_2.smv`. Browser: choose the entire
-   `fixtures/fds_2` folder, then select a metadata file if there is more than one.
+2. Desktop: choose the simulation’s `.smv` file. Browser: choose its output
+   folder, then select a metadata file if there is more than one.
    No files are uploaded to a remote service.
-3. Choose a **Recorded field** and **Mesh coverage**. Plane 1/2 labels come from
-   the output metadata; a plane may comprise several separate mesh-local planes.
-4. Drag the time slider, step frames, or press Play. Playback follows recorded
+3. Choose a **Recorded field** and **Mesh coverage**. Request 1/2 labels identify the original `&SLCF` request; one request can
+   produce multiple mesh-local planes at different coordinates.
+4. Drag the time slider, step frames, or press Play. Click or Tab to the simulation
+   canvas and press Space to toggle playback. Playback follows recorded
    times, waits for complete frames, and may run below the requested rate when
    storage/GPU throughput is limiting. The time shown is the displayed frame's time.
 5. Choose a sensor or HRR history to see its actual units, sample timestamp and
@@ -94,9 +96,15 @@ separate resolutions). It masks interior solid samples; geometry is shown as
 translucent context rather than an opaque ray-occlusion model.
 
 Boundary views display obstruction patches, omitting external mesh-boundary patches
-whose obstruction index is zero. Box geometry follows the grid-snapped SMV records;
+whose obstruction index is zero. The coverage panel reports the omitted-patch
+count for the selected boundary dataset and meshes; these may include floor or wall
+measurements. Showing these faces requires distinguishing physical surfaces from
+OPEN/MIRROR boundaries and mesh interfaces. Box geometry follows the grid-snapped SMV records;
 VENT surface styling and custom SURFACE colors are not reproduced. Nonzero mesh
-OFFSET and time-varying obstruction/vent events are rejected. Unsupported families
+OFFSET is rejected. Cases with time-varying obstruction/vent events open with an
+expanded warning: static SMV obstructions and masks remain at every time, and vent
+state and changing visibility are not reproduced. This is not guaranteed to be the
+initial geometry. Use Smokeview to inspect animated geometry. Unsupported families
 and missing files are listed under **Coverage and limitations**. A broken field
 reports an error; select an unaffected mesh or another quantity. A CSV-only case
 can show its history plot, but playback currently requires a supported spatial field.
@@ -116,45 +124,6 @@ retained; opening another releases the oldest abandoned session. Files are serve
 only by opaque handles from an explicitly selected result folder, with path and
 modification checks and the existing shell authentication token.
 
-## Verification (2026-09-21)
-
-The fixture tests inventory all 212 spatial files and decode frame 0, 1500 and 3000
-of every file. All have 3,001 frames from 0 to 1200 s. Smaller synthetic tests cover
-irregular times, both byte orders, corrupt/truncated records, RLE bounds, CSV gaps,
-nonuniform cell placement, boundary indexing and obstruction masking. Python tests
-exercise authenticated HTTP reads, path/range confinement, changed files and session
-closure. The large private fixture is optional for the regular test suite.
-
-FDSreader **1.11.7** was installed only in an ignored review directory for an
-independent check. Strict mode fails on a vent record (`could not convert string to
-float: '!'`); default mode warns but loads 20 meshes, two slice collections and three
-smoke collections. Its first temperature subslice at frame 1500 has timestamp
-600.00341796875 s, minimum 19.99260902404785 C, maximum 1221.230712890625 C and
-X = 0.225 m. The new reader matches these values and the four corner samples.
-It remains useful for offline analysis; it is not an application dependency.
-
-
-The production single-file app was exercised in Chrome through both the real
-browser folder picker (the full supplied folder) and the desktop HTTP bridge (a
-fixture-selected picker stub). Checks covered temperature slices at 600 s,
-wall-temperature cutaway, 20-mesh soot playback, HRRPUV volume at 320 s, HRR and
-sensor histories, rapid scrubbing to the final 1200 s frame, missing mesh coverage,
-and returning to the planner. No result-rendering JavaScript/WebGL errors were
-reported. Browser PNG generation and its download request were exercised; the
-browser automation did not confirm download completion. Desktop PNG save/cancel
-and atomic-write failure are tested through a stubbed destination dialog.
-
-The rebuilt desktop executable passed its startup selftest with isolated settings;
-its embedded HTML matches the production bundle and includes the new results
-module. This checks startup and packaging, not native file-dialog interaction or
-FDS-result rendering inside WebView2. Native Open/PNG Save dialogs remain manual
-checks. The existing nonfatal pyreadline deprecation warning remains in Python tests.
-
-Final checks: **426 web tests passed, 466 Python tests passed**, production build
-and `git diff --check` passed, and the final packaged executable selftest exited 0.
-The populated 13-object example plan remained intact after opening and closing a
-results session. Changes are left uncommitted.
-
 ## Simulation devices
 
 The viewer shows symbolic probes from the SMV metadata, independently of any open
@@ -172,8 +141,9 @@ thermocouples. No companion input file or aligned planning document is required.
 - Selection opens the matching device CSV history, with units and the nearest sample
   timestamp. Selecting a device history also selects and reveals its marker. Missing
   or ambiguous device histories are reported without borrowing HRR or other channels.
-- The selected probe shows its original FDS coordinates and, when recorded, a direction
-  arrow. Marker size and arrow length are symbolic. Probes are visible through the
+- The selected probe shows its original FDS coordinates. Surface-temperature and
+  heat-flux probes show their recorded direction; thermocouples and other point
+  probes do not acquire a facing from FDS’s default normal. Marker size and arrow length are symbolic. Probes are visible through the
   scene; the cutaway hides probes above its height. The dropdown still reaches them.
 - Device markers, labels and selected arrows are included in PNG snapshots. Closing
   or changing simulations releases the overlay and resets its controls.
@@ -187,20 +157,36 @@ Planned cameras, hoods and added test equipment are not overlaid. Device renderi
 an independent layer, leaving room for a future explicitly aligned equipment layer
 without coupling simulation playback to the planning document.
 
-### Device-display verification (2026-09-21)
+## Preview thresholds and local sessions
 
-- 441 web tests and 466 Python tests passed; production build and diff checks passed.
-- Production Chrome/desktop-bridge checks on the supplied complete run covered type
-  filters, labels, exact coordinates and directions, history-to-marker selection,
-  overlapping-marker selection (including nearby projected sites), cutaway clipping,
-  playback readings, master visibility, reopening/reset and preserving a populated plan.
-- PNG export was saved and visually inspected with markers, labels and the selected
-  direction. The local verification server substituted the native Open/Save pickers;
-  actual OS file-dialog interaction was not exercised.
-- A short byte response was observed once during longer playback. The frame data
-  decoded correctly from disk and the next-frame retry succeeded. The bridge now
-  checks exact response length and retries an incomplete successful response once;
-  regression tests cover recovery, persistent short responses and server rejections.
-  Subsequent browser playback advanced from 632 s past 1048 s without another error.
-- The rebuilt desktop executable passed its startup self-test and contains the exact
-  production HTML. This is startup verification, not a device-overlay test inside WebView2.
+HRRPUV fire previews use the SMV `HRRPUVCUT` threshold with the FDS 6.9.1
+0–1200 kW/m³ byte encoding; missing thresholds are reported. Temperature volumes
+use the scalar ramp and do not use a fire cutoff. The preview remains quantized
+appearance data, not a quantitative value readout. Encoding source:
+[FDS 6.9.1 constants](https://github.com/firemodels/fds/blob/FDS-6.9.1/Source/cons.f90)
+and [Smoke3D writer](https://github.com/firemodels/fds/blob/FDS-6.9.1/Source/smvv.f90).
+
+Desktop sessions inventory only result files beside the selected metadata file,
+without walking subfolders. Failed opens retain an Open button. The plan's render
+loop and reconstruction clock are held while the results dialog is open, then resume
+without catching up the elapsed wall time. A short successful byte response is logged
+with file, offset, expected length and actual length, and retried once.
+
+## Regression data
+
+`fixtures/fds-results/` contains a portable subset of the external run: all source
+mesh/device metadata, ten fields from two meshes, and three unchanged samples per
+field (original frames 0, 1500 and 3000), plus three actual CSV rows. The ordinary
+web suite always reads it, including the independent FDSreader reference sample;
+missing fixture files fail the suite. See its README for provenance and rebuilding.
+
+To opt into the separate 212-file, 3001-frame external inventory in PowerShell:
+
+```powershell
+$env:FDS_FULL_RESULTS_DIR = 'E:\path\to\completed-run'
+npm --prefix web test
+Remove-Item Env:FDS_FULL_RESULTS_DIR
+```
+
+An explicitly requested external inventory fails if its data is absent. The full
+multi-gigabyte run is neither committed nor required in a fresh clone.

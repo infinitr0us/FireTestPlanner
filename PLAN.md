@@ -1,6 +1,6 @@
 # Fire Test Plan 3D Visualization — Implementation Plan
 
-Status: **Phase 2 landed: format 1.4 and reconstructed flame playback** (2026-09-19)
+Status: **Phase 2 landed: format 1.4, reconstructed flame playback and FDS results** (2026-09-21)
 Supersedes nothing; complements `ideas.md`.
 
 ---
@@ -14,7 +14,7 @@ Supersedes nothing; complements `ideas.md`.
 | v1 objects | Cameras, burner + hood + duct, walls, ceilings |
 | v1.1 objects | Heat flux gauges, thermocouples (single bead or rake) |
 | v1.2 objects | Obstructions — the box that is neither wall nor slab |
-| FDS bridge | Import only for now, shaped so an exporter is a straightforward addition. Reader is ours: fdsreader parses simulation OUTPUT and cannot open a `.fds` input |
+| FDS bridge | Input import plus a standalone results workspace for structured `.smv` output. Shared TypeScript range readers serve browser and desktop; simulation output remains external to plans. Export is not implemented. |
 | FDS coordinates | Plan is always re-origined onto the burner; the shift is kept in `meta.source.originOffset_m` so the source file's own numbers stay recoverable |
 | Camera zoom | Stored beside the lens, not folded into it; multiplies the effective focal length |
 | Format versioning | One schema per version; a file declares the lowest version its contents need |
@@ -215,7 +215,11 @@ tool to exist.
 | M9 | **Instruments** | Format 1.1: camera zoom, heat flux gauges, thermocouple rakes, predicted exposure, user-added camera presets | **done** |
 | M10 | **FDS bridge** | Namelist reader, FDS → plan import with a preview, format 1.2 obstructions, FDS-style coordinate entry | **done** |
 
-Phase 1 is complete and Phase 2 has landed. 444 Python tests, 397 web tests.
+| M11 | **Linked test files** | External videos and spreadsheets, saved plot snapshots | **done** |
+| M12 | **Reconstructed flame playback** | Format 1.4 voxel sequences, shared playback clock, PNG and embedded examples | **done** |
+| M13 | **FDS results** | Separate simulation session, slices, boundary fields, Smoke3D preview and device histories | **done** |
+
+Phase 1 is complete and Phase 2 has landed. Current verification is recorded with the review evidence.
 
 ### M9, from fire safety engineer feedback
 

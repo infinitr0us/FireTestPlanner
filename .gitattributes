@@ -24,3 +24,12 @@
 *.m2ts binary
 *.npz binary
 *.fvs binary
+
+# FDS Fortran records and RLE payloads must never undergo line-ending conversion.
+*.sf binary
+*.bf binary
+*.s3d binary
+
+# Preserve fixed-width padding in excerpts of original FDS text output.
+fixtures/fds-results/*.smv whitespace=-blank-at-eol
+fixtures/fds-results/*.sz whitespace=-blank-at-eol

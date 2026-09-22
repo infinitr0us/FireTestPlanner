@@ -202,7 +202,7 @@ viewport.onMeasureChange = (count) => {
 
 const reportOverlay = new ReportOverlay((html, name) => { void saveHtml(html, name); });
 const fdsImport = new FdsImportDialog();
-const fdsResults = new FdsResultsDialog();
+const fdsResults = new FdsResultsDialog(open => viewport.setSuspended(open));
 
 /** Write an HTML export, and say so if it fails rather than doing nothing visible. */
 async function saveHtml(html: string, name: string): Promise<void> {

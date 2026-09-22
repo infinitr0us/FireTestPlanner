@@ -27,6 +27,11 @@ Section 11.
 
 Which version a file declares is *derived*, not authored — see section 8.
 
+This file is about the *file*. How the editor looks — its colours, labels, transport
+bar and print palette, and the checklist for any new scene or panel — is
+[docs/visual-language.md](docs/visual-language.md), the same kind of reference for
+the screen as this one is for the format.
+
 ---
 
 ## 1. World frame

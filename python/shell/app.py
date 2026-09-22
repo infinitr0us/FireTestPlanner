@@ -25,12 +25,12 @@ from __future__ import annotations
 
 import argparse
 import base64
-import tempfile
 import json
 import os
 import secrets
 import socket
 import sys
+import tempfile
 import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -242,7 +242,10 @@ class Shell:
         if not selected:
             return None
         path = selected[0] if isinstance(selected, (list, tuple)) else selected
-        return self.results.open(str(path))
+        try:
+            return self.results.open(str(path))
+        except (OSError, ValueError) as exc:
+            return {"error": str(exc)}
 
     def pick_folder(self) -> Optional[Dict[str, str]]:
         """Native folder dialog, for a reconstructed flame's voxels/ folder."""

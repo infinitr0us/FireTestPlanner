@@ -97,3 +97,40 @@ def test_png_save_cancel_invalid_and_atomic_failure(tmp_path, monkeypatch):
     assert 'error' in shell.save_results_png(data_url)
     assert target.read_bytes() == original
     assert not list(tmp_path.glob('.fds-snapshot-*'))
+
+
+def test_open_does_not_enumerate_nested_results(result_folder):
+    nested = result_folder / 'unrelated'
+    nested.mkdir()
+    (nested / 'other.csv').write_text('private unrelated data')
+    # A directory whose name has a result suffix must not become a file handle.
+    (result_folder / 'directory.sf').mkdir()
+    opened = ResultFiles().open(str(result_folder / 'case.smv'))
+    assert {f['name'] for f in opened['files']} == {'case.smv', 'case.sf'}
+
+
+@pytest.mark.parametrize('error', [ValueError('Choose a Smokeview metadata (.smv) file.'),
+                                  ValueError('Result folder exceeds 20000 files.'),
+                                  OSError('File disappeared')])
+def test_open_errors_keep_their_message_over_http(result_folder, monkeypatch, tmp_path, error):
+    import json
+    from types import SimpleNamespace
+    import urllib.request
+    import app
+    monkeypatch.setenv('FIREPLAN_SHELL_HOME', str(tmp_path / 'settings'))
+    monkeypatch.setitem(sys.modules, 'webview', SimpleNamespace(OPEN_DIALOG=1))
+    shell = app.Shell()
+    shell.window = SimpleNamespace(create_file_dialog=lambda *a, **kw: [str(result_folder / 'case.smv')])
+    def fail_open(_):
+        raise error
+    monkeypatch.setattr(shell.results, 'open', fail_open)
+    server = app.start_server(shell, str(result_folder), 'test-open-token', lambda _: None)
+    try:
+        request = urllib.request.Request('http://127.0.0.1:{}/api/results/open'.format(server.server_port),
+                                         data=b'{}', headers={'X-Shell-Token': 'test-open-token'})
+        with urllib.request.urlopen(request) as response:
+            assert response.status == 200
+            assert json.load(response) == {'error': str(error)}
+    finally:
+        server.shutdown()
+        server.server_close()

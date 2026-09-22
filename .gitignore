@@ -31,3 +31,6 @@ review/
 # Reconstructed flame fixture: the PLY point clouds are a convenience output of the
 # pipeline (ten times the NPZ, same points); the NPZ files are the format the tool reads.
 fixtures/flame/voxels/*.ply
+
+# External engineer-supplied run; portable regression data is in fds-results.
+fixtures/fds_2/
