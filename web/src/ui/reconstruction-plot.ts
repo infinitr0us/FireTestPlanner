@@ -19,7 +19,7 @@ function svgElement(tag: string, attrs: Record<string, string | number>, text?: 
 function chart(plot: ReconstructionPlot, column: 1 | 2): { svg: SVGElement; select: (index: number) => void } {
   const samples = plot.samples;
   const title = column === 1 ? 'Volume (m³)' : 'Surface area (m²)';
-  const color = column === 1 ? '#65caff' : '#ffbe66';
+  const color = column === 1 ? 'var(--plot-primary)' : 'var(--plot-secondary)';
   const minTime = samples[0][0], maxTime = samples.at(-1)![0];
   let ymax = 0;
   for (const sample of samples) ymax = Math.max(ymax, sample[column]);
@@ -31,7 +31,7 @@ function chart(plot: ReconstructionPlot, column: 1 | 2): { svg: SVGElement; sele
   svg.append(svgElement('text', { x: 56, y: 18, fill: color, 'font-weight': '600' }, title));
   for (const fraction of [0, 0.5, 1]) {
     const yy = y(ymax * fraction);
-    svg.append(svgElement('line', { x1: 56, x2: 328, y1: yy, y2: yy, stroke: '#405066', 'stroke-width': 0.6 }));
+    svg.append(svgElement('line', { x1: 56, x2: 328, y1: yy, y2: yy, stroke: 'var(--plot-grid)', 'stroke-width': 0.6 }));
     svg.append(svgElement('text', { x: 49, y: yy + 4, 'text-anchor': 'end' }, fmt(ymax * fraction)));
   }
   for (const t of maxTime === minTime ? [minTime] : [minTime, minTime + (maxTime - minTime) / 2, maxTime]) {
@@ -39,7 +39,7 @@ function chart(plot: ReconstructionPlot, column: 1 | 2): { svg: SVGElement; sele
   }
   svg.append(svgElement('text', { x: 192, y: 133, 'text-anchor': 'middle' }, 'Time (s)'));
   svg.append(svgElement('path', { d: samples.map((s, i) => `${i ? 'L' : 'M'}${x(s[0]).toFixed(2)},${y(s[column]).toFixed(2)}`).join(' '), fill: 'none', stroke: color, 'stroke-width': 1.5 }));
-  const cursor = svgElement('line', { y1: 28, y2: 103, stroke: '#cbd5e1', 'stroke-dasharray': '3 3' });
+  const cursor = svgElement('line', { y1: 28, y2: 103, stroke: 'var(--plot-cursor)', 'stroke-dasharray': '3 3' });
   const point = svgElement('circle', { r: 3, fill: color });
   svg.append(cursor, point);
   return { svg, select: (index) => {

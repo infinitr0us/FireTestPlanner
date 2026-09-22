@@ -16,6 +16,7 @@ import type { FlameStore } from '../state/flame-store';
 import { SPEEDS, type Playhead } from '../state/playhead';
 import type { Store } from '../state/store';
 import { h } from './dom';
+import { handleTransportKey, setTransportPlaying, transportButton } from './transport';
 
 export interface PlaybackBarHost {
   /** Cubes on screen this instant, for the readout. */
@@ -86,7 +87,12 @@ export class PlaybackBar {
       b.disabled = disabled;
       return b;
     };
-    this.playButton = button(this.playhead.playing ? '❚❚' : '▶', 'Play or pause (Space)', () => this.playhead.toggle());
+    const transport = (action: Parameters<typeof transportButton>[0], onclick: () => void) => {
+      const b = transportButton(action, onclick);
+      b.disabled = !ready;
+      return b;
+    };
+    this.playButton = transport('play', () => this.playhead.toggle());
     this.slider = h('input', {
       type: 'range', class: 'playback-bar__slider', min: 0, max: Math.max(marks.length - 1, 0), step: 1,
       value: Math.max(this.playhead.markIndexAt(this.playhead.time_s), 0), 'aria-label': 'Frame',
@@ -98,17 +104,18 @@ export class PlaybackBar {
       // a form control's keys to it. Space, ',' and '.' are the transport's here: a
       // slider has no use for them, and whoever has just scrubbed expects Space to
       // play. Home, End and the arrows are the slider's own, and seek through `input`.
-      onkeydown: (e: KeyboardEvent) => {
-        if (e.ctrlKey || e.metaKey || e.altKey) return;
-        if (e.key === ' ') { e.preventDefault(); this.playhead.toggle(); }
-        else if (e.key === ',') this.playhead.step(-1);
-        else if (e.key === '.') this.playhead.step(1);
-      },
+      onkeydown: (e: KeyboardEvent) => handleTransportKey(e, {
+        play: () => this.playhead.toggle(),
+        previous: () => this.playhead.step(-1),
+        next: () => this.playhead.step(1),
+        first: () => this.playhead.seek(this.playhead.start),
+        last: () => this.playhead.seek(this.playhead.end),
+      }, this.slider ?? undefined),
     }) as HTMLInputElement;
     this.slider.disabled = !ready;
     this.readout = h('output', { class: 'playback-bar__readout', 'aria-live': 'off' });
 
-    const speed = h('select', { class: 'playback-bar__select', title: 'Playback speed, times real time',
+    const speed = h('select', { class: 'playback-bar__select', title: 'Playback speed, times real time', 'aria-label': 'Playback speed',
       onchange: (e: Event) => this.playhead.setSpeed(Number((e.target as HTMLSelectElement).value)) },
     SPEEDS.map((s) => h('option', { value: s, selected: s === this.playhead.speed }, [`×${s}`])));
     const loop = h('label', { class: 'playback-bar__loop', title: 'Start over at the end' }, [
@@ -121,11 +128,11 @@ export class PlaybackBar {
     const snapshot = button('PNG', 'Save the viewport at 3× resolution, for a figure', () => this.host.snapshot(), false);
 
     const controls = h('div', { class: 'playback-bar__controls' }, [
-      button('⏮', 'First frame (Home)', () => this.playhead.seek(this.playhead.start)),
-      button('◀', 'Previous frame (,)', () => this.playhead.step(-1)),
+      transport('first', () => this.playhead.seek(this.playhead.start)),
+      transport('previous', () => this.playhead.step(-1)),
       this.playButton,
-      button('▶|', 'Next frame (.)', () => this.playhead.step(1)),
-      button('⏭', 'Last frame (End)', () => this.playhead.seek(this.playhead.end)),
+      transport('next', () => this.playhead.step(1)),
+      transport('last', () => this.playhead.seek(this.playhead.end)),
       this.slider,
       this.readout,
       speed,
@@ -149,7 +156,7 @@ export class PlaybackBar {
     this.readout.textContent = marks.length
       ? `t = ${formatTime(this.playhead.time_s)} · frame ${Math.max(index, 0) + 1}/${marks.length} · ${cubes.toLocaleString()} cubes`
       : 'no frames loaded';
-    if (this.playButton) this.playButton.textContent = this.playhead.playing ? '❚❚' : '▶';
+    if (this.playButton) setTransportPlaying(this.playButton, this.playhead.playing);
   }
 
   private statusOf(flame: ReconstructedFlameObject): string {

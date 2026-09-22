@@ -4,6 +4,7 @@
  * either and consumed in either.
  */
 
+import { DEVICE_COLORS } from './visual';
 import {
   DEFAULT_RADIATIVE_FRACTION,
   POINT_SOURCE_MIN_DIAMETERS,
@@ -399,12 +400,10 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  */
 export const cameraColor = (c: CameraObject): string => objectColor(c);
 
-/** Fallback colours for object types that have no modality to key off. Kept in
- *  step with `COLORS` in web/src/scene/builders.ts so the 3D view, the outliner
- *  and the printed drawing agree on what a gauge looks like. */
+/** Default instrument identity shared with the scene, results and drawing. */
 export const TYPE_COLORS: Record<string, string> = {
-  heatFluxSensor: '#ef4444',
-  thermocouple: '#10b981',
+  heatFluxSensor: DEVICE_COLORS.heatFlux,
+  thermocouple: DEVICE_COLORS.temperature,
 };
 
 /** Own-property lookup. `type in TYPE_COLORS` is true for an object whose type is

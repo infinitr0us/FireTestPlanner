@@ -11,6 +11,7 @@
  */
 
 import * as THREE from 'three';
+import { DEVICE_COLORS } from '../core/visual';
 
 import {
   beadOffsetsOf,
@@ -56,8 +57,8 @@ export const COLORS = {
   ceiling: 0xcbd5e1,
   obstruction: 0x78716c,
   cameraBody: 0x334155,
-  heatFlux: 0xef4444,
-  thermocouple: 0x10b981,
+  heatFlux: Number(DEVICE_COLORS.heatFlux.replace('#', '0x')),
+  thermocouple: Number(DEVICE_COLORS.temperature.replace('#', '0x')),
   instrumentBody: 0x334155,
 };
 

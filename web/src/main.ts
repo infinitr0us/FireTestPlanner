@@ -3,6 +3,7 @@
 // The Example is the reference layout with a flame reconstructed from a test on
 // its site: the plan, and the packed frames the page carries so nothing has to be
 // on disk. Both come from fixtures/flame/ via tools/build_flame_fixture.py.
+import { handleTransportKey } from './ui/transport';
 import examplePlan from '../../fixtures/flame/flame-test.ftp.json';
 import exampleFlameUrl from '../../fixtures/flame/flame-test.fvs?url';
 
@@ -672,16 +673,13 @@ window.addEventListener('keydown', (e) => {
   // Transport keys, only while there is something to play. Space on a focused
   // button is the button's: the browser activates it on keyup, and toggling the
   // clock as well would press two things at once.
-  if (playbackBar.visible && !ctrl && !e.altKey && !(e.key === ' ' && target?.tagName === 'BUTTON')) {
-    switch (e.key) {
-      case ' ': e.preventDefault(); playhead.toggle(); return;
-      case ',': playhead.step(-1); return;
-      case '.': playhead.step(1); return;
-      case 'Home': playhead.seek(playhead.start); return;
-      case 'End': playhead.seek(playhead.end); return;
-      default: break;
-    }
-  }
+  if (playbackBar.visible && handleTransportKey(e, {
+    play: () => playhead.toggle(),
+    previous: () => playhead.step(-1),
+    next: () => playhead.step(1),
+    first: () => playhead.seek(playhead.start),
+    last: () => playhead.seek(playhead.end),
+  })) return;
 
   switch (e.key) {
     case 'Delete':

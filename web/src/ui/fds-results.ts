@@ -15,6 +15,9 @@ import { FdsResultScene } from '../scene/fds-results';
 import { h } from './dom';
 import { deviceHistory } from '../core/fds-devices';
 import { FdsDevicePanel } from './fds-devices';
+import { SPEEDS } from '../state/playhead';
+import { handleTransportKey, setTransportPlaying, transportButton } from './transport';
+import { visualTheme } from './theme';
 
 interface Dataset {
   label: string;
@@ -47,10 +50,12 @@ export class FdsResultsDialog {
   private busy = false;
   private pending: number | null = null;
   private playing = false;
+  private playbackRequest = 0;
   private timer?: ReturnType<typeof setTimeout>;
   private time = 0;
   private currentIndex = 0;
   private speed = 10;
+  private loop = false;
   private low = 0;
   private high = 100;
   private opacity = 0.9;
@@ -64,7 +69,11 @@ export class FdsResultsDialog {
     value: 0,
     'aria-label': 'Simulation frame',
   });
-  private play = button('Play', () => this.togglePlay());
+  private play = transportButton('play', () => this.togglePlay());
+  private first = transportButton('first', () => this.seek(0));
+  private previous = transportButton('previous', () => this.seek(this.currentIndex - 1));
+  private next = transportButton('next', () => this.seek(this.currentIndex + 1));
+  private last = transportButton('last', () => this.seek((this.readers[0]?.count ?? 1) - 1));
   private stamp = h('output');
   private rangeLow = h('input', {
     type: 'number',
@@ -78,6 +87,9 @@ export class FdsResultsDialog {
     step: 'any',
     'aria-label': 'Color scale maximum',
   });
+  private autoScaleButton = button('Scale to this frame', () => {
+    void this.autoScale();
+  });
   private legend = h('div', { class: 'fds-results__legend' });
   private graph = h('canvas', {
     width: 600,
@@ -89,7 +101,7 @@ export class FdsResultsDialog {
   private historySelect = h('select', { 'aria-label': 'Device or heat release history' });
   private info = h('div', { class: 'fds-results__info' });
   private fieldNote = h('div', { class: 'fds-results__note' });
-  private boundaryCoverage = h('p');
+  private boundaryCoverage = h('p', { class: 'fds-results__warning' });
   private coverage?: HTMLDetailsElement;
   private focusBefore?: HTMLElement;
 
@@ -101,10 +113,18 @@ export class FdsResultsDialog {
     });
     this.dialog.addEventListener('keydown', (e) => {
       e.stopPropagation();
-      if (e.code === 'Space' && (e.target as HTMLElement).tagName === 'CANVAS') {
-        e.preventDefault();
-        this.togglePlay();
-      }
+      if (!this.slider.disabled)
+        handleTransportKey(
+          e,
+          {
+            play: () => this.togglePlay(),
+            previous: () => this.seek(this.currentIndex - 1),
+            next: () => this.seek(this.currentIndex + 1),
+            first: () => this.seek(0),
+            last: () => this.seek((this.readers[0]?.count ?? 1) - 1),
+          },
+          this.slider
+        );
     });
     this.selection.onchange = () => {
       void this.loadDataset();
@@ -113,8 +133,7 @@ export class FdsResultsDialog {
       void this.loadDataset();
     };
     this.slider.oninput = () => {
-      this.pause();
-      this.requestFrame(Number(this.slider.value));
+      this.seek(Number(this.slider.value));
     };
     this.historySelect.onchange = () => {
       this.selectedSeries =
@@ -130,9 +149,13 @@ export class FdsResultsDialog {
       const low = this.rangeLow.valueAsNumber,
         high = this.rangeHigh.valueAsNumber;
       if (!Number.isFinite(low) || !Number.isFinite(high) || low >= high) {
-        this.status.textContent = 'Color scale needs finite minimum < maximum.';
+        this.rangeLow.setAttribute('aria-invalid', 'true');
+        this.rangeHigh.setAttribute('aria-invalid', 'true');
+        this.setStatus('Color scale needs finite minimum < maximum.', 'error');
         return;
       }
+      this.rangeLow.removeAttribute('aria-invalid');
+      this.rangeHigh.removeAttribute('aria-invalid');
       this.low = low;
       this.high = high;
       this.requestFrame(this.currentIndex);
@@ -171,7 +194,7 @@ export class FdsResultsDialog {
         this.status,
       ])
     );
-    this.status.textContent = message;
+    this.setStatus(message, message ? 'error' : 'info');
   }
   private async choose(): Promise<void> {
     const epoch = ++this.epoch;
@@ -228,7 +251,7 @@ export class FdsResultsDialog {
         );
       }
     } catch (error) {
-      if (this.isOpen && epoch === this.epoch) this.status.textContent = (error as Error).message;
+      if (this.isOpen && epoch === this.epoch) this.setStatus((error as Error).message, 'error');
     }
   }
   /** Public for integration hosts that already have explicit file handles. */
@@ -254,12 +277,11 @@ export class FdsResultsDialog {
     this.boundaryCoverage.textContent = '';
     this.busy = false;
     this.pending = null;
-    this.play.disabled = true;
-    this.slider.disabled = true;
+    this.setTransportEnabled(false);
     this.stamp.textContent = '';
     this.legend.replaceChildren();
     this.fieldNote.textContent = '';
-    this.status.textContent = 'Reading simulation metadata…';
+    this.setStatus('Reading simulation metadata…');
     this.body.replaceChildren(h('div', { class: 'fds-results__welcome' }, [this.status]));
     try {
       const data = parseSmv(await resultText(source, smvName));
@@ -293,10 +315,22 @@ export class FdsResultsDialog {
           'aria-label': 'Playback speed',
           onchange: (e: Event) => {
             this.speed = Number((e.target as HTMLSelectElement).value);
+            if (this.playing && !this.busy) void this.scheduleNext(this.epoch, this.frameRequest);
           },
         },
-        [1, 5, 10, 30, 60].map((n) => h('option', { value: n, selected: n === this.speed }, [`${n}×`]))
+        SPEEDS.map((n) => h('option', { value: n, selected: n === this.speed }, ['×' + n]))
       );
+      const loop = h('label', { class: 'playback-bar__loop', title: 'Start over at the end' }, [
+        h('input', {
+          type: 'checkbox',
+          checked: this.loop,
+          onchange: (e: Event) => {
+            this.loop = (e.target as HTMLInputElement).checked;
+            if (this.playing && !this.busy) void this.scheduleNext(this.epoch, this.frameRequest);
+          },
+        }),
+        'Loop',
+      ]);
       const opacity = h('input', {
         type: 'range',
         min: 0.05,
@@ -323,7 +357,9 @@ export class FdsResultsDialog {
       cut.onchange = applyCut;
       cutHeight.oninput = applyCut;
       const warnings = h('details', { class: 'fds-results__warnings' }, [
-        h('summary', {}, ['Coverage and limitations']),
+        h('summary', { class: data.warnings.length ? 'fds-results__warning' : '' }, [
+          'Coverage and limitations',
+        ]),
         h('p', {}, [
           'Structured 2D slices and obstruction boundary fields; original FDS coordinates in metres. 3D smoke/fire is a quantized preview. Particle, isosurface, Plot3D, unstructured and Smokezip output are not displayed.',
         ]),
@@ -334,7 +370,7 @@ export class FdsResultsDialog {
           'Mesh-boundary patches (obstruction index 0) are not displayed. These may contain recorded floor or wall results. Select a boundary field for omitted-patch counts.',
         ]),
         this.boundaryCoverage,
-        ...data.warnings.map((w) => h('p', {}, [w])),
+        ...data.warnings.map((w) => h('p', { class: 'fds-results__warning' }, [w])),
       ]);
       this.coverage = warnings;
       if (data.warnings.length) warnings.open = true;
@@ -356,9 +392,7 @@ export class FdsResultsDialog {
             h('label', {}, ['Min', this.rangeLow]),
             h('label', {}, ['Max', this.rangeHigh]),
           ]),
-          button('Scale to this frame', () => {
-            void this.autoScale();
-          }),
+          this.autoScaleButton,
           h('label', {}, ['Opacity / smoke density', opacity]),
           h('label', {}, [cut, 'Cut away above Z (m)', cutHeight]),
           h('hr'),
@@ -375,18 +409,15 @@ export class FdsResultsDialog {
         h('section', { class: 'fds-results__main' }, [
           view,
           h('div', { class: 'fds-results__transport' }, [
+            this.first,
+            this.previous,
             this.play,
-            button('Previous', () => {
-              this.pause();
-              this.requestFrame(this.currentIndex - 1);
-            }),
-            button('Next', () => {
-              this.pause();
-              this.requestFrame(this.currentIndex + 1);
-            }),
+            this.next,
+            this.last,
             this.slider,
             this.stamp,
             speed,
+            loop,
             button('Fit', () => this.scene?.fit()),
             button('PNG', () => this.snapshot()),
           ]),
@@ -403,7 +434,10 @@ export class FdsResultsDialog {
           this.series.push(...series);
           if (csv.kind === 'devc') this.deviceSeries.push(...series);
         } catch (error) {
-          if (epoch === this.epoch) warnings.append(h('p', {}, [`${csv.file}: ${(error as Error).message}`]));
+          if (epoch === this.epoch)
+            warnings.append(
+              h('p', { class: 'fds-results__warning' }, [`${csv.file}: ${(error as Error).message}`])
+            );
         }
       }
       if (epoch !== this.epoch) return;
@@ -450,6 +484,8 @@ export class FdsResultsDialog {
     this.scene?.clearFields();
     this.boundaryCoverage.textContent = '';
     this.fieldNote.textContent = '';
+    this.rangeLow.removeAttribute('aria-invalid');
+    this.rangeHigh.removeAttribute('aria-invalid');
     this.readers.forEach((r) => r.clearFrame());
     this.readers = [];
     const dataset = this.datasets[Number(this.selection.value)];
@@ -457,13 +493,13 @@ export class FdsResultsDialog {
       dataset?.fields.filter(
         (f) => this.meshSelection.value === 'all' || f.mesh === Number(this.meshSelection.value)
       ) ?? [];
-    this.play.disabled = true;
-    this.slider.disabled = true;
+    this.setTransportEnabled(false);
+    this.autoScaleButton.disabled = this.rangeLow.disabled = this.rangeHigh.disabled = true;
     if (!fields.length || !this.source || !this.data) {
-      this.status.textContent = 'No recorded field for this selection. Choose another mesh or dataset.';
+      this.setStatus('No recorded field for this selection. Choose another mesh or dataset.', 'warn');
       return;
     }
-    this.status.textContent = `Opening ${fields.length} field file(s)…`;
+    this.setStatus(`Opening ${fields.length} field file(s)…`);
     try {
       const readers: ResultReader[] = [];
       // Four concurrent file reads keep both browser memory and local HTTP queues bounded.
@@ -506,7 +542,10 @@ export class FdsResultsDialog {
             ? ' No fire cutoff recorded.'
             : ` Fire cutoff: ${numeric(field.fireCutoff)} kW/m³ (FDS 6.9.1 encoding).`;
       }
-      this.rangeLow.disabled = this.rangeHigh.disabled = field.kind === 'smoke';
+      this.autoScaleButton.disabled =
+        this.rangeLow.disabled =
+        this.rangeHigh.disabled =
+          field.kind === 'smoke';
       this.low = /TEMPERATURE/.test(field.quantity) ? 20 : 0;
       this.high = /TEMPERATURE/.test(field.quantity)
         ? 500
@@ -539,13 +578,12 @@ export class FdsResultsDialog {
       this.slider.max = String(readers[0].count - 1);
       const index = (await readers[0].nearest(this.time)) ?? 0;
       if (epoch !== this.epoch || request !== this.frameRequest) return;
-      this.slider.disabled = false;
-      this.play.disabled = false;
+      this.setTransportEnabled(true);
       this.requestFrame(index);
     } catch (error) {
       if (epoch === this.epoch && request === this.frameRequest) {
         this.readers = [];
-        this.status.textContent = `Dataset unavailable: ${(error as Error).message}`;
+        this.setStatus(`Dataset unavailable: ${(error as Error).message}`, 'error');
       }
     }
   }
@@ -563,7 +601,7 @@ export class FdsResultsDialog {
       while (this.pending !== null && epoch === this.epoch && request === this.frameRequest) {
         const index = this.pending;
         this.pending = null;
-        this.status.textContent = `Loading frame ${index + 1}… (displaying ${numeric(this.time)} s)`;
+        this.setStatus(`Loading frame ${index + 1}… (displaying ${numeric(this.time)} s)`);
         const primary = await readers[0].frame(index);
         const entries = [{ field: readers[0].field, mesh: readers[0].mesh, frame: primary }];
         let missing = 0;
@@ -587,11 +625,14 @@ export class FdsResultsDialog {
         this.time = primary.time;
         this.currentIndex = index;
         this.slider.value = String(index);
-        this.stamp.textContent = `${numeric(this.time)} s · ${index + 1}/${readers[0].count}`;
+        this.stamp.textContent = `t = ${numeric(this.time)} s · frame ${index + 1}/${readers[0].count}`;
         const times = entries.map((e) => e.frame.time),
           min = Math.min(...times),
           max = Math.max(...times);
-        this.status.textContent = `${entries.length} mesh file(s) shown${missing ? ` · ${missing} outside time coverage` : ''}${max - min > 0.001 ? ` · sampled times ${numeric(min)}–${numeric(max)} s` : ''}`;
+        this.setStatus(
+          `${entries.length} mesh file(s) shown${missing ? ` · ${missing} outside time coverage` : ''}${max - min > 0.001 ? ` · sampled times ${numeric(min)}–${numeric(max)} s` : ''}`,
+          missing || max - min > 0.001 ? 'warn' : 'info'
+        );
         this.updateLegend();
         this.drawHistory();
       }
@@ -599,7 +640,7 @@ export class FdsResultsDialog {
       if (epoch === this.epoch && request === this.frameRequest) {
         this.pause();
         this.scene?.hideFields();
-        this.status.textContent = `Frame unavailable: ${(error as Error).message}`;
+        this.setStatus(`Frame unavailable: ${(error as Error).message}`, 'error');
       }
     } finally {
       if (epoch === this.epoch && request === this.frameRequest) {
@@ -642,50 +683,84 @@ export class FdsResultsDialog {
         this.high = max > min ? max : min + 1;
         this.rangeLow.value = String(this.low);
         this.rangeHigh.value = String(this.high);
+        this.rangeLow.removeAttribute('aria-invalid');
+        this.rangeHigh.removeAttribute('aria-invalid');
         this.requestFrame(this.currentIndex);
       }
     } catch (error) {
-      if (epoch === this.epoch) this.status.textContent = (error as Error).message;
+      if (epoch === this.epoch) this.setStatus((error as Error).message, 'error');
     }
   }
+  private setStatus(message: string, kind: 'info' | 'warn' | 'error' = 'info'): void {
+    this.status.textContent = message;
+    this.status.dataset.kind = kind;
+  }
+  private setTransportEnabled(enabled: boolean): void {
+    for (const control of [this.first, this.previous, this.next, this.last, this.slider])
+      control.disabled = !enabled;
+    this.play.disabled = !enabled || (this.readers[0]?.count ?? 0) < 2;
+  }
+  private seek(index: number): void {
+    this.pause();
+    this.requestFrame(index);
+  }
   private pause(): void {
+    ++this.playbackRequest;
     this.playing = false;
     clearTimeout(this.timer);
     this.timer = undefined;
-    this.play.textContent = 'Play';
+    setTransportPlaying(this.play, false);
   }
   private togglePlay(): void {
     if (this.playing) {
       this.pause();
       return;
     }
-    if (!this.readers.length) return;
+    if (!this.readers.length || this.readers[0].count < 2) return;
     this.playing = true;
-    this.play.textContent = 'Pause';
+    setTransportPlaying(this.play, true);
     if (this.currentIndex >= this.readers[0].count - 1) this.requestFrame(0);
     else if (!this.busy) void this.scheduleNext(this.epoch, this.frameRequest);
   }
   private async scheduleNext(epoch: number, request: number): Promise<void> {
     if (!this.playing) return;
-    const next = this.currentIndex + 1;
+    const playbackRequest = ++this.playbackRequest;
+    clearTimeout(this.timer);
+    const next = this.loop && this.currentIndex === this.readers[0].count - 1 ? 0 : this.currentIndex + 1;
     if (next >= this.readers[0].count) {
       this.pause();
       return;
     }
     try {
-      const time = await this.readers[0].time(next);
-      if (epoch !== this.epoch || request !== this.frameRequest || !this.playing) return;
+      // Hold the final frame for the previous interval, as flame playback does.
+      const delay =
+        next === 0
+          ? this.time - (await this.readers[0].time(this.currentIndex - 1))
+          : (await this.readers[0].time(next)) - this.time;
+      if (
+        epoch !== this.epoch ||
+        request !== this.frameRequest ||
+        playbackRequest !== this.playbackRequest ||
+        !this.playing
+      )
+        return;
       clearTimeout(this.timer);
       this.timer = setTimeout(
         () => {
-          if (this.playing && epoch === this.epoch && request === this.frameRequest) this.requestFrame(next);
+          if (
+            this.playing &&
+            epoch === this.epoch &&
+            request === this.frameRequest &&
+            playbackRequest === this.playbackRequest
+          )
+            this.requestFrame(next);
         },
-        Math.max(16, ((time - this.time) * 1000) / this.speed)
+        Math.max(16, (delay * 1000) / this.speed)
       );
     } catch (error) {
-      if (epoch === this.epoch) {
+      if (epoch === this.epoch && request === this.frameRequest && playbackRequest === this.playbackRequest) {
         this.pause();
-        this.status.textContent = (error as Error).message;
+        this.setStatus((error as Error).message, 'error');
       }
     }
   }
@@ -735,15 +810,17 @@ export class FdsResultsDialog {
     );
     const x = (t: number) => 62 + ((w - 82) * (t - start)) / (end - start || 1);
     const y = (v: number) => height - 35 - ((height - 64) * (v - min)) / (max - min || 1);
-    ctx.font = '20px system-ui';
-    ctx.fillStyle = '#a8bad1';
+    const theme = visualTheme(this.graph);
+    ctx.font = '20px ' + theme.font;
+    ctx.fillStyle = theme.textDim;
     ctx.fillText(numeric(max), 3, 22);
     ctx.fillText(numeric(min), 3, height - 34);
     ctx.fillText(`${numeric(start)} s`, 62, height - 6);
     ctx.textAlign = 'right';
     ctx.fillText(`${numeric(end)} s`, w - 12, height - 6);
     ctx.textAlign = 'left';
-    ctx.strokeStyle = '#67e8f9';
+    ctx.strokeStyle = theme.plotPrimary;
+    ctx.setLineDash([]);
     ctx.lineWidth = 2;
     ctx.beginPath();
     let pen = false;
@@ -757,7 +834,8 @@ export class FdsResultsDialog {
       pen = true;
     });
     ctx.stroke();
-    ctx.strokeStyle = '#f8c471';
+    ctx.strokeStyle = theme.plotCursor;
+    ctx.setLineDash([6, 6]);
     ctx.beginPath();
     ctx.moveTo(x(Math.min(end, Math.max(start, this.time))), 10);
     ctx.lineTo(x(Math.min(end, Math.max(start, this.time))), height - 30);
@@ -765,7 +843,7 @@ export class FdsResultsDialog {
   }
   private async snapshot(): Promise<void> {
     if (!this.scene || this.busy) {
-      this.status.textContent = 'Wait for the displayed frame to finish loading before exporting.';
+      this.setStatus('Wait for the displayed frame to finish loading before exporting.', 'warn');
       return;
     }
     this.pause();
@@ -774,15 +852,16 @@ export class FdsResultsDialog {
     const canvas = document.createElement('canvas'),
       view = this.scene.renderer.domElement;
     canvas.width = view.width;
-    const staticGeometry = this.data?.warnings.some(w => w.includes('geometry events are not animated'));
+    const staticGeometry = this.data?.warnings.some((w) => w.includes('geometry events are not animated'));
     canvas.height = view.height + (staticGeometry ? 90 : 65);
     const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = '#101b2c';
+    const theme = visualTheme(this.dialog);
+    ctx.fillStyle = theme.background;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(view, 0, 0);
     ctx.drawImage(this.scene.devices.canvas, 0, 0, view.width, view.height);
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '18px system-ui';
+    ctx.fillStyle = theme.text;
+    ctx.font = '18px ' + theme.font;
     const field = this.readers[0]?.field;
     ctx.fillText(
       `${this.data?.chid} · ${field?.quantity ?? ''} · ${numeric(this.time)} s`,
@@ -796,12 +875,13 @@ export class FdsResultsDialog {
       16,
       view.height + 51
     );
-    if (staticGeometry) ctx.fillText('Static geometry only; geometry events are not animated', 16, view.height + 77);
+    if (staticGeometry)
+      ctx.fillText('Static geometry only; geometry events are not animated', 16, view.height + 77);
     try {
       if (shell()) {
         const path = await saveResultPng(canvas.toDataURL('image/png'));
         if (epoch === this.epoch)
-          this.status.textContent = path ? `Snapshot saved: ${path}` : 'Snapshot save cancelled.';
+          this.setStatus(path ? `Snapshot saved: ${path}` : 'Snapshot save cancelled.');
       } else {
         const blob = await new Promise<Blob>((resolve, reject) =>
           canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('PNG encoding failed.'))), 'image/png')
@@ -813,11 +893,11 @@ export class FdsResultsDialog {
         link.click();
         link.remove();
         setTimeout(() => URL.revokeObjectURL(url), 60000);
-        this.status.textContent = 'PNG download requested: fds-results.png';
+        this.setStatus('PNG download requested: fds-results.png');
       }
     } catch (error) {
       if (epoch === this.epoch)
-        this.status.textContent = `Snapshot was not saved: ${(error as Error).message}`;
+        this.setStatus(`Snapshot was not saved: ${(error as Error).message}`, 'error');
     }
   }
   close(): void {

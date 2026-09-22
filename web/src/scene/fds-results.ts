@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { visualTheme } from '../ui/theme';
 import { FdsDeviceLayer } from './fds-devices';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type {
@@ -136,13 +137,13 @@ export class FdsResultScene {
   private bounds = new THREE.Box3();
   private clipZ = 1e20;
   constructor(readonly host: HTMLElement) {
-    this.scene.background = new THREE.Color('#101b2c');
+    this.scene.background = new THREE.Color(visualTheme(host).background);
     this.camera.up.set(0, 0, 1);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.domElement.tabIndex = 0;
-    this.renderer.domElement.setAttribute('aria-label', 'Simulation view; Space to play or pause');
+    this.renderer.domElement.setAttribute('aria-label', 'Simulation view; Space to play or pause, comma and period to step, Home and End to jump');
     this.renderer.domElement.addEventListener('pointerdown', this.focusCanvas);
     host.append(this.renderer.domElement);
     this.scene.add(this.geometry, this.fields);

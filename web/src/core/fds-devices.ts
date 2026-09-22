@@ -1,10 +1,11 @@
+import { DEVICE_COLORS } from './visual';
 import type { ResultDevice, ResultSeries, XYZ } from './fds-results';
 
 export const DEVICE_KINDS = {
-  thermocouple: { label: 'Thermocouples', color: '#ffca70', symbol: '●' },
-  surface: { label: 'Surface temperatures', color: '#d5a4ff', symbol: '◆' },
-  flux: { label: 'Heat-flux probes', color: '#67e8f9', symbol: '■' },
-  other: { label: 'Other probes', color: '#c5d4e5', symbol: '○' },
+  thermocouple: { label: 'Thermocouples', color: DEVICE_COLORS.temperature, symbol: '●' },
+  surface: { label: 'Surface temperatures', color: DEVICE_COLORS.temperature, symbol: '◇' },
+  flux: { label: 'Heat-flux probes', color: DEVICE_COLORS.heatFlux, symbol: '■' },
+  other: { label: 'Other probes', color: DEVICE_COLORS.other, symbol: '○' },
 } as const;
 export type DeviceKind = keyof typeof DEVICE_KINDS;
 export const deviceKinds = Object.keys(DEVICE_KINDS) as DeviceKind[];
