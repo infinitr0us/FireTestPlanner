@@ -292,6 +292,17 @@ describe('review 2026-09-22 frame readers', () => {
     });
   }
 
+  it('does not snap a pitch that would take the data off its lattice (FLM-1)', () => {
+    // Codex review of 5f8333d: 0.01 m spacing labelled 0.0099995 m is within the
+    // snap, and snapping it left the voxel at 3 m 0.015 cells off. Mirrored in
+    // python/tests/test_flame.py.
+    const coords = [[0, 0, 0], [0.01, 0, 0], [3, 0, 0]].flat();
+    const seq = FlameSequence.fromFrames([{ timestamp_s: 0, voxels: new Float64Array(coords), voxelSize_m: 0.0099995 }]);
+    expect(seq.grid.pitch_m).toBe(0.01);
+    expect(seq.grid.resolution).toBe(20000);
+    expect(seq.frames[0].dims).toEqual([301, 1, 1]);
+  });
+
   it('takes a grid whose pitch is its voxel size, as arange builds it (FLM-1)', () => {
     const coords = [0, 1, 2, 3].flatMap((i) => [i * 0.01, 0, 0]);
     const seq = FlameSequence.fromFrames([{ timestamp_s: 0, voxels: new Float64Array(coords), voxelSize_m: 0.01 }]);

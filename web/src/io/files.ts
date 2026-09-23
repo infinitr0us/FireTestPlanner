@@ -396,6 +396,15 @@ function asIncluded(child: string, name: string, issues: Issue[]): string {
 }
 
 /**
+ * One spelling per file: `geometry\part.fds`, `geometry/part.fds` and
+ * `./geometry//Part.fds` name one include, as they do to Windows and to fireplan,
+ * which compares real paths. Compared as raw strings they were two, and the one
+ * obstruction in the file was imported twice.
+ */
+const includeKey = (name: string): string => name.trim().replace(/\\/g, '/').split('/')
+  .filter((part) => part !== '' && part !== '.').join('/').toLowerCase();
+
+/**
  * `text` with every `&CATF` include spliced in **where it sits**, as FDS does.
  *
  * The position matters as much as the content. `&CATF` belongs in the body of the
@@ -424,8 +433,8 @@ async function spliceIncludes(
     const included: string[] = [];
     for (const name of rec.strings('OTHER_FILES')) {
       if (!name) continue;
-      const key = name.toLowerCase();
-      if (self !== null && key === self.toLowerCase()) {
+      const key = includeKey(name);
+      if (self !== null && key === includeKey(self)) {
         issues.push(includeIssue('warning', 'fds-catf-cycle',
           `&CATF includes ${name} from inside itself; the repeat was skipped`));
         continue;
@@ -438,13 +447,25 @@ async function spliceIncludes(
         continue;
       }
       seen.add(key);
-      // eslint-disable-next-line no-await-in-loop
-      const child = await read(name);
+      let child: string | null;
+      let failure: string | null = null;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        child = await read(name);
+      } catch (err) {
+        // One include the shell could not read -- a junction to another drive, a
+        // file locked by the solver -- is that include missing, not the import
+        // failing: it used to reject here and no preview appeared at all.
+        child = null;
+        failure = (err as Error).message;
+      }
       if (child === null) {
         unresolved.push(name);
-        issues.push(includeIssue('warning', 'fds-catf-missing',
-          `&CATF names ${name} but it is not beside the input; anything it defined is `
-          + 'missing from this plan'));
+        issues.push(includeIssue('warning', 'fds-catf-missing', failure === null
+          ? `&CATF names ${name} but it is not beside the input; anything it defined is `
+            + 'missing from this plan'
+          : `&CATF names ${name} but it could not be read (${failure}); anything it `
+            + 'defined is missing from this plan'));
         continue;
       }
       included.push(asIncluded(child, name, issues));

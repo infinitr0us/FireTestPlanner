@@ -235,14 +235,23 @@ export class Inspector {
    * is crude but the control order is stable within one selection.
    */
   private renderNow(): void {
-    const controls = () => Array.from(this.root.querySelectorAll('input, select, textarea'));
-    const focusedIndex = controls().indexOf(document.activeElement as Element);
+    // Buttons too: Tab from the last field lands on Duplicate, and the rebuild used
+    // to drop that focus onto the page. A control is refocused only if the one at
+    // its index is the same kind of control -- after Delete the panel is a different
+    // panel, and the index would otherwise put focus in whatever field it now meets.
+    const controls = () => Array.from(this.root.querySelectorAll('input, select, textarea, button'));
+    const kind = (el: Element | undefined): string => (el === undefined ? ''
+      : `${el.tagName}|${(el as HTMLInputElement).type ?? ''}|${el.tagName === 'BUTTON' ? el.textContent : ''}`);
+    const before = controls();
+    const focusedIndex = before.indexOf(document.activeElement as Element);
+    const focusedKind = kind(before[focusedIndex]);
 
     this.renderInner();
 
     if (focusedIndex >= 0) {
-      const next = controls()[focusedIndex] as HTMLInputElement | undefined;
-      next?.focus();
+      const next = controls()[focusedIndex] as HTMLElement | undefined;
+      if (next === undefined || kind(next) !== focusedKind) return;
+      next.focus();
       if (next instanceof HTMLInputElement && next.type === 'text') next.select();
     }
   }

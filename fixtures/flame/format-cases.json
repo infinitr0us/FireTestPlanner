@@ -85,5 +85,26 @@
   {
     "file": "bzip2.npz",
     "error": "unsupported compression method 12"
+  },
+  {
+    "file": "no-npy-suffix.npz",
+    "voxels": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.01,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.01,
+        0.02
+      ]
+    ],
+    "voxelSize": 0.01
   }
 ]

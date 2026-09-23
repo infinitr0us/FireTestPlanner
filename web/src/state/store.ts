@@ -29,6 +29,13 @@ export interface SaveIdentity {
   revision: number;
   /** The shell's handle on the file this document came from, or null. */
   token: string | null;
+  /**
+   * The document as written, as `JSON.stringify` spells it -- set by
+   * `serializeForSave`. When edits land while a save is pending, this, not the
+   * screen and not the previous save, is what the file now holds, and undo has to
+   * compare against it.
+   */
+  snapshot?: string;
 }
 
 /**
@@ -93,6 +100,15 @@ export class Store {
   /** Snapshot to take BEFORE serialising for a save; hand it back to `markSaved`. */
   identity(): SaveIdentity {
     return { documentId: this.documentId, revision: this.revision, token: this.documentToken };
+  }
+
+  /** Serialise for a save: the text to write, and the identity `markSaved` needs --
+   *  which document and revision the bytes describe, and the document as written. */
+  serializeForSave(): { text: string; identity: SaveIdentity } {
+    const identity = this.identity();
+    const text = this.serialize();
+    identity.snapshot = JSON.stringify(this.doc);
+    return { text, identity };
   }
 
   // -- subscription ------------------------------------------------------
@@ -403,7 +419,12 @@ export class Store {
     this.documentToken = token;
     if (identity.revision === this.revision) {
       this.dirty = false;
-      this.savedText = JSON.stringify(this.doc);
+      this.savedText = identity.snapshot ?? JSON.stringify(this.doc);
+    } else {
+      // Edits landed while the save was pending: the file holds what was written,
+      // not the screen and not the previous save. Without a snapshot of it, no undo
+      // can be known to reach it.
+      this.savedText = identity.snapshot ?? null;
     }
     this.emit('dirty');
   }

@@ -348,7 +348,8 @@ function expandMult(xb: Xb, mult: NamelistRecord | undefined): Xb[] {
     return v === null ? fallback : Math.trunc(v);
   };
   const dxb = [0, 0, 0, 0, 0, 0];
-  mult.numbers('DXB').slice(0, 6).forEach((v, k) => { dxb[k] = v; });
+  // By position: a null repeat (`DXB=2*,1,1,2*`) leaves those entries at zero.
+  mult.numberList('DXB').slice(0, 6).forEach((v, k) => { if (v !== null) dxb[k] = v; });
   for (const [key, pair] of [['DX', 0], ['DY', 2], ['DZ', 4]] as const) {
     const d = mult.number(key) ?? 0;
     if (Math.abs(d) > MULT_EPS) { dxb[pair] = d; dxb[pair + 1] = d; }
@@ -508,6 +509,64 @@ function ventOrientation(xb: Xb, rec: NamelistRecord, obsts: Box[], domain: Xb |
   return `+${axis}`;
 }
 
+/** Area of the union of axis-aligned rectangles `[u0, u1, v0, v1]`: strips between
+ *  consecutive u edges, each with its merged v cover. Mirror of `_union_area` in
+ *  fds.py, step for step, so both engines subtract the same double. */
+function unionArea(rects: Array<[number, number, number, number]>): number {
+  const us = [...new Set(rects.flatMap((r) => [r[0], r[1]]))].sort((a, b) => a - b);
+  let total = 0;
+  for (let i = 0; i + 1 < us.length; i += 1) {
+    const a = us[i];
+    const b = us[i + 1];
+    const spans = rects.filter((r) => r[0] <= a && r[1] >= b)
+      .map((r) => [r[2], r[3]] as [number, number])
+      .sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+    let covered = 0;
+    let lo = 0;
+    let hi = 0;
+    let open = false;
+    for (const [s, e] of spans) {
+      if (!open || s > hi) {
+        if (open) covered += hi - lo;
+        lo = s;
+        hi = e;
+        open = true;
+      } else if (e > hi) hi = e;
+    }
+    if (open) covered += hi - lo;
+    total += (b - a) * covered;
+  }
+  return total;
+}
+
+/**
+ * What is left of a box's face once other obstructions are taken off it: FDS burns
+ * a surface only where gas touches it. Another box sitting flush against the face,
+ * or running through its plane, covers that part -- two touching burning boxes
+ * share a face that burns on neither side, and counting it overstated the fire.
+ */
+function exposedArea(box: Box, face: string, area: number, boxes: Box[]): number {
+  const axis = face[1] === 'x' ? 0 : face[1] === 'y' ? 2 : 4;
+  const high = face[0] === '+';
+  const plane = box.xb[high ? axis + 1 : axis];
+  const [u, v] = [0, 2, 4].filter((i) => i !== axis);
+  const rects: Array<[number, number, number, number]> = [];
+  for (const other of boxes) {
+    if (other === box) continue;
+    const o = other.xb;
+    const covers = high
+      ? o[axis] <= plane + TOL_M && o[axis + 1] > plane + TOL_M
+      : o[axis + 1] >= plane - TOL_M && o[axis] < plane - TOL_M;
+    if (!covers) continue;
+    const u0 = Math.max(box.xb[u], o[u]);
+    const u1 = Math.min(box.xb[u + 1], o[u + 1]);
+    const v0 = Math.max(box.xb[v], o[v]);
+    const v1 = Math.min(box.xb[v + 1], o[v + 1]);
+    if (u1 - u0 > TOL_M && v1 - v0 > TOL_M) rects.push([u0, u1, v0, v1]);
+  }
+  return rects.length === 0 ? area : Math.max(0, area - unionArea(rects));
+}
+
 function fireFaces(
   boxes: Box[], vents: Box[], surfs: Map<string, NamelistRecord>,
   peaks: Map<string, number>, heatOfCombustion: number | null, issues: Issue[],
@@ -569,6 +628,8 @@ function fireFaces(
           const axis = oriented[1];
           area = axis === 'z' ? dx * dy : axis === 'y' ? dx * dz : dy * dz;
         }
+      } else {
+        area = exposedArea(box, face, area, boxes);
       }
       out.push({
         surf: String(surfId), xb: box.xb, areaM2: area,
@@ -1111,7 +1172,10 @@ function groupedRakes(
   const byXy = new Map<string, Array<[NamelistRecord, number | null]>>();
   for (const pair of members) {
     const xyz = pair[0].numbers('XYZ');
-    const key = `${xyz[0].toFixed(4)}|${xyz[1].toFixed(4)}|${pair[0].number('IOR') ?? ''}`;
+    // `+ 0` folds -0 into 0 before spelling it: -0.00001 and 0.00001 are one XY at
+    // four decimals, as they are in fireplan, where -0.0 == 0.0 as a key.
+    const at = (v: number): string => (Number(v.toFixed(4)) + 0).toFixed(4);
+    const key = `${at(xyz[0])}|${at(xyz[1])}|${pair[0].number('IOR') ?? ''}`;
     const slot = byXy.get(key);
     if (slot) slot.push(pair);
     else byXy.set(key, [pair]);
@@ -1200,7 +1264,9 @@ function importDevices(
       });
     }
     group.objects = made.length;
-    objects.push(...made);
+    // A loop, not a spread: an import can hold a hundred thousand devices, past the
+    // argument limit a spread runs into.
+    for (const obj of made) objects.push(obj);
 
     if (kind === 'thermocouple' && groupRakes && made.length < positioned.length) {
       issues.push(issue('info', 'fds-rake-grouped',
@@ -1528,8 +1594,9 @@ export function fdsToPlan(
 
   const devices: DeviceGroup[] = [];
   if (opts.devices !== false) {
-    objects.push(...importDevices(
-      group('DEVC'), props, origin, opts, burner, floorZ, ids, devices, issues));
+    const imported = importDevices(
+      group('DEVC'), props, origin, opts, burner, floorZ, ids, devices, issues);
+    for (const obj of imported) objects.push(obj);
   }
 
   doc.objects = objects;

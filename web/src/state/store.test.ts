@@ -194,3 +194,27 @@ describe('undo and the saved state (review 2026-09-22)', () => {
     expect(seen).toEqual(['first', 'second:selection']);
   });
 });
+
+describe('a save with edits made while it was pending (Codex review of 5f8333d)', () => {
+  it('compares undo against what was written, not against the save before it', () => {
+    // Open A, edit to B, start saving, edit to C, the save lands. The file holds B.
+    const store = new Store();
+    store.replaceDocument(withCamera(), 'plan.ftp.json', 'tok');
+    const title = (t: string) => {
+      store.edit('Rename', (d) => { d.meta = { ...d.meta, title: t }; });
+      store.commit();
+    };
+    title('B');
+    const { identity } = store.serializeForSave();
+    title('C');
+    store.markSaved('plan.ftp.json', identity);
+    expect(store.dirty).toBe(true); // C is not in the file
+
+    store.undo(); // B: exactly what the file holds
+    expect(store.document.meta?.title).toBe('B');
+    expect(store.dirty).toBe(false);
+    store.undo(); // A: the file does not hold this; it used to read as clean
+    expect(store.document.meta?.title).toBe('store test');
+    expect(store.dirty).toBe(true);
+  });
+});

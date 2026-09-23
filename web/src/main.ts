@@ -516,12 +516,13 @@ async function savePlan(saveAs = false): Promise<void> {
   const suggested = saveAs || store.fileName === 'untitled.ftp.json'
     ? suggestFileName()
     : store.fileName;
-  // Taken BEFORE serialising: this is the document and revision the bytes describe,
-  // and it is what decides whether the dirty bullet may clear when the write lands.
-  const identity = store.identity();
   saveInFlight = true;
   try {
-    const saved = await savePlanText(store.serialize(), suggested, saveAs, identity.token);
+    // The document and revision the bytes describe, and the document as written:
+    // what decides whether the dirty bullet may clear when the write lands, and what
+    // undo compares against afterwards.
+    const { text, identity } = store.serializeForSave();
+    const saved = await savePlanText(text, suggested, saveAs, identity.token);
     // null means the user cancelled the dialog; a failed write throws.
     if (saved) {
       store.markSaved(saved.path.split(/[\\/]/).pop() ?? suggested, identity, saved.token);
@@ -561,12 +562,12 @@ async function importFds(): Promise<void> {
   }
   if (!picked) return;
 
-  // A split input -- geometry in one file, devices in another, pulled together by
-  // &CATF -- is the normal shape for anything past a demo, and importing only the
-  // file that was named would hand over a model with most of itself missing.
-  const source = await resolveFdsIncludes(picked.text, picked.name);
-
   try {
+    // A split input -- geometry in one file, devices in another, pulled together by
+    // &CATF -- is the normal shape for anything past a demo, and importing only the
+    // file that was named would hand over a model with most of itself missing.
+    // Inside the try: a failure here used to escape this function unreported.
+    const source = await resolveFdsIncludes(picked.text, picked.name);
     fdsImport.open(source.text, picked.name, store.displayUnit, (doc, name) => {
       // The same boundary every other document crosses. `replaceDocument` installs
       // the document before anything reads it, so a plan that would fail to load is

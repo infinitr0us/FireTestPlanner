@@ -488,7 +488,10 @@ def _expand_mult(xb: Xb, mult: Optional[Record]) -> List[Xb]:
         return fallback if v is None else int(math.trunc(v))
 
     dxb = [0.0] * 6
-    for k, v in enumerate(mult.numbers("DXB")[:6]):
+    # By position: a null repeat (`DXB=2*,1,1,2*`) leaves those entries at zero.
+    for k, v in enumerate(mult.number_list("DXB")[:6]):
+        if v is None:
+            continue
         dxb[k] = v
     for key, pair in (("DX", 0), ("DY", 2), ("DZ", 4)):
         d = mult.number(key) or 0.0
@@ -659,6 +662,61 @@ def _vent_orientation(xb: Xb, rec: Record, obsts: List[_Box],
     return "+" + axis
 
 
+def _union_area(rects: List[Tuple[float, float, float, float]]) -> float:
+    """Area of the union of axis-aligned rectangles ``(u0, u1, v0, v1)``: strips
+    between consecutive u edges, each with its merged v cover. Mirror of
+    ``unionArea`` in fds.ts, step for step, so both engines subtract the same double."""
+    us = sorted(set(x for r in rects for x in (r[0], r[1])))
+    total = 0.0
+    for i in range(len(us) - 1):
+        a, b = us[i], us[i + 1]
+        spans = sorted((r[2], r[3]) for r in rects if r[0] <= a and r[1] >= b)
+        covered = 0.0
+        lo = hi = 0.0
+        is_open = False
+        for s, e in spans:
+            if not is_open or s > hi:
+                if is_open:
+                    covered += hi - lo
+                lo, hi = s, e
+                is_open = True
+            elif e > hi:
+                hi = e
+        if is_open:
+            covered += hi - lo
+        total += (b - a) * covered
+    return total
+
+
+def _exposed_area(box: "_Box", face: str, area: float, boxes: List["_Box"]) -> float:
+    """What is left of a box's face once other obstructions are taken off it.
+
+    FDS burns a surface only where gas touches it. Another box sitting flush against
+    the face, or running through its plane, covers that part -- two touching burning
+    boxes share a face that burns on neither side. Mirror of ``exposedArea`` in fds.ts.
+    """
+    axis = 0 if face[1] == "x" else (2 if face[1] == "y" else 4)
+    high = face[0] == "+"
+    plane = box.xb[axis + 1] if high else box.xb[axis]
+    u, v = [i for i in (0, 2, 4) if i != axis]
+    rects: List[Tuple[float, float, float, float]] = []
+    for other in boxes:
+        if other is box:
+            continue
+        o = other.xb
+        if high:
+            covers = o[axis] <= plane + TOL_M and o[axis + 1] > plane + TOL_M
+        else:
+            covers = o[axis + 1] >= plane - TOL_M and o[axis] < plane - TOL_M
+        if not covers:
+            continue
+        u0, u1 = max(box.xb[u], o[u]), min(box.xb[u + 1], o[u + 1])
+        v0, v1 = max(box.xb[v], o[v]), min(box.xb[v + 1], o[v + 1])
+        if u1 - u0 > TOL_M and v1 - v0 > TOL_M:
+            rects.append((u0, u1, v0, v1))
+    return area if not rects else max(0.0, area - _union_area(rects))
+
+
 def _fire_faces(boxes: List[_Box], vents: List[_Box], surfs: Dict[str, Record],
                 peaks: Dict[str, float], heat_of_combustion: Optional[float],
                 issues: List[Issue], domain: Optional[Xb] = None) -> List[_FireFace]:
@@ -723,6 +781,8 @@ def _fire_faces(boxes: List[_Box], vents: List[_Box], surfs: Dict[str, Record],
                     face = oriented
                     axis = oriented[1]
                     area = dx * dy if axis == "z" else (dx * dz if axis == "y" else dy * dz)
+            else:
+                area = _exposed_area(box, face, area, boxes)
             out.append(_FireFace(
                 surf=str(surf_id), xb=box.xb, area_m2=area,
                 hrr_kw=rel[0] * area if rel[0] is not None and area > 0 else None,

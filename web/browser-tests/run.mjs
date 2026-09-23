@@ -180,6 +180,24 @@ try {
   await waitFor(() => evaluate('document.querySelectorAll(".outliner__row").length===' + rows), 'undo of the delete and the edit');
   check('undo back to the loaded plan leaves it unmodified',
     await evaluate('!document.querySelector(".toolbar__file").textContent.includes("•")'));
+
+  // Tab from the last field onto a button keeps focus there through the rebuild,
+  // and a rebuild into a different panel does not push focus into a field (Codex
+  // review of 5f8333d).
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("Heptane pan"))');
+  // The object's Notes: the last text field, just before Duplicate and Delete.
+  const notes = '[...document.querySelectorAll("#inspector input[type=text]")].pop()';
+  await waitFor(() => evaluate('!!' + notes + ' && !!document.querySelector("#inspector .panel__actions")'), 'burner notes field');
+  await evaluate('(() => { const e=' + notes + '; e.focus(); e.select(); })()');
+  await send('Input.insertText', { text: 'checked' });
+  await key('Tab', 'Tab', 9);
+  await new Promise(r => setTimeout(r, 300));
+  const landed = await evaluate('(() => { const a=document.activeElement; return [a?.tagName, a?.textContent?.slice(0,30), ' + notes + '.value].join("|"); })()');
+  check('Tab from the last field keeps focus on the button it reached (' + landed + ')', landed === 'BUTTON|Duplicate|checked');
+  await click('[...document.querySelectorAll("#inspector button")].find(b=>b.textContent==="Delete")');
+  await new Promise(r => setTimeout(r, 150));
+  check('a rebuild into another panel does not move focus into a field',
+    await evaluate('!["INPUT","SELECT","TEXTAREA"].includes(document.activeElement?.tagName)'));
   check('no uncaught browser exceptions', errors.length===0);
   const result = { browser: executable, passed: checks.length, checks };
   if (process.env.BROWSER_TEST_OUTPUT) {

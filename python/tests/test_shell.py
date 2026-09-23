@@ -814,3 +814,21 @@ def test_an_include_may_sit_in_a_subfolder_of_the_input(tmp_path):
     assert "OBST" in shell.read_fds_include("geometry\\walls.fds")["text"]
     for escape in ("geometry/../../x.fds", "..\\x.fds", "C:/x.fds", "geometry/nul"):
         assert "error" in shell.read_fds_include(escape)
+
+
+def test_an_include_through_a_junction_to_another_drive_is_refused_not_a_crash(tmp_path, monkeypatch):
+    """Codex review of 5f8333d: `geometry/walls.fds` resolving through a junction to
+    D: made `commonpath` raise ValueError, the route answered 500 and the page's
+    import never showed a preview. It is an include outside the folder."""
+    (tmp_path / "geometry").mkdir()
+    (tmp_path / "geometry" / "walls.fds").write_text("&OBST XB=0,1,0,1,0,1 /\n", encoding="utf-8")
+    (tmp_path / "root.fds").write_text("&HEAD CHID='r' /\n", encoding="utf-8")
+    shell = shell_app.Shell()
+    shell.read_fds(str(tmp_path / "root.fds"))
+
+    def other_drive(paths):
+        raise ValueError("Paths don't have the same drive")
+
+    monkeypatch.setattr(shell_app.os.path, "commonpath", other_drive)
+    answer = shell.read_fds_include("geometry/walls.fds")
+    assert "text" not in answer and "folder" in answer["error"]

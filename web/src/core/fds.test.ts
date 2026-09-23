@@ -612,6 +612,35 @@ describe('what an import refuses to guess', () => {
     expect(result.issues.map((i) => i.code)).not.toContain('fds-catf-unresolved');
   });
 
+  it('reads one file once however its path is spelled (Codex review of 5f8333d)', async () => {
+    // Python compares real paths and read it once; this compared raw strings and
+    // imported the one obstruction twice.
+    const reads: string[] = [];
+    const spliced = await spliceFdsIncludes(
+      "&HEAD CHID='p' /\n&CATF OTHER_FILES='geometry/part.fds','geometry\\part.fds','./Geometry//part.fds' /\n&TAIL /\n",
+      async (name) => { reads.push(name); return '&OBST XB=0,2,0,0.1,0,2 /\n'; }, './p.fds',
+    );
+    expect(reads).toEqual(['geometry/part.fds']);
+    expect(spliced.issues.filter((i) => i.code === 'fds-catf-repeat')).toHaveLength(2);
+    expect(fdsToPlan(spliced.text, 'p.fds', { includesResolved: true }).counts.wall).toBe(1);
+  });
+
+  it('reports an include the shell could not read, and imports the rest (Codex review of 5f8333d)', async () => {
+    // A junction to another drive made the shell answer 500 and the whole import
+    // rejected before any preview appeared.
+    const spliced = await spliceFdsIncludes(
+      "&HEAD CHID='p' /\n&CATF OTHER_FILES='far/walls.fds','near.fds' /\n&TAIL /\n",
+      async (name) => {
+        if (name === 'far/walls.fds') throw new Error('HTTP 500');
+        return '&OBST XB=0,2,0,0.1,0,2 /\n';
+      },
+    );
+    expect(spliced.unresolved).toEqual(['far/walls.fds']);
+    const missing = spliced.issues.find((i) => i.code === 'fds-catf-missing');
+    expect(missing?.message).toContain('could not be read (HTTP 500)');
+    expect(fdsToPlan(spliced.text, 'p.fds', { includesResolved: true }).counts.wall).toBe(1);
+  });
+
   it('says so when &CATF pulls in files nobody read', () => {
     // The browser is handed one file's bytes and cannot go looking. Silence there
     // would present a fraction of a model as a whole one.
@@ -868,6 +897,18 @@ describe('review 2026-09-22 FDS cases', () => {
     const values = Array.from({ length: 1_000_000 }, (_, i) => i - 500_000);
     expect(rangeOf(values)).toEqual([-500_000, 499_999]);
   });
+
+  it('imports a hundred and fifty thousand devices without overflowing the stack (FDSI-10)', () => {
+    // The importer itself, not only `rangeOf`: `objects.push(...made)` threw
+    // RangeError past the engine's argument limit (Codex review of 5f8333d).
+    const count = 150_000;
+    const lines = ["&HEAD CHID='many' /", '&MESH IJK=10,10,10, XB=-2,2,-2,2,0,3 /',
+      "&SURF ID='FIRE', HRRPUA=500. /",
+      "&OBST XB=-0.25,0.25,-0.25,0.25,0,0.1, SURF_ID6='INERT','INERT','INERT','INERT','INERT','FIRE' /"];
+    for (let i = 0; i < count; i += 1) lines.push(`&DEVC ID='T${i}', XYZ=1,1,1, QUANTITY='THERMOCOUPLE' /`);
+    const result = fdsToPlan(`${lines.join('\n')}\n&TAIL /\n`, 'many.fds', { importedAt: IMPORTED_AT, groupRakes: false });
+    expect(result.counts.thermocouple).toBe(count);
+  }, 60_000);
 });
 
 describe('review 2026-09-22 namelist values', () => {

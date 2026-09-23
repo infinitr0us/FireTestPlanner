@@ -101,6 +101,9 @@ def read_frame(path: str) -> Tuple[np.ndarray, float]:
             raise ValueError('{}: not a reconstruction frame (needs voxels and voxel_size)'.format(name))
         raw_voxels, raw_size = data['voxels'], data['voxel_size']
     for label, array in (('voxels', raw_voxels), ('voxel_size', raw_size)):
+        # A member without the NPY header comes back from np.load as raw bytes.
+        if not isinstance(array, np.ndarray):
+            raise ValueError('{}: {} is not an NPY array'.format(name, label))
         if (array.dtype.kind, array.dtype.itemsize) not in _FRAME_DTYPES:
             raise ValueError('{}: {} has dtype {}; expected a 4- or 8-byte float or integer'.format(
                 name, label, array.dtype.str))
@@ -138,9 +141,22 @@ def infer_pitch(voxels: np.ndarray) -> float:
 PITCH_SNAP = 1e-4
 
 
-def snap_pitch(pitch: float, voxel_size: float) -> float:
-    """The pitch, snapped to the voxel size when the two are the same spacing."""
-    return voxel_size if abs(pitch - voxel_size) <= PITCH_SNAP * voxel_size else pitch
+def snap_pitch(pitch: float, voxel_size: float, spans: Sequence[float] = ()) -> float:
+    """The pitch, snapped to the voxel size when the two are the same spacing.
+
+    `spans` is the extent of the data on each axis. Close is not enough on its own: a
+    grid whose true spacing is 0.01 m, labelled with a voxel size of 0.0099995 m, is
+    within the snap, and snapping it put a voxel 3 m out 0.015 cells off the lattice.
+    The snap stands only if every extent is still a whole number of the snapped
+    cells. Mirror of `snapPitch` in flame.ts.
+    """
+    if abs(pitch - voxel_size) > PITCH_SNAP * voxel_size:
+        return pitch
+    for span in spans:
+        cells = float(span) / voxel_size
+        if abs(cells - round(cells)) > LATTICE_TOLERANCE:
+            return pitch
+    return voxel_size
 
 
 def infer_resolution(pitch: float, voxel_size: float) -> Optional[int]:
@@ -288,9 +304,9 @@ class FlameSequence:
         if not populated:
             raise ValueError('every frame is empty; nothing to reconstruct a grid from')
         fullest = max(populated, key=lambda item: len(item[1]))[1]
-        pitch = snap_pitch(infer_pitch(fullest), voxel_size)
         lo = np.min([v.min(axis=0) for _, v in populated], axis=0)
         hi = np.max([v.max(axis=0) for _, v in populated], axis=0)
+        pitch = snap_pitch(infer_pitch(fullest), voxel_size, [float(h - l) for l, h in zip(lo, hi)])
         bounds = np.array([lo, hi], dtype=np.float64)
         frames = []
         for t, v, _ in raw:

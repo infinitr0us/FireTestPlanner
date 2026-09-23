@@ -61,5 +61,30 @@
     "name": "FDS 6's current heat flux names are gauges (FDSI-14)",
     "text": "&HEAD CHID='flux' /\n&MESH IJK=10,10,10, XB=-2,2,-2,2,0,3 /\n&SURF ID='FIRE', HRRPUA=500. /\n&OBST XB=-0.25,0.25,-0.25,0.25,0,0.1, SURF_ID6='INERT','INERT','INERT','INERT','INERT','FIRE' /\n&DEVC ID='TOT', XYZ=1.5,0,1, IOR=-1, QUANTITY='TOTAL HEAT FLUX' /\n&DEVC ID='GAS', XYZ=-1.5,0,1, ORIENTATION=1,0,0, QUANTITY='GAUGE HEAT FLUX GAS' /\n&TAIL /\n",
     "counts": {"burner": 1, "heatFluxSensor": 2}
+  },
+  {
+    "name": "two touching burning boxes share a face that burns on neither side (FDSI-3)",
+    "text": "&HEAD CHID='pair' /\n&MESH IJK=10,10,10, XB=-2,3,-2,2,0,3 /\n&SURF ID='FIRE', HRRPUA=100. /\n&OBST XB=-0.5,0.5,-0.5,0.5,0,1, SURF_ID='FIRE' /\n&OBST XB=0.5,1.5,-0.5,0.5,0,1, SURF_ID='FIRE' /\n&TAIL /\n",
+    "counts": {"burner": 2},
+    "burnerHrrKw": 400,
+    "codes": ["fds-burner-sides"]
+  },
+  {
+    "name": "a box against a burning box covers part of its side (FDSI-3)",
+    "text": "&HEAD CHID='cover' /\n&MESH IJK=10,10,10, XB=-2,3,-2,2,0,3 /\n&SURF ID='FIRE', HRRPUA=100. /\n&OBST XB=-0.5,0.5,-0.5,0.5,0,1, SURF_ID='FIRE' /\n&OBST XB=0.5,1.5,-0.5,0.5,0,0.5 /\n&TAIL /\n",
+    "counts": {"obstruction": 1, "burner": 1},
+    "burnerHrrKw": 450
+  },
+  {
+    "name": "MULT: null repeats keep DXB positions (FDSI-4)",
+    "text": "&HEAD CHID='m4' /\n&MESH IJK=10,10,10, XB=-2,2,-2,4,0,3 /\n&SURF ID='FIRE', HRRPUA=500. /\n&OBST XB=-0.25,0.25,-0.25,0.25,0,0.1, SURF_ID6='INERT','INERT','INERT','INERT','INERT','FIRE' /\n&MULT ID='row', N_UPPER=1, DXB=2*,1,1,2* /\n&OBST ID='post', XB=0,0.5,1,1.5,0,1, MULT_ID='row' /\n&TAIL /\n",
+    "counts": {"obstruction": 2, "burner": 1},
+    "sourceXyz": [["obst-post", [0.25, 1.25, 0]], ["obst-post-2", [0.25, 2.25, 0]]]
+  },
+  {
+    "name": "a rake straddling x = 0 is one rake (FDSI-7)",
+    "text": "&HEAD CHID='zero' /\n&MESH IJK=10,10,10, XB=-2,2,-2,2,0,3 /\n&SURF ID='FIRE', HRRPUA=500. /\n&OBST XB=-0.25,0.25,-0.25,0.25,0,0.1, SURF_ID6='INERT','INERT','INERT','INERT','INERT','FIRE' /\n&DEVC ID='TC1', XYZ=-0.00001,1,1, QUANTITY='THERMOCOUPLE' /\n&DEVC ID='TC2', XYZ=0.00001,1,2, QUANTITY='THERMOCOUPLE' /\n&TAIL /\n",
+    "counts": {"burner": 1, "thermocouple": 1},
+    "codes": ["fds-rake-grouped"]
   }
 ]

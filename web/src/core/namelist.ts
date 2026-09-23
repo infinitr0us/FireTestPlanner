@@ -89,6 +89,12 @@ export class NamelistRecord {
     );
   }
 
+  /** Numeric values, keeping null holes so positional lists stay aligned --
+   *  `DXB=2*,1,1,2*` moves a copy in Y, and dropping the holes moved it in X. */
+  numberList(key: string): Array<number | null> {
+    return this.values(key).map((v) => (typeof v === 'number' && Number.isFinite(v) ? v : null));
+  }
+
   string(key: string): string | null {
     const v = this.value(key);
     return typeof v === 'string' ? v : null;

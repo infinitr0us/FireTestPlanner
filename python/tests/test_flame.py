@@ -428,6 +428,17 @@ def test_a_grid_whose_pitch_is_its_voxel_size_loads_and_validates(tmp_path):
     assert sequence_problem(seq.manifest("2026-09-22T00:00:00Z")) is None
 
 
+def test_a_pitch_that_would_leave_the_lattice_is_not_snapped(tmp_path):
+    """FLM-1, Codex review of 5f8333d: 0.01 m spacing labelled 0.0099995 m is within
+    the snap, and snapping it left the voxel at 3 m 0.015 cells off the lattice.
+    Mirrored in web/src/core/flame.test.ts."""
+    np.savez(str(tmp_path / "t_0000000.0s.npz"),
+             voxels=np.array([[0.0, 0.0, 0.0], [0.01, 0.0, 0.0], [3.0, 0.0, 0.0]]), voxel_size=0.0099995)
+    seq = FlameSequence.load(str(tmp_path))
+    assert seq.pitch == 0.01 and seq.resolution == 20000
+    assert list(seq.frames[0].dims) == [301, 1, 1]
+
+
 def test_a_truncated_frame_is_named(tmp_path):
     (tmp_path / "t_0000005.0s.npz").write_bytes(b"\x01\x02\x03")
     with pytest.raises(ValueError, match=r"^t_0000005\.0s\.npz: not a ZIP archive"):

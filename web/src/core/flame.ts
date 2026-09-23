@@ -163,8 +163,9 @@ export async function parseFrameFile(name: string, bytes: Uint8Array): Promise<R
     // in a folder of eighty of them.
     throw new Error(`${name}: ${(err as Error).message}`);
   }
-  const voxelsEntry = entries.get('voxels.npy');
-  const sizeEntry = entries.get('voxel_size.npy');
+  // With or without `.npy` on the member name, as np.load accepts either.
+  const voxelsEntry = entries.get('voxels.npy') ?? entries.get('voxels');
+  const sizeEntry = entries.get('voxel_size.npy') ?? entries.get('voxel_size');
   if (!voxelsEntry || !sizeEntry) throw new Error(`${name}: not a reconstruction frame (needs voxels and voxel_size)`);
   const voxelsArray = parseNpy(voxelsEntry);
   if (voxelsArray.shape.length !== 2 || voxelsArray.shape[1] !== 3) {
@@ -220,9 +221,23 @@ export function inferPitch(voxels: Float64Array): number {
  *  is a whole 1/(res-1) above, half a percent at 192. Mirror of flame.py. */
 export const PITCH_SNAP = 1e-4;
 
-/** The pitch, snapped to the voxel size when the two are the same grid spacing. */
-export const snapPitch = (pitch: number, voxelSize: number): number =>
-  Math.abs(pitch - voxelSize) <= PITCH_SNAP * voxelSize ? voxelSize : pitch;
+/**
+ * The pitch, snapped to the voxel size when the two are the same grid spacing.
+ *
+ * `spans` is the extent of the data on each axis. Close is not enough on its own: a
+ * grid whose true spacing is 0.01 m, labelled with a voxel size of 0.0099995 m, is
+ * within the snap, and snapping it put a voxel 3 m out 0.015 cells off the lattice
+ * and refused a sequence that loaded before. The snap stands only if every extent
+ * is still a whole number of the snapped cells. Mirror of `snap_pitch` in flame.py.
+ */
+export function snapPitch(pitch: number, voxelSize: number, spans: ArrayLike<number> = []): number {
+  if (Math.abs(pitch - voxelSize) > PITCH_SNAP * voxelSize) return pitch;
+  for (let a = 0; a < spans.length; a += 1) {
+    const cells = spans[a] / voxelSize;
+    if (Math.abs(cells - Math.round(cells)) > LATTICE_TOLERANCE) return pitch;
+  }
+  return voxelSize;
+}
 
 export function inferResolution(pitch: number, voxelSize: number): number | null {
   const gap = pitch - voxelSize;
@@ -367,7 +382,6 @@ export class FlameSequence {
     const populated = sorted.filter((f) => f.voxels.length);
     if (!populated.length) throw new Error('every frame is empty; nothing to reconstruct a grid from');
     const fullest = populated.reduce((a, b) => (b.voxels.length > a.voxels.length ? b : a));
-    const pitch = snapPitch(inferPitch(fullest.voxels), voxelSize);
     const lo: [number, number, number] = [Infinity, Infinity, Infinity];
     const hi: [number, number, number] = [-Infinity, -Infinity, -Infinity];
     for (const f of populated) {
@@ -377,6 +391,7 @@ export class FlameSequence {
         if (f.voxels[i] > hi[axis]) hi[axis] = f.voxels[i];
       }
     }
+    const pitch = snapPitch(inferPitch(fullest.voxels), voxelSize, [0, 1, 2].map((a) => hi[a] - lo[a]));
     const frames = sorted.map((f) => {
       try { return packFrame(f.timestamp_s, f.voxels, lo, pitch); }
       catch (err) {

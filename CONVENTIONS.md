@@ -578,7 +578,7 @@ Five of them, and the sample input in `fixtures/fds/` exercises the first three:
 | `&OBST` thin in z, above the floor | | `ceiling`, soffit at `z1` |
 | `&OBST` thin in z, lowest | | **the floor** — the `z = 0` plane, not an object |
 | anything else | | `obstruction` |
-| a face whose `SURF` has `HRRPUA` or `MLRPUA` | | `burner`, `hrr_kw = rate × area × max(RAMP F)` — `MLRPUA` × `HEAT_OF_COMBUSTION` (from the `&SURF` or the `&REAC`); with none stated, the burner is imported with no HRR and `fds-hrr-unknown` says so. A burning box's side faces add to its HRR (`fds-burner-sides`) |
+| a face whose `SURF` has `HRRPUA` or `MLRPUA` | | `burner`, `hrr_kw = rate × area × max(RAMP F)` — `MLRPUA` × `HEAT_OF_COMBUSTION` (from the `&SURF` or the `&REAC`); with none stated, the burner is imported with no HRR and `fds-hrr-unknown` says so. A burning box's side faces add to its HRR (`fds-burner-sides`). Every obstruction face counts only its exposed area: whatever another `&OBST` sits flush against or runs through is taken off, so two touching burning boxes do not burn the face they share |
 | `&HOLE` ∩ a wall | | a wall `opening`, by arc length along the polyline |
 | `&DEVC` + a heat-flux quantity, `IOR` | | `heatFluxSensor`, `IOR` as the outward normal |
 | `&DEVC` + a temperature quantity | | `thermocouple`; a vertical run at one XY is one rake |
@@ -598,7 +598,8 @@ the domain and the domain is what the origin falls back to when nothing burns. T
 expansion transcribes FDS's `READ_MULT`: `DX`/`DY`/`DZ` override `DXB` pairs in both
 forms, the form is sequential whenever `N_LOWER` or `N_UPPER` is non-zero, `DX0`/`DY0`/
 `DZ0` offset every copy, and skip bounds default to −999/999, so `I_LOWER_SKIP=3` alone
-skips from 3 to the top of the array.
+skips from 3 to the top of the array. `DXB` is read by position: a null repeat
+(`DXB=2*,1,1,2*`) leaves those entries at zero rather than shifting the rest along.
 
 `&CATF` includes are read and spliced in **at the position of the `&CATF` record**,
 because a split input with a geometry file and a devices file is the normal shape
@@ -611,7 +612,10 @@ are not followed (`fds-catf-nested` says so). That needs a filesystem, so it is 
 desktop shell that supplies the sibling files (`/api/read-fds-include`, confined to
 the folder the input came from, subfolders included). A browser tab is handed one file's bytes and cannot go
 looking: there, an unresolved `&CATF` is a prominent warning naming every file that
-went unread, never a silent omission.
+went unread, never a silent omission. One file is read once however its name is
+spelled (`geometry\part.fds`, `geometry/part.fds`; `fds-catf-repeat` for the rest),
+and an include the shell cannot read is reported as missing while the rest of the
+input still imports.
 
 **A heat-release surface is not a boundary condition.** A degenerate `&VENT`
 coplanar with a mesh face is normally `OPEN`/`MIRROR`/`PERIODIC` and is dropped —

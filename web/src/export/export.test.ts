@@ -431,6 +431,14 @@ describe('drawings and report (review 2026-09-22)', () => {
     // Both pages span the 2 m minimum, so pixels compare directly: 2 m against
     // 0.25 m. The equal-area diameter drew both 0.8 m wide.
     expect(widths[0] / widths[1]).toBeCloseTo(8, 1);
+
+    // The predicted flame stays the correlations' equal-area cone in both views, as
+    // the 3D view and the checks have it; only the pan is rectangular (Codex review
+    // of 5f8333d: the flame had taken the pan's 2 m and 0.25 m too).
+    const flames = (['front', 'side'] as const).map((view) =>
+      extent(polygonsIn(buildViewSvg(doc, view, 'm'), '#f59e0b')[0], 0));
+    expect(flames[0]).toBeCloseTo(flames[1], 1); // SVG coordinates carry two decimals
+    expect(flames[0] / widths[0]).toBeCloseTo(Math.sqrt(4 * 0.5 / Math.PI) / 2, 3);
   });
 
   it('keeps a wide hood canopy on the sheet (EXP-7)', () => {

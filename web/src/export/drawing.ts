@@ -627,7 +627,11 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
       : [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]]
         .map(([x, y]) => lateral([...footprintXY(b, [x, y]), 0]));
     const [lo, hi] = rangeOf(coords);
-    const centre = (lo + hi) / 2;
+    // The predicted flame and plume are the correlations' equal-area cone about the
+    // burner's centre, as the 3D view draws them and every check computes them --
+    // only the pan takes the rectangular extent.
+    const centre = lateral(origin);
+    const dEff = burnerDiameterM(b);
 
     out.push(polygon([
       at(lo, origin[2]),
@@ -639,7 +643,7 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
     const tip = flameTipZM(b);
     if (tip !== null) {
       out.push(polygon([
-        at(lo, surface), at(hi, surface), at(centre, tip),
+        at(centre - dEff / 2, surface), at(centre + dEff / 2, surface), at(centre, tip),
       ], `fill="${COLORS.flame}" fill-opacity="0.35" stroke="${COLORS.flame}" stroke-width="1"`));
 
       // Plume envelope, dashed: it is a correlation, not a measurement.

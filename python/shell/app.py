@@ -500,7 +500,13 @@ class Shell:
             return {"error": "{} is not a file name an &CATF include can use".format(name)}
         root = os.path.realpath(directory)
         path = os.path.realpath(os.path.join(directory, *parts))
-        if os.path.commonpath([os.path.normcase(path), os.path.normcase(root)]) != os.path.normcase(root):
+        try:
+            inside = os.path.commonpath([os.path.normcase(path), os.path.normcase(root)]) == os.path.normcase(root)
+        except ValueError:
+            # Different drives -- a junction in the input's folder pointing at D: --
+            # have no common path. That is outside the folder, not a server error.
+            inside = False
+        if not inside:
             return {"error": "an &CATF include is read from the input's own folder only"}
         if not os.path.isfile(path):
             return {"error": "{} is not beside the FDS input".format(name)}

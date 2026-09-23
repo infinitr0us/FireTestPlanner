@@ -92,6 +92,15 @@ class Record:
         return [float(v) for v in self.values(key)
                 if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)]
 
+    def number_list(self, key: str) -> List[Optional[float]]:
+        """Numeric values, keeping ``None`` holes so positional lists stay aligned.
+
+        ``DXB=2*,1,1,2*`` moves a copy in Y; dropping the holes moved it in X.
+        Mirror of ``numberList`` in namelist.ts.
+        """
+        return [float(v) if isinstance(v, (int, float)) and not isinstance(v, bool)
+                and math.isfinite(v) else None for v in self.values(key)]
+
     def string(self, key: str, default: Optional[str] = None) -> Optional[str]:
         v = self.value(key)
         return v if isinstance(v, str) else default
