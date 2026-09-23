@@ -319,6 +319,27 @@ def test_an_unknown_object_keeps_exotic_numbers_through_a_round_trip():
     assert Plan.loads(text).data["objects"][0]["calibration"]["dark"] == 1.23e-8
 
 
+def test_integers_beyond_2_53_are_spelled_as_javascript_writes_them():
+    """The web editor reads every number as a double, so an integer past 2**53 in an
+    unknown object reaches its writer already rounded. Python keeps the exact int;
+    written exactly, the two writers disagreed about the bytes (review 2026-09-22,
+    FMT-9). CONVENTIONS section 6 now scopes the precision promise to doubles."""
+    from fireplan.serialize import _encode
+    assert _encode(12345678901234567890, 0) == "12345678901234567000"
+    assert _encode(10 ** 22, 0) == "1e+22"
+    assert _encode(2 ** 53 + 1, 0) == "9007199254740992"
+    assert _encode(-(2 ** 60), 0) == "-1152921504606847000"
+    assert _encode(2 ** 53, 0) == "9007199254740992"
+
+
+def test_lone_surrogates_are_escaped_as_json_stringify_escapes_them():
+    """A "\\ud800" escape loads as a lone surrogate, which UTF-8 cannot encode --
+    the save failed. JSON.stringify writes it as an escape (FMT-10)."""
+    from fireplan.serialize import _encode
+    assert _encode("a\ud800b", 0) == '"a\\ud800b"'
+    assert _encode("\U0001f600", 0) == '"\U0001f600"'
+
+
 def test_the_writer_agrees_with_json_dumps_on_everything_but_floats():
     """The writer is hand-rolled so it can spell floats JavaScript's way. Indentation,
     separators and string escaping must still be exactly what json.dumps produces --
@@ -330,7 +351,7 @@ def test_the_writer_agrees_with_json_dumps_on_everything_but_floats():
         "empty_list": [],
         "unicode": 'café — 火 "quoted" back\\slash\ttab\nnewline',
         "control": "",
-        "ints": [0, -1, 10 ** 25],
+        "ints": [0, -1, 2 ** 53],  # beyond 2**53 see the test below
         "scalars": [True, False, None],
         "nested": {"a": [{"b": [1, 2]}, []]},
         "floats": [0.5, -2.7432, 1.25],  # spelled the same by both writers
@@ -639,3 +660,80 @@ def test_the_1_0_schema_was_not_edited_to_accept_1_1_content():
     with pytest.raises(PlanError):
         plan.validate_schema("1.0.0")
     plan.validate_schema("1.1.0")
+
+
+# -- review 2026-09-22: writer parity -------------------------------------
+
+#: The same table is in web/src/core/core.test.ts (ROUNDING_TIES).
+ROUNDING_TIES = [
+    (0.0015875, "0.001587"), (0.0078125, "0.007813"), (5e-7, "0"), (1.0000015, "1.000001"),
+    (-0.0015875, "-0.001587"), (2.5e-6, "0.000003"), (0.1234565, "0.123456"),
+    (1091622763385650.9, "1091622763385650.9"), (0.3048, "0.3048"), (12.0, "12"), (-1e-7, "0"),
+]
+
+
+@pytest.mark.parametrize("value,written", ROUNDING_TIES)
+def test_rounding_ties_match_the_web_writer(value, written):
+    plan = Plan.new("ties")
+    plan.data["environment"]["ambientTemperature_C"] = value
+    assert '"ambientTemperature_C": {}\n'.format(written) in plan.dumps()
+
+
+def _with_camera(extra_spec=None, **extra):
+    plan = Plan.new("parity")
+    spec = {"modality": "RGB", "resolution_px": [640, 480], "sensor_mm": [6, 4.5], "focalLength_mm": 4}
+    spec.update(extra_spec or {})
+    plan.add(dict({"id": "c", "type": "camera", "transform": {"position_m": [1, 0, 1]}, "camera": spec}, **extra))
+    return plan
+
+
+@pytest.mark.parametrize("zoom", [1, 1.0, 1.0000004])
+def test_a_1x_zoom_is_omitted_and_does_not_raise_the_version(zoom):
+    text = _with_camera({"zoomFactor": zoom}).dumps()
+    assert "zoomFactor" not in text and '"version": "1.0.0"' in text
+    assert '"version": "1.1.0"' in _with_camera({"zoomFactor": 2}).dumps()
+
+
+def test_1_4_link_and_display_keys_declare_1_4():
+    offset = _with_camera(linkedFiles=[{"id": "v", "kind": "video", "path": "a.mp4", "timeOffset_s": 2.5}])
+    assert '"version": "1.4.0"' in offset.dumps()
+    offset.validate_schema(Plan.loads(offset.dumps()).format_version)
+    zero = _with_camera(linkedFiles=[{"id": "v", "kind": "video", "path": "a.mp4", "timeOffset_s": 0}])
+    assert '"version": "1.3.0"' in zero.dumps()
+    opacity = _with_camera(display={"opacity": 0.5})
+    assert '"version": "1.4.0"' in opacity.dumps()
+
+
+def test_nan_and_infinity_literals_are_refused_on_load():
+    text = Plan.new("x").dumps().replace('"ambientTemperature_C": 20', '"ambientTemperature_C": NaN')
+    with pytest.raises(PlanError, match="NaN"):
+        Plan.loads(text)
+
+
+def test_a_byte_order_mark_does_not_stop_a_plan_loading(tmp_path):
+    path = tmp_path / "bom.ftp.json"
+    path.write_bytes(b"\xef\xbb\xbf" + Plan.new("bom").dumps().encode("utf-8"))
+    assert Plan.load(str(path)).title == "bom"
+    assert Plan.loads("﻿" + Plan.new("bom").dumps()).title == "bom"
+
+
+def test_checking_a_plan_does_not_change_its_bytes():
+    """Reading a position used to insert a transform block (and reading the ambient
+    an environment block) into objects that had none, unknown types included."""
+    plan = Plan.new("read only")
+    del plan.data["environment"]
+    plan.add({"id": "b", "type": "burner", "footprint": {"shape": "circle", "diameter_m": 0.3},
+              "fire": {"hrr_kw": 100}})
+    plan.add({"id": "t", "type": "thermocouple", "beadOffsets_m": [1.5]})
+    plan.add({"id": "x", "type": "futureThing", "payload": 1})
+    before = plan.dumps()
+    plan.check()
+    _ = [o.position for o in plan.objects]
+    assert plan.dumps() == before
+
+
+def test_an_unparseable_version_label_is_compared_as_the_web_writer_compares_it():
+    """`Number(part) || 0` in JavaScript: "1.5.0-rc1" reads as 1.5.0 and stays."""
+    from fireplan.serialize import effective_version
+    assert effective_version({"version": "1.5.0-rc1", "objects": []}) == "1.5.0-rc1"
+    assert effective_version({"version": "v1.4.0", "objects": []}) == "1.0.0"

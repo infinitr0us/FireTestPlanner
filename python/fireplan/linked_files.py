@@ -10,11 +10,23 @@ import os
 import posixpath
 import re
 
+from ._text import js_trim
+
 LINK_TYPES = {'burner', 'camera', 'heatFluxSensor', 'thermocouple', 'reconstructedFlame'}
 MAX_CSV_BYTES = 5 * 1024 * 1024
 MAX_PLOT_SAMPLES = 20_000
 #: Also the cap on a voxel sequence's frames: the manifest is one row per frame.
 MAX_SEQUENCE_FRAMES = 20_000
+
+
+def links_allowed(obj):
+    """Whether `obj` is an object of a type that carries linkedFiles.
+
+    Tolerant of shapes the schema rejects -- a `type` that is a dict or a list is
+    unhashable, and testing it against a set raised TypeError out of
+    `validate_schema` instead of the schema's own error (review 2026-09-22, FMT-5).
+    """
+    return isinstance(obj, dict) and isinstance(obj.get('type'), str) and obj['type'] in LINK_TYPES
 
 
 def link_kind_for(object_type):
@@ -34,7 +46,9 @@ def sequence_problem(sequence):
     the voxel size (the grid is endpoint-inclusive, so it cannot be).
     """
     grid = sequence.get('grid', {})
-    if not all(math.isfinite(grid.get(k, math.nan)) and grid[k] > 0 for k in ('voxelSize_m', 'pitch_m')) or grid['pitch_m'] < grid['voxelSize_m']:
+    # Within the readers' snap tolerance (PITCH_SNAP in flame.py): a grid whose pitch
+    # IS its voxel size, inferred a few ulps short, used to be refused.
+    if not all(math.isfinite(grid.get(k, math.nan)) and grid[k] > 0 for k in ('voxelSize_m', 'pitch_m')) or grid['pitch_m'] < grid['voxelSize_m'] * (1 - 1e-4):
         return 'a voxel sequence needs a positive voxel size and a pitch no smaller than it'
     resolution = grid.get('resolution')
     if resolution is not None and (isinstance(resolution, bool) or not isinstance(resolution, numbers.Real)
@@ -61,7 +75,7 @@ def _csv_rows(text, separator):
 
     def push_cell():
         nonlocal cell, closed
-        row.append(cell.strip())
+        row.append(js_trim(cell))
         cell, closed = '', False
 
     def push_row():
@@ -91,9 +105,9 @@ def _csv_rows(text, separator):
             if ch == '\r' and text[i + 1:i + 2] == '\n':
                 i += 1
             push_row()
-        elif ch == '"' and not cell.strip() and not closed:
+        elif ch == '"' and not js_trim(cell) and not closed:
             cell, quoted = '', True
-        elif ch == '"' or (closed and ch.strip()):
+        elif ch == '"' or (closed and js_trim(ch)):
             raise ValueError('Malformed CSV quoting.')
         else:
             cell += ch
@@ -113,7 +127,7 @@ def parse_reconstruction_csv(text, imported_at=None):
     if len(text.encode('utf-8')) > MAX_CSV_BYTES:
         raise ValueError('CSV exceeds the 5 MiB plot limit.')
     text = text.removeprefix('\ufeff')
-    header_line = next((line for line in re.split(r'\r?\n', text) if line.strip()), '')
+    header_line = next((line for line in re.split(r'\r?\n', text) if js_trim(line)), '')
     separator = '\t' if '\t' in header_line else ';' if ';' in header_line and ',' not in header_line else ','
     table = _csv_rows(text, separator)
     headers = [cell.lower() for cell in table.pop(0)] if table else []
@@ -148,7 +162,7 @@ def parse_reconstruction_csv(text, imported_at=None):
 
 
 def local_path(path):
-    return (isinstance(path, str) and bool(path.strip())
+    return (isinstance(path, str) and bool(js_trim(path))
             and not re.search(r'[\x00-\x1f]', path)
             and not re.match(r'^[a-z][a-z0-9+.-]*:', re.sub(r'^[a-z]:[/\\]', '', path, flags=re.I), re.I))
 
@@ -172,15 +186,37 @@ def resolve_path(path, plan_path=None):
     return path_module.normpath(path_module.join(path_module.dirname(path_module.abspath(str(plan_path))), path))
 
 
+def _root(path):
+    """The root a path hangs from -- a drive, a UNC share, '/' or nothing. Mirror
+    of `parts(...).root` in web/src/io/link-paths.ts."""
+    match = re.match(r'^(?:[a-z]:/|//[^/]+/[^/]+/?|/)', str(path).replace('\\', '/'), re.I)
+    return (match.group(0) if match else '').rstrip('/')
+
+
+def _same_root(a, b):
+    ra, rb = _root(a), _root(b)
+    fold = re.match(r'^[a-z]:$|^//', rb, re.I) is not None
+    return (ra.lower() == rb.lower()) if fold else ra == rb
+
+
 def for_destination(data, source_path, destination):
-    """Rebase a COPY for Save As. No source or attachment bytes are touched."""
+    """Rebase a COPY for Save As. No source or attachment bytes are touched.
+
+    A link is made relative only when it hangs from the same root as the
+    destination, as the web writer decides it: a drive-less rooted link such as
+    `/mnt/data/run.csv` beside a plan on `E:` used to be relativised against the
+    process's current drive, so the result depended on where Python was started.
+    """
     result = deepcopy(data)
     for obj in result.get('objects', []):
-        if obj.get('type') not in LINK_TYPES:
+        if not links_allowed(obj):
             continue
         for link in obj.get('linkedFiles', []):
             absolute = resolve_path(link['path'], source_path or destination)
             module = _path_module(absolute, destination)
+            if not _same_root(absolute, module.abspath(str(destination))):
+                link['path'] = absolute.replace('\\', '/')
+                continue
             try:
                 link['path'] = module.relpath(absolute, module.dirname(module.abspath(str(destination)))).replace('\\', '/')
             except ValueError:  # different Windows drives
@@ -191,7 +227,7 @@ def for_destination(data, source_path, destination):
 def problems(data):
     """Assumes schema-valid shapes. Strict time order and unique IDs need code."""
     for obj in data.get('objects', []):
-        if obj.get('type') not in LINK_TYPES:
+        if not links_allowed(obj):
             continue
         seen = set()
         for link in obj.get('linkedFiles', []):

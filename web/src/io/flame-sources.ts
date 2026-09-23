@@ -26,7 +26,12 @@ export function pickVoxelFolder(): Promise<File[]> {
       clearTimeout(focusTimer);
       window.removeEventListener('focus', onFocus);
       input.remove();
-      resolve(files.filter((f) => FRAME_NAME.test(f.name)));
+      // Only files directly in the picked folder. `webkitdirectory` hands over
+      // every subfolder too, and frames there were merged by timestamp into one
+      // sequence -- a different run's frames adopted as this one's -- where the
+      // desktop and fireplan read the top level only.
+      resolve(files.filter((f) => FRAME_NAME.test(f.name)
+        && ((f as File & { webkitRelativePath?: string }).webkitRelativePath ?? '').split('/').length <= 2));
     };
     const onFocus = (): void => {
       clearTimeout(focusTimer);

@@ -140,7 +140,11 @@ export class FlamePanel {
     if (!entry) return h('p', { class: 'linked-files__hint' }, [shell() ? 'Frames not read yet.' : 'Frames not loaded in this tab.']);
     if (entry.status === 'loading') return h('p', { class: 'linked-files__hint', role: 'status' }, [`Reading frame ${entry.progress.done} of ${entry.progress.total}…`]);
     if (entry.status === 'error') return h('p', { class: 'linked-files__message', role: 'status' }, [entry.error ?? 'The folder could not be read.']);
-    if (entry.changed) return h('p', { class: 'linked-files__message', role: 'status' }, [`The folder changed since it was linked: ${entry.changed}. Refresh to adopt it as it is now.`]);
+    if (entry.changed) {
+      // Refresh exists only on the desktop; in a tab, Relink reads the folder again.
+      return h('p', { class: 'linked-files__message', role: 'status' }, [
+        `The folder changed since it was linked: ${entry.changed}. ${shell() ? 'Refresh' : 'Relink'} to adopt it as it is now.`]);
+    }
     return h('p', { class: 'linked-files__hint' }, [`${entry.sequence!.frames.length.toLocaleString()} frames loaded.`]);
   }
 

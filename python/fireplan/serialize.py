@@ -16,12 +16,65 @@ reproduces `json.dumps(indent=2, ensure_ascii=False)` verbatim.
 from __future__ import annotations
 
 import json
+import math
 import re
+from decimal import ROUND_HALF_UP, Decimal, localcontext
 from typing import Any, Dict, List, Tuple
 
 # 1 um. Finer than any tape measure used on a test site, and coarse enough that
 # float round-trip noise never shows up in a diff.
 FLOAT_DECIMALS = 6
+_MICRO = Decimal(1).scaleb(-FLOAT_DECIMALS)
+
+
+def _round_micro(value: float) -> float:
+    """A float rounded to 1 um the way both writers round it.
+
+    The EXACT binary value, ties away from zero -- which is what JavaScript's
+    `toFixed(6)` does and what `roundMicro` in web/src/core/math.ts uses. The
+    previous rules disagreed on ties: `round(v, 6)` goes to even, and the web
+    writer's `Math.round(v * 1e6) / 1e6` rounds the product first, so 1/16 in
+    (0.0015875 m) became 0.001587 here and 0.001588 there. Integral values and
+    non-finite ones pass through (the writer refuses the latter).
+    """
+    if not math.isfinite(value) or value.is_integer():
+        return value
+    with localcontext() as ctx:
+        ctx.prec = 60  # a non-integral double has at most 16 integer digits
+        return float(Decimal(value).quantize(_MICRO, rounding=ROUND_HALF_UP))
+
+
+def _zoom_is_default(zoom: Any) -> bool:
+    """Absent, null or 1 once rounded: "no zoom". Writers omit it (CONVENTIONS
+    section 4), so it must not raise the version either. Mirror of `zoomIsDefault`
+    in web/src/core/types.ts."""
+    if zoom is None:
+        return True
+    if isinstance(zoom, bool) or not isinstance(zoom, (int, float)):
+        return False
+    return _round_micro(float(zoom)) == 1.0
+
+
+def _uses_1_4_keys(obj: Dict[str, Any]) -> bool:
+    """Format 1.4's link and display keys: the 1.3 schema closes `linkedFile` and
+    every earlier one closes `display`, so either present needs a 1.4 reader.
+    Mirror of `uses1_4Keys` in web/src/core/types.ts."""
+    display = obj.get("display")
+    if isinstance(display, dict) and (display.get("opacity") is not None
+                                      or display.get("colorMode") is not None):
+        return True
+    links = obj.get("linkedFiles")
+    for link in links if isinstance(links, list) else []:
+        if not isinstance(link, dict) or "timeOffset_s" not in link:
+            continue
+        offset = link["timeOffset_s"]
+        if offset is None:
+            continue
+        # The writer drops a numeric 0; a bool is not a number here, as in JS.
+        if not isinstance(offset, bool) and isinstance(offset, (int, float)) and offset == 0:
+            continue
+        return True
+    return False
 
 _TOP = ["format", "version", "meta", "units", "coordinateSystem", "environment", "objects"]
 _META = ["title", "testId", "author", "organization", "siteName", "created", "modified", "revision", "notes", "source"]
@@ -81,20 +134,35 @@ _VERSION_MIN = "1.0.0"
 _VERSION_LATEST = "1.4.0"
 
 
-def _version_tuple(version: str) -> Tuple[int, ...]:
-    """Three components, zero-padded, so comparison means the same thing here as in
-    the web writer.
+_JS_NUMERIC = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
 
-    Without the padding `("1", "0")` sorts below `(1, 0, 0)` and a plan declaring
-    "1.0" is rewritten to "1.0.0" by this engine while the web writer leaves it
-    alone -- a byte-parity crack, even if such a file is invalid to both validators.
-    Mirror of `compareVersions` in web/src/core/types.ts.
+
+def _js_version_part(part: str) -> float:
+    """One version component as `Number(part) || 0` reads it in JavaScript: a
+    decimal number, or 0 for anything else (NaN included)."""
+    text = part.strip()
+    if text == "":
+        return 0.0
+    if _JS_NUMERIC.match(text):
+        return float(text)
+    if text in ("Infinity", "+Infinity"):
+        return math.inf
+    if text == "-Infinity":
+        return -math.inf
+    return 0.0
+
+
+def _version_tuple(version: str) -> Tuple[float, ...]:
+    """Three components, zero-padded, compared exactly as the web writer does.
+
+    Mirror of `compareVersions` in web/src/core/types.ts, which reads each part with
+    `Number(part) || 0`. Without the padding `("1", "0")` sorts below `(1, 0, 0)`;
+    and a label with a non-numeric part ("1.5.0-rc1") used to collapse to nothing
+    here and be rewritten to the required version, while the web writer kept it --
+    a byte-parity crack either way.
     """
-    try:
-        parts = tuple(int(part) for part in str(version).split("."))
-    except (TypeError, ValueError):
-        return ()
-    return (parts + (0, 0, 0))[:3]
+    parts = tuple(_js_version_part(part) for part in str(version).split("."))
+    return (parts + (0.0, 0.0, 0.0))[:3]
 
 
 def required_version(data: Dict[str, Any]) -> str:
@@ -106,7 +174,7 @@ def required_version(data: Dict[str, Any]) -> str:
     `requiredFormatVersion` in web/src/core/types.ts.
     """
     objects = [o for o in data.get("objects", []) or [] if isinstance(o, dict)]
-    if any(o.get("type") in _TYPES_1_4 for o in objects):
+    if any(o.get("type") in _TYPES_1_4 or _uses_1_4_keys(o) for o in objects):
         return "1.4.0"
     if any("linkedFiles" in o for o in objects):
         return "1.3.0"
@@ -121,7 +189,7 @@ def required_version(data: Dict[str, Any]) -> str:
             needed = "1.1.0"
         elif kind == "camera":
             spec = obj.get("camera")
-            if isinstance(spec, dict) and spec.get("zoomFactor") is not None:
+            if isinstance(spec, dict) and not _zoom_is_default(spec.get("zoomFactor")):
                 needed = "1.1.0"
         elif kind == "burner":
             fire = obj.get("fire")
@@ -154,7 +222,7 @@ def _round_floats(value: Any) -> Any:
     if isinstance(value, bool):
         return value
     if isinstance(value, float):
-        return round(value, FLOAT_DECIMALS)
+        return _round_micro(value)
     if isinstance(value, dict):
         return {k: _round_floats(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -229,7 +297,11 @@ def _canon_object(obj: Dict[str, Any]) -> Dict[str, Any]:
         spec = _order(o["camera"], _CAMERA_SPEC)
         if isinstance(spec.get("distortion"), dict):
             spec["distortion"] = _order(spec["distortion"], _DISTORTION)
-        o["camera"] = _drop_null_1_1(spec, "zoomFactor")
+        spec = _drop_null_1_1(spec, "zoomFactor")
+        # 1x is the absence of a zoom; CONVENTIONS section 4 says omit it.
+        if "zoomFactor" in spec and _zoom_is_default(spec["zoomFactor"]):
+            spec.pop("zoomFactor")
+        o["camera"] = spec
         if "mount" in o:
             o["mount"] = _canon_sub(o["mount"], _MOUNT)
     elif kind == "burner":
@@ -328,6 +400,8 @@ def canonicalize(data: Dict[str, Any]) -> Dict[str, Any]:
 
 _INDENT = "  "
 _INF = float("inf")
+_MAX_SAFE_INTEGER = 2 ** 53
+_SURROGATE = re.compile("[\ud800-\udfff]")
 
 
 def _shortest_digits(value: float) -> Tuple[str, int]:
@@ -396,8 +470,17 @@ def _encode(value: Any, level: int) -> str:
     if value is False:
         return "false"
     if isinstance(value, str):
-        return json.dumps(value, ensure_ascii=False)
+        # A lone surrogate (from a "\ud800" escape) cannot be encoded as UTF-8, so
+        # the save used to fail outright. JSON.stringify writes it as an escape;
+        # so does this. Paired surrogates never reach here: json.loads joins them.
+        return _SURROGATE.sub(lambda m: "\\u{:04x}".format(ord(m.group())),
+                              json.dumps(value, ensure_ascii=False))
     if isinstance(value, int):  # after the bool checks: bool subclasses int
+        if abs(value) > _MAX_SAFE_INTEGER:
+            # JavaScript reads every number as a double, so the web writer can only
+            # write this integer's nearest double. Spell it the same way, or the
+            # two writers disagree about the bytes (CONVENTIONS section 6).
+            return _js_number(float(value))
         return int.__repr__(value)  # a subclass's own repr is not a JSON number
     if isinstance(value, float):
         return _js_number(value)

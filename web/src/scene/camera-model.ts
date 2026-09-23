@@ -57,3 +57,31 @@ export function isShown(node: THREE.Object3D, root: THREE.Object3D | null = null
 /** `hits` with everything that is not actually drawn taken out, order kept. */
 export const shownHits = <T extends { object: THREE.Object3D }>(hits: T[], root: THREE.Object3D): T[] =>
   hits.filter((hit) => isShown(hit.object, root));
+
+/** Lines and points: drawn marks with no surface, hit by distance, not by crossing. */
+export const isLineLike = (o: THREE.Object3D): boolean =>
+  (o as THREE.Line).isLine === true || (o as THREE.Points).isPoints === true;
+
+/**
+ * `hits` without the lines and points that are more than `px` screen pixels from
+ * the pointer, order kept. `pointer` is in pixels from the canvas's top-left and
+ * `size` is the canvas in the same pixels.
+ *
+ * Lines have no surface, so Three tests them against a distance in world units --
+ * 1 m unless told otherwise. A click on a bead selected the hood outline a metre
+ * away, and the ruler measured to a plume ring instead of the floor. The raycast is
+ * run with a generous world threshold, and this judges each line where the user
+ * does: on screen.
+ */
+export function nearLineHits<T extends { object: THREE.Object3D; point: THREE.Vector3 }>(
+  hits: T[], camera: THREE.Camera, pointer: { x: number; y: number },
+  size: { width: number; height: number }, px: number,
+): T[] {
+  return hits.filter((hit) => {
+    if (!isLineLike(hit.object)) return true;
+    const ndc = hit.point.clone().project(camera);
+    const x = ((ndc.x + 1) / 2) * size.width;
+    const y = ((1 - ndc.y) / 2) * size.height;
+    return Math.hypot(x - pointer.x, y - pointer.y) <= px;
+  });
+}

@@ -134,3 +134,27 @@ def test_open_errors_keep_their_message_over_http(result_folder, monkeypatch, tm
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_results_dir_outputs_named_by_the_smv_are_offered(tmp_path):
+    """FDS writes the .smv and CSVs beside the input, and with RESULTS_DIR every
+    binary output under that folder, named in the .smv with the prefix. The desktop
+    listed only the top level, so such a run opened with every field missing."""
+    out = tmp_path / 'out'
+    out.mkdir()
+    (out / 'case_1_1.sf').write_bytes(b'slice')
+    (out / 'case_1_2.bf').write_bytes(b'boundary')
+    (out / 'case_1_2.bf.bnd').write_text('0 1 2\n')
+    (out / 'unlisted.sf').write_bytes(b'not named by the smv')
+    (tmp_path / 'case_devc.csv').write_text('s,C\nTime,T\n0,20\n')
+    (tmp_path / 'case.smv').write_text(
+        'SLCF     1 # STRUCTURED &     0    5     0    5     0    5\n out/case_1_1.sf\nTEMPERATURE\ntemp\nC\n'
+        # RESULTS_DIR='out\' -- FDS appends '/', giving a doubled separator.
+        'BNDF     1     1\n out\/case_1_2.bf\nWALL TEMPERATURE\nwtemp\nC\n'
+        'SLCF     1\n ../escape.sf\nX\nx\nC\n', encoding='utf-8')
+    opened = ResultFiles().open(str(tmp_path / 'case.smv'))
+    names = {f['name'] for f in opened['files']}
+    assert names == {'case.smv', 'case_devc.csv', 'out/case_1_1.sf', 'out/case_1_2.bf', 'out/case_1_2.bf.bnd'}
+    files = ResultFiles()
+    token = files.open(str(tmp_path / 'case.smv'))['token']
+    assert files.read(token, 'out/case_1_2.bf', 0, 8) == b'boundary'

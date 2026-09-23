@@ -24,6 +24,7 @@ the feature:
 | Instrument/measurement colors | `core/visual.ts`, consumed by plan and results |
 | Plan object colors and camera modalities | `core/plan.ts`: `TYPE_COLORS`, `MODALITY_COLORS`, `objectColor` |
 | Results quantity families and symbols | `core/fds-devices.ts`, preserving the recorded quantity |
+| Results scalar colour scale | `scene/fds-results.ts`: the shader's `ramp`, and `resultRampRgb` for anything drawn outside it (the PNG colour bar); `.fds-results__ramp` shows the same five stops |
 | Playback controls and shortcuts | `ui/transport.ts`; speeds from `state/playhead.ts` |
 | Plot series, grid and cursor | `--plot-*` tokens in `styles.css` |
 

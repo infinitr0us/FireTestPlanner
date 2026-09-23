@@ -216,6 +216,65 @@ describe('canonical serialisation', () => {
   });
 });
 
+// -- review 2026-09-22: writer parity ------------------------------------------
+
+/** The same table is in python/tests/test_roundtrip.py. Ties at the 7th decimal
+ *  diverged between the two writers (FMT-1): 1/16 in was 0.001588 here and
+ *  0.001587 in Python. One rule now -- the exact binary value, ties away from zero. */
+export const ROUNDING_TIES: Array<[number, string]> = [
+  [0.0015875, '0.001587'], [0.0078125, '0.007813'], [5e-7, '0'], [1.0000015, '1.000001'],
+  [-0.0015875, '-0.001587'], [2.5e-6, '0.000003'], [0.1234565, '0.123456'],
+  [1091622763385650.9, '1091622763385650.9'], [0.3048, '0.3048'], [12, '12'], [-1e-7, '0'],
+];
+
+describe('writer parity with fireplan', () => {
+  const withCamera = (camera: Record<string, unknown>, extra: Record<string, unknown> = {}): PlanDocument => {
+    const doc = newPlan('parity');
+    doc.objects.push({ id: 'c', type: 'camera', transform: { position_m: [1, 0, 1] },
+      camera: { modality: 'RGB', resolution_px: [640, 480], sensor_mm: [6, 4.5], focalLength_mm: 4, ...camera },
+      ...extra } as never);
+    return doc;
+  };
+
+  it('rounds to 1 µm by the one rule both writers share', () => {
+    for (const [value, written] of ROUNDING_TIES) {
+      const doc = newPlan('ties');
+      doc.environment = { ...doc.environment, ambientTemperature_C: value };
+      expect(serializePlan(doc)).toContain(`"ambientTemperature_C": ${written}\n`);
+    }
+  });
+
+  it('refuses NaN and Infinity rather than writing null', () => {
+    const doc = newPlan('nan');
+    doc.objects.push({ id: 'u', type: 'futureThing', rate: Number.POSITIVE_INFINITY } as never);
+    expect(() => serializePlan(doc)).toThrow(/not JSON compliant/);
+  });
+
+  it('omits a 1x zoom and does not let it raise the version', () => {
+    for (const zoom of [1, 1.0000004]) {
+      const text = serializePlan(withCamera({ zoomFactor: zoom }));
+      expect(text).not.toContain('zoomFactor');
+      expect(text).toContain('"version": "1.0.0"');
+    }
+    expect(serializePlan(withCamera({ zoomFactor: 2 }))).toContain('"version": "1.1.0"');
+  });
+
+  it("declares 1.4.0 for 1.4's link and display keys on any object", () => {
+    // The 1.3 schema closes linkedFile and every earlier one closes display, so a
+    // file with either key written as 1.3.0 or 1.0.0 failed its own schema (FMT-4).
+    const offset = withCamera({}, { linkedFiles: [{ id: 'v', kind: 'video', path: 'a.mp4', timeOffset_s: 2.5 }] });
+    expect(serializePlan(offset)).toContain('"version": "1.4.0"');
+    const zero = withCamera({}, { linkedFiles: [{ id: 'v', kind: 'video', path: 'a.mp4', timeOffset_s: 0 }] });
+    expect(serializePlan(zero)).toContain('"version": "1.3.0"');
+    const opacity = withCamera({}, { display: { opacity: 0.5 } });
+    expect(serializePlan(opacity)).toContain('"version": "1.4.0"');
+  });
+
+  it('reads a plan that starts with a byte-order mark', () => {
+    expect(parsePlan(`﻿${FIXTURE_TEXT}`).format).toBe('fire-test-plan');
+  });
+});
+
 // -- frames ---------------------------------------------------------------
 
 describe('frame math', () => {
@@ -1081,9 +1140,30 @@ describe('unit parsing', () => {
   });
 
   it('rejects nonsense rather than storing NaN', () => {
-    for (const bad of ['', 'abc', '12 furlongs', '--3']) {
+    for (const bad of ['', 'abc', '12 furlongs', '--3', '.', '1.2.3']) {
       expect(parseLength(bad, 'm')).toBeNull();
     }
+  });
+
+  it('reads a decimal comma as one, and refuses a comma it cannot place (UI-4)', () => {
+    // Commas used to be deleted: "2,5" was stored as 25 m.
+    expect(parseLength('2,5', 'm')).toBeCloseTo(2.5, 9);
+    expect(parseLength('0,25', 'm')).toBeCloseTo(0.25, 9);
+    expect(parseLength('2,5', 'ft')).toBeCloseTo(0.762, 9);
+    expect(parseLength('2,5ft', 'm')).toBeCloseTo(0.762, 9);
+    // Grouping is still grouping where nothing else fits.
+    expect(parseLength('1,250.5mm', 'm')).toBeCloseTo(1.2505, 9);
+    expect(parseLength('12,500,000mm', 'm')).toBeCloseTo(12500, 9);
+    // 1250 or 1.25: not guessed.
+    for (const ambiguous of ['1,250', '1,250mm', '2,5,3', '1,25.5']) {
+      expect(parseLength(ambiguous, 'm')).toBeNull();
+    }
+  });
+
+  it('accepts a trailing decimal point', () => {
+    expect(parseLength('5.', 'm')).toBe(5);
+    expect(parseLength('5.ft', 'm')).toBeCloseTo(1.524, 9);
+    expect(parseLength(`5' 6."`, 'm')).toBeCloseTo(5 * 0.3048 + 6 * 0.0254, 9);
   });
 
   it('formats without trailing zeros', () => {

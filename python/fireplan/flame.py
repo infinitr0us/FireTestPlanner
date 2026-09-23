@@ -21,6 +21,7 @@ import math
 import os
 import re
 import struct
+import zipfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -72,19 +73,48 @@ def list_frames(folder: str) -> List[Tuple[float, str]]:
     return frames
 
 
+#: What a frame's arrays may hold: 4- or 8-byte floats or integers, either byte order.
+#: The editor reads exactly these (DTYPE_READERS in web/src/core/flame.ts), and
+#: np.load reads far more -- a frame only one engine could open was a plan the other
+#: refused (review 2026-09-22, FLM-5).
+_FRAME_DTYPES = {('f', 4), ('f', 8), ('i', 4), ('i', 8)}
+#: Stored or deflated, the two methods the editor's ZIP reader decompresses.
+_FRAME_COMPRESSION = {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
+
+
 def read_frame(path: str) -> Tuple[np.ndarray, float]:
-    """The `(M, 3)` voxel centres and the voxel size a frame file holds."""
+    """The `(M, 3)` voxel centres and the voxel size a frame file holds.
+
+    Every refusal names the file: in a folder of eighty frames, "not a ZIP archive"
+    on its own sends the user looking at all of them.
+    """
+    name = os.path.basename(path)
+    if not zipfile.is_zipfile(path):
+        raise ValueError('{}: not a ZIP archive (no end-of-central-directory record)'.format(name))
+    with zipfile.ZipFile(path) as archive:
+        for info in archive.infolist():
+            if info.compress_type not in _FRAME_COMPRESSION:
+                raise ValueError('{}: ZIP entry {} uses unsupported compression method {}'.format(
+                    name, info.filename, info.compress_type))
     with np.load(path) as data:
         if 'voxels' not in data or 'voxel_size' not in data:
-            raise ValueError('{}: not a reconstruction frame (needs voxels and voxel_size)'.format(os.path.basename(path)))
-        voxels = np.asarray(data['voxels'], dtype=np.float64)
-        voxel_size = float(data['voxel_size'])
+            raise ValueError('{}: not a reconstruction frame (needs voxels and voxel_size)'.format(name))
+        raw_voxels, raw_size = data['voxels'], data['voxel_size']
+    for label, array in (('voxels', raw_voxels), ('voxel_size', raw_size)):
+        if (array.dtype.kind, array.dtype.itemsize) not in _FRAME_DTYPES:
+            raise ValueError('{}: {} has dtype {}; expected a 4- or 8-byte float or integer'.format(
+                name, label, array.dtype.str))
+    if raw_size.size != 1:
+        raise ValueError('{}: voxel_size must be a positive number'.format(name))
+    voxels = np.asarray(raw_voxels, dtype=np.float64)
+    voxel_size = float(raw_size.reshape(-1)[0])
     if voxels.ndim != 2 or voxels.shape[1] != 3:
-        raise ValueError('{}: voxels must be an (M, 3) array, got shape {}'.format(os.path.basename(path), voxels.shape))
+        raise ValueError('{}: voxels must be an (M, 3) array, got shape ({})'.format(
+            name, ', '.join(str(n) for n in voxels.shape)))
     if not np.all(np.isfinite(voxels)):
-        raise ValueError('{}: voxel coordinates must be finite'.format(os.path.basename(path)))
+        raise ValueError('{}: voxel coordinates must be finite'.format(name))
     if not (math.isfinite(voxel_size) and voxel_size > 0):
-        raise ValueError('{}: voxel_size must be a positive number'.format(os.path.basename(path)))
+        raise ValueError('{}: voxel_size must be a positive number'.format(name))
     return voxels, voxel_size
 
 
@@ -101,6 +131,16 @@ def infer_pitch(voxels: np.ndarray) -> float:
     if not len(gaps):
         raise ValueError('cannot infer the lattice pitch: no two voxels share a row')
     return float(gaps.min())
+
+
+#: How close an inferred pitch has to be to the voxel size to BE it: an `arange`
+#: grid's smallest float gap lands a few ulps short. Mirror of PITCH_SNAP in flame.ts.
+PITCH_SNAP = 1e-4
+
+
+def snap_pitch(pitch: float, voxel_size: float) -> float:
+    """The pitch, snapped to the voxel size when the two are the same spacing."""
+    return voxel_size if abs(pitch - voxel_size) <= PITCH_SNAP * voxel_size else pitch
 
 
 def infer_resolution(pitch: float, voxel_size: float) -> Optional[int]:
@@ -207,6 +247,11 @@ def pack_frame(timestamp: float, voxels: np.ndarray, origin_m: Sequence[float], 
     idx = lattice_indices(voxels, origin_m, pitch)
     lo = idx.min(axis=0)
     dims = idx.max(axis=0) - lo + 1
+    # Refused where every frame is built, as the web reader does: the editor draws
+    # cells with 16-bit indices, and a longer axis wrapped. Same sentence as `pack`.
+    if int(dims.max()) > MAX_FRAME_DIM:
+        raise ValueError('frame at {} s spans {} cells on one axis; the packed form holds at most {}'.format(
+            _js_number(timestamp), int(dims.max()), MAX_FRAME_DIM))
     local = idx - lo
     flat = (local[:, 0] * dims[1] + local[:, 1]) * dims[2] + local[:, 2]
     cells = np.zeros(int(np.prod(dims)), dtype=bool)
@@ -234,6 +279,7 @@ class FlameSequence:
     def load(cls, folder: str) -> 'FlameSequence':
         listed = list_frames(folder)
         raw = [(t, *read_frame(path)) for t, path in listed]
+        names = {t: os.path.basename(path) for t, path in listed}
         sizes = {vs for _, _, vs in raw}
         if len(sizes) != 1:
             raise ValueError('frames disagree about voxel_size: {}'.format(sorted(sizes)))
@@ -242,7 +288,7 @@ class FlameSequence:
         if not populated:
             raise ValueError('every frame is empty; nothing to reconstruct a grid from')
         fullest = max(populated, key=lambda item: len(item[1]))[1]
-        pitch = infer_pitch(fullest)
+        pitch = snap_pitch(infer_pitch(fullest), voxel_size)
         lo = np.min([v.min(axis=0) for _, v in populated], axis=0)
         hi = np.max([v.max(axis=0) for _, v in populated], axis=0)
         bounds = np.array([lo, hi], dtype=np.float64)
@@ -251,8 +297,15 @@ class FlameSequence:
             try:
                 frames.append(pack_frame(t, v, lo, pitch))
             except ValueError as exc:
-                raise ValueError('t_{:09.1f}s.npz: {}'.format(t, exc)) from exc
-        return cls(voxel_size, pitch, infer_resolution(pitch, voxel_size), bounds, frames)
+                # The file's own name, not one rebuilt from the timestamp.
+                raise ValueError('{}: {}'.format(names[t], exc)) from exc
+        sequence = cls(voxel_size, pitch, infer_resolution(pitch, voxel_size), bounds, frames)
+        # The rules the editor's load boundary applies to a manifest: fireplan wrote
+        # manifests the editor then refused to open.
+        problem = sequence_problem(sequence.manifest('1970-01-01T00:00:00Z'))
+        if problem:
+            raise ValueError(problem)
+        return sequence
 
     @property
     def timestamps(self) -> np.ndarray:

@@ -9,7 +9,7 @@
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DEFAULT_RADIATIVE_FRACTION, plumeCentrelineRiseK, pointSourceFluxKwM2 } from './correlations';
 import { createHeatFluxSensor, createThermocouple } from './factory';
@@ -22,6 +22,7 @@ import {
   effectiveFocalLengthMm,
   firePointSourceM,
   flameRadiusAtZ,
+  framingOf,
   fuelSurfaceZM,
   fxOf,
   gaugeRangeKwM2,
@@ -49,6 +50,7 @@ import {
   vfovDegOf,
   zoomOf,
   checkPlan,
+  plotSequenceMismatch,
 } from './plan';
 import type { CameraPreset } from './presets';
 import {
@@ -60,9 +62,11 @@ import {
   deleteCustomPreset,
   findPreset,
   isCustomPreset,
+  keepPresetsForSession,
   presetFromCamera,
   presetIdFromLabel,
   presetsArePersistent,
+  reloadCustomPresets,
   resetCustomPresets,
   saveCustomPreset,
   specFromPreset,
@@ -1166,6 +1170,68 @@ describe('the camera preset library', () => {
     expect(presetsArePersistent()).toBe(false);
   });
 
+  it('gives every stored preset an id of its own (UI-8)', () => {
+    // A stored entry reusing a shipped id showed twice and offered "Delete preset"
+    // on the shipped one; two sharing an id could not be told apart.
+    const builtin = BUILTIN_CAMERA_PRESETS[0];
+    const entry = { label: 'Mine', resolution_px: [640, 480], sensor_mm: [7.68, 5.76], focalLength_mm: 18 };
+    adoptShellPresets([{ ...entry, id: builtin.id }, { ...entry, id: 'rig' }, { ...entry, id: 'rig' }], async () => true);
+    const ids = customCameraPresets().map((p) => p.id);
+    expect(ids).toEqual([`${builtin.id}-2`, 'rig', 'rig-2']);
+    expect(isCustomPreset(builtin.id)).toBe(false);
+    expect(new Set(cameraPresets().map((p) => p.id)).size).toBe(cameraPresets().length);
+  });
+
+  it('writes back the stored entries it could not use (UI-8)', () => {
+    const writes: unknown[][] = [];
+    const broken = { id: 'broken', label: 'Broken', resolution_px: [640, 480], sensor_mm: [7.68, 5.76], focalLength_mm: 'x' };
+    adoptShellPresets(
+      [{ id: 'kept', label: 'Kept', resolution_px: [640, 480], sensor_mm: [7.68, 5.76], focalLength_mm: 18 }, broken],
+      async (presets) => { writes.push(presets); return true; },
+    );
+    expect(customCameraPresets().map((p) => p.id)).toEqual(['kept']);
+    saveCustomPreset(presetFromCamera(camera(), 'My rig'));
+    expect((writes[0] as Array<{ id: string }>).map((p) => p.id)).toEqual(['kept', 'my-rig', 'broken']);
+    expect(writes[0][2]).toEqual(broken);
+  });
+
+  it('moves an unreadable stored library aside before replacing it (UI-8)', () => {
+    const items = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => items.get(k) ?? null,
+      setItem: (k: string, v: string) => { items.set(k, v); },
+      removeItem: (k: string) => { items.delete(k); },
+    });
+    try {
+      items.set('fire-test-plan.cameraPresets.v1', '[{"id": "half-writ');
+      reloadCustomPresets();
+      expect(customCameraPresets()).toEqual([]);
+      saveCustomPreset(presetFromCamera(camera(), 'My rig'));
+      expect(items.get('fire-test-plan.cameraPresets.v1.unreadable')).toBe('[{"id": "half-writ');
+      expect(JSON.parse(items.get('fire-test-plan.cameraPresets.v1')!).map((p: { id: string }) => p.id)).toEqual(['my-rig']);
+      expect(presetsArePersistent()).toBe(true);
+    } finally {
+      resetCustomPresets();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('says a desktop library the shell could not serve lasts the session only (UI-8)', () => {
+    // The desktop page's origin changes every launch, so browser storage there is
+    // not a place the library survives.
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} });
+    try {
+      keepPresetsForSession();
+      expect(presetsArePersistent()).toBe(false);
+      saveCustomPreset(presetFromCamera(camera(), 'My rig'));
+      expect(presetsArePersistent()).toBe(false);
+      expect(customCameraPresets()).toHaveLength(1);
+    } finally {
+      resetCustomPresets();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('places a camera whose intrinsics are inline, not a reference', () => {
     const preset = findPreset('flir-a700-24deg')!;
     const spec = specFromPreset(preset);
@@ -1215,5 +1281,102 @@ describe('instrument factories', () => {
     doc.objects.push(createHeatFluxSensor(doc));
     doc.objects.push(createHeatFluxSensor(doc));
     expect(doc.objects[1].id).not.toBe(doc.objects[2].id);
+  });
+});
+
+// -- review 2026-09-22: mirrored in python/tests/test_instruments.py -------------
+
+describe('review 2026-09-22 physics', () => {
+  const lit = (hrrKw: number, position: Vec3, id: string, footprint?: BurnerObject['footprint']): BurnerObject => ({
+    id, type: 'burner', transform: { position_m: position },
+    footprint: footprint ?? { shape: 'square', size_m: [0.3048, 0.3048] }, rimHeight_m: 0.1,
+    fire: { fuel: 'n-heptane', hrr_kw: hrrKw, hrrCurve: null },
+  });
+
+  it('judges a bead below the mean tip against flame temperature (PHY-3)', () => {
+    const doc = firePlan();
+    const burner = doc.objects[0] as BurnerObject;
+    const surface = fuelSurfaceZM(burner);
+    const z = surface + 0.95 * ((firePointSourceM(doc) as Vec3)[2] - surface) * 2;
+    const rake = addRake(doc, [0.015, 0, 0], [z], { tcType: 'T' });
+    const bead = thermocoupleBeads(doc, rake)[0];
+    expect([bead.region, bead.flameZone]).toEqual(['plume', true]);
+    expect(beadVerdict(bead, tcMaxTemperatureC(rake)).status).toBe('bad');
+    expect(instrumentChecks(doc).some((i) => i.code === 'tc-over-temperature')).toBe(true);
+  });
+
+  it("leaves fires outside a view tube's cone out of the sum (PHY-4)", () => {
+    const build = (withB: boolean): PlanDocument => {
+      const doc = firePlan(1000);
+      if (withB) doc.objects.push(lit(500, [0, 4, 0], 'burner-b'));
+      const aim = firePointSourceM(firePlan(1000)) as Vec3;
+      addGauge(doc, [-4, 0, aim[2]], { aim, viewAngle: 20, range: null });
+      return doc;
+    };
+    const alone = heatFluxEstimate(build(false), heatFluxSensors(build(false))[0])!;
+    const both = build(true);
+    expect(heatFluxEstimate(both, heatFluxSensors(both)[0])!.incidentKwM2).toBeCloseTo(alone.incidentKwM2, 9);
+    heatFluxSensors(both)[0].gauge!.range_kw_m2 = alone.incidentKwM2 * 1.1;
+    expect(instrumentChecks(both).map((i) => i.code)).not.toContain('gauge-over-range');
+  });
+
+  it('measures clearance from the fuel surface and skips a hood below the fire (PHY-7)', () => {
+    const doc = newPlan('stand');
+    doc.objects.push({ ...lit(5.7, [0, 0, 1.9], 'burner-main') } as BurnerObject);
+    doc.objects.push({ id: 'slab', type: 'ceiling', transform: { position_m: [0, 0, 0] },
+      polygon_m: [[-2, -2], [2, -2], [2, 2], [-2, 2]], height_m: 2.6 } as never);
+    doc.objects.push({ id: 'hood', type: 'hood', transform: { position_m: [0, 0, 0] },
+      opening_m: [2, 2], height_m: 1.5 } as never);
+    const found = checkPlan(doc).map((i) => i.code);
+    expect(found).not.toContain('ceiling-clearance');
+    expect(found).not.toContain('flame-impingement');
+    expect(found).not.toContain('hood-offset');
+  });
+
+  it('files hood-offset once per uncovered fire, not per hood (PHY-8)', () => {
+    const hood = (id: string, x: number) => ({ id, type: 'hood', transform: { position_m: [x, 0, 0] },
+      opening_m: [2, 2], height_m: 3 }) as never;
+    const doc = firePlan();
+    doc.objects.push(lit(130, [5, 0, 0], 'burner-2'), hood('hood-a', 0), hood('hood-b', 5));
+    expect(checkPlan(doc).filter((i) => i.code === 'hood-offset')).toEqual([]);
+    doc.objects = doc.objects.filter((o) => o.id !== 'hood-b');
+    const offsets = checkPlan(doc).filter((i) => i.code === 'hood-offset');
+    expect(offsets.map((i) => i.objectId)).toEqual(['hood-a']);
+  });
+
+  it('frames the flame at the pan, not only the plume cone (PHY-2)', () => {
+    const doc = newPlan('pool');
+    doc.objects.push(lit(2000, [0, 0, 0], 'pool', { shape: 'circle', diameter_m: 2.5 }));
+    (doc.objects[0] as BurnerObject).rimHeight_m = 0;
+    const cam = camera({ resolution_px: [500, 1000], sensor_mm: [5, 10], focalLength_mm: 10 });
+    cam.transform = { position_m: [-4, 0, 1], rotation_quat: lookAtQuat([-4, 0, 1], [0, 0, 1]) };
+    doc.objects.push(cam);
+    expect(framingOf(doc, cam)!.fraction).toBeLessThan(1);
+  });
+
+  it('does not depend on which way the room is drawn (PHY-5)', () => {
+    const fractions = [0, 15, 30, 45].map((deg) => {
+      const doc = firePlan();
+      const a = (deg * Math.PI) / 180;
+      const at: Vec3 = [-2.2 * Math.cos(a), -2.2 * Math.sin(a), 1.2];
+      const cam = camera({ resolution_px: [640, 480], sensor_mm: [10.88, 8.16], focalLength_mm: 24.6 });
+      cam.transform = { position_m: at, rotation_quat: lookAtQuat(at, [0, 0, 0.8]) };
+      doc.objects.push(cam);
+      return framingOf(doc, cam)!.fraction;
+    });
+    expect(new Set(fractions).size).toBe(1);
+  });
+
+  it('prints a gauge with no range as unjudged, not usable (EXP-1)', () => {
+    const doc = firePlan();
+    addGauge(doc, [1.2, 0, 0.3], { range: null });
+    expect(gaugeVerdict(doc, heatFluxSensors(doc)[0])).toEqual({ status: 'muted', label: 'no range set' });
+  });
+
+  it("matches a run's own CSV at small voxels and one-decimal frame names (FLM-2, FLM-3)", () => {
+    const manifest = { importedAt: 'x', grid: { voxelSize_m: 0.005, pitch_m: 0.005025, resolution: 200 },
+      bounds_m: [[0, 0, 0], [1, 1, 1]], frames: [[0.3, 1003]] } as never;
+    expect(plotSequenceMismatch([[0.30000000000000004, 0.000125, 0]], manifest)).toBeNull();
+    expect(plotSequenceMismatch([[0.4, 0.000125, 0]], manifest)).not.toBeNull();
   });
 });

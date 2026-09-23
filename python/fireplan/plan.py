@@ -100,6 +100,16 @@ class Issue:
         return "{}: {}{} -- {}".format(self.severity.upper(), self.code, where, self.message)
 
 
+def _refuse_constant(name: str):
+    """`json.loads` hook for NaN / Infinity / -Infinity, which are not JSON.
+
+    Python accepts them by default (and `json.dump` writes them by default), so a
+    plan carrying one loaded, passed `validate_schema()`, and failed only when
+    saved -- or reached the editor, which refuses the file outright.
+    """
+    raise PlanError("invalid JSON: {} is not a JSON number".format(name))
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -136,6 +146,12 @@ def _write_atomic(path: str, text: str) -> None:
         raise
 
 
+#: The reconstruction pipeline's volume rounding in `volumes.csv`: one microlitre.
+PLOT_VOLUME_ROUNDING_M3 = 1e-6
+#: Half the tenth of a second a frame file's name carries, and a hair more.
+FRAME_NAME_TIME_TOLERANCE_S = 0.05 + 1e-9
+
+
 def plot_sequence_mismatch(samples, manifest) -> Optional[str]:
     """Why a burner's CSV snapshot and a flame's manifest are not from one run, or None.
 
@@ -148,11 +164,15 @@ def plot_sequence_mismatch(samples, manifest) -> Optional[str]:
     if len(samples) != len(frames):
         return "has {} samples against {} frames".format(len(samples), len(frames))
     voxel_volume = float(manifest["grid"]["voxelSize_m"]) ** 3
+    # The CSV's volumes are rounded to a microlitre, which below a ~7.9 mm voxel is
+    # more than one voxel on its own; frame names carry a tenth of a second while
+    # the CSV keeps the full timestamp. Mirror of the web tolerances.
+    count_tolerance = 1 + PLOT_VOLUME_ROUNDING_M3 / 2 / voxel_volume
     for sample, frame in zip(samples, frames):
-        if sample[0] != frame[0]:
+        if abs(sample[0] - frame[0]) > FRAME_NAME_TIME_TOLERANCE_S:
             return "is sampled at {} s where the sequence has a frame at {} s".format(
                 _plain(sample[0]), _plain(frame[0]))
-        if abs(sample[1] / voxel_volume - frame[1]) > 1:
+        if abs(sample[1] / voxel_volume - frame[1]) > count_tolerance:
             return "records {} m\u00b3 at {} s where the frame holds {} voxels".format(
                 _plain(sample[1]), _plain(frame[0]), frame[1])
     return None
@@ -208,8 +228,12 @@ class Plan:
 
     @classmethod
     def loads(cls, text: str) -> "Plan":
+        # A byte-order mark from a Windows editor is not part of the JSON; a
+        # browser tab already drops it, and the editor's own parser now does too.
+        if text.startswith("﻿"):
+            text = text[1:]
         try:
-            return cls(json.loads(text))
+            return cls(json.loads(text, parse_constant=_refuse_constant))
         except json.JSONDecodeError as exc:
             raise PlanError("invalid JSON: {}".format(exc)) from exc
 
@@ -234,7 +258,7 @@ class Plan:
 
     @classmethod
     def load(cls, path) -> "Plan":
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, "r", encoding="utf-8-sig") as fh:
             plan = cls.loads(fh.read())
         plan.source_path = os.path.abspath(path)
         return plan
@@ -301,7 +325,10 @@ class Plan:
 
     @property
     def title(self) -> str:
-        return self.meta.get("title") or "Untitled fire test"
+        # Read without `self.meta`, which creates the block: a read is not an edit,
+        # and an inserted `"meta": {}` would change the bytes the plan saves as.
+        meta = self.data.get("meta")
+        return (meta.get("title") if isinstance(meta, dict) else None) or "Untitled fire test"
 
     @property
     def environment(self) -> Dict[str, Any]:
@@ -309,7 +336,8 @@ class Plan:
 
     @property
     def ambient_temperature_c(self) -> float:
-        t = self.environment.get("ambientTemperature_C")
+        env = self.data.get("environment")
+        t = env.get("ambientTemperature_C") if isinstance(env, dict) else None
         return 20.0 if t is None else float(t)
 
     @property
@@ -714,26 +742,44 @@ class Plan:
         fires = self.fire_burners
         many = len(fires) > 1
 
+        # A fire no hood covers is one finding, filed once, against the hood nearest
+        # to covering it -- not one per (hood, fire) pair, which filed an error for
+        # each hood standing over a different fire. Mirror of `hoodChecks`.
+        for burner in fires:
+            bp = burner.position
+            offsets = [(hood, hood.opening_offset(bp[0], bp[1])) for hood in hoods]
+            if any(off[2] <= 0.0 for _, off in offsets):
+                continue
+            nearest, off = offsets[0]
+            for hood, candidate in offsets[1:]:
+                if candidate[2] < off[2]:
+                    nearest, off = hood, candidate
+            several = len(hoods) > 1
+            issues.append(
+                Issue("error", "hood-offset",
+                      "{} the burner{} -- the burner centre is {:.2f} m outside {}, so no hood "
+                      "captures any of its plume".format(
+                          "no hood opening covers" if several else "the hood opening does not cover",
+                          _which_fire(burner, many), off[2],
+                          "the nearest opening" if several else "the opening"), nearest.id)
+            )
+
         for hood in hoods:
             intake = hood.intake_height_m
             for burner in fires:
                 flame_tip = burner.flame_tip_z_m()
+                surface = burner.fuel_surface_z_m
                 bp = burner.position
                 of = _which_fire(burner, many)
                 off_u, off_v, overhang = hood.opening_offset(bp[0], bp[1])
 
-                # Nothing else is meaningful about a hood that is not over the fire:
-                # the flame cannot reach a canopy beside it, and the plume it fails
-                # to capture is not a margin problem but a placement one.
-                if overhang > 0.0:
-                    issues.append(
-                        Issue("error", "hood-offset",
-                              "the hood opening does not cover the burner{} -- the burner centre "
-                              "is {:.2f} m outside the opening, so this hood captures none of its "
-                              "plume".format(of, overhang), hood.id)
-                    )
+                # Nothing else is meaningful about a hood that is not over the fire
+                # (filed above, once per fire), nor about one whose intake is at or
+                # below the fuel surface.
+                if overhang > 0.0 or intake <= surface:
                     continue
 
+                # Clearance on the flame's own height, from the fuel surface.
                 if flame_tip >= intake:
                     issues.append(
                         Issue("error", "flame-impingement",
@@ -741,7 +787,7 @@ class Plan:
                               "{:.2f} m -- flame in the canopy, not a free plume"
                               .format(of, flame_tip, intake), hood.id)
                     )
-                elif flame_tip > 0.8 * intake:
+                elif flame_tip - surface > 0.8 * (intake - surface):
                     issues.append(
                         Issue("warning", "flame-clearance",
                               "mean flame tip{} at {:.2f} m leaves only {:.2f} m below the hood "
@@ -817,7 +863,9 @@ class Plan:
                               "free-plume correlations no longer apply"
                               .format(of, tip, soffit), ceiling.id)
                     )
-                elif tip > 0.8 * soffit:
+                elif tip - burner.fuel_surface_z_m > 0.8 * (soffit - burner.fuel_surface_z_m):
+                    # From the fuel surface: how much of the gap above the fire the
+                    # flame fills. Mirror of `ceilingChecks`.
                     issues.append(
                         Issue("warning", "ceiling-clearance",
                               "mean flame tip{} at {:.2f} m leaves only {:.2f} m below the "
@@ -891,13 +939,19 @@ class Plan:
             )
             parts.append((burner, distance, cos_theta, off_axis, incident))
 
-        # The primary is first, so a tie -- and the one-burner case -- keeps it.
-        dominant = parts[0]
-        for part in parts[1:]:
+        # A view-limiting tube admits only the fires inside its acceptance cone, and
+        # the sum is over those alone; with no fire inside it the figures describe
+        # the strongest one outside. The primary is first, so a tie -- and the
+        # one-burner case -- keeps it. Mirror of `heatFluxEstimate`.
+        half_angle = sensor.view_angle_deg / 2.0
+        admitted = [part for part in parts if part[3] <= half_angle]
+        pool = admitted or parts
+        dominant = pool[0]
+        for part in pool[1:]:
             if part[4] > dominant[4]:
                 dominant = part
         burner, distance, _, off_axis, _ = dominant
-        incident = sum(part[4] for part in parts)
+        incident = float(sum(part[4] for part in admitted))
 
         return {
             "sensor_id": sensor.id,
@@ -905,7 +959,7 @@ class Plan:
             "off_axis_deg": off_axis,
             "incident_kw_m2": incident,
             "faces_fire": any(part[2] > 0.0 for part in parts),
-            "within_view_angle": off_axis <= sensor.view_angle_deg / 2.0,
+            "within_view_angle": bool(admitted),
             "near_field": distance < correlations.POINT_SOURCE_MIN_DIAMETERS * burner.diameter_m,
             "fraction_of_range": None if rng is None else incident / rng,
             "source_id": burner.id,
@@ -941,6 +995,10 @@ class Plan:
         ):
             region = "outside"
             gas_c = None
+            # Inside a plume envelope at or below that burner's mean tip: the
+            # flame's own height band, judged against flame temperature for
+            # survival. Mirror of `flameZone` in web/src/core/plan.ts.
+            flame_zone = False
             radial = radial_to(primary, world) if primary is not None else float("nan")
 
             # Every fire in the plan, flame beating plume: a bead inside one burner's
@@ -959,8 +1017,11 @@ class Plan:
                 # is called "flame".
                 if flame_r is not None and surface <= world[2] <= tip and r <= flame_r:
                     region, gas_c, radial = "flame", None, r
+                    flame_zone = False
                     break
                 if world[2] > surface and r <= burner.plume_radius_m(float(world[2])):
+                    if world[2] <= tip:
+                        flame_zone = True
                     here = None
                     if world[2] > tip:
                         rise = correlations.plume_centreline_rise_k(
@@ -982,6 +1043,7 @@ class Plan:
                 "radial_m": radial,
                 "region": region,
                 "gas_temperature_c": gas_c,
+                "flame_zone": flame_zone,
             })
         return out
 
@@ -1056,22 +1118,23 @@ class Plan:
             limit = rake.max_temperature_c
             tc_type = rake.tc_type
 
-            in_flame = [b for b in beads if b["region"] == "flame"]
+            in_flame = [b for b in beads if b["region"] == "flame" or b["flame_zone"]]
             if in_flame:
                 which = ("every bead" if len(in_flame) == len(beads)
                          else "{} of {} beads".format(len(in_flame), len(beads)))
+                sits = "sits" if len(in_flame) in (1, len(beads)) else "sit"
                 if limit < FLAME_TEMPERATURE_C:
                     issues.append(Issue(
                         "error", "tc-over-temperature",
-                        "{} sits inside the mean flame envelope, where gas is roughly {:.0f} C "
+                        "{} {} in the flame or below its mean tip, where gas is roughly {:.0f} C "
                         "-- past the {:.0f} C limit of a type {} thermocouple"
-                        .format(which, FLAME_TEMPERATURE_C, limit, tc_type), rake.id))
+                        .format(which, sits, FLAME_TEMPERATURE_C, limit, tc_type), rake.id))
                 else:
                     issues.append(Issue(
                         "warning", "tc-in-flame",
-                        "{} sits inside the mean flame envelope; expect intermittent flame "
+                        "{} {} in the flame or below its mean tip; expect intermittent flame "
                         "temperatures rather than a plume reading, and significant radiation "
-                        "error on a bare bead".format(which), rake.id))
+                        "error on a bare bead".format(which, sits), rake.id))
 
             temps = [b["gas_temperature_c"] for b in beads if b["gas_temperature_c"] is not None]
             if temps and max(temps) > limit:
@@ -1098,8 +1161,6 @@ class Plan:
         reports what falls inside the image. This is the question a test plan exists
         to answer: whether the gear, at that standoff, will see what it must.
         """
-        burner = self.burner
-        base_z = burner.fuel_surface_z_m
         result: Dict[str, Any] = {
             "camera_id": camera.id,
             "standoff_m": camera.standoff_m,
@@ -1108,11 +1169,22 @@ class Plan:
             "hfov_deg": camera.hfov_deg,
             "vfov_deg": camera.vfov_deg,
         }
+        try:
+            burner = self.burner
+        except PlanError:
+            # No burner: nothing to frame. The web engine answers null here; raising
+            # took down a notebook looping over cameras (review 2026-09-22, PHY-12).
+            result.update(flame_base_visible=None, flame_tip_visible=None,
+                          plume_fraction_visible=None)
+            return result
+        base_z = burner.fuel_surface_z_m
 
         _, base_visible = camera.project(np.array([burner.position[0], burner.position[1], base_z]))
         result["flame_base_visible"] = bool(base_visible)
 
-        if burner.hrr_kw is None:
+        # No flame to frame: no HRR, or a non-positive one, or a zero-area pan --
+        # exactly the burners `fire_burners` leaves out and `check()` treats as unlit.
+        if not any(lit.raw is burner.raw for lit in self.fire_burners):
             result["flame_tip_visible"] = None
             result["plume_fraction_visible"] = None
             return result
@@ -1122,15 +1194,22 @@ class Plan:
         result["flame_tip_visible"] = bool(tip_visible)
         result["flame_height_m"] = tip_z - base_z
 
-        # Ring of points around the plume at each sampled height, so a plume that
-        # overflows the frame sideways is caught as well as one that overflows the top.
+        # Ring of points around the drawn envelope at each sampled height -- the
+        # flame cone near the pan, where it is wider than the plume cone, and the
+        # plume above -- so a fire that overflows the frame sideways is caught as
+        # well as one that overflows the top. The four samples are toward, away
+        # from and either side of the camera, so the verdict does not depend on
+        # which way the room happens to be drawn. Mirror of `framingOf`.
+        bx, by = float(burner.position[0]), float(burner.position[1])
+        cx, cy = float(camera.position[0]), float(camera.position[1])
+        bearing = math.atan2(cy - by, cx - bx) if math.hypot(cx - bx, cy - by) > 1e-9 else 0.0
         pts = []
         for i in range(samples):
             z = base_z + (tip_z - base_z) * i / max(1, samples - 1)
-            r = burner.plume_radius_m(z)
-            for ang in (0.0, math.pi / 2, math.pi, 3 * math.pi / 2):
-                pts.append([burner.position[0] + r * math.cos(ang),
-                            burner.position[1] + r * math.sin(ang), z])
+            r = max(burner.plume_radius_m(z), burner.flame_radius_m(z) or 0.0)
+            for k in range(4):
+                ang = bearing + k * math.pi / 2
+                pts.append([bx + r * math.cos(ang), by + r * math.sin(ang), z])
         _, vis = camera.project(np.asarray(pts))
         result["plume_fraction_visible"] = float(np.mean(vis))
         return result
@@ -1162,8 +1241,12 @@ class Plan:
                 "h": h,
                 "fl_x": cam.fx,
                 "fl_y": cam.fy,
-                "cx": cx,
-                "cy": cy,
+                # nerfstudio measures pixels from the image corner -- a pixel's
+                # centre is at index + 0.5, as in COLMAP -- where this format uses the
+                # OpenCV convention of centres at integers (CONVENTIONS section 4).
+                # Without the shift every exported ray was half a pixel off.
+                "cx": cx + 0.5,
+                "cy": cy + 0.5,
                 # nerfstudio expects OpenGL-convention camera-to-world, which is
                 # exactly what the file stores -- no flip.
                 "transform_matrix": cam.extrinsics("opengl").tolist(),
@@ -1182,8 +1265,22 @@ class Plan:
         return out
 
     def equipment_table(self) -> List[Dict[str, Any]]:
-        """Flat rows for the equipment list in the exported drawing."""
+        """Flat rows for the equipment list in the exported drawing -- one per object,
+        in the order and with the meanings of the editor's report
+        (web/src/export/report.ts):
+
+        - ``standoff_m`` is the plan distance from the origin (the burner centre);
+          for a reconstructed flame, of its envelope's centre from its burner. None
+          for walls, ceilings and boxes, which have no single position to measure.
+        - ``height_m`` is above the floor: an instrument's lens or sensing face, a
+          rake's top bead, a burner's fuel surface, a hood's intake, a ceiling's
+          soffit, and the top of a wall, box or flame envelope.
+        """
         rows: List[Dict[str, Any]] = []
+
+        def plan_distance(p: Any) -> float:
+            return round(float(np.hypot(p[0], p[1])), 3)
+
         for cam in self.cameras.values():
             rows.append({
                 "id": cam.id,
@@ -1196,11 +1293,20 @@ class Plan:
                 "intrinsics": cam.intrinsics_source,
             })
         for b in self.burners:
+            # The fuel surface, not the burner's origin; the mean flame tip is named
+            # in the detail. The editor printed the tip in this column and fireplan the
+            # origin, both under "height" (review 2026-09-22, EXP-5/EXP-10).
+            detail = "{} D_eff {:.3f} m".format(b.shape, b.diameter_m)
+            q = b.hrr_kw
+            if q is not None and q > 0:
+                detail += ", {:g} kW".format(round(q, 2))
+                if b.diameter_m > 0:
+                    detail += ", mean flame tip {:.3f} m".format(b.flame_tip_z_m())
             rows.append({
                 "id": b.id, "name": b.name, "category": "burner",
-                "detail": "{} D_eff {:.3f} m".format(b.shape, b.diameter_m),
-                "standoff_m": round(float(np.linalg.norm(b.position)), 3),
-                "height_m": round(float(b.position[2]), 3),
+                "detail": detail,
+                "standoff_m": plan_distance(b.position),
+                "height_m": round(b.fuel_surface_z_m, 3),
                 "hfov_deg": None, "intrinsics": None,
             })
         for hd in self.hoods:
@@ -1208,15 +1314,17 @@ class Plan:
             rows.append({
                 "id": hd.id, "name": hd.name, "category": "hood",
                 "detail": "{:.2f} x {:.2f} m at {:.2f} m".format(*hd.opening_m, hd.opening_z_m),
-                "standoff_m": round(float(np.linalg.norm(hd.position)), 3),
+                "standoff_m": plan_distance(hd.position),
                 "height_m": round(hd.intake_height_m, 3),
                 "hfov_deg": None, "intrinsics": None,
             })
         for wl in self.walls:
+            # The top of the wall above the floor, base height included.
+            top = float(wl.position[2]) + wl.base_height_m + wl.height_m
             rows.append({
                 "id": wl.id, "name": wl.name, "category": "wall",
                 "detail": "{:.2f} m long, {:.2f} m high".format(wl.length_m, wl.height_m),
-                "standoff_m": None, "height_m": round(wl.height_m, 3),
+                "standoff_m": None, "height_m": round(top, 3),
                 "hfov_deg": None, "intrinsics": None,
             })
         for cl in self.ceilings:
@@ -1224,6 +1332,14 @@ class Plan:
                 "id": cl.id, "name": cl.name, "category": "ceiling",
                 "detail": "{:.1f} m2 slab, soffit at {:.2f} m".format(cl.area_m2, cl.soffit_z_m),
                 "standoff_m": None, "height_m": round(cl.soffit_z_m, 3),
+                "hfov_deg": None, "intrinsics": None,
+            })
+        for ob in self.obstructions:
+            dx, dy, dz = (float(v) for v in ob.size_m)
+            rows.append({
+                "id": ob.id, "name": ob.name, "category": "obstruction",
+                "detail": "{:.2f} x {:.2f} x {:.2f} m".format(dx, dy, dz),
+                "standoff_m": None, "height_m": round(ob.top_z_m, 3),
                 "hfov_deg": None, "intrinsics": None,
             })
         for hf in self.heat_flux_sensors:
@@ -1244,6 +1360,27 @@ class Plan:
                     tc.tc_type, len(heights), "s" if len(heights) != 1 else ""),
                 "standoff_m": round(float(np.linalg.norm(tc.position[:2])), 3),
                 "height_m": round(max(heights), 3),
+                "hfov_deg": None, "intrinsics": None,
+            })
+        for fl in self.reconstructed_flames:
+            manifest = fl.manifest
+            frames = (manifest or {}).get("frames") or []
+            if manifest and frames:
+                detail = "{} frames, {:g}-{:g} s, {:.1f} mm voxels".format(
+                    len(frames), frames[0][0], frames[-1][0], manifest["grid"]["pitch_m"] * 1000.0)
+            else:
+                detail = "no voxel folder linked"
+            corners = fl.bounds_corners()
+            burner = self.flame_burner(fl)
+            offset = None
+            if burner is not None and len(corners):
+                centre = corners.mean(axis=0)
+                offset = plan_distance(centre[:2] - burner.position[:2])
+            rows.append({
+                "id": fl.id, "name": fl.name, "category": "reconstructed flame",
+                "detail": detail,
+                "standoff_m": offset,
+                "height_m": round(float(corners[:, 2].max()), 3) if len(corners) else None,
                 "hfov_deg": None, "intrinsics": None,
             })
         return rows

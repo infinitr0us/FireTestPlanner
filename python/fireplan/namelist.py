@@ -37,9 +37,12 @@ records, and :mod:`fireplan.fds` decides what a record is for.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Sequence
+
+from ._text import JS_WS_CLASS, js_parse_int, js_trim
 
 __all__ = ["Record", "read", "read_one", "strip_comments", "NamelistError"]
 
@@ -80,11 +83,14 @@ class Record:
 
     def number(self, key: str, default: Optional[float] = None) -> Optional[float]:
         v = self.value(key)
-        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else default
+        # Finite only, as the web reader has it: IOR=1D400 is infinity, and int()
+        # of that raised OverflowError out of the importer.
+        return (float(v) if isinstance(v, (int, float)) and not isinstance(v, bool)
+                and math.isfinite(v) else default)
 
     def numbers(self, key: str) -> List[float]:
         return [float(v) for v in self.values(key)
-                if isinstance(v, (int, float)) and not isinstance(v, bool)]
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)]
 
     def string(self, key: str, default: Optional[str] = None) -> Optional[str]:
         v = self.value(key)
@@ -108,7 +114,7 @@ class Record:
 
 # -- 1. carving the text into records -------------------------------------
 
-_GROUP_NAME = re.compile(r"&([A-Za-z]\w*)")
+_GROUP_NAME = re.compile(r"&([A-Za-z][A-Za-z0-9_]*)")  # ASCII, as JavaScript's \w
 
 
 def strip_comments(text: str) -> str:
@@ -158,7 +164,7 @@ def _opens_a_record(scan: str, start: int, resume: int) -> bool:
     one's ``/`` on the same line.
     """
     line_start = scan.rfind("\n", 0, start) + 1
-    return not scan[max(line_start, resume):start].strip()
+    return not js_trim(scan[max(line_start, resume):start])
 
 
 def _record_spans(text: str) -> Iterator[tuple]:
@@ -243,23 +249,27 @@ def _mask_strings(body: str) -> str:
     return "".join(out)
 
 
-_ASSIGNMENT = re.compile(r"([A-Za-z_]\w*)\s*(\([^)]*\))?\s*=")
+# The character classes are JavaScript's, not Python's: `\w` and `\s` are
+# Unicode-aware here and ASCII / ECMAScript-whitespace there (see _text.py).
+_ASSIGNMENT = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)[" + JS_WS_CLASS + r"]*(\([^)]*\))?["
+                         + JS_WS_CLASS + r"]*=")
 
 #: One value: a quoted string, or a run of anything that is not a separator.
 #: Commas and whitespace are both separators -- see the module docstring.
-_VALUE = re.compile(r"""'(?:[^']|'')*'|"[^"]*"|[^,\s]+""")
+_VALUE = re.compile(r"""(?:[0-9]+\*)?'(?:[^']|'')*'|(?:[0-9]+\*)?"[^"]*"|[^,"""
+                    + JS_WS_CLASS + r"""]+""")
 
-_REPEAT = re.compile(r"^(\d+)\*(.*)$")
+_REPEAT = re.compile(r"^([0-9]+)\*(.*)$")
 _LOGICAL = re.compile(r"^\.(TRUE|FALSE|T|F)\.$", re.IGNORECASE)
 #: Fortran spells a double-precision exponent with D. `1.2D3` is `1.2e3`; the
 #: anchoring keeps it away from an unquoted word that merely contains a D.
-_FORTRAN_REAL = re.compile(r"^[-+]?(\d+\.?\d*|\.\d+)[dD][-+]?\d+$")
+_FORTRAN_REAL = re.compile(r"^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)[dD][-+]?[0-9]+$")
 
 
 #: A Fortran real, spelled out rather than left to `float()`. `float` accepts
 #: 'inf', 'nan' and '1_0'; JavaScript's `Number` does not, and a parser that is
 #: supposed to agree in both languages cannot differ on what counts as a number.
-_REAL = re.compile(r"^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$")
+_REAL = re.compile(r"^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$")
 
 
 def _scalar(token: str) -> Any:
@@ -280,6 +290,9 @@ def _parse_values(raw: str) -> List[Any]:
         repeat = _REPEAT.match(token)
         count, body = (int(repeat.group(1)), repeat.group(2)) if repeat else (1, token)
         if not body:
+            # Fortran's null repeat: n values left as they were, kept as holes so
+            # positional lists stay aligned. Mirror of namelist.ts.
+            out.extend([None] * count)
             continue
         out.extend([_scalar(body)] * count)
     return out
@@ -295,12 +308,11 @@ def _first_index(subscript: Optional[str]) -> Optional[int]:
     """
     if not subscript:
         return None
-    head = subscript.strip("()").split(",")[0].strip()
-    first = head.split(":")[0].strip()
-    try:
-        return int(first)
-    except ValueError:
-        return None
+    head = js_trim(subscript.replace("(", "").replace(")", "").split(",")[0])
+    first = js_trim(head.split(":")[0])
+    # Number.parseInt, as the web reader has it: '1_0' is 1 and a non-ASCII digit
+    # is not a digit, where Python's int() read 10 and any script's digits.
+    return js_parse_int(first)
 
 
 def _assign(params: Dict[str, List[Any]], key: str, subscript: Optional[str],
@@ -328,7 +340,8 @@ def _parse_params(body: str) -> Dict[str, List[Any]]:
     params: Dict[str, List[Any]] = {}
     for k, match in enumerate(hits):
         end = hits[k + 1].start() if k + 1 < len(hits) else len(body)
-        raw = body[match.end():end].strip().rstrip(",")
+        raw = js_trim(body[match.end():end])
+        raw = raw[:-1] if raw.endswith(",") else raw
         _assign(params, match.group(1).upper(), match.group(2), _parse_values(raw))
     return params
 
@@ -359,7 +372,7 @@ def read_one(text: str) -> Record:
     answer to a paste. A missing leading ``&`` is the mistake people actually make --
     it is how an FDS line gets commented out -- so it gets its own message.
     """
-    stripped = text.strip()
+    stripped = js_trim(text)
     if not stripped:
         raise NamelistError("nothing to read")
     records = read(stripped)

@@ -53,7 +53,9 @@ function fail(message: string): never {
   throw new Error(message);
 }
 export function safeResultPath(name: string): string {
-  const path = name.trim().replace(/\\/g, '/');
+  // Repeated separators collapse: FDS appends '/' to RESULTS_DIR, so `out\` in an
+  // input becomes `out\/x.sf` in the .smv. Mirror of `result_name` in fds_results.py.
+  const path = name.trim().replace(/\\/g, '/').replace(/\/+/g, '/');
   if (
     !path ||
     path.startsWith('/') ||
@@ -91,6 +93,16 @@ export function parseSmv(text: string): ResultCase {
   let offset: XYZ = [0, 0, 0];
   const warning = (s: string) => {
     if (!result.warnings.includes(s)) result.warnings.push(s);
+  };
+  // One output with an unusable path is skipped and named; it used to reject the
+  // whole case -- every other field, the devices and the CSVs with it.
+  const safePath = (name: string | undefined): string | null => {
+    try {
+      return safeResultPath(name ?? '');
+    } catch {
+      warning(`Skipped an output whose path cannot be read safely: ${(name ?? '').trim()}`);
+      return null;
+    }
   };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i],
@@ -159,14 +171,15 @@ export function parseSmv(text: string): ResultCase {
         result.devices.push({ id, quantity: quantity ?? '', position, orientation });
     } else if (tag === 'CSVF') {
       const kind = lines[++i],
-        file = safeResultPath(lines[++i]);
-      if (['hrr', 'devc'].includes(kind)) result.csv.push({ kind, file });
+        file = safePath(lines[++i]);
+      if (file !== null && ['hrr', 'devc'].includes(kind)) result.csv.push({ kind, file });
     } else if (['SLCF', 'SLCC', 'BNDF', 'BNDC', 'SMOKF3D'].includes(tag)) {
       const header = numbers(line.split(/[#!]/)[0].substring(tag.length));
-      const file = safeResultPath(lines[++i]),
+      const file = safePath(lines[++i]),
         quantity = lines[++i],
         shortName = lines[++i],
         unit = lines[++i];
+      if (file === null) continue;
       const kind = tag.startsWith('SL') ? 'slice' : tag.startsWith('BN') ? 'boundary' : 'smoke';
       if (kind === 'boundary' && header[1] !== 1) {
         warning('Only version 1 boundary files are supported.');
@@ -194,7 +207,7 @@ export function parseSmv(text: string): ResultCase {
         extinction: header[1],
         plane: line.match(/!\s*(\d+)/)?.[1],
       });
-    } else if (/^(ISOF|ISOG|PRT5|PL3D|GEOM|CGEOM|BNDE|BNDS|SLCFGEOM|SMOKG3D|SMOKF3D16)$/.test(tag)) {
+    } else if (/^(ISOF|ISOG|TISOF|TISOG|PRT5|PL3D|GEOM|CGEOM|BNDE|BNDS|SLCFGEOM|SLCT|SMOKG3D|SMOKF3D16)$/.test(tag)) {
       warning(`Unsupported output family: ${tag}`);
     } else if (/^(SHOW_OBST|HIDE_OBST|OPEN_VENT|CLOSE_VENT)$/.test(tag)) {
       geometryEvents++;
@@ -300,6 +313,9 @@ export function decodeRle(bytes: Uint8Array, count: number): Uint8Array {
 export class ResultReader {
   patches: ResultPatch[] = [];
   count = 0;
+  /** True when the file ends part-way through a frame -- a run stopped mid-write --
+   *  and only its complete frames are offered. */
+  incomplete = false;
   private start = 0;
   private stride = 0;
   private little = true;
@@ -341,8 +357,17 @@ export class ResultReader {
         this.smokeSizes.push(row[2]);
         pos += 36 + row[2];
       });
-      if (pos !== size) fail('Smoke file and .sz index disagree; incomplete or changed run.');
-      this.count = rows.length;
+      // The index can run ahead of the data when a run stopped mid-write: keep the
+      // frames the file holds in full. Data past the index is a changed run.
+      let complete = rows.length;
+      while (complete > 0 && this.smokeOffsets[complete - 1] + 36 + this.smokeSizes[complete - 1] > size) complete -= 1;
+      if (complete < rows.length) {
+        this.incomplete = true;
+        this.smokeOffsets.length = complete;
+        this.smokeSizes.length = complete;
+        for (let t = complete; t < rows.length; t += 1) this.times.delete(t);
+      } else if (pos !== size) fail('Smoke file and .sz index disagree; incomplete or changed run.');
+      this.count = complete;
     } else {
       for (const expected of [this.field.quantity, this.field.shortName, this.field.unit]) {
         const r = header.next(30);
@@ -373,8 +398,10 @@ export class ResultReader {
       }
       this.stride = 12 + this.patches.reduce((n, p) => n + p.count * 4 + 8, 0);
       if (this.stride > MAX_READ) fail('Frame exceeds the 64 MiB decoding limit.');
-      if ((size - this.start) % this.stride !== 0) fail(`Truncated output: ${this.field.file}`);
-      this.count = (size - this.start) / this.stride;
+      // A partial last record is a run stopped mid-write, not a corrupt file: the
+      // frames before it are whole, and hiding all of them hid the run.
+      this.count = Math.floor((size - this.start) / this.stride);
+      this.incomplete = (size - this.start) % this.stride !== 0;
     }
     for (const p of this.patches)
       for (let a = 0; a < 3; a++) {
@@ -431,7 +458,10 @@ export class ResultReader {
       this.little
     );
     const time = r.next(4).getFloat32(0, this.little);
-    if (Math.abs(time - (await this.time(index))) > 1e-3) fail('Frame time disagrees with the index.');
+    // The .sz index writes seven significant digits, so from 10,000 s its rounding
+    // alone exceeds a fixed millisecond; the tolerance scales with the time.
+    const indexed = await this.time(index);
+    if (Math.abs(time - indexed) > Math.max(1e-3, 1e-6 * Math.abs(indexed))) fail('Frame time disagrees with the index.');
     this.checkTime(index, time);
     let values: Float32Array | Uint8Array;
     if (smoke) {
@@ -463,7 +493,7 @@ export interface ResultSeries {
   times: number[];
   values: number[];
 }
-export function parseResultCsv(text: string): ResultSeries[] {
+export function parseResultCsv(text: string, warn: (message: string) => void = () => {}): ResultSeries[] {
   const rows = text
     .replace(/^\uFEFF/, '')
     .trim()
@@ -495,6 +525,12 @@ export function parseResultCsv(text: string): ResultSeries[] {
     .slice(1)
     .map((name, i) => ({ name, unit: units[i + 1], times: [] as number[], values: [] as number[] }));
   let previous = -Infinity;
+  const last = rows[rows.length - 1];
+  if (last && rows.length > 0 && (last.length !== names.length || !last[0] || !Number.isFinite(Number(last[0])))) {
+    // A run stopped mid-write leaves a half row; every earlier row is whole.
+    rows.pop();
+    warn('The last row is incomplete (the run stopped mid-write); it was left out.');
+  }
   for (const row of rows) {
     if (row.length !== names.length) fail('CSV row width disagrees with its header.');
     const time = Number(row[0]);

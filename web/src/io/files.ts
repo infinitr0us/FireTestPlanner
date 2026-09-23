@@ -52,7 +52,14 @@ export interface ShellBridge {
   ): Promise<SavedPlan | null>;
   saveHtml(html: string, suggestedName: string): Promise<string | null>;
   recentFiles(): Promise<string[]>;
+  /** A plan from the recent list. Rejects with the shell's reason otherwise. */
   openRecent(path: string): Promise<OpenedPlan | null>;
+  /** The page put the document `token` came with on screen: only now does the file
+   *  join the recent list and the window title. */
+  adopted(token: string): Promise<void>;
+  /** Unsaved changes on screen or not. The shell arms its close prompt from this,
+   *  because WebView2 does not run `beforeunload` when the window is closed. */
+  setDirty(dirty: boolean): Promise<void>;
   /** The user's camera preset library, kept in the shell's per-profile settings
    *  rather than in browser storage -- see `presets.ts` for why. */
   loadPresets(): Promise<unknown[]>;
@@ -151,9 +158,15 @@ export function connectShell(onReady: () => void): void {
     },
     saveHtml: (html, name) =>
       call<SaveResult>('/api/save-html', { html, name }).then((r) => unwrapSave(r)?.path ?? null),
-    recentFiles: () => call<string[]>('/api/recent').then((r) => r ?? []),
-    openRecent: (path) =>
-      call<{ path: string; text: string; token?: unknown } | null>('/api/open-recent', { path }).then(withToken),
+    recentFiles: () => call<string[]>('/api/recent').then((r) => (Array.isArray(r) ? r : [])),
+    openRecent: async (path) => {
+      const result = await call<{ path: string; text: string; token?: unknown; error?: string } | null>(
+        '/api/open-recent', { path });
+      if (result?.error) throw new Error(result.error);
+      return withToken(result);
+    },
+    adopted: async (token) => { await call('/api/adopted', { token }); },
+    setDirty: async (dirty) => { await call('/api/dirty', { dirty }); },
     loadPresets: () => call<unknown[]>('/api/presets').then((r) => (Array.isArray(r) ? r : [])),
     savePresets: (presets) =>
       call<{ saved?: boolean }>('/api/presets', { presets }).then((r) => Boolean(r?.saved)),
@@ -236,6 +249,21 @@ function download(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+/** The browser's File System Access save picker, where there is one (Chromium). */
+interface WritableFileHandle {
+  name: string;
+  createWritable(): Promise<{ write(data: string): Promise<void>; close(): Promise<void> }>;
+}
+type SavePicker = (options: {
+  suggestedName: string;
+  types: Array<{ description: string; accept: Record<string, string[]> }>;
+}) => Promise<WritableFileHandle>;
+
+/** Files a browser tab saved through the picker, by the token handed to the store,
+ *  so a plain Save writes back to the file chosen rather than asking again. */
+const browserHandles = new Map<string, WritableFileHandle>();
+let browserHandleCount = 0;
+
 export async function savePlanText(
   text: string,
   suggestedName: string,
@@ -243,9 +271,35 @@ export async function savePlanText(
   token: string | null = null,
 ): Promise<SavedPlan | null> {
   const bridge = shell();
-  // Only the desktop shell can distinguish the two: a browser download always
-  // goes through the browser's own destination handling.
   if (bridge) return bridge.savePlan(text, suggestedName, saveAs, token);
+  // A browser tab with the File System Access API gets a real save: the picker
+  // says whether the user chose a file or cancelled, and the write says whether it
+  // landed. A plain download reports neither, so treating it as saved cleared the
+  // unsaved-changes bullet -- and disarmed the close-tab warning -- even when the
+  // download's Save-As dialog had been cancelled.
+  const picker = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
+  if (typeof picker === 'function') {
+    let handle = !saveAs && token ? browserHandles.get(token) : undefined;
+    if (!handle) {
+      try {
+        handle = await picker({
+          suggestedName,
+          types: [{ description: 'Fire test plan', accept: { 'application/json': ['.json'] } }],
+        });
+      } catch (err) {
+        if ((err as DOMException)?.name === 'AbortError') return null;
+        throw err;
+      }
+    }
+    const writable = await handle.createWritable();
+    await writable.write(text);
+    await writable.close();
+    const issued = `browser:${++browserHandleCount}`;
+    browserHandles.set(issued, handle);
+    return { path: handle.name, token: issued };
+  }
+  // Elsewhere a download is all there is, and the browser does not say whether it
+  // happened; the plan is treated as saved, as it always has been.
   download(new Blob([text], { type: 'application/json' }), suggestedName);
   return { path: suggestedName, token: null };
 }
@@ -305,41 +359,65 @@ async function pickText(
 export const openFdsText = (): Promise<PickedText | null> =>
   pickText('.fds,text/plain', (b) => b.openFds(), 'model.fds');
 
-/** How deep `&CATF` includes are followed before the reader gives up. Mirrors
- *  `CATF_MAX_DEPTH` in python/fireplan/fds.py. */
-const CATF_MAX_DEPTH = 8;
-
 const includeIssue = (severity: Issue['severity'], code: string, message: string): Issue =>
   ({ severity, code, message });
 
 /**
- * `text` with every `&CATF` include spliced in **where it sits**.
+ * An included file as FDS copies it into the run (`COPY_FILE_TO_CAT`, read.f90):
+ * its `&HEAD` left out, and nothing past its first `&TAIL` or `&CATF`, where FDS
+ * stops copying that file. So a child's `&TAIL` ends the child, not the model --
+ * the parent carries on after its `&CATF` line -- and a child's own `&CATF` is
+ * never read: FDS does not follow nested includes. Mirror of `_as_included` in
+ * python/fireplan/fds.py.
+ */
+function asIncluded(child: string, name: string, issues: Issue[]): string {
+  const records = readNamelist(child);
+  const stop = records.find((r) => r.group === 'TAIL' || r.group === 'CATF');
+  const end = stop ? stop.start : child.length;
+  if (stop?.group === 'CATF') {
+    issues.push(includeIssue('info', 'fds-catf-nested',
+      `${name} includes further files with &CATF; FDS stops copying an included file at `
+      + 'its own &CATF line and never reads nested includes, so neither does this import'));
+  } else if (stop && /^[ \t]*&/m.test(child.slice(stop.end))) {
+    issues.push(includeIssue('info', 'fds-catf-tail',
+      `the included file ${name} has records after its &TAIL; FDS copies an included `
+      + 'file only up to its &TAIL, and so does this import'));
+  }
+  const pieces: string[] = [];
+  let pos = 0;
+  for (const rec of records) {
+    if (rec.start >= end) break;
+    if (rec.group !== 'HEAD') continue;
+    pieces.push(child.slice(pos, rec.start));
+    pos = rec.end;
+  }
+  pieces.push(child.slice(pos, end));
+  return pieces.join('');
+}
+
+/**
+ * `text` with every `&CATF` include spliced in **where it sits**, as FDS does.
  *
  * The position matters as much as the content. `&CATF` belongs in the body of the
  * input, before `&TAIL` -- that is where the official validation cases put it --
  * and reading stops at `&TAIL`, so a child appended after the parent's last line is
- * a child nobody reads. Mirror of `_read_source` in python/fireplan/fds.py, which
- * is why the record offsets exist on `NamelistRecord`.
+ * a child nobody reads. Each child goes through `asIncluded`. Mirror of
+ * `_read_source` in python/fireplan/fds.py, which is why the record offsets exist on
+ * `NamelistRecord`.
  *
  * Everything the splice could not do is an issue with the same code Python's reader
  * files, so the import preview names it whichever engine did the reading: a file
- * that is not there, a child that ends in `&TAIL` (which stops the reader there, so
- * the rest of the parent is never read), a file included twice, a file including
- * itself, and nesting past the depth limit. A silent splice is the failure the
- * whole `&CATF` path exists to avoid.
+ * that is not there, a file included twice, the input including itself, and a
+ * child's own includes or trailing records that FDS would not read either.
  */
 async function spliceIncludes(
   text: string, read: (name: string) => Promise<string | null>,
-  seen: Set<string>, stack: string[], depth: number,
-  unresolved: string[], issues: Issue[],
+  self: string | null, unresolved: string[], issues: Issue[],
 ): Promise<string> {
-  if (depth > CATF_MAX_DEPTH) {
-    issues.push(includeIssue('warning', 'fds-catf-deep',
-      `&CATF nesting stopped at ${CATF_MAX_DEPTH} levels deep`));
-    return text;
-  }
   const pieces: string[] = [];
   let pos = 0;
+  // Names compare case-blind: Windows, where these inputs live, does.
+  const seen = new Set<string>();
 
   for (const rec of readNamelist(text)) {
     if (rec.group !== 'CATF') continue;
@@ -347,16 +425,14 @@ async function spliceIncludes(
     for (const name of rec.strings('OTHER_FILES')) {
       if (!name) continue;
       const key = name.toLowerCase();
-      if (stack.includes(key)) {
+      if (self !== null && key === self.toLowerCase()) {
         issues.push(includeIssue('warning', 'fds-catf-cycle',
           `&CATF includes ${name} from inside itself; the repeat was skipped`));
         continue;
       }
       if (seen.has(key)) {
-        // Not a cycle: two files including one common file, which FDS would splice
-        // twice. Once is enough here -- the second copy could only redefine what
-        // the first already said -- but saying "cycle" would send the reader
-        // looking for a loop that is not there.
+        // Two &CATF names for one file, which FDS would splice twice. Once is
+        // enough here -- the second copy could only redefine what the first said.
         issues.push(includeIssue('info', 'fds-catf-repeat',
           `${name} is included more than once; it was read the first time`));
         continue;
@@ -371,14 +447,7 @@ async function spliceIncludes(
           + 'missing from this plan'));
         continue;
       }
-      if (readNamelist(child).some((r) => r.group === 'TAIL')) {
-        issues.push(includeIssue('warning', 'fds-catf-tail',
-          `the included file ${name} ends with &TAIL, which stops the reader there -- `
-          + 'anything after the &CATF line in the parent is not in this plan'));
-      }
-      // eslint-disable-next-line no-await-in-loop
-      included.push(await spliceIncludes(
-        child, read, seen, [...stack, key], depth + 1, unresolved, issues));
+      included.push(asIncluded(child, name, issues));
     }
     if (included.length > 0) {
       pieces.push(text.slice(pos, rec.end), `\n${included.join('\n')}\n`);
@@ -407,11 +476,11 @@ export interface SplicedFds {
  * to be the untested half.
  */
 export async function spliceFdsIncludes(
-  text: string, read: (name: string) => Promise<string | null>,
+  text: string, read: (name: string) => Promise<string | null>, self: string | null = null,
 ): Promise<SplicedFds> {
   const unresolved: string[] = [];
   const issues: Issue[] = [];
-  const spliced = await spliceIncludes(text, read, new Set<string>(), [], 0, unresolved, issues);
+  const spliced = await spliceIncludes(text, read, self, unresolved, issues);
   return { text: spliced, unresolved, issues };
 }
 
@@ -423,11 +492,11 @@ export async function spliceFdsIncludes(
  * is therefore missing rather than presenting a fraction of a model as a whole one.
  */
 export async function resolveFdsIncludes(
-  text: string,
+  text: string, self: string | null = null,
 ): Promise<SplicedFds & { resolved: boolean }> {
   const bridge = shell();
   if (!bridge) return { text, resolved: false, unresolved: [], issues: [] };
-  const spliced = await spliceFdsIncludes(text, (name) => bridge.readFdsInclude(name));
+  const spliced = await spliceFdsIncludes(text, (name) => bridge.readFdsInclude(name), self);
   return { ...spliced, resolved: true };
 }
 
@@ -468,11 +537,15 @@ export const embeddedFlameKey = (objectId: string, linkId: string): string => `$
 export function embedPlanInHtml(boot: string, planJson: string, title: string, flames: EmbeddedFlames = new Map()): string {
   // A shared viewer cannot use desktop directories. Keep only attachment names,
   // labels and snapshots, including for cross-drive, UNC and relative paths.
+  // Every object's links, not only the types this build knows: an object from a
+  // newer format carries its links the same way, and its directories are no more
+  // the recipient's business than a camera's.
   const shared = JSON.parse(planJson);
   for (const obj of shared.objects ?? []) {
-    if (!LINK_TYPES.includes(obj?.type) || !Array.isArray(obj.linkedFiles)) continue;
+    if (!Array.isArray(obj?.linkedFiles)) continue;
     for (const link of obj.linkedFiles) {
       if (typeof link?.path === 'string') link.path = fileName(link.path);
+      if (!LINK_TYPES.includes(obj.type)) continue;
       const payload = flames.get(embeddedFlameKey(String(obj.id), String(link?.id)));
       if (payload) link.embedded = payload;
     }
@@ -482,7 +555,11 @@ export function embedPlanInHtml(boot: string, planJson: string, title: string, f
     new RegExp(`(<script[^>]*id="${EMBED_ID}"[^>]*>)([\\s\\S]*?)(</script>)`, 'i'),
     (_m, open: string, _body: string, close: string) => `${open}\n${safe}\n${close}`,
   );
-  html = html.replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeHtml(title)}</title>`);
+  // A replacer function, not a replacement string: in a string `$'`, `` $` `` and
+  // `$&` splice parts of the page back in, so a title like "Budget $' test" copied
+  // the whole application into <title>.
+  const titleTag = `<title>${escapeHtml(title)}</title>`;
+  html = html.replace(/<title>[\s\S]*?<\/title>/i, () => titleTag);
   return html;
 }
 

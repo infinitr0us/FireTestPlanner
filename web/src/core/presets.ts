@@ -83,6 +83,25 @@ let custom: CameraPreset[] = [];
 let loaded = false;
 
 /**
+ * Stored entries `coerce` refused, kept verbatim and written back after the good
+ * ones. Dropping them from memory is right -- they must not reach the intrinsics
+ * maths -- but the next save used to write the library without them, so one bad
+ * field in a hand-edited file cost the user that preset for good.
+ */
+let refused: unknown[] = [];
+
+/** localStorage key a stored library that is not JSON at all is moved to, once,
+ *  before the first write replaces it. */
+const UNREADABLE_KEY = `${STORAGE_KEY}.unreadable`;
+
+/**
+ * Set when the desktop shell's store could not be reached. This page's origin
+ * carries a new loopback port on every launch, so browser storage there would keep
+ * the library only until the window closes -- while the UI said it would last.
+ */
+let sessionOnly = false;
+
+/**
  * Whether the LAST WRITE actually landed somewhere that survives a restart, or
  * null before there has been a write to observe.
  *
@@ -156,43 +175,77 @@ function coerce(raw: unknown): CameraPreset | null {
 export const presetGrade = (source: IntrinsicsSource): IntrinsicsSource =>
   (source === 'calibrated' ? 'datasheet' : source);
 
+/**
+ * Install a stored library: coerce each entry, keep the refused ones verbatim, and
+ * give each preset an id no other preset has.
+ *
+ * An id is how a placed camera names its preset and how Delete finds one. A stored
+ * entry reusing a shipped preset's id showed up twice in the palette and offered
+ * "Delete preset" on the shipped one; two entries sharing an id could not be told
+ * apart. The first keeps the id; a later one gets the next free `-2`, `-3`.
+ */
+function adopt(stored: unknown[]): void {
+  custom = [];
+  refused = [];
+  const taken = new Set(BUILTIN_CAMERA_PRESETS.map((p) => p.id));
+  for (const raw of stored) {
+    const preset = coerce(raw);
+    if (preset === null) {
+      refused.push(raw);
+      continue;
+    }
+    let id = preset.id;
+    for (let i = 2; taken.has(id); i += 1) id = `${preset.id}-${i}`;
+    taken.add(id);
+    custom.push({ ...preset, id });
+  }
+}
+
 function load(): void {
   if (loaded) return;
   loaded = true;
   const store = storage();
   if (!store) return;
+  let text: string | null = null;
   try {
-    const text = store.getItem(STORAGE_KEY);
+    text = store.getItem(STORAGE_KEY);
     if (!text) return;
     const parsed: unknown = JSON.parse(text);
-    if (Array.isArray(parsed)) {
-      custom = parsed.map(coerce).filter((p): p is CameraPreset => p !== null);
-    }
+    if (Array.isArray(parsed)) adopt(parsed);
+    else throw new Error('not a list');
   } catch {
-    // A corrupted entry is not worth refusing to start over. Leave it in place
-    // rather than clearing it -- the user may be able to recover it by hand.
+    // A corrupted library is not worth refusing to start over, and it is not ours
+    // to destroy: the next save would overwrite it, so it is moved aside first,
+    // where the user can still recover it by hand.
     custom = [];
+    refused = [];
+    try {
+      if (text !== null && store.getItem(UNREADABLE_KEY) === null) store.setItem(UNREADABLE_KEY, text);
+    } catch {
+      // Storage refused the copy as well; nothing more can be done from here.
+    }
   }
 }
 
 function persist(): void {
+  const stored: unknown[] = [...custom, ...refused];
   if (remote) {
     // Fire and forget: the library is already correct in memory and the next click
     // must not wait on a disk write. The ANSWER is kept, though — it is what the
     // UI is worded from.
-    void remote(custom as unknown[]).then(
+    void remote(stored).then(
       (ok) => { lastWriteDurable = ok; },
       () => { lastWriteDurable = false; },
     );
     return;
   }
-  const store = storage();
+  const store = sessionOnly ? null : storage();
   if (!store) {
     lastWriteDurable = false;
     return;
   }
   try {
-    store.setItem(STORAGE_KEY, JSON.stringify(custom));
+    store.setItem(STORAGE_KEY, JSON.stringify(stored));
     lastWriteDurable = true;
   } catch {
     // Quota exhausted or storage denied. The in-memory list still works for this
@@ -210,7 +263,18 @@ function persist(): void {
  * does this fall back to whether there is anywhere to write to at all.
  */
 export const presetsArePersistent = (): boolean =>
-  lastWriteDurable ?? (remote !== null || storage() !== null);
+  lastWriteDurable ?? (remote !== null || (!sessionOnly && storage() !== null));
+
+/**
+ * The desktop shell's store could not be reached: keep the library in memory for
+ * this session and say so, rather than write it to an origin the next launch will
+ * not have (see `sessionOnly`).
+ */
+export function keepPresetsForSession(): void {
+  remote = null;
+  sessionOnly = true;
+  lastWriteDurable = null;
+}
 
 /**
  * Take over preset storage from the desktop shell.
@@ -225,7 +289,8 @@ export function adoptShellPresets(
   save: (presets: unknown[]) => Promise<boolean>,
 ): void {
   remote = save;
-  custom = stored.map(coerce).filter((p): p is CameraPreset => p !== null);
+  sessionOnly = false;
+  adopt(stored);
   loaded = true;
   lastWriteDurable = null;
 }
@@ -291,15 +356,26 @@ export function deleteCustomPreset(id: string): boolean {
   return true;
 }
 
+/** Test seam: forget the in-memory library, so the next read loads storage again,
+ *  as a fresh page would. */
+export function reloadCustomPresets(): void {
+  custom = [];
+  refused = [];
+  loaded = false;
+}
+
 /** Test seam. Not used by the app, which never wants to drop a user's library. */
 export function resetCustomPresets(): void {
   custom = [];
+  refused = [];
   loaded = true;
   remote = null;
+  sessionOnly = false;
   lastWriteDurable = null;
   const store = storage();
   try {
     store?.removeItem(STORAGE_KEY);
+    store?.removeItem(UNREADABLE_KEY);
   } catch {
     // Nothing to undo; the in-memory list is already empty.
   }

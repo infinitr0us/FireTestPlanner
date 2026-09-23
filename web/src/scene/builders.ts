@@ -21,6 +21,7 @@ import {
   cameraColor,
   fuelSurfaceZM,
   gaugeViewAngleDeg,
+  hoodCanopyRiseM,
   imagePlaneExtents,
   plumeRadiusAtZ,
   positionOf,
@@ -85,7 +86,10 @@ function applyTransform(group: THREE.Group, obj: PlanObject): void {
   const p = positionOf(obj);
   group.position.set(p[0], p[1], p[2]);
   const q = quatOf(obj);
-  group.quaternion.set(q[0], q[1], q[2], q[3]);
+  // Normalised, as every frame helper in core/math.ts does: Three would otherwise
+  // draw a non-unit quaternion as a rotation with a scale and a shear, while the
+  // checks and drawings read the same object as a pure rotation.
+  group.quaternion.set(q[0], q[1], q[2], q[3]).normalize();
   group.userData.planId = obj.id;
   group.visible = obj.display?.visible !== false;
 }
@@ -135,7 +139,13 @@ export function buildBurner(b: BurnerObject, showFlame: boolean): THREE.Group {
           depthWrite: false,
         }),
       );
-      flame.position.z = rim + flameHeight / 2;
+      // From the fuel surface the checks use, not the top of the drawn pan: the pan
+      // is drawn at least 2 cm tall to stay visible, and starting the cone there
+      // drew a rimless burner's flame 2 cm above the one every check judges.
+      flame.position.z = rimHeightM(b) + flameHeight / 2;
+      // A correlation, not a surface: a click on it selects the burner, but the
+      // ruler looks through it to what is really there.
+      flame.userData.selectionOnly = true;
       group.add(flame);
 
       group.add(buildPlume(b, flameHeight));
@@ -236,7 +246,7 @@ export function buildHood(h: HoodObject): THREE.Group {
   // intake `hoodIntakeHeightM` reports is this plus the transform's Z.
   const intake = h.height_m - skirt;
   const ductD = h.duct?.diameter_m ?? Math.min(w, d) * 0.25;
-  const apexRise = Math.max(Math.min(w, d) * 0.45, 0.4);
+  const apexRise = hoodCanopyRiseM(h);
 
   const shellMaterial = new THREE.MeshStandardMaterial({
     color: COLORS.hood,
@@ -358,14 +368,40 @@ export function buildWall(wall: WallObject): THREE.Group {
       group.add(mesh);
     };
 
-    let cursor = 0;
-    for (const o of local) {
-      addBox(cursor, o.start, base, base + height);          // solid before
-      addBox(o.start, o.end, base, base + Math.min(o.sill, height));            // sill
-      addBox(o.start, o.end, base + Math.min(o.head, height), base + height);   // lintel
-      cursor = o.end;
+    // Each span between two opening edges is covered by the same openings all the
+    // way along, and the wall there is what their height bands leave. Cutting one
+    // opening at a time let overlapping openings -- a window beside a door, one
+    // running into the other -- build each other's sill and lintel back across the
+    // gap. Neighbouring spans with the same bands are joined into one box.
+    const cuts = [...new Set([0, segLen, ...local.flatMap((o) => [o.start, o.end])])].sort((a, b) => a - b);
+    let run: { from: number; to: number; solid: Array<[number, number]> } | null = null;
+    const flush = (): void => {
+      if (run) for (const [z0, z1] of run.solid) addBox(run.from, run.to, base + z0, base + z1);
+    };
+    for (let k = 0; k < cuts.length - 1; k += 1) {
+      const from = cuts[k];
+      const to = cuts[k + 1];
+      if (to - from <= 1e-9) continue;
+      const mid = (from + to) / 2;
+      const bands = local
+        .filter((o) => o.start <= mid && mid <= o.end)
+        .map((o) => [Math.max(0, o.sill), Math.min(height, o.head)] as [number, number])
+        .filter(([lo, hi]) => hi > lo)
+        .sort((a, b) => a[0] - b[0]);
+      const solid: Array<[number, number]> = [];
+      let z = 0;
+      for (const [lo, hi] of bands) {
+        if (lo > z) solid.push([z, lo]);
+        z = Math.max(z, hi);
+      }
+      if (z < height) solid.push([z, height]);
+      if (run && run.to === from && JSON.stringify(run.solid) === JSON.stringify(solid)) run.to = to;
+      else {
+        flush();
+        run = { from, to, solid };
+      }
     }
-    addBox(cursor, segLen, base, base + height);
+    flush();
 
     travelled += segLen;
   }
@@ -474,6 +510,59 @@ export function buildFlameProxy(f: ReconstructedFlameObject): THREE.Group {
 
 // -- ceiling --------------------------------------------------------------
 
+/** Even-odd test of a point against a polygon's outline. */
+function insidePolygon(poly: Array<[number, number]>, x: number, y: number): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i, i += 1) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Where a polygon's label goes: its area centroid when that is inside it, else the
+ * middle of the widest stretch of the horizontal line through the centroid. The
+ * vertex average used before put an L-shaped slab's label over the notch, off the
+ * slab it named.
+ */
+export function labelPoint(poly: Array<[number, number]>): [number, number] {
+  let area = 0;
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0; i < poly.length; i += 1) {
+    const [x0, y0] = poly[i];
+    const [x1, y1] = poly[(i + 1) % poly.length];
+    const cross = x0 * y1 - x1 * y0;
+    area += cross;
+    cx += (x0 + x1) * cross;
+    cy += (y0 + y1) * cross;
+  }
+  const centre: [number, number] = Math.abs(area) > 1e-12
+    ? [cx / (3 * area), cy / (3 * area)]
+    : [poly.reduce((s, p) => s + p[0], 0) / poly.length, poly.reduce((s, p) => s + p[1], 0) / poly.length];
+  if (insidePolygon(poly, centre[0], centre[1])) return centre;
+
+  const y = centre[1];
+  const xs: number[] = [];
+  for (let i = 0; i < poly.length; i += 1) {
+    const [x0, y0] = poly[i];
+    const [x1, y1] = poly[(i + 1) % poly.length];
+    if ((y0 > y) !== (y1 > y)) xs.push(x0 + ((y - y0) * (x1 - x0)) / (y1 - y0));
+  }
+  xs.sort((a, b) => a - b);
+  let best: [number, number] = centre;
+  let widest = 0;
+  for (let i = 0; i + 1 < xs.length; i += 2) {
+    if (xs[i + 1] - xs[i] > widest) {
+      widest = xs[i + 1] - xs[i];
+      best = [(xs[i] + xs[i + 1]) / 2, y];
+    }
+  }
+  return best;
+}
+
 /**
  * Slab extruded upward from its underside.
  *
@@ -524,12 +613,9 @@ export function buildCeiling(c: CeilingObject): THREE.Group {
   );
   group.add(outline);
 
-  const centroid = c.polygon_m.reduce(
-    (acc, [x, y]) => [acc[0] + x / c.polygon_m.length, acc[1] + y / c.polygon_m.length],
-    [0, 0],
-  );
+  const [lx, ly] = labelPoint(c.polygon_m);
   const label = makeLabel(displayName(c), 'object');
-  label.position.set(centroid[0], centroid[1], c.height_m + thickness + 0.15);
+  label.position.set(lx, ly, c.height_m + thickness + 0.15);
   group.add(label);
 
   // The whole slab, label included, on the ceiling layer: the editor's plan camera
@@ -748,8 +834,11 @@ export function buildCamera(c: CameraObject, showFrustum: boolean): THREE.Group 
 }
 
 function buildFrustum(c: CameraObject, color: THREE.Color): THREE.Object3D {
-  // Reach far enough to pass the fire without cluttering the scene.
-  const far = Math.min(Math.max(standoffM(c) * 1.35, 1.5), 12);
+  // Reach far enough to pass the fire without cluttering the scene: a third past
+  // it, but no more than 3 m past. A flat 12 m cap stopped the frustum short of the
+  // fire for any camera standing further back than that.
+  const standoff = standoffM(c);
+  const far = Math.max(Math.min(standoff * 1.35, standoff + 3), 1.5);
   // The image's own edges -- fx, fy and the principal point -- not a symmetric
   // pyramid from two fields of view. Non-square pixels and an off-centre principal
   // point both move these, and the framing verdict is computed from them.

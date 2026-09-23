@@ -127,8 +127,11 @@ export function flameActions(store: Store, flames: FlameStore, host: FlameAction
         if (bridge) {
           await flames.load(link, shellSource(bridge, link.path));
         } else {
+          const documentId = store.documentId;
           const files = await pickVoxelFolder();
-          if (!files.length) return;
+          // The picker is an await: a plan opened while it was up must not be handed
+          // this folder's frames under a link it happens to share.
+          if (!files.length || store.documentId !== documentId) return;
           await flames.load(link, filesSource(files));
         }
       } catch {

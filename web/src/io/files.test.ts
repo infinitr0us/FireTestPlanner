@@ -68,4 +68,22 @@ describe('embedding a plan in the shared viewer', () => {
     expect(html).toContain('<title>Bay 3 &lt;script&gt;x&lt;/script&gt;</title>');
     expect(html.match(/<\/script/gi)).toHaveLength(2);
   });
+
+  it('takes a title literally, dollar patterns included', () => {
+    // As a replacement string, `$'` spliced the rest of the page into <title>.
+    for (const title of ["Budget $' test", 'Cost $$5', 'A $& B', 'C $` D']) {
+      const html = embedPlanInHtml(BOOT, '{}', title);
+      expect(html).toContain(`<title>${title.replace(/&/g, '&amp;')}</title>`);
+      expect(html.match(/<script/gi)).toHaveLength(2);
+      expect(html.length).toBeLessThan(BOOT.length + title.length + 20);
+    }
+  });
+
+  it('strips directories from the links of object types this build does not know', () => {
+    const source = JSON.stringify({ objects: [{ id: 'f', type: 'futureThing',
+      linkedFiles: [{ id: 'a', kind: 'spreadsheet', path: 'C:/Users/alice/other/run.csv' }] }] });
+    const html = embedPlanInHtml(BOOT, source, 'T');
+    expect(JSON.parse(embedded(html)).objects[0].linkedFiles[0].path).toBe('run.csv');
+    expect(html).not.toContain('alice');
+  });
 });

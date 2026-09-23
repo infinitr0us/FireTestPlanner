@@ -11,9 +11,10 @@ import {
 } from '../core/fds-results';
 import { browserResultsSource, desktopResultsSource } from '../io/fds-results-source';
 import { openShellResults, saveResultPng, shell } from '../io/files';
-import { FdsResultScene } from '../scene/fds-results';
+import { FdsResultScene, resultRampRgb } from '../scene/fds-results';
 import { h } from './dom';
 import { deviceHistory } from '../core/fds-devices';
+import { rangeOf } from '../core/math';
 import { FdsDevicePanel } from './fds-devices';
 import { SPEEDS } from '../state/playhead';
 import { handleTransportKey, setTransportPlaying, transportButton } from './transport';
@@ -24,8 +25,23 @@ interface Dataset {
   fields: ResultField[];
 }
 const button = (text: string, action: () => void) => h('button', { type: 'button', onclick: action }, [text]);
+/** A time in seconds: up to three decimals, so nearby output frames stay distinct
+ *  (docs/visual-language.md, Playback). */
 const numeric = (n: number): string =>
   Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 3 }) : '—';
+/**
+ * A measured value: four significant figures, and exponent notation below 0.01 or
+ * from a million. Three fixed decimals printed a soot density of 3.1e-5 kg/m3 and a
+ * CO fraction of 4.2e-4 as "0 — 0" in the legend, the history axes and the PNG
+ * caption, while the scale boxes held the real numbers.
+ */
+export const measured = (n: number): string => {
+  if (!Number.isFinite(n)) return '—';
+  const abs = Math.abs(n);
+  if (abs === 0) return '0';
+  if (abs < 0.01 || abs >= 1e6) return n.toExponential(2).replace('e+', 'e');
+  return n.toLocaleString(undefined, { maximumSignificantDigits: 4 });
+};
 const pathOf = (f: File) => f.webkitRelativePath || f.name;
 
 /** A modal results workspace owns its own scene, clock and file session. It never
@@ -430,7 +446,11 @@ export class FdsResultsDialog {
       this.scene.devices.onPick = (devices) => this.devicePanel?.pick(devices);
       for (const csv of data.csv) {
         try {
-          const series = parseResultCsv(await resultText(source, csv.file));
+          const notes: string[] = [];
+          const series = parseResultCsv(await resultText(source, csv.file), (m) => notes.push(m));
+          if (epoch === this.epoch) {
+            for (const note of notes) warnings.append(h('p', { class: 'fds-results__warning' }, [`${csv.file}: ${note}`]));
+          }
           if (epoch !== this.epoch) return;
           this.series.push(...series);
           if (csv.kind === 'devc') this.deviceSeries.push(...series);
@@ -522,10 +542,14 @@ export class FdsResultsDialog {
       }
       this.readers = readers;
       const field = fields[0];
+      const partial = readers.filter((r) => r.incomplete).length;
       this.fieldNote.textContent =
         field.kind === 'smoke'
           ? 'Quantized 3D preview. Appearance controls do not change physical values. Use slices and wall fields for quantitative readings.'
           : `${field.unit} · ${field.cellCentered ? 'Cell-centered' : 'Node-centered'} · ${readers.length} mesh file(s). Separate mesh planes retain their recorded positions.`;
+      if (partial) {
+        this.fieldNote.textContent += ` ${partial} file(s) end part-way through a frame (a run stopped mid-write); their complete frames are shown.`;
+      }
       if (field.kind === 'boundary') {
         const skipped = readers.reduce(
           (n, reader) => n + reader.patches.filter((p) => p.obstruction === 0).length,
@@ -541,7 +565,7 @@ export class FdsResultsDialog {
         this.fieldNote.textContent +=
           field.fireCutoff === undefined
             ? ' No fire cutoff recorded.'
-            : ` Fire cutoff: ${numeric(field.fireCutoff)} kW/m³ (FDS 6.9.1 encoding).`;
+            : ` Fire cutoff: ${measured(field.fireCutoff)} kW/m³ (FDS 6.9.1 encoding).`;
       }
       this.autoScaleButton.disabled =
         this.rangeLow.disabled =
@@ -627,9 +651,7 @@ export class FdsResultsDialog {
         this.currentIndex = index;
         this.slider.value = String(index);
         this.stamp.textContent = `t = ${numeric(this.time)} s · frame ${index + 1}/${readers[0].count}`;
-        const times = entries.map((e) => e.frame.time),
-          min = Math.min(...times),
-          max = Math.max(...times);
+        const [min, max] = rangeOf(entries.map((e) => e.frame.time));
         this.setStatus(
           `${entries.length} mesh file(s) shown${missing ? ` · ${missing} outside time coverage` : ''}${max - min > 0.001 ? ` · sampled times ${numeric(min)}–${numeric(max)} s` : ''}`,
           missing || max - min > 0.001 ? 'warn' : 'info'
@@ -657,19 +679,28 @@ export class FdsResultsDialog {
         ? h('span', {}, ['3D appearance preview · 8-bit encoded output'])
         : h('div', {}, [
             h('div', { class: 'fds-results__ramp' }),
-            h('div', {}, [`${numeric(this.low)} — ${numeric(this.high)} ${field?.unit ?? ''}`]),
+            h('div', {}, [`${measured(this.low)} — ${measured(this.high)} ${field?.unit ?? ''}`]),
           ])
     );
   }
   private async autoScale(): Promise<void> {
-    if (this.busy || !this.readers.length || this.readers[0].field.kind === 'smoke') return;
+    if (!this.readers.length || this.readers[0].field.kind === 'smoke') return;
+    if (this.busy) {
+      // Said, not swallowed: the button looked broken while a frame was loading.
+      this.setStatus('A frame is still loading; choose Scale to this frame once it shows.', 'warn');
+      return;
+    }
     const epoch = this.epoch,
       request = this.frameRequest;
+    // The frame on screen now, read once: the loop below awaits, and reading the
+    // clock inside it mixed frames when playback moved on meanwhile.
+    const time = this.time,
+      current = this.currentIndex;
     try {
       let min = Infinity,
         max = -Infinity;
       for (const r of this.readers) {
-        const index = await r.nearest(this.time, this.currentIndex);
+        const index = await r.nearest(time, current);
         if (index === null) continue;
         const frame = await r.frame(index);
         for (const value of frame.values)
@@ -804,7 +835,7 @@ export class FdsResultsDialog {
     this.readout.textContent =
       this.time < start || this.time > end
         ? `${s.name}: outside recorded time coverage`
-        : `${s.name}: ${numeric(s.values[at])} ${s.unit} · sample at ${numeric(s.times[at])} s`;
+        : `${s.name}: ${measured(s.values[at])} ${s.unit} · sample at ${numeric(s.times[at])} s`;
     this.graph.setAttribute(
       'aria-label',
       `${s.name} history, ${s.unit}, ${numeric(start)} to ${numeric(end)} seconds`
@@ -814,8 +845,8 @@ export class FdsResultsDialog {
     const theme = this.theme;
     ctx.font = '20px ' + theme.font;
     ctx.fillStyle = theme.textDim;
-    ctx.fillText(numeric(max), 3, 22);
-    ctx.fillText(numeric(min), 3, height - 34);
+    ctx.fillText(measured(max), 3, 22);
+    ctx.fillText(measured(min), 3, height - 34);
     ctx.fillText(`${numeric(start)} s`, 62, height - 6);
     ctx.textAlign = 'right';
     ctx.fillText(`${numeric(end)} s`, w - 12, height - 6);
@@ -864,18 +895,33 @@ export class FdsResultsDialog {
     ctx.fillStyle = theme.text;
     ctx.font = '18px ' + theme.font;
     const field = this.readers[0]?.field;
+    // Which dataset and which meshes: a PNG is read away from the dialog that made it.
+    const dataset = this.datasets[Number(this.selection.value)]?.label;
+    const meshes = this.meshSelection.selectedOptions[0]?.textContent ?? '';
     ctx.fillText(
-      `${this.data?.chid} · ${field?.quantity ?? ''} · ${numeric(this.time)} s`,
+      [this.data?.chid, dataset ?? field?.quantity ?? '', meshes, `${numeric(this.time)} s`]
+        .filter(Boolean).join(' · '),
       16,
       view.height + 25
     );
-    ctx.fillText(
-      field?.kind === 'smoke'
-        ? 'Quantized 3D appearance preview'
-        : `${numeric(this.low)} – ${numeric(this.high)} ${field?.unit ?? ''}`,
-      16,
-      view.height + 51
-    );
+    if (field?.kind === 'smoke') {
+      ctx.fillText('Quantized 3D appearance preview', 16, view.height + 51);
+    } else {
+      // The colour scale itself, not only its end values: a scientific field keeps
+      // its quantity, unit and legend (docs/visual-language.md). Stops from the
+      // shader's own ramp, which the on-screen bar (.fds-results__ramp) also shows.
+      const low = measured(this.low);
+      const high = `${measured(this.high)} ${field?.unit ?? ''}`.trim();
+      const barX = 16 + ctx.measureText(low).width + 10;
+      const barWidth = Math.min(260, Math.max(80, canvas.width - barX - ctx.measureText(high).width - 40));
+      const ramp = ctx.createLinearGradient(barX, 0, barX + barWidth, 0);
+      for (let i = 0; i <= 8; i += 1) ramp.addColorStop(i / 8, `rgb(${resultRampRgb(i / 8).join(',')})`);
+      ctx.fillText(low, 16, view.height + 51);
+      ctx.fillStyle = ramp;
+      ctx.fillRect(barX, view.height + 38, barWidth, 16);
+      ctx.fillStyle = theme.text;
+      ctx.fillText(high, barX + barWidth + 10, view.height + 51);
+    }
     if (staticGeometry)
       ctx.fillText('Static geometry only; geometry events are not animated', 16, view.height + 77);
     try {

@@ -75,8 +75,10 @@ components are removed from linked paths in the exported copy, including paths o
 other drives or network shares. Relink originals to access them in the viewer. It
 does not bundle videos or workbooks. Names, labels and other plan text are retained;
 review those before sharing if they contain private information.
-No external file opens or refreshes automatically when a plan is loaded. Explicit
-Open, Show in folder, Refresh and Relink actions on network paths contact that host.
+No external file opens or refreshes automatically when a plan is loaded, and a
+reconstructed flame's frames are read on opening only from a local folder (see
+[flame playback](flame-playback.md)). Explicit Open, Show in folder, Refresh, Relink
+and Load frames actions on network paths contact that host.
 
 ## Python and the file format
 

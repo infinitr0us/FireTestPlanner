@@ -239,10 +239,10 @@ def test_pack_refuses_an_axis_the_u16_field_cannot_hold(tmp_path):
     """The same message as the editor's, rather than struct's; the editor used to
     wrap 65,536 to 0 silently."""
     write_frames(tmp_path, [synthetic(0, [[0, 0, 0], [1, 0, 0], [0, 0, 65535]])])
-    seq = FlameSequence.load(str(tmp_path))
-    assert seq.frames[0].dims == (2, 1, 65536)
+    # Refused as the folder is read, as the editor now refuses it (review 2026-09-22,
+    # FLM-7): its renderer addresses cells in 16 bits too.
     with pytest.raises(ValueError, match='spans 65536 cells on one axis; the packed form holds at most 65535'):
-        seq.pack()
+        FlameSequence.load(str(tmp_path))
     # The limit itself packs and reads back.
     write_frames(tmp_path, [synthetic(0, [[0, 0, 0], [1, 0, 0], [0, 0, 65534]])])
     limit = FlameSequence.load(str(tmp_path))
@@ -397,3 +397,38 @@ def test_shared_check_cases(flame_plan, case):
     for issue in plan.check():
         if issue.code.startswith('flame-'):
             assert issue.object_id == 'flame-main'
+
+
+# -- review 2026-09-22: mirrored in web/src/core/flame.test.ts -----------------
+
+_FORMAT_CASES = json.loads((FLAME / "format-cases.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("case", _FORMAT_CASES, ids=[c["file"] for c in _FORMAT_CASES])
+def test_frame_layouts_are_read_as_the_editor_reads_them(case):
+    """FLM-5: one set of accepted layouts, and the same refusals, in both engines."""
+    from fireplan.flame import read_frame
+    path = str(FLAME / "format-cases" / case["file"])
+    if "error" in case:
+        with pytest.raises(ValueError, match=case["error"]):
+            read_frame(path)
+        return
+    voxels, size = read_frame(path)
+    assert voxels.tolist() == case["voxels"] and size == case["voxelSize"]
+
+
+def test_a_grid_whose_pitch_is_its_voxel_size_loads_and_validates(tmp_path):
+    """FLM-1: an arange-built grid used to be refused by the editor while fireplan
+    wrote its manifest anyway."""
+    np.savez(str(tmp_path / "t_0000000.0s.npz"),
+             voxels=np.array([[i * 0.01, 0.0, 0.0] for i in range(4)]), voxel_size=0.01)
+    seq = FlameSequence.load(str(tmp_path))
+    assert seq.pitch == 0.01 and seq.resolution is None
+    from fireplan.linked_files import sequence_problem
+    assert sequence_problem(seq.manifest("2026-09-22T00:00:00Z")) is None
+
+
+def test_a_truncated_frame_is_named(tmp_path):
+    (tmp_path / "t_0000005.0s.npz").write_bytes(b"\x01\x02\x03")
+    with pytest.raises(ValueError, match=r"^t_0000005\.0s\.npz: not a ZIP archive"):
+        FlameSequence.load(str(tmp_path))

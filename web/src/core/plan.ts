@@ -102,7 +102,10 @@ export function newPlan(title = 'Untitled fire test'): PlanDocument {
 export function parsePlan(text: string): PlanDocument {
   let data: unknown;
   try {
-    data = JSON.parse(text);
+    // A byte-order mark from a Windows editor is not JSON. A picked file's
+    // `Blob.text()` drops it; text that came through the desktop shell or a paste
+    // did not, and the same file then opened in one path and not the other.
+    data = JSON.parse(text.replace(/^﻿/, ''));
   } catch (err) {
     throw new Error(`Invalid JSON: ${(err as Error).message}`);
   }
@@ -489,12 +492,24 @@ export function framingOf(d: PlanDocument, c: CameraObject, rings = 24): Framing
   const tipZ = flameTipZM(burner);
   if (tipZ === null) return null;
   const bp = positionOf(burner);
+  const cp = positionOf(c);
+  // The four samples per ring are taken relative to the camera -- toward it, away
+  // from it and the two sides -- not along the world axes. A world-axis ring was
+  // narrower to a camera standing at 45 degrees than to one on an axis, so the
+  // same camera read 92% or 100% depending only on which way the room was drawn.
+  const bearing = Math.hypot(cp[0] - bp[0], cp[1] - bp[1]) > 1e-9
+    ? Math.atan2(cp[1] - bp[1], cp[0] - bp[0]) : 0;
 
   const samples: Vec3[] = [];
   for (let i = 0; i < rings; i += 1) {
     const z = baseZ + ((tipZ - baseZ) * i) / (rings - 1);
-    const r = plumeRadiusAtZ(burner, z) ?? 0;
-    for (const a of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
+    // The drawn envelope: the flame cone near the pan, where it is wider than the
+    // 15-degree plume cone (which starts at the virtual origin), and the plume
+    // above. The plume alone put the base ring inside the pan, and a wide pool
+    // whose edges were cut off read as fully framed.
+    const r = Math.max(plumeRadiusAtZ(burner, z) ?? 0, flameRadiusAtZ(burner, z) ?? 0);
+    for (let k = 0; k < 4; k += 1) {
+      const a = bearing + (k * Math.PI) / 2;
       samples.push([bp[0] + r * Math.cos(a), bp[1] + r * Math.sin(a), z]);
     }
   }
@@ -607,12 +622,13 @@ export interface HeatFluxEstimate {
   distanceM: number;
   /** Angle between the gauge's outward normal and the line to that source. */
   offAxisDeg: number;
-  /** Predicted incident flux, kW/m2, summed over every fire in the plan. Zero when
-   *  the gauge faces away from all of them. */
+  /** Predicted incident flux, kW/m2, summed over every fire inside the gauge's
+   *  acceptance cone. Zero when it faces away from all of them, or its view tube
+   *  admits none. */
   incidentKwM2: number;
   /** True when at least one fire is in front of the sensing face. */
   facesFire: boolean;
-  /** False when `sourceId` falls outside a view-limiting tube's acceptance cone. */
+  /** False when no fire falls inside a view-limiting tube's acceptance cone. */
   withinViewAngle: boolean;
   /** True when `sourceId` is close enough that "point source" stops being true. */
   nearField: boolean;
@@ -685,16 +701,25 @@ export function heatFluxEstimate(
     });
   }
 
-  // The primary is first, so a tie -- and the one-burner case -- keeps it.
-  const dominant = parts.reduce((best, p) => (p.incident > best.incident ? p : best), parts[0]);
-  const incidentKwM2 = parts.reduce((sum, p) => sum + p.incident, 0);
+  // A view-limiting tube admits only what lies inside its acceptance cone. The sum
+  // is over those fires alone: a second fire 45 degrees off a +/-10 degree gauge
+  // does not reach the sensor, and adding it in filed a false over-range. With an
+  // open hemisphere (180 degrees) that is every fire in front of the face, exactly
+  // as before.
+  const halfAngle = gaugeViewAngleDeg(s) / 2;
+  const admitted = parts.filter((p) => p.offAxisDeg <= halfAngle);
+  // The primary is first, so a tie -- and the one-burner case -- keeps it. With no
+  // fire inside the cone, the figures still describe the strongest one outside it.
+  const pool = admitted.length > 0 ? admitted : parts;
+  const dominant = pool.reduce((best, p) => (p.incident > best.incident ? p : best), pool[0]);
+  const incidentKwM2 = admitted.reduce((sum, p) => sum + p.incident, 0);
 
   return {
     distanceM: dominant.distanceM,
     offAxisDeg: dominant.offAxisDeg,
     incidentKwM2,
     facesFire: parts.some((p) => p.cosTheta > 0),
-    withinViewAngle: dominant.offAxisDeg <= gaugeViewAngleDeg(s) / 2,
+    withinViewAngle: admitted.length > 0,
     nearField: dominant.distanceM < POINT_SOURCE_MIN_DIAMETERS * burnerDiameterM(dominant.burner),
     fractionOfRange: range === null ? null : incidentKwM2 / range,
     sourceId: dominant.burner.id,
@@ -737,6 +762,14 @@ export interface BeadState {
    *  first, else inside any burner's plume envelope, else outside them all. */
   region: 'flame' | 'plume' | 'outside';
   /**
+   * Inside a plume envelope at or below that burner's mean flame tip: the flame's
+   * own height band. The drawn cone tapers to a point at the mean tip, but the
+   * intermittent flame does not -- a bead 1.5 cm off the axis at 0.95 L_f is in
+   * flame much of the time. No plume temperature applies there, so the survival
+   * question is answered against flame temperature, as for a bead in the cone.
+   */
+  flameZone: boolean;
+  /**
    * Predicted gas temperature, degrees Celsius, or null where no correlation
    * applies. This is the PLUME CENTRELINE value: an upper bound for a bead that
    * is inside the envelope but off the axis.
@@ -765,6 +798,7 @@ export function thermocoupleBeads(d: PlanDocument, t: ThermocoupleObject): BeadS
 
     let region: BeadState['region'] = 'outside';
     let gasTemperatureC: number | null = null;
+    let flameZone = false;
     let radialM = primary ? radialTo(primary) : Number.NaN;
 
     // Every fire in the plan, flame beating plume: a bead inside one burner's flame
@@ -784,12 +818,14 @@ export function thermocoupleBeads(d: PlanDocument, t: ThermocoupleObject): BeadS
       if (world[2] >= surface && world[2] <= tipZ && flameR !== null && radial <= flameR) {
         region = 'flame';
         gasTemperatureC = null;
+        flameZone = false;
         radialM = radial;
         break;
       }
       if (world[2] > surface && plumeR !== null && radial <= plumeR) {
         // Above the mean tip only: inside the flame's own height the plume
         // correlation is not merely imprecise, it is the wrong correlation.
+        if (world[2] <= tipZ) flameZone = true;
         let here: number | null = null;
         if (world[2] > tipZ) {
           const rise = plumeCentrelineRiseK(
@@ -806,9 +842,13 @@ export function thermocoupleBeads(d: PlanDocument, t: ThermocoupleObject): BeadS
       }
     }
 
-    return { index, offsetM, world, radialM, region, gasTemperatureC };
+    return { index, offsetM, world, radialM, region, gasTemperatureC, flameZone };
   });
 }
+
+/** In the flame, or in its height band inside a plume: where a bead has to survive
+ *  flame temperature. `beadVerdict` and `instrumentChecks` both judge this. */
+export const beadAtFlameTemperature = (b: BeadState): boolean => b.region === 'flame' || b.flameZone;
 
 // -- hood -----------------------------------------------------------------
 
@@ -823,6 +863,15 @@ export function thermocoupleBeads(d: PlanDocument, t: ThermocoupleObject): BeadS
  * cleared a flame that was visibly inside the canopy.
  */
 export const hoodOpeningZM = (h: HoodObject): number => positionOf(h)[2] + h.height_m;
+
+/**
+ * How far the drawn canopy rises above the opening to its duct collar. A picture,
+ * not a dimension any check reads -- but the 3D view, Fit and the printed
+ * elevations all draw it, and a drawing that sized its page from one rise and drew
+ * another cut a wide hood's canopy off the top of the sheet.
+ */
+export const hoodCanopyRiseM = (h: HoodObject): number =>
+  Math.max(Math.min(h.opening_m[0], h.opening_m[1]) * 0.45, 0.4);
 
 /** Lowest plane that must capture the plume: opening, less any skirt. World space. */
 export const hoodIntakeHeightM = (h: HoodObject): number =>
@@ -928,30 +977,46 @@ export function hoodChecks(d: PlanDocument): Issue[] {
   const fires = fireBurners(d);
   const many = fires.length > 1;
 
+  // A fire no hood covers is one finding, filed once, against the hood nearest to
+  // covering it. Asking it of every (hood, fire) pair filed an error for each hood
+  // that stands over a different fire -- two fires under two hoods, both captured,
+  // read as two captures missed.
+  for (const burner of fires) {
+    const bp = positionOf(burner);
+    const offsets = allHoods.map((hood) => ({ hood, off: hoodOpeningOffset(hood, [bp[0], bp[1]]) }));
+    if (offsets.some((o) => o.off.inside)) continue;
+    const nearest = offsets.reduce((a, b) => (b.off.overhang < a.off.overhang ? b : a));
+    const of = whichFire(burner, many);
+    out.push(issue('error', 'hood-offset',
+      `${allHoods.length > 1 ? 'No hood opening covers' : 'The hood opening does not cover'} ` +
+      `the burner${of} — the burner centre is ${nearest.off.overhang.toFixed(2)} m outside ` +
+      `${allHoods.length > 1 ? 'the nearest opening' : 'the opening'}, so no hood captures ` +
+      `any of its plume.`, nearest.hood.id));
+  }
+
   for (const hood of allHoods) {
     const intake = hoodIntakeHeightM(hood);
     for (const burner of fires) {
       const tip = flameTipZM(burner)!;
+      const surface = fuelSurfaceZM(burner);
       const bp = positionOf(burner);
       const of = whichFire(burner, many);
       const off = hoodOpeningOffset(hood, [bp[0], bp[1]]);
 
       // Nothing else is meaningful about a hood that is not over the fire: the
       // flame cannot reach a canopy beside it, and the plume it fails to capture is
-      // not a margin problem but a placement one.
-      if (!off.inside) {
-        out.push(issue('error', 'hood-offset',
-          `The hood opening does not cover the burner${of} — the burner centre is ` +
-          `${off.overhang.toFixed(2)} m outside the opening, so this hood captures ` +
-          `none of its plume.`, hood.id));
-        continue;
-      }
+      // not a margin problem but a placement one (filed above, once per fire). Nor
+      // about one whose intake is at or below the fuel surface -- the ceiling check
+      // skips a slab below the fire for the same reason.
+      if (!off.inside || intake <= surface) continue;
 
+      // Clearance is judged on the flame's own height, from the fuel surface: a
+      // 12 cm flame on a 2 m stand is not "close to" a canopy 0.5 m above it.
       if (tip >= intake) {
         out.push(issue('error', 'flame-impingement',
           `Mean flame tip${of} reaches ${tip.toFixed(2)} m, at or above the hood intake at ` +
           `${intake.toFixed(2)} m — flame in the canopy, not a free plume.`, hood.id));
-      } else if (tip > 0.8 * intake) {
+      } else if (tip - surface > 0.8 * (intake - surface)) {
         out.push(issue('warning', 'flame-clearance',
           `Mean flame tip${of} at ${tip.toFixed(2)} m leaves only ${(intake - tip).toFixed(2)} m ` +
           `below the hood intake; an intermittent tip will reach higher.`, hood.id));
@@ -1007,9 +1072,10 @@ export function ceilingChecks(d: PlanDocument): Issue[] {
     const soffit = ceilingSoffitZM(slab);
     for (const burner of fires) {
       const tip = flameTipZM(burner)!;
+      const surface = fuelSurfaceZM(burner);
       const bp = positionOf(burner);
       const of = whichFire(burner, many);
-      if (soffit <= fuelSurfaceZM(burner)) continue;      // below the fire
+      if (soffit <= surface) continue;                     // below the fire
       if (!ceilingCoversXY(slab, bp[0], bp[1])) continue;  // off to one side
 
       if (tip >= soffit) {
@@ -1017,7 +1083,9 @@ export function ceilingChecks(d: PlanDocument): Issue[] {
           `Mean flame tip${of} reaches ${tip.toFixed(2)} m, at or above the ceiling soffit at ` +
           `${soffit.toFixed(2)} m — the fire will spread as a ceiling jet and the ` +
           `free-plume correlations no longer apply.`, slab.id));
-      } else if (tip > 0.8 * soffit) {
+      } else if (tip - surface > 0.8 * (soffit - surface)) {
+        // From the fuel surface, not the floor: the question is how much of the
+        // gap above the fire the flame fills.
         out.push(issue('warning', 'ceiling-clearance',
           `Mean flame tip${of} at ${tip.toFixed(2)} m leaves only ` +
           `${(soffit - tip).toFixed(2)} m below the ceiling; an intermittent tip ` +
@@ -1084,6 +1152,10 @@ export function gaugeVerdict(d: PlanDocument, s: HeatFluxSensorObject): Instrume
   // The number is still printed, but it is an order of magnitude. Green would say
   // "size the gauge on this", which is the one thing `gauge-near-field` forbids.
   if (e.nearField) return { status: 'warn', label: 'near field' };
+  // Without a range there is no over-range or low-signal verdict to have passed --
+  // every gauge an FDS import makes is like this, by design. Green "usable" said
+  // those checks had been made; neutral says they have not.
+  if (frac === null) return { status: 'muted', label: 'no range set' };
   return { status: 'ok', label: 'usable' };
 }
 
@@ -1091,10 +1163,11 @@ export function gaugeVerdict(d: PlanDocument, s: HeatFluxSensorObject): Instrume
  *  the flame has no plume temperature, and calling it "in the plume" was how the
  *  report described an over-temperature bead as if it were a good one. */
 export function beadVerdict(b: BeadState, limitC: number): InstrumentVerdict {
-  if (b.region === 'flame') {
+  if (beadAtFlameTemperature(b)) {
+    const where = b.region === 'flame' ? 'in the flame' : 'below the flame tip';
     return limitC < FLAME_TEMPERATURE_C
-      ? { status: 'bad', label: `in the flame, past the ${limitC} °C limit` }
-      : { status: 'warn', label: 'in the flame' };
+      ? { status: 'bad', label: `${where}, past the ${limitC} °C limit` }
+      : { status: 'warn', label: where };
   }
   if (b.region === 'plume') {
     return b.gasTemperatureC !== null && b.gasTemperatureC > limitC
@@ -1177,19 +1250,20 @@ export function instrumentChecks(d: PlanDocument): Issue[] {
     const limit = tcMaxTemperatureC(t);
     const type = tcTypeOf(t);
 
-    const inFlame = beads.filter((b) => b.region === 'flame');
+    const inFlame = beads.filter(beadAtFlameTemperature);
     if (inFlame.length > 0) {
       const which = inFlame.length === beads.length
         ? 'every bead'
         : `${inFlame.length} of ${beads.length} beads`;
+      const sits = inFlame.length === beads.length || inFlame.length === 1 ? 'sits' : 'sit';
       if (limit < FLAME_TEMPERATURE_C) {
         out.push(issue('error', 'tc-over-temperature',
-          `${which} sits inside the mean flame envelope, where gas is roughly ` +
+          `${which} ${sits} in the flame or below its mean tip, where gas is roughly ` +
           `${FLAME_TEMPERATURE_C} °C — past the ${limit} °C limit of a type ${type} ` +
           `thermocouple.`, t.id));
       } else {
         out.push(issue('warning', 'tc-in-flame',
-          `${which} sits inside the mean flame envelope. Expect intermittent flame ` +
+          `${which} ${sits} in the flame or below its mean tip. Expect intermittent flame ` +
           `temperatures rather than a plume reading, and significant radiation error on a ` +
           `bare bead.`, t.id));
       }
@@ -1381,6 +1455,11 @@ export function plotFollowsFlame(
   });
 }
 
+/** The reconstruction pipeline's volume rounding in `volumes.csv`: one microlitre. */
+export const PLOT_VOLUME_ROUNDING_M3 = 1e-6;
+/** Half the tenth of a second a frame file's name carries, and a hair more. */
+export const FRAME_NAME_TIME_TOLERANCE_S = 0.05 + 1e-9;
+
 /**
  * Why a burner's CSV snapshot and a flame's manifest are not from one run, or null.
  *
@@ -1394,10 +1473,18 @@ export function plotSequenceMismatch(
   const frames = manifest.frames;
   if (samples.length !== frames.length) return `has ${samples.length} samples against ${frames.length} frames`;
   const voxelVolume = manifest.grid.voxelSize_m ** 3;
+  // The pipeline writes volumes rounded to a microlitre (1e-6 m3). Below a voxel of
+  // about 7.9 mm that rounding alone is more than one voxel, and a tolerance of one
+  // voxel called the run's own CSV someone else's.
+  const countTolerance = 1 + PLOT_VOLUME_ROUNDING_M3 / 2 / voxelVolume;
   for (let i = 0; i < frames.length; i += 1) {
-    if (samples[i][0] !== frames[i][0]) return `is sampled at ${samples[i][0]} s where the sequence has a frame at ${frames[i][0]} s`;
+    // Frame names carry a tenth of a second (`t_{t:09.1f}s.npz`) while the CSV keeps
+    // the full timestamp, so 0.30000000000000004 s is the frame at 0.3 s.
+    if (Math.abs(samples[i][0] - frames[i][0]) > FRAME_NAME_TIME_TOLERANCE_S) {
+      return `is sampled at ${samples[i][0]} s where the sequence has a frame at ${frames[i][0]} s`;
+    }
     const count = samples[i][1] / voxelVolume;
-    if (Math.abs(count - frames[i][1]) > 1) return `records ${samples[i][1]} m³ at ${frames[i][0]} s where the frame holds ${frames[i][1]} voxels`;
+    if (Math.abs(count - frames[i][1]) > countTolerance) return `records ${samples[i][1]} m³ at ${frames[i][0]} s where the frame holds ${frames[i][1]} voxels`;
   }
   return null;
 }
@@ -1441,9 +1528,7 @@ export function boundsPoints(d: PlanDocument, opts: { ducts?: boolean } = {}): V
       const tip = flameTipZM(obj);
       if (tip !== null) pts.push([p[0], p[1], tip]);
     } else if (isHood(obj)) {
-      const opening = hoodOpeningZM(obj);
-      const [w, dd] = obj.opening_m;
-      const apex = opening + Math.max(Math.min(w, dd) * 0.45, 0.4);
+      const apex = hoodOpeningZM(obj) + hoodCanopyRiseM(obj);
       const top = opts.ducts && obj.duct ? apex + (obj.duct.length_m ?? 2) : apex;
       for (const [x, y] of hoodOpeningCornersXY(obj)) {
         pts.push([x, y, hoodIntakeHeightM(obj)], [x, y, top]);

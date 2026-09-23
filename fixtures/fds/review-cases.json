@@ -1,0 +1,65 @@
+[
+  {
+    "name": "a fire vent on an inert pan, no floor slab (FDSI-1)",
+    "text": "&HEAD CHID='pan' /\n&MESH IJK=10,10,10, XB=-2,2,-2,2,0,3 /\n&SURF ID='FIRE', HRRPUA=500. /\n&OBST XB=-0.5,0.5,-0.5,0.5,0,0.3 /\n&VENT XB=-0.5,0.5,-0.5,0.5,0.3,0.3, SURF_ID='FIRE' /\n&OBST XB=1.9,2.0,-2,2,0,2.5 /\n&DEVC ID='t1', XYZ=1,0,1.5, QUANTITY='THERMOCOUPLE' /\n&TAIL /\n",
+    "counts": {"burner": 1, "wall": 1, "thermocouple": 1},
+    "burnerHrrKw": 500, "burnerRimM": 0.3, "originZ": 0,
+    "sourceXyz": [["tc-t1", [1, 0, 1.5]]],
+    "absentCodes": ["fds-no-fire", "fds-burner-raised"]
+  },
+  {
+    "name": "the standard FDS burner, SURF_IDS on a pan (FDSI-2)",
+    "text": "&HEAD CHID='ids' /\n&MESH IJK=10,10,10, XB=-2,2,-2,2,0,3 /\n&SURF ID='BURNER', HRRPUA=500. /\n&OBST XB=-0.5,0.5,-0.5,0.5,0,0.3, SURF_IDS='BURNER','INERT','INERT' /\n&DEVC ID='t1', XYZ=1,0,1.5, QUANTITY='THERMOCOUPLE' /\n&TAIL /\n",
+    "counts": {"burner": 1, "thermocouple": 1},
+    "burnerHrrKw": 500, "burnerRimM": 0.3, "originZ": 0,
+    "sourceXyz": [["tc-t1", [1, 0, 1.5]]],
+    "absentCodes": ["fds-no-fire"]
+  },
+  {
+    "name": "a box burning on every face (FDSI-3)",
+    "text": "&HEAD CHID='box' /\n&MESH IJK=10,10,10, XB=-2,2,-2,2,0,3 /\n&SURF ID='FIRE', HRRPUA=100. /\n&OBST XB=-0.5,0.5,-0.5,0.5,0,1, SURF_ID='FIRE' /\n&TAIL /\n",
+    "counts": {"burner": 1},
+    "burnerHrrKw": 500, "burnerRimM": 1, "originZ": 0,
+    "codes": ["fds-burner-sides"]
+  },
+  {
+    "name": "MULT: sequential DXB with DX0 (FDSI-4a)",
+    "text": "&HEAD CHID='m1' /\n&MESH IJK=10,10,10, XB=-2,10,-2,2,0,3 /\n&SURF ID='FIRE', HRRPUA=500. /\n&OBST XB=-0.25,0.25,-0.25,0.25,0,0.1, SURF_ID6='INERT','INERT','INERT','INERT','INERT','FIRE' /\n&MULT ID='row', DXB=1,1,0,0,0,0, DX0=5, N_LOWER=0, N_UPPER=2 /\n&OBST ID='post', XB=0,0.5,1,1.5,0,1, MULT_ID='row' /\n&TAIL /\n",
+    "counts": {"burner": 1, "obstruction": 3},
+    "sourceXyz": [["obst-post", [5.25, 1.25, 0]], ["obst-post-2", [6.25, 1.25, 0]], ["obst-post-3", [7.25, 1.25, 0]]]
+  },
+  {
+    "name": "MULT: DX with N_UPPER is four copies (FDSI-4b)",
+    "text": "&HEAD CHID='m2' /\n&MESH IJK=10,10,10, XB=-2,10,-2,2,0,3 /\n&SURF ID='FIRE', HRRPUA=500. /\n&OBST XB=-0.25,0.25,-0.25,0.25,0,0.1, SURF_ID6='INERT','INERT','INERT','INERT','INERT','FIRE' /\n&MULT ID='row', DX=1, N_UPPER=3 /\n&OBST XB=0,0.5,1,1.5,0,1, MULT_ID='row' /\n&TAIL /\n",
+    "counts": {"burner": 1, "obstruction": 4}
+  },
+  {
+    "name": "MULT: a one-sided skip removes the rest of the axis (FDSI-4c)",
+    "text": "&HEAD CHID='m3' /\n&MESH IJK=10,10,10, XB=-2,10,-2,2,0,3 /\n&SURF ID='FIRE', HRRPUA=500. /\n&OBST XB=-0.25,0.25,-0.25,0.25,0,0.1, SURF_ID6='INERT','INERT','INERT','INERT','INERT','FIRE' /\n&MULT ID='row', DX=1, I_UPPER=5, I_LOWER_SKIP=3 /\n&OBST XB=0,0.5,1,1.5,0,1, MULT_ID='row' /\n&TAIL /\n",
+    "counts": {"burner": 1, "obstruction": 3}
+  },
+  {
+    "name": "MLRPUA with no heat of combustion is still the fire (FDSI-5)",
+    "text": "&HEAD CHID='mlr' /\n&MESH IJK=10,10,10, XB=-2,2,-2,2,0,3 /\n&REAC FUEL='HEPTANE' /\n&SURF ID='POOL', MLRPUA=0.05 /\n&VENT XB=-0.5,0.5,-0.5,0.5,0,0, SURF_ID='POOL' /\n&TAIL /\n",
+    "counts": {"burner": 1},
+    "burnerHrrKw": null,
+    "codes": ["fds-hrr-unknown"], "absentCodes": ["fds-no-fire"]
+  },
+  {
+    "name": "ids that used to collide (FDSI-6)",
+    "text": "&HEAD CHID='ids' /\n&MESH IJK=10,10,10, XB=-2,4,-2,2,0,3 /\n&SURF ID='FIRE', HRRPUA=500. /\n&OBST XB=-0.25,0.25,-0.25,0.25,0,0.1, SURF_ID6='INERT','INERT','INERT','INERT','INERT','FIRE' /\n&OBST XB=1,1.5,1,1.5,0,1 /\n&OBST ID='1', XB=2,2.5,1,1.5,0,1 /\n&MULT ID='two', DX=0.6, I_UPPER=1 /\n&OBST ID='Col', XB=1,1.5,-1.5,-1,0,1, MULT_ID='two' /\n&OBST ID='Col 2', XB=3,3.5,-1.5,-1,0,1 /\n&TAIL /\n",
+    "counts": {"burner": 1, "obstruction": 5},
+    "absentCodes": ["fds-invalid"]
+  },
+  {
+    "name": "a rake keeps the file's own XY (FDSI-7)",
+    "text": "&HEAD CHID='rake' /\n&MESH IJK=10,10,10, XB=-2,2,-2,2,0,3 /\n&SURF ID='FIRE', HRRPUA=500. /\n&OBST XB=-0.25,0.25,-0.25,0.25,0,0.1, SURF_ID6='INERT','INERT','INERT','INERT','INERT','FIRE' /\n&DEVC ID='TC1', XYZ=1.23456,0.98765,0.5, QUANTITY='THERMOCOUPLE' /\n&DEVC ID='TC2', XYZ=1.23456,0.98765,1.0, QUANTITY='THERMOCOUPLE' /\n&DEVC ID='TC3', XYZ=1.23456,0.98765,1.5, QUANTITY='THERMOCOUPLE' /\n&TAIL /\n",
+    "counts": {"burner": 1, "thermocouple": 1},
+    "sourceXyz": [["tc-tc1-tc3", [1.23456, 0.98765, 0.5]]]
+  },
+  {
+    "name": "FDS 6's current heat flux names are gauges (FDSI-14)",
+    "text": "&HEAD CHID='flux' /\n&MESH IJK=10,10,10, XB=-2,2,-2,2,0,3 /\n&SURF ID='FIRE', HRRPUA=500. /\n&OBST XB=-0.25,0.25,-0.25,0.25,0,0.1, SURF_ID6='INERT','INERT','INERT','INERT','INERT','FIRE' /\n&DEVC ID='TOT', XYZ=1.5,0,1, IOR=-1, QUANTITY='TOTAL HEAT FLUX' /\n&DEVC ID='GAS', XYZ=-1.5,0,1, ORIENTATION=1,0,0, QUANTITY='GAUGE HEAT FLUX GAS' /\n&TAIL /\n",
+    "counts": {"burner": 1, "heatFluxSensor": 2}
+  }
+]

@@ -7,6 +7,8 @@
  * declares -- see `requiredFormatVersion` at the foot of this module.
  */
 
+import { roundMicro } from './math';
+
 export const FORMAT = 'fire-test-plan';
 
 /**
@@ -433,6 +435,26 @@ export const maxVersion = (a: string, b: string): string =>
   compareVersions(a, b) >= 0 ? a : b;
 
 /**
+ * A zoom factor that means "no zoom": absent, null, or 1 once rounded to the
+ * writer's precision. Writers omit it (CONVENTIONS section 4), so it must not raise
+ * the declared version either. Mirror of `_zoom_is_default` in serialize.py.
+ */
+export const zoomIsDefault = (z: unknown): boolean =>
+  z === undefined || z === null || (typeof z === 'number' && roundMicro(z) === 1);
+
+/** The link keys and display keys format 1.4 introduced. The 1.3 schema closes
+ *  `linkedFile` and every earlier schema closes `display`, so either one present
+ *  makes a file that only a 1.4 reader accepts. `timeOffset_s` counts only when the
+ *  writer keeps it -- it drops null and 0. */
+const uses1_4Keys = (o: PlanObject): boolean => {
+  const display = o.display as Record<string, unknown> | undefined | null;
+  if (display && typeof display === 'object'
+      && ((display.opacity ?? null) !== null || (display.colorMode ?? null) !== null)) return true;
+  return Array.isArray(o.linkedFiles) && o.linkedFiles.some((l) =>
+    l && typeof l === 'object' && l.timeOffset_s !== undefined && l.timeOffset_s !== null && l.timeOffset_s !== 0);
+};
+
+/**
  * The lowest format version that can describe this document.
  *
  * A plan that uses nothing beyond 1.0 keeps saying "1.0.0", so it still opens --
@@ -441,14 +463,15 @@ export const maxVersion = (a: string, b: string): string =>
  * Mirror of `required_version` in python/fireplan/serialize.py.
  */
 export function requiredFormatVersion(doc: PlanDocument): string {
-  if (doc.objects?.some((o) => TYPES_1_4.includes(o.type))) return '1.4.0';
-  if (doc.objects?.some((o) => o.linkedFiles !== undefined)) return '1.3.0';
+  const objects = Array.isArray(doc.objects) ? doc.objects.filter((o) => o && typeof o === 'object') : [];
+  if (objects.some((o) => TYPES_1_4.includes(o.type) || uses1_4Keys(o))) return '1.4.0';
+  if (objects.some((o) => o.linkedFiles !== undefined)) return '1.3.0';
   let needed = '1.0.0';
-  for (const o of doc.objects ?? []) {
+  for (const o of objects) {
     // The highest tier there is; nothing later in the list can raise it further.
     if (TYPES_1_2.includes(o.type)) return '1.2.0';
     if (TYPES_1_1.includes(o.type)) needed = '1.1.0';
-    else if (isCamera(o) && o.camera?.zoomFactor != null) needed = '1.1.0';
+    else if (isCamera(o) && !zoomIsDefault(o.camera?.zoomFactor)) needed = '1.1.0';
     else if (isBurner(o) && o.fire?.radiativeFraction != null) needed = '1.1.0';
   }
   return needed;

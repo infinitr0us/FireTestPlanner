@@ -71,9 +71,16 @@ export class Store {
   revision = 0;
   /** True when there are unsaved edits. Drives the title bar and the close prompt. */
   dirty = false;
+  /**
+   * The document as it stands in its file, as `JSON.stringify` spells it, or null
+   * when no file holds it (a new plan, an import). Undo and redo compare against it,
+   * so stepping back to exactly what was saved clears the bullet again.
+   */
+  private savedText: string | null = null;
 
   constructor(doc?: PlanDocument) {
     this.doc = doc ?? newPlan();
+    this.savedText = JSON.stringify(this.doc);
   }
 
   /** Every mutation goes through here, so nothing can dirty the document without
@@ -95,8 +102,24 @@ export class Store {
     return () => this.listeners.delete(fn);
   }
 
+  /**
+   * Tell every listener, even when one throws.
+   *
+   * The panels, the scene and the title bar are separate listeners, and a throw in
+   * one used to skip every listener after it -- the scene kept drawing an object the
+   * document no longer had. The first error still propagates once all have run, so
+   * `replaceDocument` can put the previous document back.
+   */
   private emit(event: StoreEvent): void {
-    for (const fn of this.listeners) fn(event);
+    let failure: { error: unknown } | null = null;
+    for (const fn of this.listeners) {
+      try {
+        fn(event);
+      } catch (error) {
+        failure ??= { error };
+      }
+    }
+    if (failure) throw failure.error;
   }
 
   // -- document ----------------------------------------------------------
@@ -160,21 +183,33 @@ export class Store {
     const prev = this.undoStack.pop();
     if (prev === undefined) return;
     this.redoStack.push(JSON.stringify(this.doc));
-    this.doc = JSON.parse(prev) as PlanDocument;
-    this.pendingLabel = null;
-    this.pruneSelection();
-    this.touch();
-    this.emit('document');
+    this.restore(prev);
   }
 
   redo(): void {
     const next = this.redoStack.pop();
     if (next === undefined) return;
     this.undoStack.push(JSON.stringify(this.doc));
-    this.doc = JSON.parse(next) as PlanDocument;
+    this.restore(next);
+  }
+
+  /**
+   * Install a history snapshot.
+   *
+   * The display unit is a view preference kept out of history on purpose (see
+   * `setDisplayUnit`), but every snapshot carries it -- so undoing an edit made
+   * before a switch to feet used to switch the panels back to metres, and the next
+   * save wrote the reverted unit. The unit on screen is kept.
+   */
+  private restore(snapshot: string): void {
+    const length = this.doc.units.display?.length;
+    this.doc = JSON.parse(snapshot) as PlanDocument;
+    if (length !== undefined) this.doc.units.display = { ...(this.doc.units.display ?? {}), length };
     this.pendingLabel = null;
     this.pruneSelection();
     this.touch();
+    // Back at exactly what is in the file: nothing unsaved (review 2026-09-22, UI-11).
+    this.dirty = this.savedText === null || JSON.stringify(this.doc) !== this.savedText;
     this.emit('document');
   }
 
@@ -280,7 +315,7 @@ export class Store {
     const previous = {
       doc: this.doc, fileName: this.fileName, token: this.documentToken,
       undo: this.undoStack, redo: this.redoStack, pendingLabel: this.pendingLabel,
-      selectedIds: this.selectedIds, dirty: this.dirty,
+      selectedIds: this.selectedIds, dirty: this.dirty, savedText: this.savedText,
       documentId: this.documentId, revision: this.revision,
     };
     this.doc = doc;
@@ -291,6 +326,7 @@ export class Store {
     this.pendingLabel = null;
     this.selectedIds = [];
     this.dirty = false;
+    this.savedText = JSON.stringify(doc);
     this.documentId += 1;
     this.revision += 1;
     try {
@@ -305,6 +341,7 @@ export class Store {
       this.pendingLabel = previous.pendingLabel;
       this.selectedIds = previous.selectedIds;
       this.dirty = previous.dirty;
+      this.savedText = previous.savedText;
       this.documentId = previous.documentId;
       this.revision = previous.revision;
       this.emit('document');
@@ -345,6 +382,8 @@ export class Store {
    */
   markDirty(): void {
     this.touch();
+    // No file holds this document, so no undo can bring it back to one.
+    this.savedText = null;
     this.emit('dirty');
   }
 
@@ -362,7 +401,10 @@ export class Store {
     if (identity.documentId !== this.documentId) return;
     this.fileName = fileName;
     this.documentToken = token;
-    if (identity.revision === this.revision) this.dirty = false;
+    if (identity.revision === this.revision) {
+      this.dirty = false;
+      this.savedText = JSON.stringify(this.doc);
+    }
     this.emit('dirty');
   }
 }

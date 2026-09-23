@@ -78,6 +78,18 @@ export function resultSurface(mesh: ResultMesh, field: ResultField, patches: Res
   return { positions: new Float32Array(positions), indices: new Uint32Array(indices) };
 }
 
+/**
+ * The field colour scale at `t` in [0, 1], as 0-255 RGB: the fragment shader's
+ * `ramp` below, for what is drawn outside it -- the exported PNG's colour bar. One
+ * formula, so the bar cannot drift from the picture it explains.
+ */
+export function resultRampRgb(t: number): [number, number, number] {
+  const u = Math.min(1, Math.max(0, t));
+  const channel = (centre: number): number =>
+    Math.round(255 * Math.min(1, Math.max(0, 1.5 - Math.abs(4 * u - centre))));
+  return [channel(3), channel(2), channel(1)];
+}
+
 const scalarVertex = `attribute float scalar; attribute float valid;
 varying float value; varying float present; varying float worldZ;
 void main(){value=scalar; present=valid; worldZ=position.z; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
@@ -120,6 +132,23 @@ interface VolumeView {
   object: THREE.Mesh;
   texture: THREE.Data3DTexture;
   mask: Uint8Array;
+}
+
+/**
+ * Whether mesh coordinates are evenly spaced, within FDS's own rounding.
+ *
+ * Against the ideal grid, not neighbour against neighbour: FDS writes coordinates
+ * with five decimals, so a 1/30 m cell alternates 0.03333 / 0.03334 and the gaps
+ * differ by exactly 1e-5 -- every such ordinary mesh was refused a smoke preview. A
+ * stretched grid misses the ideal by far more than the rounding.
+ */
+export function uniformSpacing(c: ArrayLike<number>): boolean {
+  const n = c.length - 1;
+  if (n < 1) return true;
+  const step = (c[n] - c[0]) / n;
+  const tolerance = Math.max(2e-5, 1e-3 * Math.abs(step));
+  for (let i = 0; i <= n; i += 1) if (Math.abs(c[i] - (c[0] + i * step)) > tolerance) return false;
+  return true;
 }
 
 export class FdsResultScene {
@@ -316,10 +345,12 @@ export class FdsResultScene {
     if (!view) {
       const b = frame.patches[0].bounds;
       const dims = [0, 1, 2].map((a) => b[2 * a + 1] - b[2 * a] + 1);
+      // Uniform against the ideal grid, not neighbour against neighbour: FDS writes
+      // coordinates with five decimals, so a 1/30 m cell alternates 0.03333 / 0.03334
+      // and the gaps differ by exactly 1e-5 -- every such ordinary mesh was refused.
+      // A stretched grid misses the ideal by far more than the rounding.
       for (let a = 0; a < 3; a++) {
-        const c = mesh.coordinates[a],
-          step = c[1] - c[0];
-        if (c.some((v, i) => i > 0 && Math.abs(v - c[i - 1] - step) > 1e-5))
+        if (!uniformSpacing(mesh.coordinates[a]))
           throw new Error('Smoke volume preview requires uniform spacing within each mesh.');
       }
       if (

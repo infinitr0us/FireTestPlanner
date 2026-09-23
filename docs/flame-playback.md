@@ -100,8 +100,10 @@ checks or the instrument verdicts.
 The plan stores a reference and a manifest, never the voxels: the folder's path
 (relative to the plan when possible, like every link), the grid, the bounds and
 one `[timestamp, voxel count]` per frame. The desktop app reads the frames when
-the plan opens. A browser tab keeps the folder's name and asks for the folder again
-after reopening (**Load frames…**).
+the plan opens, except from a network share (a `\\server\share` path): opening a
+plan does not contact another machine, so those frames wait for **Load frames**. A
+browser tab keeps the folder's name and asks for the folder again after reopening
+(**Load frames…**).
 
 **Share…** embeds the loaded frames in the exported page, packed and compressed —
 the example is 49 KB — up to 25 MB; over that, the page is exported without them

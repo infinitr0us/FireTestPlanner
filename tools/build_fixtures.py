@@ -127,10 +127,10 @@ def build_camera_row() -> Plan:
             "so each camera's radial standoff is a little over 9 ft. "
             "Note the framing consequence: NEITHER IR camera frames the 1.30 m flame at "
             "9 ft, though they miss by different amounts. The T650's 18.8 degree vertical "
-            "field clips the flame base by 131 mm and the tip by 209 mm, catching 72 percent "
-            "of the plume. The A8303sc's wider 22.8 degree field does much better and is "
-            "still short: it clips the base by only 3 mm but the tip by 76 mm, for 89 "
-            "percent. The asymmetry is perspective, not aim -- both cameras stand at 1.5 m "
+            "field loses 137 mm of the flame's axis at the base and 177 mm at the tip, "
+            "catching 72 percent of the plume. The A8303sc's wider 22.8 degree field does "
+            "much better and is still short: it loses only 3 mm at the base but 65 mm at "
+            "the tip, for 89 percent. The asymmetry is perspective, not aim -- both cameras stand at 1.5 m "
             "and look DOWN at mid-flame, so the flame tip is nearly level with the lens and "
             "falls much further off-axis than a flat-plane estimate suggests. Backing the IR "
             "row out to about 4.5 m frames the whole plume for both, at 2.7 and 3.3 mm/px. "
@@ -294,9 +294,35 @@ def build_fds_import() -> Plan:
     return result.plan
 
 
+def build_fds_review_golden() -> dict:
+    """Python's conversion of every snippet in fixtures/fds/review-cases.json.
+
+    The comprehensive review of 2026-09-22 found the two importers disagreeing on
+    inputs the IR401 sample never exercises (rake coordinates, BOMs, MULT forms).
+    These small cases are the ones behind its fixes; the web suite converts each and
+    must write these bytes, exactly as it must for IR401_0.
+    """
+    with open(os.path.join(ROOT, "fixtures", "fds", "review-cases.json"), encoding="utf-8") as fh:
+        cases = json.load(fh)
+    out = {}
+    for case in cases:
+        result = fds.to_plan(case["text"], "case.fds",
+                             fds.ImportOptions(imported_at="2026-08-15T00:00:00Z"))
+        result.plan.meta["created"] = "2026-08-15T00:00:00Z"
+        result.plan.meta["modified"] = "2026-08-15T00:00:00Z"
+        out[case["name"]] = result.plan.dumps()
+    return out
+
+
 def main() -> None:
     out_dir = os.path.join(ROOT, "fixtures")
     os.makedirs(out_dir, exist_ok=True)
+
+    golden = os.path.join(out_dir, "fds", "review-cases.golden.json")
+    with open(golden, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(build_fds_review_golden(), fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    print("wrote {}".format(golden))
 
     for name, plan in [
         ("pool-fire-camera-row.ftp.json", build_camera_row()),

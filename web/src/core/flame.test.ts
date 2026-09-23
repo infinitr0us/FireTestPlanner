@@ -26,6 +26,7 @@ import {
   gunzip,
   type RawFrame,
 } from './flame';
+import { voxelSequenceProblem } from './linked-files';
 
 const FOLDER = fileURLToPath(new URL('../../../fixtures/flame/voxels/', import.meta.url));
 const EXPECTED = JSON.parse(readFileSync(fileURLToPath(new URL('../../../fixtures/flame/expected.json', import.meta.url)), 'utf8'));
@@ -260,12 +261,47 @@ describe('the packed form, refusing what pack could not have written', () => {
     expect(FlameSequence.unpack(noisy).bounds[1][0]).toBeCloseTo(-0.9, 8);
   });
 
-  it('refuses to pack a box axis the u16 field cannot hold, rather than wrapping it', () => {
-    // 65,536 cells on one axis packed to 0 and unpacked to a frame with no surface.
-    const seq = FlameSequence.fromFrames([synthetic(0, [[0, 0, 0], [1, 0, 0], [0, 0, 65535]])]);
-    expect(seq.frames[0].dims).toEqual([2, 1, 65536]);
-    expect(() => seq.pack()).toThrow('spans 65536 cells on one axis; the packed form holds at most 65535');
+  it('refuses a box axis the u16 field cannot hold, at load rather than wrapping it', () => {
+    // 65,536 cells on one axis packed to 0 and unpacked to a frame with no surface;
+    // the renderer addresses cells in 16 bits too, so the frame is refused as it is
+    // read, not only when a page packs it (review 2026-09-22, FLM-7).
+    expect(() => FlameSequence.fromFrames([synthetic(0, [[0, 0, 0], [1, 0, 0], [0, 0, 65535]])]))
+      .toThrow('spans 65536 cells on one axis; the packed form holds at most 65535');
     const limit = FlameSequence.fromFrames([synthetic(0, [[0, 0, 0], [1, 0, 0], [0, 0, 65534]])]);
     expect(FlameSequence.unpack(limit.pack()).frames[0].dims).toEqual([2, 1, 65535]);
+  });
+});
+
+// -- review 2026-09-22: mirrored in python/tests/test_flame.py -----------------
+
+describe('review 2026-09-22 frame readers', () => {
+  const formatCases = JSON.parse(readFileSync(new URL('../../../fixtures/flame/format-cases.json', import.meta.url), 'utf8')) as
+    Array<{ file: string; voxels?: number[][]; voxelSize?: number; error?: string }>;
+
+  for (const c of formatCases) {
+    it(`reads ${c.file} as fireplan does (FLM-5)`, async () => {
+      const bytes = new Uint8Array(readFileSync(new URL(`../../../fixtures/flame/format-cases/${c.file}`, import.meta.url)));
+      const read = parseFrameFile('t_0000000.0s.npz', bytes);
+      if (c.error) {
+        await expect(read).rejects.toThrow(c.error);
+        return;
+      }
+      const frame = await read;
+      expect(Array.from(frame.voxels)).toEqual(c.voxels!.flat());
+      expect(frame.voxelSize_m).toBe(c.voxelSize);
+    });
+  }
+
+  it('takes a grid whose pitch is its voxel size, as arange builds it (FLM-1)', () => {
+    const coords = [0, 1, 2, 3].flatMap((i) => [i * 0.01, 0, 0]);
+    const seq = FlameSequence.fromFrames([{ timestamp_s: 0, voxels: new Float64Array(coords), voxelSize_m: 0.01 }]);
+    expect(seq.grid.pitch_m).toBe(0.01);
+    expect(seq.grid.resolution).toBeNull();
+    expect(voxelSequenceProblem(seq.manifest('2026-09-22T00:00:00Z'))).toBeNull();
+  });
+
+  it('names the file a truncated frame came from (FLM-8)', async () => {
+    await expect(parseFrameFile('t_0000005.0s.npz', new Uint8Array([1, 2, 3])))
+      .rejects.toThrow(/^t_0000005\.0s\.npz: not a ZIP archive/);
   });
 });

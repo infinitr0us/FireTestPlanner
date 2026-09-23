@@ -44,6 +44,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from . import namelist, serialize
+from ._text import js_to_fixed
 from .namelist import Record
 from .plan import Issue, Plan, PlanError
 
@@ -96,6 +97,8 @@ GAUGE_QUANTITIES = frozenset({
     "GAUGE HEAT FLUX", "INCIDENT HEAT FLUX", "RADIATIVE HEAT FLUX",
     "CONVECTIVE HEAT FLUX", "NET HEAT FLUX", "HEAT FLUX",
     "RADIOMETER", "RADIATIVE HEAT FLUX GAS",
+    # FDS 6's current name for NET HEAT FLUX, and the old name of GAUGE HEAT FLUX.
+    "TOTAL HEAT FLUX", "GAUGE HEAT FLUX GAS",
 })
 GAS_TC_QUANTITIES = frozenset({"THERMOCOUPLE", "TEMPERATURE"})
 SURFACE_TC_QUANTITIES = frozenset({
@@ -271,12 +274,26 @@ def _color_of(rec: Record) -> Optional[str]:
 
 
 def _face_surfs(rec: Record) -> List[Optional[str]]:
-    """The `SURF_ID` of each of the six faces, in `FACES` order."""
-    six = rec.strings("SURF_ID6")
-    if six:
-        return (six + [None] * 6)[:6]
+    """The `SURF_ID` of each of the six faces, in `FACES` order.
+
+    FDS's three spellings, each overriding the one before for the faces it names:
+    `SURF_ID` for every face; `SURF_IDS` for the top, the sides and the bottom;
+    `SURF_ID6` face by face. Mirror of `faceSurfs` in web/src/core/fds.ts.
+    """
     one = rec.string("SURF_ID")
-    return [one] * 6 if one else [None] * 6
+    faces: List[Optional[str]] = [one] * 6
+    ids = rec.strings("SURF_IDS") + [None, None, None]
+    top, sides, bottom = ids[0], ids[1], ids[2]
+    if top:
+        faces[5] = top
+    if sides:
+        faces[0:4] = [sides] * 4
+    if bottom:
+        faces[4] = bottom
+    for i, s in enumerate(rec.strings("SURF_ID6")[:6]):
+        if s:
+            faces[i] = s
+    return faces
 
 
 def _utc_now_iso() -> str:
@@ -288,26 +305,84 @@ class _Ids:
 
     def __init__(self) -> None:
         self.used: Dict[str, int] = {}
+        self.taken: set = set()
 
     def make(self, prefix: str, name: Optional[str] = None) -> str:
+        """The next id for `prefix` and `name`, never one already handed out.
+
+        Counting per base alone let two bases meet: an unnamed box is `obst-1` and a
+        box with `ID='1'` is `obst-1` too; the second of two `Col` copies is
+        `obst-col-2` and so is `ID='Col 2'`. Mirror of `Ids.make` in fds.ts.
+        """
         base = "{}-{}".format(prefix, _slug(name)) if name else prefix
         n = self.used.get(base, 0)
+        candidate = base if n == 0 and name else "{}-{}".format(base, n + 1)
+        while candidate in self.taken:
+            n += 1
+            candidate = "{}-{}".format(base, n + 1)
         self.used[base] = n + 1
-        if n == 0 and name:
-            return base
-        return "{}-{}".format(base, n + 1)
+        self.taken.add(candidate)
+        return candidate
 
 
 # -- reading the file, including its includes -----------------------------
 
-#: How deep `&CATF` includes are followed before the reader gives up.
-CATF_MAX_DEPTH = 8
 
 
-def _read_source(path: str, seen: Optional[set] = None,
-                 stack: Optional[Tuple[str, ...]] = None,
-                 depth: int = 0) -> Tuple[str, List[Issue]]:
-    """The file's text with any `&CATF` includes spliced in **where they sit**.
+def _file_key(path: str) -> str:
+    """One spelling per file: resolved, and case-blind where the filesystem is."""
+    return os.path.normcase(os.path.realpath(path))
+
+
+def _read_text(path: str) -> Tuple[Optional[str], Optional[Issue]]:
+    try:
+        with open(path, "r", encoding="utf-8-sig", errors="replace") as fh:
+            return fh.read(), None
+    except OSError as exc:
+        # A &CATF naming a directory, a file that vanished between the check and the
+        # open, or one the user cannot read. None of those is a reason to abandon a
+        # model whose other half is perfectly readable.
+        return None, Issue("warning", "fds-catf-unreadable",
+                           "&CATF names {} but it could not be read ({}); anything it "
+                           "defined is missing from this plan"
+                           .format(os.path.basename(path), exc.strerror or exc))
+
+
+def _as_included(child: str, name: str, issues: List[Issue]) -> str:
+    """An included file as FDS copies it into the run (COPY_FILE_TO_CAT, read.f90):
+    its `&HEAD` left out, and nothing past its first `&TAIL` or `&CATF`, where FDS
+    stops copying it. A child's `&TAIL` ends the child, not the model, and a child's
+    own `&CATF` is never read. Mirror of `asIncluded` in web/src/io/files.ts."""
+    records = namelist.read(child)
+    stop = next((r for r in records if r.group in ("TAIL", "CATF")), None)
+    end = stop.start if stop is not None else len(child)
+    if stop is not None and stop.group == "CATF":
+        issues.append(Issue(
+            "info", "fds-catf-nested",
+            "{} includes further files with &CATF; FDS stops copying an included file at "
+            "its own &CATF line and never reads nested includes, so neither does this "
+            "import".format(name)))
+    elif stop is not None and re.search(r"^[ \t]*&", child[stop.end:], re.M):
+        issues.append(Issue(
+            "info", "fds-catf-tail",
+            "the included file {} has records after its &TAIL; FDS copies an included "
+            "file only up to its &TAIL, and so does this import".format(name)))
+    pieces: List[str] = []
+    pos = 0
+    for rec in records:
+        if rec.start >= end:
+            break
+        if rec.group != "HEAD":
+            continue
+        pieces.append(child[pos:rec.start])
+        pos = rec.end
+    pieces.append(child[pos:end])
+    return "".join(pieces)
+
+
+def _read_source(path: str) -> Tuple[str, List[Issue]]:
+    """The file's text with its `&CATF` includes spliced in **where they sit**, as
+    FDS splices them.
 
     FDS's `&CATF` splices other files into the input, and split inputs are normal in
     anything bigger than a demonstration case -- a geometry file plus a devices file
@@ -317,43 +392,18 @@ def _read_source(path: str, seen: Optional[set] = None,
     The position matters as much as the content. `&CATF` belongs in the body of the
     input, before `&TAIL` -- that is where the official validation cases put it --
     and reading stops at `&TAIL`, so a child appended after the parent's last line
-    is a child nobody reads. Appending is the difference between importing a model
-    and importing its title.
+    is a child nobody reads. Each child goes through `_as_included`: FDS reads only
+    the top-level file's includes. Mirror of `spliceFdsIncludes` in files.ts.
     """
-    seen = set() if seen is None else seen
-    stack = () if stack is None else stack
     real = os.path.abspath(path)
-
-    if real in stack:
-        return "", [Issue("warning", "fds-catf-cycle",
-                          "&CATF includes {} from inside itself; the repeat was skipped"
-                          .format(os.path.basename(path)))]
-    if real in seen:
-        # Not a cycle: two files including one common file, which FDS would splice
-        # twice. Once is enough here -- the second copy could only redefine what
-        # the first already said -- but it is not the file including itself, and
-        # saying so would send the reader looking for a loop that is not there.
-        return "", [Issue("info", "fds-catf-repeat",
-                          "{} is included more than once; it was read the first time"
-                          .format(os.path.basename(path)))]
-    if depth > CATF_MAX_DEPTH:
-        return "", [Issue("warning", "fds-catf-deep",
-                          "&CATF nesting stopped at {} levels deep".format(CATF_MAX_DEPTH))]
-    seen.add(real)
-
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            text = fh.read()
-    except OSError as exc:
-        # A &CATF naming a directory, a file that vanished between the check and the
-        # open, or one the user cannot read. None of those is a reason to abandon a
-        # model whose other half is perfectly readable.
-        return "", [Issue("warning", "fds-catf-unreadable",
-                          "&CATF names {} but it could not be read ({}); anything it "
-                          "defined is missing from this plan"
-                          .format(os.path.basename(path), exc.strerror or exc))]
+    # The input itself: a file that is not there is the caller's error, and saying
+    # "no FDS namelist records found" about it sent people looking in the wrong place.
+    with open(real, "r", encoding="utf-8-sig", errors="replace") as fh:
+        text = fh.read()
+    own = _file_key(real)
 
     issues: List[Issue] = []
+    seen: set = set()
     pieces: List[str] = []
     pos = 0
     for rec in namelist.read(text):
@@ -364,23 +414,31 @@ def _read_source(path: str, seen: Optional[set] = None,
             if not other:
                 continue
             child = other if os.path.isabs(other) else os.path.join(os.path.dirname(real), other)
+            key = _file_key(child)
+            if key == own:
+                issues.append(Issue("warning", "fds-catf-cycle",
+                                    "&CATF includes {} from inside itself; the repeat was "
+                                    "skipped".format(other)))
+                continue
+            if key in seen:
+                # Two &CATF names for one file, which FDS would splice twice. Once is
+                # enough here -- the second copy could only redefine what the first said.
+                issues.append(Issue("info", "fds-catf-repeat",
+                                    "{} is included more than once; it was read the first "
+                                    "time".format(other)))
+                continue
+            seen.add(key)
             if not os.path.exists(child):
                 issues.append(Issue("warning", "fds-catf-missing",
                                     "&CATF names {} but it is not beside the input; "
                                     "anything it defined is missing from this plan"
                                     .format(other)))
                 continue
-            child_text, child_issues = _read_source(child, seen, stack + (real,), depth + 1)
-            issues.extend(child_issues)
-            if not child_text:
+            child_text, problem = _read_text(child)
+            if child_text is None:
+                issues.append(problem)
                 continue
-            if any(r.group == "TAIL" for r in namelist.read(child_text)):
-                issues.append(Issue(
-                    "warning", "fds-catf-tail",
-                    "the included file {} ends with &TAIL, which stops the reader "
-                    "there -- anything after the &CATF line in the parent is not in "
-                    "this plan".format(other)))
-            included.append(child_text)
+            included.append(_as_included(child_text, other, issues))
         if included:
             pieces.append(text[pos:rec.end])
             pieces.append("\n" + "\n".join(included) + "\n")
@@ -407,69 +465,61 @@ def _multipliers(records: List[Record]) -> Dict[str, Record]:
     return {r.string("ID"): r for r in records if r.group == "MULT" and r.string("ID")}
 
 
-def _skipped(mult: Record, axes: Sequence[Tuple[str, int]]) -> bool:
-    """Whether this replicate falls in the block `&MULT` was told to leave out.
-
-    `I_LOWER_SKIP`..`K_UPPER_SKIP` (and `N_LOWER_SKIP`/`N_UPPER_SKIP`) carve a hole
-    out of the array -- a courtyard in a block of flats, the gap a stair core
-    occupies. An expander that ignores them builds geometry the model does not have,
-    right where the model deliberately has none. An axis with no bounds stated
-    constrains nothing, and a `&MULT` with no skip fields at all skips nothing.
-    """
-    stated = False
-    for name, index in axes:
-        lo, hi = mult.number(name + "_LOWER_SKIP"), mult.number(name + "_UPPER_SKIP")
-        if lo is None and hi is None:
-            continue
-        stated = True
-        low = int(lo if lo is not None else hi)
-        high = int(hi if hi is not None else lo)
-        if not (min(low, high) <= index <= max(low, high)):
-            return False
-    return stated
+#: FDS's TWENTY_EPSILON_EB: a DX smaller than this does not override DXB.
+_MULT_EPS = 20 * 2.220446049250313e-16
 
 
 def _expand_mult(xb: Xb, mult: Optional[Record]) -> List[Xb]:
-    """Every copy `&MULT` asks for, including the original.
+    """Every copy `&MULT` asks for, including the original -- as FDS builds them.
 
-    Supports the two forms that appear in real inputs: a `DX`/`DY`/`DZ` step over
-    `I`/`J`/`K` index ranges, and a `DXB` delta over `N_LOWER`..`N_UPPER`. An
-    unexpanded `MULT_ID` would drop most of a repetitive facade, so this is not
-    optional decoration.
+    A transcription of `READ_MULT` and the copy loop in `READ_OBST`/`READ_MESH`
+    (firemodels/fds Source/read.f90); see `expandMult` in web/src/core/fds.ts for
+    the rules and why each matters. In short: `DX`/`DY`/`DZ` override `DXB` pairs in
+    both forms; the form is sequential whenever `N_LOWER` or `N_UPPER` is non-zero;
+    `DX0`/`DY0`/`DZ0` offset every copy; skip bounds default to -999/999 and the
+    hole is the box between them and the array's own bounds; copies come out K,
+    then J, then I.
     """
     if mult is None:
         return [list(xb)]
 
-    def rng(lo: str, hi: str) -> range:
-        a = int(mult.number(lo, 0) or 0)
-        b = int(mult.number(hi, 0) or 0)
-        return range(min(a, b), max(a, b) + 1)
+    def whole(key: str, fallback: int) -> int:
+        v = mult.number(key)
+        return fallback if v is None else int(math.trunc(v))
 
-    dx0 = mult.number("DX0", 0.0) or 0.0
-    dy0 = mult.number("DY0", 0.0) or 0.0
-    dz0 = mult.number("DZ0", 0.0) or 0.0
+    dxb = [0.0] * 6
+    for k, v in enumerate(mult.numbers("DXB")[:6]):
+        dxb[k] = v
+    for key, pair in (("DX", 0), ("DY", 2), ("DZ", 4)):
+        d = mult.number(key) or 0.0
+        if abs(d) > _MULT_EPS:
+            dxb[pair] = dxb[pair + 1] = d
+    offset = [mult.number("DX0") or 0.0, mult.number("DY0") or 0.0, mult.number("DZ0") or 0.0]
 
-    dxb = mult.numbers("DXB")
-    if len(dxb) == 6 and (mult.has("N_LOWER") or mult.has("N_UPPER")):
-        out = []
-        for n in rng("N_LOWER", "N_UPPER"):
-            if _skipped(mult, [("N", n)]):
-                continue
-            out.append([xb[k] + n * dxb[k] for k in range(6)])
-        return out
+    n_lower, n_upper = whole("N_LOWER", 0), whole("N_UPPER", 0)
+    sequential = n_lower != 0 or n_upper != 0
+    if sequential:
+        lower, upper, first = [n_lower, 0, 0], [n_upper, 0, 0], "N"
+    else:
+        lower = [whole("I_LOWER", 0), whole("J_LOWER", 0), whole("K_LOWER", 0)]
+        upper = [whole("I_UPPER", 0), whole("J_UPPER", 0), whole("K_UPPER", 0)]
+        first = "I"
+    lower_skip = [whole(first + "_LOWER_SKIP", -999), whole("J_LOWER_SKIP", -999),
+                  whole("K_LOWER_SKIP", -999)]
+    upper_skip = [whole(first + "_UPPER_SKIP", 999), whole("J_UPPER_SKIP", 999),
+                  whole("K_UPPER_SKIP", 999)]
+    skipping = any(lower_skip[a] >= lower[a] or upper_skip[a] <= upper[a] for a in range(3))
+    hole_low = [max(lower[a], lower_skip[a]) for a in range(3)]
+    hole_high = [min(upper[a], upper_skip[a]) for a in range(3)]
 
-    dx = mult.number("DX", 0.0) or 0.0
-    dy = mult.number("DY", 0.0) or 0.0
-    dz = mult.number("DZ", 0.0) or 0.0
     out = []
-    for i in rng("I_LOWER", "I_UPPER"):
-        for j in rng("J_LOWER", "J_UPPER"):
-            for k in rng("K_LOWER", "K_UPPER"):
-                if _skipped(mult, [("I", i), ("J", j), ("K", k)]):
+    for k in range(lower[2], upper[2] + 1):
+        for j in range(lower[1], upper[1] + 1):
+            for i in range(lower[0], upper[0] + 1):
+                if skipping and all(hole_low[a] <= v <= hole_high[a] for a, v in enumerate((i, j, k))):
                     continue
-                sx, sy, sz = dx0 + i * dx, dy0 + j * dy, dz0 + k * dz
-                out.append([xb[0] + sx, xb[1] + sx, xb[2] + sy, xb[3] + sy,
-                            xb[4] + sz, xb[5] + sz])
+                step = (i, i, i) if sequential else (i, j, k)
+                out.append([xb[n] + offset[n // 2] + step[n // 2] * dxb[n] for n in range(6)])
     return out
 
 
@@ -619,8 +669,9 @@ def _fire_faces(boxes: List[_Box], vents: List[_Box], surfs: Dict[str, Record],
     the plan's burner is decided separately, and is overridable.
     """
     off: List[str] = []
+    unknown: List[str] = []
 
-    def released(surf_id: Optional[str]) -> Optional[Tuple[float, str]]:
+    def released(surf_id: Optional[str]) -> Optional[Tuple[Optional[float], str]]:
         rec = surfs.get(surf_id or "")
         if rec is None:
             return None
@@ -641,6 +692,12 @@ def _fire_faces(boxes: List[_Box], vents: List[_Box], surfs: Dict[str, Record],
         if mlrpua and hoc:
             # kg/m2/s x kJ/kg = kW/m2
             return mlrpua * hoc * peak, "MLRPUA"
+        if mlrpua:
+            # A mass loss rate with no heat of combustion stated: still the fire, at a
+            # rate the file does not give. Mirror of fds.ts.
+            if surf_id and surf_id not in unknown:
+                unknown.append(str(surf_id))
+            return None, "MLRPUA"
         return None
 
     out: List[_FireFace] = []
@@ -668,8 +725,15 @@ def _fire_faces(boxes: List[_Box], vents: List[_Box], surfs: Dict[str, Record],
                     area = dx * dy if axis == "z" else (dx * dz if axis == "y" else dy * dz)
             out.append(_FireFace(
                 surf=str(surf_id), xb=box.xb, area_m2=area,
-                hrr_kw=rel[0] * area if area > 0 else None,
+                hrr_kw=rel[0] * area if rel[0] is not None and area > 0 else None,
                 face=face, horizontal=face in ("-z", "+z"), from_vent=from_vent))
+    if unknown:
+        issues.append(Issue(
+            "warning", "fds-hrr-unknown",
+            "{} state{} MLRPUA but no HEAT_OF_COMBUSTION, on the &SURF or the &REAC, so "
+            "the heat release rate is not in the file. It was imported as a fire with no "
+            "HRR; set one before relying on the flame and instrument predictions."
+            .format(", ".join("'" + x + "'" for x in unknown), "s" if len(unknown) == 1 else "")))
     if off:
         issues.append(Issue(
             "warning", "fds-surface-off",
@@ -760,7 +824,31 @@ def _is_wall(xb: Xb) -> bool:
     return thin <= WALL_ASPECT * long_ and thin <= WALL_ASPECT * dz
 
 
-def _detect_floor(slabs: List[_Box], burner: Optional[_FireFace],
+#: A box is a burner's pan, not a floor, when the fire vent covers a good part of its
+#: top: at most this many times the vent's plan area. Mirror of PAN_AREA_RATIO.
+PAN_AREA_RATIO = 4.0
+
+
+def _burner_pans(faces: List[_FireFace], obsts: List[_Box]) -> List[_Box]:
+    """The boxes the burner vents sit on: the pans. Mirror of `burnerPans` in
+    web/src/core/fds.ts -- a pan with a fire &VENT on top is part of the burner, not
+    the floor; a large slab under a small vent is a floor with a fire on it."""
+    out: List[_Box] = []
+    for face in faces:
+        if not face.from_vent or face.face != "+z":
+            continue
+        fx, fy, _ = _extent(face.xb)
+        for box in obsts:
+            bx, by, _ = _extent(box.xb)
+            on_top = (abs(face.xb[4] - box.xb[5]) <= TOL_M
+                      and face.xb[0] >= box.xb[0] - TOL_M and face.xb[1] <= box.xb[1] + TOL_M
+                      and face.xb[2] >= box.xb[2] - TOL_M and face.xb[3] <= box.xb[3] + TOL_M)
+            if on_top and bx * by <= PAN_AREA_RATIO * fx * fy and not any(box is p for p in out):
+                out.append(box)
+    return out
+
+
+def _detect_floor(slabs: List[_Box], burner_base: Optional[float],
                   domain: Optional[Xb]) -> Tuple[float, str]:
     """Floor level, and the rule that produced it.
 
@@ -773,15 +861,15 @@ def _detect_floor(slabs: List[_Box], burner: Optional[_FireFace],
     # slab when none qualifies took the one slab in the model -- an overhead
     # ceiling -- as the floor, put the origin at its top, dropped it from the plan
     # as floor geometry and left every device two metres below ground.
-    if burner is None:
+    if burner_base is None:
         candidates = list(slabs)
     else:
-        candidates = [s for s in slabs if s.xb[5] <= burner.xb[4] + BURNER_PLATFORM_TOL_M]
+        candidates = [s for s in slabs if s.xb[5] <= burner_base + BURNER_PLATFORM_TOL_M]
     if candidates:
         lowest = min(candidates, key=lambda s: s.xb[5])
         return lowest.xb[5], "the top of the lowest horizontal slab"
-    if burner is not None:
-        return burner.xb[4], _FLOOR_FROM_BURNER
+    if burner_base is not None:
+        return burner_base, _FLOOR_FROM_BURNER
     if domain is not None:
         return domain[4], "the bottom of the mesh"
     return 0.0, "z = 0"
@@ -899,7 +987,8 @@ def _surface_note(rec: Record, surfs: Dict[str, Record]) -> Optional[str]:
     a gauge can survive and what the room looks like ten minutes in. This format has
     nowhere structured to put it, so it goes in the notes rather than nowhere.
     """
-    named = [x for x in dict.fromkeys(rec.strings("SURF_ID6") or [rec.string("SURF_ID")]) if x]
+    # The surfaces the faces actually carry, whichever spelling set them.
+    named = [x for x in dict.fromkeys(_face_surfs(rec)) if x]
     if not named:
         return None
     burning = [x for x in named
@@ -1138,13 +1227,17 @@ def to_plan(text: str, filename: Optional[str] = None,
                 .format(burner.surf, len(burner_faces))))
 
     # -- origin and floor ------------------------------------------------
-    burner_xbs = [f.xb for f in burner_faces if not f.from_vent]
+    pans = _burner_pans(burner_faces, obst_boxes)
+    burner_xbs = [f.xb for f in burner_faces if not f.from_vent] + [p.xb for p in pans]
     slabs = [b for b in obst_boxes
              if _is_slab(b.xb) and not any(b.xb == xb for xb in burner_xbs)]
+    # Where the chosen burner stands: the bottom of its pan, when it has one.
+    burner_base = None if burner is None else min(
+        [burner.xb[4]] + [p.xb[4] for p in _burner_pans([burner], obst_boxes)])
     if opts.floor_z_m is not None:
         floor_z, floor_rule = float(opts.floor_z_m), "the level you gave"
     else:
-        floor_z, floor_rule = _detect_floor(slabs, burner, domain)
+        floor_z, floor_rule = _detect_floor(slabs, burner_base, domain)
 
     if opts.origin_m is not None:
         ox, oy, oz = (float(v) for v in opts.origin_m)
@@ -1159,13 +1252,13 @@ def to_plan(text: str, filename: Optional[str] = None,
         ox = oy = oz = 0.0
     origin = (ox, oy, oz)
 
-    if burner is not None and burner.xb[4] > floor_z + BURNER_PLATFORM_TOL_M:
+    if burner_base is not None and burner_base > floor_z + BURNER_PLATFORM_TOL_M:
         issues.append(Issue(
             "warning", "fds-burner-raised",
             "the burner's base is {:.2f} m above the floor, taken from {}. If it "
             "stands on a platform this is right; if the floor was detected wrongly "
             "every height in the plan is off by the same amount."
-            .format(burner.xb[4] - floor_z, floor_rule)))
+            .format(burner_base - floor_z, floor_rule)))
     if floor_rule == _FLOOR_FROM_BURNER and slabs:
         # The model has slabs, but every one of them is above the fire. That is the
         # shape of a floor-level fire under a ceiling with no floor slab drawn -- and
@@ -1216,8 +1309,24 @@ def to_plan(text: str, filename: Optional[str] = None,
                 "has no planar object, and a box with no thickness is one the editor "
                 "cannot open.".format(stats["thin"], serialize._js_number(THIN_M * 1000))))
 
+    # A box burning on every face burns on its sides too; they join the burner's
+    # HRR, and the bottom is taken to rest on something. Mirror of fds.ts.
+    sides_kw = 0.0
     for face in burner_faces:
-        objects.append(_burner_object(ids, face, origin, floor_z, reac, surfs))
+        sides = [] if face.from_vent else [
+            f for f in faces if not f.from_vent and f is not face and f.xb == face.xb
+            and f.face not in ("+z", "-z") and f.hrr_kw is not None]
+        extra = sum(f.hrr_kw for f in sides)
+        sides_kw += extra
+        whole = (dataclasses.replace(face, hrr_kw=face.hrr_kw + extra)
+                 if extra > 0 and face.hrr_kw is not None else face)
+        objects.append(_burner_object(ids, whole, origin, floor_z, reac, surfs))
+    if sides_kw > 0:
+        issues.append(Issue(
+            "info", "fds-burner-sides",
+            "The burner box also burns on its sides; their {} kW is included in the "
+            "burner's heat release rate, as FDS releases heat over every exposed face."
+            .format(js_to_fixed(sides_kw, 1))))
 
     device_groups: List[DeviceGroup] = []
     if opts.devices:
@@ -1469,6 +1578,14 @@ def _import_devices(records: List[Record], props: Dict[str, Record],
     return objects
 
 
+def _round4(value: float) -> float:
+    """`Number(value.toFixed(4))`: the exact binary value, ties away from zero."""
+    from decimal import ROUND_HALF_UP, Decimal
+    if not math.isfinite(value):
+        return value
+    return float(Decimal(value).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+
+
 def _grouped_rakes(members: List[Tuple[Record, Optional[float]]], origin: Sequence[float],
                    ids: _Ids, quantity: str) -> List[Dict[str, Any]]:
     """Collapse vertical runs at a common XY into one rake each.
@@ -1483,7 +1600,9 @@ def _grouped_rakes(members: List[Tuple[Record, Optional[float]]], origin: Sequen
     order: List[Tuple[float, float, Any]] = []
     for rec, diameter in members:
         xyz = rec.numbers("XYZ")
-        key = (round(xyz[0], 4), round(xyz[1], 4), rec.number("IOR"))
+        # Rounded as JavaScript's toFixed(4) rounds (the exact value, ties away from
+        # zero), so both engines put the same devices in the same run.
+        key = (_round4(xyz[0]), _round4(xyz[1]), rec.number("IOR"))
         if key not in by_xy:
             by_xy[key] = []
             order.append(key)
@@ -1493,8 +1612,10 @@ def _grouped_rakes(members: List[Tuple[Record, Optional[float]]], origin: Sequen
     for key in order:
         run = sorted(by_xy[key], key=lambda pair: pair[0].numbers("XYZ")[2])
         first = run[0][0]
-        z0 = first.numbers("XYZ")[2]
-        position = [key[0] - ox, key[1] - oy, z0 - oz]
+        x, y, z0 = first.numbers("XYZ")[:3]
+        # The lowest bead's own coordinates, not the grouping key: the key is
+        # rounded to 0.1 mm, and the web importer (and the file) say 1.23456.
+        position = [x - ox, y - oy, z0 - oz]
         offsets = [r.numbers("XYZ")[2] - z0 for r, _ in run]
         diameter = next((d for _, d in run if d), None)
         if len(run) == 1:
@@ -1582,6 +1703,17 @@ def _report_invalid(plan: Plan, issues: List[Issue]) -> None:
             "error", "fds-invalid",
             "the conversion produced a plan this format does not accept, so it needs "
             "fixing before it is used: {}".format(str(exc).replace("\n", " ").strip())))
+    # The schema cannot say "unique"; the editor's load boundary does, so this does.
+    seen, repeated = set(), []
+    for obj in plan.data.get("objects", []):
+        oid = obj.get("id")
+        if oid in seen and oid not in repeated:
+            repeated.append(oid)
+        seen.add(oid)
+    if repeated:
+        issues.append(Issue(
+            "error", "fds-invalid",
+            "the conversion produced repeated object ids: {}".format(", ".join(map(str, repeated)))))
 
 
 def _plan_span(objects: List[Dict[str, Any]]) -> Optional[List[float]]:

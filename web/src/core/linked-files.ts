@@ -19,6 +19,13 @@ export const extension = (path: string): string => fileName(path).split('.').pop
 export const isLocalPath = (path: string): boolean =>
   path.trim().length > 0 && !/[\x00-\x1f]/.test(path)
   && !/^[a-z][a-z0-9+.-]*:/i.test(path.replace(/^[a-z]:[/\\]/i, ''));
+/**
+ * A path Windows reaches through the network or the device namespace: UNC
+ * (`\\server\share`, `//server/share`, WebDAV's `\\host@SSL\…`) or `\\?\` / `\\.\`.
+ * Merely resolving one contacts that host and offers it the user's credentials, so
+ * nothing a plan names that way is touched without a click.
+ */
+export const isNetworkPath = (path: string): boolean => /^[\\/]{2}/.test(path.trim());
 
 /** Small strict CSV/TSV reader: quoted delimiters, escaped quotes, CRLF and BOM. */
 function rows(text: string, separator: string): string[][] {
@@ -98,7 +105,9 @@ export function voxelSequenceProblem(sequence: VoxelSequenceManifest): string | 
   const grid = sequence.grid;
   if (!grid || typeof grid !== 'object' || Object.keys(grid).some((key) => !['voxelSize_m', 'pitch_m', 'resolution'].includes(key))) return 'A voxel sequence needs a grid with voxelSize_m, pitch_m and resolution.';
   const positive = (x: unknown): boolean => typeof x === 'number' && Number.isFinite(x) && x > 0;
-  if (!positive(grid.voxelSize_m) || !positive(grid.pitch_m) || grid.pitch_m < grid.voxelSize_m) return 'A voxel sequence needs a positive voxel size and a pitch no smaller than it.';
+  // Within the snap tolerance of the readers (`PITCH_SNAP` in core/flame.ts): a grid
+  // whose pitch IS its voxel size, inferred a few ulps short, used to be refused.
+  if (!positive(grid.voxelSize_m) || !positive(grid.pitch_m) || grid.pitch_m < grid.voxelSize_m * (1 - 1e-4)) return 'A voxel sequence needs a positive voxel size and a pitch no smaller than it.';
   if (grid.resolution !== null && (!Number.isInteger(grid.resolution) || grid.resolution < 2)) return 'A voxel sequence needs an integer grid resolution of at least 2, or null.';
   const bounds = sequence.bounds_m;
   if (!Array.isArray(bounds) || bounds.length !== 2 || !isVec3(bounds[0]) || !isVec3(bounds[1]) || bounds[0].some((lo, i) => lo > bounds[1][i])) return 'A voxel sequence needs finite bounds with the minimum corner first.';

@@ -114,9 +114,21 @@ export function validateStructure(doc: PlanDocument): Issue[] {
       err('bad-color',
         `Object "${obj.id}" has display.color ${JSON.stringify(color)}; expected "#rrggbb".`, obj.id);
     }
+    // Format 1.4 adds these to `display` for every object, not only flames; the
+    // schema checks them wherever they appear, so this does too.
+    const display = obj.display as Record<string, unknown> | undefined | null;
+    if (isStated(display?.opacity) && !(isFiniteNumber(display!.opacity) && display!.opacity >= 0 && display!.opacity <= 1)) {
+      err('bad-opacity', `Object "${obj.id}" has display.opacity outside 0–1.`, obj.id);
+    }
+    if (isStated(display?.colorMode) && !['height', 'solid'].includes(String(display!.colorMode))) {
+      err('bad-color-mode', `Object "${obj.id}" has display.colorMode ${JSON.stringify(display!.colorMode)}; expected "height" or "solid".`, obj.id);
+    }
 
     const t = obj.transform;
-    if (t !== undefined) {
+    if (t !== undefined && !isPlainObject(t)) {
+      // `transform: null` used to escape as a raw TypeError reading position_m.
+      err('bad-transform', `Object "${obj.id}" has a transform that is not an object.`, obj.id);
+    } else if (t !== undefined) {
       if (!isNumberArray(t.position_m, 3)) {
         err('bad-position', `Object "${obj.id}" has an invalid position_m; expected three numbers.`, obj.id);
       }
@@ -236,8 +248,11 @@ function validateByType(obj: PlanObject, err: Reporter): void {
         err('bad-modality',
           `Camera "${id}" has modality "${String(cam.modality)}"; expected one of ${MODALITIES.join(', ')}.`, id);
       }
-      if (!isNumberArray(cam.resolution_px, 2) || (cam.resolution_px as number[]).some((v) => v <= 0)) {
-        err('bad-resolution', `Camera "${id}" has an invalid resolution_px; expected two positive numbers.`, id);
+      // Whole pixels, as the schema says: a fractional count loaded here and was
+      // truncated by fireplan, so the two engines computed different fx and cx.
+      if (!isNumberArray(cam.resolution_px, 2)
+          || (cam.resolution_px as number[]).some((v) => v <= 0 || !Number.isInteger(v))) {
+        err('bad-resolution', `Camera "${id}" has an invalid resolution_px; expected two positive whole numbers.`, id);
       }
       if (!isNumberArray(cam.sensor_mm, 2) || (cam.sensor_mm as number[]).some((v) => v <= 0)) {
         err('bad-sensor', `Camera "${id}" has an invalid sensor_mm; expected two positive numbers.`, id);
@@ -413,13 +428,6 @@ function validateByType(obj: PlanObject, err: Reporter): void {
       if (isStated(raw.representation) && raw.representation !== 'voxels') {
         err('bad-representation',
           `Reconstructed flame "${id}" has representation ${JSON.stringify(raw.representation)}; this build knows only "voxels".`, id);
-      }
-      const display = raw.display as Record<string, unknown> | undefined;
-      if (isStated(display?.opacity) && !(isFiniteNumber(display!.opacity) && display!.opacity >= 0 && display!.opacity <= 1)) {
-        err('bad-opacity', `Reconstructed flame "${id}" has display.opacity outside 0–1.`, id);
-      }
-      if (isStated(display?.colorMode) && !['height', 'solid'].includes(String(display!.colorMode))) {
-        err('bad-color-mode', `Reconstructed flame "${id}" has display.colorMode ${JSON.stringify(display!.colorMode)}; expected "height" or "solid".`, id);
       }
       break;
     }

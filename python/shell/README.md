@@ -12,12 +12,21 @@ python -m venv .venv
 
 .venv\Scripts\python.exe app.py                 # run it
 .venv\Scripts\python.exe app.py --selftest --log selftest.log
+.venv\Scripts\python.exe check_close_prompt.py  # the unsaved-changes prompt, natively
 .venv\Scripts\python.exe build_exe.py           # -> dist/FireTestPlanner.exe
 ```
 
 `--selftest` boots the window, waits for the web app to call `/api/ready`, checks
 what it reported, prints a verdict and exits non-zero on failure. A GUI milestone
 nobody can look at is not verified otherwise.
+
+`check_close_prompt.py` drives the real window: it edits the plan through the page,
+sends the window `WM_CLOSE`, expects the unsaved-changes prompt and cancels it, undoes
+back to the saved state, and expects the next close to go through without asking.
+WebView2 does not run the page's `beforeunload` when the host window closes, so
+this prompt is the shell's (`Shell.set_dirty` arms pywebview's `confirm_close`), and
+unit tests alone cannot show that the native dialog appears. A window shows for a
+few seconds; the verdict goes to the ignored `review/desktop-checks/`.
 
 ## Why an HTTP bridge instead of pywebview's `js_api`
 
@@ -51,10 +60,25 @@ and drive the user's file dialogs.
 |---|---|---|
 | `/api/ready` | POST | The app reports it has booted; returns any plan named on the command line |
 | `/api/open` | POST | Native open dialog; returns `{path, text, token}` |
-| `/api/open-recent` | POST | Read a known path; same answer |
+| `/api/open-recent` | POST | Read a path from the recent list (and only from it); same answer |
+| `/api/adopted` | POST | The page kept the plan `token` names: it joins the recent list and the title |
+| `/api/dirty` | POST | Unsaved changes on or off: arms the window's close prompt and the title bullet |
+| `/api/recent` | GET | Recent paths that still exist |
+| `/api/save-target` | POST | Chooses a plan's destination before the page rebases its links; writes nothing |
 | `/api/save` | POST | Writes the plan to the file `token` names; asks for a destination otherwise |
 | `/api/save-html` | POST | Native save dialog, writes an exported page |
-| `/api/recent` | GET | Recent paths that still exist |
+| `/api/open-fds` | POST | Native open dialog for an FDS input; returns its text and name |
+| `/api/read-fds-include` | POST | A file an `&CATF` names, confined to the input's folder and its subfolders |
+| `/api/pick-linked-files` | POST | Native dialog for spreadsheets or videos to link to an object |
+| `/api/linked-file` | POST | Open a linked file, show its folder, or read a spreadsheet's text |
+| `/api/pick-folder` | POST | Native folder dialog for a reconstructed flame's frames |
+| `/api/flame/list` | POST | The frame files a voxel folder holds; registers the folder for `/api/flame/frame` |
+| `/api/flame/frame` | GET | One frame's bytes, from a registered folder only |
+| `/api/presets` | GET, POST | The custom camera preset library in the settings file: read, or replace |
+| `/api/results/open` | POST | Native dialog for an FDS `.smv`; opens a results session over its folder |
+| `/api/results/read` | GET | A byte range of one output the session's `.smv` names (including `RESULTS_DIR` subfolders) |
+| `/api/results/png` | POST | Native save dialog for a results snapshot |
+| `/api/results/close` | POST | Ends a results session |
 
 Everything else is served as static files from the bundle directory.
 

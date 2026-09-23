@@ -34,7 +34,7 @@
  * what it did.
  */
 
-import { lookAtQuat } from './math';
+import { lookAtQuat, rangeOf } from './math';
 import { newPlan } from './plan';
 import { validateStructure } from './validate';
 import {
@@ -98,6 +98,9 @@ export const GAUGE_QUANTITIES = [
   'GAUGE HEAT FLUX', 'INCIDENT HEAT FLUX', 'RADIATIVE HEAT FLUX',
   'CONVECTIVE HEAT FLUX', 'NET HEAT FLUX', 'HEAT FLUX',
   'RADIOMETER', 'RADIATIVE HEAT FLUX GAS',
+  // FDS 6's current name for NET HEAT FLUX, and the old name of GAUGE HEAT FLUX
+  // (data.f90): both still turn up in real inputs.
+  'TOTAL HEAT FLUX', 'GAUGE HEAT FLUX GAS',
 ];
 export const GAS_TC_QUANTITIES = ['THERMOCOUPLE', 'TEMPERATURE'];
 export const SURFACE_TC_QUANTITIES = [
@@ -245,12 +248,24 @@ function colorOf(rec: NamelistRecord): string | null {
   return null;
 }
 
-/** The `SURF_ID` of each of the six faces, in `FACES` order. */
+/**
+ * The `SURF_ID` of each of the six faces, in `FACES` order.
+ *
+ * FDS's three spellings, each overriding the one before for the faces it names:
+ * `SURF_ID` for every face; `SURF_IDS` for the top, the sides and the bottom (in
+ * that order); `SURF_ID6` face by face. `SURF_IDS` was not read at all, so the
+ * standard burner -- `SURF_IDS='BURNER','INERT','INERT'` on a pan -- imported with no
+ * fire, and the pan became the floor.
+ */
 function faceSurfs(rec: NamelistRecord): Array<string | null> {
-  const six = rec.strings('SURF_ID6');
-  if (six.length > 0) return [...six, null, null, null, null, null, null].slice(0, 6);
   const one = rec.string('SURF_ID');
-  return one ? [one, one, one, one, one, one] : [null, null, null, null, null, null];
+  const faces: Array<string | null> = [one, one, one, one, one, one];
+  const [top, sides, bottom] = rec.strings('SURF_IDS');
+  if (top) faces[5] = top;
+  if (sides) faces.fill(sides, 0, 4);
+  if (bottom) faces[4] = bottom;
+  rec.strings('SURF_ID6').slice(0, 6).forEach((s, i) => { if (s) faces[i] = s; });
+  return faces;
 }
 
 const nowIso = (): string => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -258,13 +273,27 @@ const nowIso = (): string => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
 /** Unique, readable object ids -- an FDS `ID` where there is one, else a counter. */
 class Ids {
   private used = new Map<string, number>();
+  private taken = new Set<string>();
 
+  /**
+   * The next id for `prefix` and `name`, never one already handed out.
+   *
+   * Counting per base alone let two bases meet: an unnamed box is `obst-1` and a box
+   * with `ID='1'` is `obst-1` too, and the second of two `Col` copies is
+   * `obst-col-2` as is `ID='Col 2'`. The load boundary then refused the whole import
+   * of a perfectly valid model.
+   */
   make(prefix: string, name?: string | null): string {
     const base = name ? `${prefix}-${slug(name)}` : prefix;
-    const n = this.used.get(base) ?? 0;
+    let n = this.used.get(base) ?? 0;
+    let candidate = n === 0 && name ? base : `${base}-${n + 1}`;
+    while (this.taken.has(candidate)) {
+      n += 1;
+      candidate = `${base}-${n + 1}`;
+    }
     this.used.set(base, n + 1);
-    if (n === 0 && name) return base;
-    return `${base}-${n + 1}`;
+    this.taken.add(candidate);
+    return candidate;
   }
 }
 
@@ -290,71 +319,63 @@ function multipliers(records: NamelistRecord[]): Map<string, NamelistRecord> {
   return out;
 }
 
-/**
- * Whether this replicate falls in the block `&MULT` was told to leave out.
- *
- * `I_LOWER_SKIP`..`K_UPPER_SKIP` (and `N_LOWER_SKIP`/`N_UPPER_SKIP`) carve a hole
- * out of the array -- a courtyard in a block of flats, the gap a stair core
- * occupies. An expander that ignores them builds geometry the model does not have,
- * right where the model deliberately has none. An axis with no bounds stated
- * constrains nothing, and a `&MULT` with no skip fields at all skips nothing.
- */
-function skippedByMult(mult: NamelistRecord, axes: Array<[string, number]>): boolean {
-  let stated = false;
-  for (const [name, index] of axes) {
-    const lo = mult.number(`${name}_LOWER_SKIP`);
-    const hi = mult.number(`${name}_UPPER_SKIP`);
-    if (lo === null && hi === null) continue;
-    stated = true;
-    const low = Math.trunc(lo ?? hi!);
-    const high = Math.trunc(hi ?? lo!);
-    if (index < Math.min(low, high) || index > Math.max(low, high)) return false;
-  }
-  return stated;
-}
+/** FDS's `TWENTY_EPSILON_EB`: a `DX` smaller than this does not override `DXB`. */
+const MULT_EPS = 20 * Number.EPSILON;
 
 /**
- * Every copy `&MULT` asks for, including the original.
+ * Every copy `&MULT` asks for, including the original -- exactly as FDS builds them.
  *
- * Supports the two forms that appear in real inputs: a `DX`/`DY`/`DZ` step over
- * `I`/`J`/`K` index ranges, and a `DXB` delta over `N_LOWER`..`N_UPPER`. An
- * unexpanded `MULT_ID` would drop most of a repetitive facade, so this is not
- * optional decoration.
+ * A transcription of `READ_MULT` and the copy loop in `READ_OBST`/`READ_MESH`
+ * (firemodels/fds `Source/read.f90`), because each shortcut an earlier version took
+ * built a different model from the same file:
+ *
+ * - `DXB` defaults to zeros and `DX`/`DY`/`DZ`, when stated, override its pairs, in
+ *   BOTH forms. So `DX=1, N_UPPER=3` is four copies a metre apart, and a plain
+ *   `DXB` with `I_UPPER` is a valid array too.
+ * - The form is sequential whenever `N_LOWER` or `N_UPPER` is non-zero, and then
+ *   the single index steps all six `XB` values.
+ * - `DX0`/`DY0`/`DZ0` offset every copy in both forms.
+ * - Skip bounds default to -999 and 999, and the hole is the box between the
+ *   stated bounds and the array's own: `I_LOWER_SKIP=3` alone skips 3 to the top,
+ *   not index 3 alone. In the sequential form the `N_*_SKIP` bounds apply.
+ * - Copies come out K, then J, then I, as FDS numbers them.
  */
 function expandMult(xb: Xb, mult: NamelistRecord | undefined): Xb[] {
   if (!mult) return [[...xb] as Xb];
 
-  const range = (lo: string, hi: string): number[] => {
-    const a = Math.trunc(mult.number(lo) ?? 0);
-    const b = Math.trunc(mult.number(hi) ?? 0);
-    const out: number[] = [];
-    for (let v = Math.min(a, b); v <= Math.max(a, b); v += 1) out.push(v);
-    return out;
+  const int = (key: string, fallback: number): number => {
+    const v = mult.number(key);
+    return v === null ? fallback : Math.trunc(v);
   };
-
-  const dx0 = mult.number('DX0') ?? 0;
-  const dy0 = mult.number('DY0') ?? 0;
-  const dz0 = mult.number('DZ0') ?? 0;
-
-  const dxb = mult.numbers('DXB');
-  if (dxb.length === 6 && (mult.has('N_LOWER') || mult.has('N_UPPER'))) {
-    return range('N_LOWER', 'N_UPPER')
-      .filter((n) => !skippedByMult(mult, [['N', n]]))
-      .map((n) => xb.map((v, k) => v + n * dxb[k]) as Xb);
+  const dxb = [0, 0, 0, 0, 0, 0];
+  mult.numbers('DXB').slice(0, 6).forEach((v, k) => { dxb[k] = v; });
+  for (const [key, pair] of [['DX', 0], ['DY', 2], ['DZ', 4]] as const) {
+    const d = mult.number(key) ?? 0;
+    if (Math.abs(d) > MULT_EPS) { dxb[pair] = d; dxb[pair + 1] = d; }
   }
+  const offset = [mult.number('DX0') ?? 0, mult.number('DY0') ?? 0, mult.number('DZ0') ?? 0];
 
-  const dx = mult.number('DX') ?? 0;
-  const dy = mult.number('DY') ?? 0;
-  const dz = mult.number('DZ') ?? 0;
+  const nLower = int('N_LOWER', 0);
+  const nUpper = int('N_UPPER', 0);
+  const sequential = nLower !== 0 || nUpper !== 0;
+  const lower = sequential ? [nLower, 0, 0] : [int('I_LOWER', 0), int('J_LOWER', 0), int('K_LOWER', 0)];
+  const upper = sequential ? [nUpper, 0, 0] : [int('I_UPPER', 0), int('J_UPPER', 0), int('K_UPPER', 0)];
+  const first = sequential ? 'N' : 'I';
+  const lowerSkip = [int(`${first}_LOWER_SKIP`, -999), int('J_LOWER_SKIP', -999), int('K_LOWER_SKIP', -999)];
+  const upperSkip = [int(`${first}_UPPER_SKIP`, 999), int('J_UPPER_SKIP', 999), int('K_UPPER_SKIP', 999)];
+  const skipping = [0, 1, 2].some((a) => lowerSkip[a] >= lower[a] || upperSkip[a] <= upper[a]);
+  const holeLow = [0, 1, 2].map((a) => Math.max(lower[a], lowerSkip[a]));
+  const holeHigh = [0, 1, 2].map((a) => Math.min(upper[a], upperSkip[a]));
+  const skipped = (index: number[]): boolean =>
+    skipping && index.every((v, a) => v >= holeLow[a] && v <= holeHigh[a]);
+
   const out: Xb[] = [];
-  for (const i of range('I_LOWER', 'I_UPPER')) {
-    for (const j of range('J_LOWER', 'J_UPPER')) {
-      for (const k of range('K_LOWER', 'K_UPPER')) {
-        if (skippedByMult(mult, [['I', i], ['J', j], ['K', k]])) continue;
-        const sx = dx0 + i * dx;
-        const sy = dy0 + j * dy;
-        const sz = dz0 + k * dz;
-        out.push([xb[0] + sx, xb[1] + sx, xb[2] + sy, xb[3] + sy, xb[4] + sz, xb[5] + sz]);
+  for (let k = lower[2]; k <= upper[2]; k += 1) {
+    for (let j = lower[1]; j <= upper[1]; j += 1) {
+      for (let i = lower[0]; i <= upper[0]; i += 1) {
+        if (skipped([i, j, k])) continue;
+        const step = sequential ? [i, i, i] : [i, j, k];
+        out.push(xb.map((v, n) => v + offset[n >> 1] + step[n >> 1] * dxb[n]) as Xb);
       }
     }
   }
@@ -493,7 +514,10 @@ function fireFaces(
   domain: Xb | null = null,
 ): FireFace[] {
   const off: string[] = [];
-  const released = (surfId: string | null): number | null => {
+  const unknown: string[] = [];
+  // kW/m² for a burning surface, 'unknown' for one that burns at a rate this input
+  // does not state, null for one that does not burn.
+  const released = (surfId: string | null): number | 'unknown' | null => {
     const rec = surfId === null ? undefined : surfs.get(surfId);
     if (!rec) return null;
     // Membership, not `peak || 1`: a ramp whose peak really is zero is a surface
@@ -511,6 +535,13 @@ function fireFaces(
     const hoc = rec.number('HEAT_OF_COMBUSTION') ?? heatOfCombustion;
     // kg/m²/s × kJ/kg = kW/m²
     if (mlrpua && hoc) return mlrpua * hoc * peak;
+    // A mass loss rate with no heat of combustion stated: FDS derives one from the
+    // fuel's chemistry, which this reader does not model. It is still the fire --
+    // reporting "no surface releases heat" dropped the burner entirely.
+    if (mlrpua) {
+      if (surfId !== null && !unknown.includes(surfId)) unknown.push(surfId);
+      return 'unknown';
+    }
     return null;
   };
 
@@ -541,10 +572,17 @@ function fireFaces(
       }
       out.push({
         surf: String(surfId), xb: box.xb, areaM2: area,
-        hrrKw: area > 0 ? perArea * area : null,
+        hrrKw: perArea !== 'unknown' && area > 0 ? perArea * area : null,
         face, horizontal: face === '-z' || face === '+z', fromVent,
       });
     });
+  }
+  if (unknown.length > 0) {
+    issues.push(issue('warning', 'fds-hrr-unknown',
+      `${unknown.map((x) => `'${x}'`).join(', ')} state${unknown.length === 1 ? 's' : ''} MLRPUA `
+      + 'but no HEAT_OF_COMBUSTION, on the &SURF or the &REAC, so the heat release rate is '
+      + 'not in the file. It was imported as a fire with no HRR; set one before relying on '
+      + 'the flame and instrument predictions.'));
   }
   if (off.length > 0) {
     issues.push(issue('warning', 'fds-surface-off',
@@ -647,22 +685,53 @@ export function isWallBox(xb: Xb): boolean {
  * mesh would put every height in the plan 200 mm out and leave the burner floating.
  */
 function detectFloor(
-  slabs: Box[], burner: FireFace | null, domain: Xb | null,
+  slabs: Box[], burnerBase: number | null, domain: Xb | null,
 ): [number, string] {
   // With a burner, only a slab UNDER it can be the floor. Falling back to every slab
   // when none qualifies took the one slab in the model -- an overhead ceiling -- as
   // the floor, put the origin at its top, dropped it from the plan as floor geometry
   // and left every device two metres below ground.
-  const candidates = burner === null
+  const candidates = burnerBase === null
     ? slabs
-    : slabs.filter((s) => s.xb[5] <= burner.xb[4] + BURNER_PLATFORM_TOL_M);
+    : slabs.filter((s) => s.xb[5] <= burnerBase + BURNER_PLATFORM_TOL_M);
   if (candidates.length > 0) {
     const lowest = candidates.reduce((best, s) => (s.xb[5] < best.xb[5] ? s : best));
     return [lowest.xb[5], 'the top of the lowest horizontal slab'];
   }
-  if (burner !== null) return [burner.xb[4], 'the base of the burner'];
+  if (burnerBase !== null) return [burnerBase, 'the base of the burner'];
   if (domain !== null) return [domain[4], 'the bottom of the mesh'];
   return [0, 'z = 0'];
+}
+
+/** A box is a burner's pan, not a floor, when the fire vent covers a good part of
+ *  its top: at most this many times the vent's plan area. A room's floor slab under
+ *  a 0.3 m pan is a hundred times the pan; the pan itself is about one. */
+const PAN_AREA_RATIO = 4;
+
+/**
+ * The boxes the burner vents sit on: the pans.
+ *
+ * The usual FDS burner is an inert box with a fire `&VENT` on its top face. A pan
+ * passes the slab test, so with no floor slab drawn it was taken as the floor --
+ * every height shifted by the pan's, and the pan vanished as floor geometry. It is
+ * part of the burner: excluded from the floor search, not drawn separately (the
+ * burner's rim height is the pan), and its base is where the burner stands. A large
+ * slab carrying a small vent is a floor with a fire on it, and stays one.
+ */
+function burnerPans(faces: FireFace[], obsts: Box[]): Box[] {
+  const out: Box[] = [];
+  for (const face of faces) {
+    if (!face.fromVent || face.face !== '+z') continue;
+    const [fx, fy] = extent(face.xb);
+    for (const box of obsts) {
+      const [bx, by] = extent(box.xb);
+      const onTop = Math.abs(face.xb[4] - box.xb[5]) <= TOL_M
+        && face.xb[0] >= box.xb[0] - TOL_M && face.xb[1] <= box.xb[1] + TOL_M
+        && face.xb[2] >= box.xb[2] - TOL_M && face.xb[3] <= box.xb[3] + TOL_M;
+      if (onTop && bx * by <= PAN_AREA_RATIO * fx * fy && !out.includes(box)) out.push(box);
+    }
+  }
+  return out;
 }
 
 /** The rule `detectFloor` reports when it took the burner's own base as the floor. */
@@ -780,9 +849,8 @@ function geometryObject(
 function surfaceNote(
   rec: NamelistRecord, surfs: Map<string, NamelistRecord>,
 ): string | null {
-  const six = rec.strings('SURF_ID6');
-  const source = six.length > 0 ? six : [rec.string('SURF_ID')];
-  const named = [...new Set(source)].filter((s): s is string => Boolean(s));
+  // The surfaces the faces actually carry, whichever spelling set them.
+  const named = [...new Set(faceSurfs(rec))].filter((s): s is string => Boolean(s));
   if (named.length === 0) return null;
 
   const burning = named.filter((s) => {
@@ -1253,7 +1321,7 @@ function planSpan(objects: PlanObject[]): [number, number, number, number] | nul
     }
   }
   if (xs.length === 0) return null;
-  return [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  return [...rangeOf(xs), ...rangeOf(ys)];
 }
 
 /** Convert FDS input text into a plan, with a full account of the conversion. */
@@ -1294,9 +1362,9 @@ export function fdsToPlan(
   // -- domain ------------------------------------------------------------
   const meshes = meshBoxes(records, mults);
   const domain: Xb | null = meshes.length === 0 ? null : [
-    Math.min(...meshes.map((m) => m[0])), Math.max(...meshes.map((m) => m[1])),
-    Math.min(...meshes.map((m) => m[2])), Math.max(...meshes.map((m) => m[3])),
-    Math.min(...meshes.map((m) => m[4])), Math.max(...meshes.map((m) => m[5])),
+    rangeOf(meshes.map((m) => m[0]))[0], rangeOf(meshes.map((m) => m[1]))[1],
+    rangeOf(meshes.map((m) => m[2]))[0], rangeOf(meshes.map((m) => m[3]))[1],
+    rangeOf(meshes.map((m) => m[4]))[0], rangeOf(meshes.map((m) => m[5]))[1],
   ];
 
   // -- the fire ----------------------------------------------------------
@@ -1360,14 +1428,19 @@ export function fdsToPlan(
 
   // -- origin and floor --------------------------------------------------
   // A shallow burner pan passes the slab test, so without this it becomes "the
-  // lowest horizontal slab" and puts the floor at the top of the burner.
-  const burnerXbs = burners.filter((f) => !f.fromVent).map((f) => f.xb);
+  // lowest horizontal slab" and puts the floor at the top of the burner -- whether
+  // the pan itself burns (an &OBST fire face) or carries a fire &VENT on its top.
+  const pans = burnerPans(burners, obstBoxes);
+  const burnerXbs = [...burners.filter((f) => !f.fromVent).map((f) => f.xb), ...pans.map((p) => p.xb)];
   const slabs = obstBoxes.filter(
     (b) => isSlabBox(b.xb) && !burnerXbs.some((xb) => sameXb(b.xb, xb)),
   );
+  // Where the chosen burner stands: the bottom of its pan, when it has one.
+  const burnerBase = burner === null ? null : burnerPans([burner], obstBoxes)
+    .reduce((low, pan) => Math.min(low, pan.xb[4]), burner.xb[4]);
   const [floorZ, floorRule] = opts.floorZM !== undefined
     ? [opts.floorZM, 'the level you gave']
-    : detectFloor(slabs, burner, domain);
+    : detectFloor(slabs, burnerBase, domain);
 
   let origin: Vec3;
   if (opts.originM) {
@@ -1382,9 +1455,9 @@ export function fdsToPlan(
   }
   const [ox, oy, oz] = origin;
 
-  if (burner !== null && burner.xb[4] > floorZ + BURNER_PLATFORM_TOL_M) {
+  if (burnerBase !== null && burnerBase > floorZ + BURNER_PLATFORM_TOL_M) {
     issues.push(issue('warning', 'fds-burner-raised',
-      `The burner's base is ${(burner.xb[4] - floorZ).toFixed(2)} m above the floor, taken `
+      `The burner's base is ${(burnerBase - floorZ).toFixed(2)} m above the floor, taken `
       + `from ${floorRule}. If it stands on a platform this is right; if the floor was `
       + 'detected wrongly every height in the plan is off by the same amount.'));
   }
@@ -1434,8 +1507,23 @@ export function fdsToPlan(
     }
   }
 
+  // A box whose surface burns on every face burns on its sides too: FDS releases
+  // HRRPUA over each exposed face, and taking the top alone imported a 1 m cube at
+  // 100 kW/m2 as a 100 kW fire where FDS burns about 500 kW. The sides join the
+  // burner's HRR; the bottom is taken to rest on something.
+  let sidesKw = 0;
   for (const face of burners) {
-    objects.push(burnerObject(ids, face, origin, floorZ, reac, surfs));
+    const sides = face.fromVent ? [] : faces.filter((f) => !f.fromVent && f !== face
+      && sameXb(f.xb, face.xb) && f.face !== '+z' && f.face !== '-z' && f.hrrKw !== null);
+    const extra = sides.reduce((sum, f) => sum + f.hrrKw!, 0);
+    sidesKw += extra;
+    const whole = extra > 0 && face.hrrKw !== null ? { ...face, hrrKw: face.hrrKw + extra } : face;
+    objects.push(burnerObject(ids, whole, origin, floorZ, reac, surfs));
+  }
+  if (sidesKw > 0) {
+    issues.push(issue('info', 'fds-burner-sides',
+      `The burner box also burns on its sides; their ${sidesKw.toFixed(1)} kW is included in `
+      + 'the burner\'s heat release rate, as FDS releases heat over every exposed face.'));
   }
 
   const devices: DeviceGroup[] = [];
@@ -1487,7 +1575,7 @@ export function fdsToPlan(
   const ceilingHeights = objects
     .filter((o) => o.type === 'ceiling')
     .map((o) => (o as CeilingObject).height_m);
-  if (ceilingHeights.length > 0) env.ceilingHeight_m = Math.min(...ceilingHeights);
+  if (ceilingHeights.length > 0) env.ceilingHeight_m = rangeOf(ceilingHeights)[0];
   const misc = group('MISC')[0];
   const tmpa = misc ? misc.number('TMPA') : null;
   if (tmpa !== null) env.ambientTemperature_C = tmpa;

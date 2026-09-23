@@ -13,8 +13,8 @@ import { describe, expect, it } from 'vitest';
 import { checkPlan, firePointSourceM, newPlan, parsePlan, positionOf } from '../core/plan';
 import { lookAtQuat } from '../core/math';
 import type { CameraObject, PlanDocument } from '../core/types';
-import { buildViewSvg, escapeXml } from './drawing';
-import { PRINT_CSS, REPORT_CSS, buildReportBody, buildReportHtml } from './report';
+import { buildViewSvg, elevationHeading, escapeXml } from './drawing';
+import { PRINT_CSS, REPORT_CSS, buildReportBody, buildReportHtml, formatKw } from './report';
 
 const FIXTURE_PATH = fileURLToPath(new URL('../../../fixtures/pool-fire-camera-row.ftp.json', import.meta.url));
 const fixture = (): PlanDocument => parsePlan(readFileSync(FIXTURE_PATH, 'utf8'));
@@ -230,7 +230,8 @@ describe('report content', () => {
     // Every stacked name still reaches the sheet, and none of them overprint.
     const ys = new Set<number>();
     for (let i = 0; i < 6; i += 1) {
-      const line = svg.split('\n').find((l) => l.includes(`>Stacked gauge ${i}<`));
+      // Unrotated, so each faces straight down, and the plan label says so (EXP-3).
+      const line = svg.split('\n').find((l) => l.includes(`>Stacked gauge ${i} (faces down)<`));
       expect(line).toBeDefined();
       ys.add(Number(/ y="(-?[0-9.]+)"/.exec(line as string)![1]));
     }
@@ -335,5 +336,160 @@ describe('report content', () => {
       return Number(/ y="(-?[0-9.]+)"/.exec(tag as string)![1]);
     };
     expect(Math.abs(yOf('East wall gauge') - yOf('East wall rake'))).toBeGreaterThan(6);
+  });
+});
+
+// -- review 2026-09-22 ----------------------------------------------------------
+
+/** Every x and y a drawing's polygons and paths use, in page pixels. */
+const pagePoints = (svg: string): Array<[number, number]> =>
+  [...svg.matchAll(/<polygon points="([^"]+)"/g)]
+    .flatMap((m) => m[1].split(' ').map((pt) => pt.split(',').map(Number) as [number, number]));
+
+/** The polygons drawn in one colour, as lists of page points. */
+const polygonsIn = (svg: string, color: string): Array<Array<[number, number]>> =>
+  svg.split('\n')
+    .filter((l) => l.startsWith('<polygon') && l.includes(`stroke="${color}"`))
+    .map((l) => /points="([^"]+)"/.exec(l)![1].split(' ').map((pt) => pt.split(',').map(Number) as [number, number]));
+
+const extent = (pts: Array<[number, number]>, axis: 0 | 1): number =>
+  Math.max(...pts.map((q) => q[axis])) - Math.min(...pts.map((q) => q[axis]));
+
+describe('drawings and report (review 2026-09-22)', () => {
+  it('names elevations from the recorded north, and marks the plan (EXP-2)', () => {
+    const doc = newPlan('north');
+    expect(elevationHeading(doc, 'front')).toBe('looking along +Y');
+    expect(elevationHeading(doc, 'side')).toBe('looking along +X');
+    expect(buildViewSvg(doc, 'plan', 'm')).toContain('>+Y</text>');
+
+    // +Y points south: the front elevation looks south, the side one west.
+    doc.coordinateSystem.northAzimuth_rad = Math.PI;
+    expect(elevationHeading(doc, 'front')).toBe('looking south (+Y)');
+    expect(elevationHeading(doc, 'side')).toBe('looking west (+X)');
+    const svg = buildViewSvg(doc, 'plan', 'm');
+    expect(svg).toContain('>N</text>');
+    const body = buildReportBody({ ...fixture(), coordinateSystem: doc.coordinateSystem }, 'm');
+    expect(body).toContain('Front elevation — looking south (+Y)');
+    expect(body).not.toContain('looking north (+Y)');
+  });
+
+  it('lays a camera looking straight down over the floor around it (EXP-3, PHY-6)', () => {
+    const doc = newPlan('overhead');
+    const position: [number, number, number] = [2, 0, 4];
+    doc.objects.push({
+      id: 'cam', type: 'camera', name: 'Overhead',
+      transform: { position_m: position, rotation_quat: lookAtQuat(position, [2, 0, 0]) },
+      camera: { modality: 'RGB', resolution_px: [1920, 1080], sensor_mm: [6.4, 3.6], focalLength_mm: 4 },
+    } as never);
+    const svg = buildViewSvg(doc, 'plan', 'm');
+    const [wedge] = svg.split('\n').filter((l) => l.startsWith('<polygon') && l.includes('fill-opacity="0.07"'));
+    const pts = /points="([^"]+)"/.exec(wedge)![1].split(' ').map((pt) => pt.split(',').map(Number));
+    const xs = pts.map((q) => q[0]);
+    // The camera's own marker sits inside the footprint, not at a wedge's apex.
+    const marker = /<circle cx="([0-9.]+)" cy="([0-9.]+)" r="4"/.exec(svg)!;
+    expect(Math.min(...xs)).toBeLessThan(Number(marker[1]));
+    expect(Math.max(...xs)).toBeGreaterThan(Number(marker[1]));
+  });
+
+  it('says a gauge facing the ceiling faces up, and draws no invented heading (EXP-3)', () => {
+    const doc = newPlan('up');
+    doc.objects.push({
+      id: 'hf', type: 'heatFluxSensor', name: 'Ceiling gauge',
+      transform: { position_m: [1, 1, 0.5], rotation_quat: [1, 0, 0, 0] },
+      gauge: { range_kw_m2: 50, viewAngle_deg: 180 },
+    } as never);
+    const svg = buildViewSvg(doc, 'plan', 'm');
+    expect(svg).toContain('>Ceiling gauge (faces up)<');
+    expect(svg).not.toContain('stroke-dasharray="4 3"');
+  });
+
+  it('draws a horizontal rake bead by bead in plan (EXP-4)', () => {
+    const doc = newPlan('rake');
+    doc.objects.push({
+      id: 'tc', type: 'thermocouple', name: 'Ceiling rake',
+      // Local +Z along world +X: the rake lies flat, its beads spread east.
+      transform: { position_m: [0, 1, 2], rotation_quat: [0, Math.SQRT1_2, 0, Math.SQRT1_2] },
+      beadOffsets_m: [0, 0.5, 1, 1.5], thermocouple: { type: 'K' },
+    } as never);
+    const svg = buildViewSvg(doc, 'plan', 'm');
+    expect(svg).toContain('>Ceiling rake<');
+    expect(svg).not.toContain('(×4)');
+    expect((svg.match(/r="2.6"/g) ?? []).length).toBe(4);
+  });
+
+  it('draws a line burner at its own width in each elevation (EXP-6)', () => {
+    const doc = newPlan('line burner');
+    doc.objects.push({
+      id: 'b', type: 'burner', transform: { position_m: [0, 0, 0] },
+      footprint: { shape: 'rectangle', size_m: [2, 0.25] }, rimHeight_m: 0.1,
+      fire: { hrr_kw: 100 },
+    } as never);
+    const widths = (['front', 'side'] as const).map((view) => {
+      const [pan] = polygonsIn(buildViewSvg(doc, view, 'm'), '#7c3aed');
+      return extent(pan, 0);
+    });
+    // Both pages span the 2 m minimum, so pixels compare directly: 2 m against
+    // 0.25 m. The equal-area diameter drew both 0.8 m wide.
+    expect(widths[0] / widths[1]).toBeCloseTo(8, 1);
+  });
+
+  it('keeps a wide hood canopy on the sheet (EXP-7)', () => {
+    const doc = newPlan('hood');
+    doc.objects.push({
+      id: 'h', type: 'hood', transform: { position_m: [0, 0, 0] }, height_m: 2.5, opening_m: [4, 1],
+    } as never);
+    const svg = buildViewSvg(doc, 'front', 'm');
+    const height = Number(/viewBox="0 0 [0-9.]+ ([0-9.]+)"/.exec(svg)![1]);
+    for (const [, y] of pagePoints(svg)) {
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(y).toBeLessThanOrEqual(height);
+    }
+  });
+
+  it('prints heights as each object\'s own extent, and HRR as written (EXP-9, EXP-10)', () => {
+    expect(formatKw(300.00000000000006)).toBe('300');
+    expect(formatKw(12.345)).toBe('12.35');
+    const doc = newPlan('heights');
+    doc.objects.push({
+      id: 'b', type: 'burner', name: 'Pan', transform: { position_m: [0, 0, 0] },
+      footprint: { shape: 'circle', diameter_m: 0.5 }, rimHeight_m: 0.1, fire: { hrr_kw: 300.00000000000006 },
+    } as never);
+    doc.objects.push({
+      id: 'w', type: 'wall', name: 'Upstand', transform: { position_m: [0, 0, 0] },
+      polyline_m: [[1, 0], [2, 0]], height_m: 0.6, baseHeight_m: 2,
+    } as never);
+    const body = buildReportBody(doc, 'm');
+    const row = (name: string): string => body.split('<tr>').find((r) => r.includes(`>${name}<`))!;
+    expect(row('Pan')).toContain('300 kW');
+    expect(row('Pan')).not.toContain('300.00000000000006');
+    expect(row('Pan')).toContain('mean flame tip');
+    expect(row('Pan')).toContain('<td class="num">0.1</td>');
+    expect(row('Upstand')).toContain('<td class="num">2.6</td>');
+  });
+
+  it('warns that a zoomed camera\'s mm/px is output pixels (EXP-11)', () => {
+    const doc = fixture();
+    expect(buildReportBody(doc, 'm')).not.toContain('A digital zoom');
+    (doc.objects.find((o) => o.type === 'camera') as CameraObject).camera.zoomFactor = 2;
+    const body = buildReportBody(doc, 'm');
+    expect(body).toContain('A digital zoom');
+    expect(body).toMatch(/[0-9.]+ at 2×<\/td>/);
+  });
+
+  it('breaks a wall at a doorway in plan, and not at a window (EXP-15)', () => {
+    const doc = newPlan('door');
+    doc.objects.push({
+      id: 'w', type: 'wall', transform: { position_m: [0, 0, 0] },
+      polyline_m: [[0, 0], [4, 0], [4, 3]], height_m: 2.5,
+      openings: [
+        { offset_m: 1, width_m: 0.9, sillHeight_m: 0, height_m: 2.1 },
+        { offset_m: 5, width_m: 1, sillHeight_m: 1, height_m: 1 },
+      ],
+    } as never);
+    const svg = buildViewSvg(doc, 'plan', 'm');
+    const walls = svg.split('\n').filter((l) => l.startsWith('<path') && l.includes('stroke="#64748b"'));
+    expect(walls).toHaveLength(2);
+    // The second run turns the corner with the wall; the window does not cut it.
+    expect((walls[1].match(/L/g) ?? []).length).toBe(2);
   });
 });

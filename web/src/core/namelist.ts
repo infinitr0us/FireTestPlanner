@@ -267,9 +267,10 @@ function maskStrings(body: string): string {
 
 const ASSIGNMENT = /([A-Za-z_]\w*)\s*(\([^)]*\))?\s*=/g;
 
-/** One value: a quoted string, or a run of anything that is not a separator.
+/** One value: a quoted string (with an optional `n*` repeat in front, so
+ *  `2*'my surf'` stays one token), or a run of anything that is not a separator.
  *  Commas and whitespace are both separators -- see the module comment. */
-const VALUE = /'(?:[^']|'')*'|"[^"]*"|[^,\s]+/g;
+const VALUE = /(?:\d+\*)?'(?:[^']|'')*'|(?:\d+\*)?"[^"]*"|[^,\s]+/g;
 
 const REPEAT = /^(\d+)\*(.*)$/;
 const LOGICAL = /^\.(TRUE|FALSE|T|F)\.$/i;
@@ -296,7 +297,13 @@ function parseValues(raw: string): NamelistValue[] {
     const repeat = REPEAT.exec(token);
     const count = repeat ? Number(repeat[1]) : 1;
     const body = repeat ? repeat[2] : token;
-    if (!body) continue;
+    if (!body) {
+      // `n*` with nothing after it is Fortran's null repeat: n values left as they
+      // were. Dropping them shifted every later value -- `SURF_ID6=2*,'A','B'` put
+      // A on the first face instead of the third.
+      for (let k = 0; k < count; k += 1) out.push(null);
+      continue;
+    }
     const v = scalar(body);
     for (let k = 0; k < count; k += 1) out.push(v);
   }

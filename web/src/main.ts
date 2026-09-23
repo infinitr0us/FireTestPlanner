@@ -9,7 +9,7 @@ import exampleFlameUrl from '../../fixtures/flame/flame-test.fvs?url';
 import { handleTransportKey } from './ui/transport';
 import type { FlameSequence } from './core/flame';
 import { flameSequenceLink, newPlan, reconstructedFlames } from './core/plan';
-import { adoptShellPresets } from './core/presets';
+import { adoptShellPresets, keepPresetsForSession } from './core/presets';
 import { isReconstructedFlame, type LengthUnit, type PlanDocument } from './core/types';
 import { describeErrors, parseAndValidatePlan, validateStructure } from './core/validate';
 import {
@@ -28,7 +28,9 @@ import {
   shell,
   splitEmbeddedFlames,
   type EmbeddedFlames,
+  type ShellBridge,
 } from './io/files';
+import { isNetworkPath } from './core/linked-files';
 import { decodeEmbedded, encodeEmbedded } from './io/flame-sources';
 import { Viewport, type GizmoMode, type ViewportOptions } from './scene/viewport';
 import { flameActions, type FlameActionsHost } from './state/flame-actions';
@@ -134,13 +136,61 @@ async function attachEmbedded(flames: EmbeddedFlames): Promise<void> {
   }
 }
 
-/** On the desktop, frames the plan links are read as the plan opens. */
+/**
+ * On the desktop, frames the plan links are read as the plan opens -- from a local
+ * folder. A plan is someone else's file, and a link to `\\host\share` would have
+ * Windows contact that host, offering the user's credentials, before anyone clicked
+ * anything; such a folder waits for Load frames like a browser tab's does.
+ */
 function autoLoadFlames(): void {
   if (!shell()) return;
   for (const flame of reconstructedFlames(store.document)) {
     const link = flameSequenceLink(flame);
-    if (link && !flameStore.get(link)) void flameOps.load(flame);
+    if (link && !isNetworkPath(link.path) && !flameStore.get(link)) void flameOps.load(flame);
   }
+}
+
+/**
+ * Tell the desktop shell whether there are unsaved changes, so its close prompt is
+ * armed exactly while they exist. WebView2 does not run `beforeunload` when the
+ * window is closed, so this is the only thing that stops a close discarding work.
+ * Chained, so two quick updates cannot reach the threaded server out of order.
+ */
+let reportedDirty = false;
+let dirtyReports: Promise<void> = Promise.resolve();
+function reportDirty(): void {
+  const bridge = shell();
+  if (!bridge || store.dirty === reportedDirty) return;
+  reportedDirty = store.dirty;
+  const dirty = store.dirty;
+  dirtyReports = dirtyReports.then(() => bridge.setDirty(dirty)).catch(() => {
+    // The prompt is a safeguard, not a reason to interrupt editing.
+  });
+}
+
+/** The desktop's recent plans, newest first. Empty in a browser tab. */
+let recentPlans: string[] = [];
+function refreshRecent(): void {
+  const bridge = shell();
+  if (!bridge) return;
+  void bridge.recentFiles().then((list) => {
+    recentPlans = list;
+    renderToolbar();
+  }, () => {});
+}
+
+async function openRecentPlan(path: string): Promise<void> {
+  const bridge = shell();
+  if (!bridge || !confirmDiscard()) return;
+  let result: Awaited<ReturnType<ShellBridge['openRecent']>>;
+  try {
+    result = await bridge.openRecent(path);
+  } catch (err) {
+    window.alert(`Could not open ${path}:\n\n${(err as Error).message}`);
+    refreshRecent();
+    return;
+  }
+  if (result) adopt(result.text, result.path.split(/[\\/]/).pop() ?? 'plan.ftp.json', result.token);
 }
 
 function downloadDataUrl(url: string, name: string): void {
@@ -243,6 +293,7 @@ viewport.onSelect = (id, additive) => {
 viewport.onPlace = (point) => palette.place([point.x, point.y, point.z]);
 
 store.subscribe((event) => {
+  reportDirty();
   if (event === 'document') {
     if (store.documentId !== flameDocumentId) {
       // A new document: the loaded sequences belonged to the old one.
@@ -302,6 +353,7 @@ function renderToolbar(): void {
 
     group([
       btn('Open', () => { void openPlan(); }),
+      recentPlans.length > 0 ? recentSelect() : null,
       btn('Save', () => { void savePlan(false); }),
       btn('Save as…', () => { void savePlan(true); }),
       btn('Import FDS…', () => { void importFds(); },
@@ -357,7 +409,26 @@ function renderToolbar(): void {
   );
 }
 
-const group = (children: HTMLElement[]): HTMLElement => h('div', { class: 'toolbar__group' }, children);
+const group = (children: Array<HTMLElement | null>): HTMLElement =>
+  h('div', { class: 'toolbar__group' }, children);
+
+/** The desktop's recent plans: a select whose first option is its own label, so
+ *  choosing a file opens it and the control shows "Recent…" again afterwards. */
+function recentSelect(): HTMLElement {
+  return h('select', {
+    class: 'toolbar__select',
+    title: 'Open a recent plan',
+    onchange: (e: Event) => {
+      const select = e.target as HTMLSelectElement;
+      const path = select.value;
+      select.value = '';
+      if (path) void openRecentPlan(path);
+    },
+  }, [
+    h('option', { value: '', selected: true }, ['Recent…']),
+    ...recentPlans.map((path) => h('option', { value: path, title: path }, [path.split(/[\\/]/).pop() ?? path])),
+  ]);
+}
 
 // The click event is swallowed here rather than forwarded: a handler such as
 // `savePlan(saveAs = false)` registered directly would receive the MouseEvent as its
@@ -421,6 +492,9 @@ function adopt(text: string, name: string, token: string | null = null): void {
     store.replaceDocument(parseAndValidatePlan(split.text), name, token);
     if (split.flames.size) void attachEmbedded(split.flames);
     viewport.frameAll();
+    // Only an adopted file becomes a recent plan and the window's title.
+    const bridge = shell();
+    if (bridge && token) void bridge.adopted(token).then(refreshRecent, () => {});
   } catch (err) {
     window.alert(
       `${name} could not be opened as a fire test plan:\n\n${(err as Error).message}\n\n` +
@@ -449,7 +523,10 @@ async function savePlan(saveAs = false): Promise<void> {
   try {
     const saved = await savePlanText(store.serialize(), suggested, saveAs, identity.token);
     // null means the user cancelled the dialog; a failed write throws.
-    if (saved) store.markSaved(saved.path.split(/[\\/]/).pop() ?? suggested, identity, saved.token);
+    if (saved) {
+      store.markSaved(saved.path.split(/[\\/]/).pop() ?? suggested, identity, saved.token);
+      refreshRecent();
+    }
   } catch (err) {
     window.alert(
       `${suggested} was not saved:\n\n${(err as Error).message}\n\n` +
@@ -487,7 +564,7 @@ async function importFds(): Promise<void> {
   // A split input -- geometry in one file, devices in another, pulled together by
   // &CATF -- is the normal shape for anything past a demo, and importing only the
   // file that was named would hand over a model with most of itself missing.
-  const source = await resolveFdsIncludes(picked.text);
+  const source = await resolveFdsIncludes(picked.text, picked.name);
 
   try {
     fdsImport.open(source.text, picked.name, store.displayUnit, (doc, name) => {
@@ -631,12 +708,31 @@ function isTextControl(el: HTMLElement): boolean {
   return !/^(range|checkbox|radio|color|file|button|submit|reset|image)$/.test((el as HTMLInputElement).type);
 }
 
+/**
+ * The value the focused text control held when it took focus or last committed,
+ * so Escape can put it back. Escape used to blur the field with the typed text
+ * still in it -- and a blur commits, so Escape saved the edit it should cancel.
+ */
+let committedText: { el: HTMLInputElement | HTMLTextAreaElement; value: string } | null = null;
+const noteCommitted = (e: Event): void => {
+  const el = e.target;
+  committedText = (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && isTextControl(el)
+    ? { el, value: el.value }
+    : null;
+};
+window.addEventListener('focusin', noteCommitted);
+window.addEventListener('change', (e) => { if (e.target === committedText?.el) noteCommitted(e); }, true);
+
 window.addEventListener('keydown', (e) => {
   if (fdsResults.isOpen) return;
   const target = e.target as HTMLElement | null;
   const control = target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName) ? target : null;
-  // Escape hands the keyboard back to the editor.
-  if (control && e.key === 'Escape') { control.blur(); return; }
+  // Escape cancels what was typed, then hands the keyboard back to the editor.
+  if (control && e.key === 'Escape') {
+    if (committedText?.el === control) committedText.el.value = committedText.value;
+    control.blur();
+    return;
+  }
 
   // A modal owns the keyboard while it is up.
   if (fdsImport.isOpen) {
@@ -736,6 +832,8 @@ if (sharedPlanAdopted) {
 connectShell(() => {
   document.body.classList.add('is-desktop');
   renderToolbar();
+  refreshRecent();
+  reportDirty();
 
   // The custom preset library comes from the shell's settings file, not from
   // browser storage: this page's origin carries a fresh loopback port on every
@@ -751,7 +849,12 @@ connectShell(() => {
       inspector.render();
     }, () => {
       // An unreachable shell route is not worth failing the boot over; the
-      // in-memory library still works for the session and says so.
+      // in-memory library still works for the session, and now says so -- it used
+      // to fall back to browser storage under this launch's one-off origin and
+      // promise the library would outlive the window.
+      keepPresetsForSession();
+      palette.render();
+      inspector.render();
     });
   }
 

@@ -10,6 +10,7 @@
  */
 
 import { fileName } from '../core/linked-files';
+import { shell } from '../io/files';
 import { flameSequenceLink, reconstructedFlames } from '../core/plan';
 import type { ReconstructedFlameObject } from '../core/types';
 import type { FlameStore } from '../state/flame-store';
@@ -186,7 +187,9 @@ export class PlaybackBar {
     }
     if (status.startsWith('loading')) return line(`${name}: reading frame ${status.slice(8)} from ${fileName(link.path)}…`, 'info');
     if (status.startsWith('error')) return line(`${name}: ${status.slice(6)}`, 'error', load ?? undefined);
-    if (status.startsWith('changed')) return line(`${name}: ${status.slice(8)}. Refresh the link in the inspector to adopt the folder as it is now.`, 'warn');
+    if (status.startsWith('changed')) {
+      return line(`${name}: ${status.slice(8)}. ${shell() ? 'Refresh' : 'Relink'} the link in the inspector to adopt the folder as it is now.`, 'warn');
+    }
     return null;
   }
 }

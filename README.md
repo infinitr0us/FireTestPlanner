@@ -126,7 +126,9 @@ burner's volume plot follows the same clock, and a selected camera's
 picture-in-picture shows the hull from its own view at that moment.
 
 The plan stores a reference and a manifest, never the voxels; the desktop app reads
-the frames as the plan opens, and **Share…** embeds them in the exported page (the
+the frames as the plan opens (from a network share only on **Load frames**, so
+opening a plan never contacts another machine), and **Share…** embeds them in the
+exported page (the
 example is 49 KB packed). Placement checks say when a hull sits below the floor or
 away from its burner — the reconstruction frame was not the plan frame — and the
 object's transform is the correction. See [docs/flame-playback.md](docs/flame-playback.md).
@@ -188,7 +190,8 @@ python -m venv .venv
 .venv\Scripts\python.exe build_exe.py           # -> dist/FireTestPlanner.exe
 ```
 
-Same bundle, in a native window with native file dialogs and a recent-files list.
+Same bundle, in a native window with native file dialogs, a **Recent…** list in the
+toolbar, and a prompt before closing the window over unsaved changes.
 See [`python/shell/README.md`](python/shell/README.md) for how the bridge works and
 why it is HTTP rather than pywebview's `js_api`.
 

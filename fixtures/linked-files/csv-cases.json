@@ -17,5 +17,7 @@
   { "name": "no rows", "text": "timestamp_s,volume_m3,surface_area_m2\n", "error": "CSV contains no measurements." },
   { "name": "wrong width", "text": "timestamp_s,volume_m3,surface_area_m2\n0,1,2,3", "error": "CSV row 2 has 4 fields; expected 3." },
   { "name": "unclosed quote", "text": "timestamp_s,volume_m3,surface_area_m2\n0,\"1,2", "error": "CSV has an unclosed quoted field." },
-  { "name": "text after quote", "text": "timestamp_s,volume_m3,surface_area_m2\n0,\"1\"x,2", "error": "Malformed CSV quoting." }
+  { "name": "text after quote", "text": "timestamp_s,volume_m3,surface_area_m2\n0,\"1\"x,2", "error": "Malformed CSV quoting." },
+  {"name": "NEL is not whitespace", "text": "timestamp_s,volume_m3,surface_area_m2\n0,1,2", "error": "CSV row 2: surface_area_m2 is not a number."},
+  {"name": "BOM inside a cell is whitespace", "text": "timestamp_s,volume_m3,surface_area_m2\n0,﻿1,2", "samples": [[0, 1, 2]]}
 ]

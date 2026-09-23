@@ -701,20 +701,51 @@ def test_a_catf_include_is_spliced_where_it_sits_not_after_tail(tmp_path):
     assert one(result, "burner")["fire"]["hrr_kw"] == pytest.approx(100.0)
 
 
-def test_a_child_that_ends_in_tail_is_reported(tmp_path):
-    """Reading stops at &TAIL, so a child that carries one ends the parent there:
-    the parent's thermocouple after the &CATF line is not in this plan, and the
-    import has to say why rather than present the remainder as the whole."""
+def test_a_child_s_tail_ends_the_child_not_the_model(tmp_path):
+    """FDS copies an included file up to its &TAIL (COPY_FILE_TO_CAT, read.f90) and
+    then carries on with the parent after the &CATF line. The parent's thermocouple
+    is in the model; the child's record after its &TAIL is not, and that is said."""
     root = tmp_path / "root.fds"
     root.write_text("&HEAD CHID='catf' /\n&CATF OTHER_FILES='child.fds' /\n"
                     "&DEVC ID='parent', XYZ=1,1,1, QUANTITY='TEMPERATURE' /\n&TAIL /\n",
                     encoding="utf-8")
-    (tmp_path / "child.fds").write_text("&OBST XB=0,2,0,0.1,0,2 /\n&TAIL /\n", encoding="utf-8")
+    (tmp_path / "child.fds").write_text(
+        "&HEAD CHID='child' /\n&OBST XB=0,2,0,0.1,0,2 /\n&TAIL /\n&OBST XB=3,5,0,0.1,0,2 /\n",
+        encoding="utf-8")
     result = fds.load(str(root))
     tail = next(i for i in result.issues if i.code == "fds-catf-tail")
-    assert "child.fds" in tail.message
+    assert "child.fds" in tail.message and tail.severity == "info"
     assert result.counts.get("wall") == 1
-    assert "thermocouple" not in result.counts
+    assert result.counts.get("thermocouple") == 1
+    assert result.plan.title == "catf"          # the child's &HEAD is not copied
+
+
+def test_nested_includes_are_not_followed_as_fds_does_not(tmp_path):
+    """FDS stops copying a child at its own &CATF line and never reads a grandchild."""
+    (tmp_path / "grand.fds").write_text("&OBST XB=3,5,0,0.1,0,2 /\n", encoding="utf-8")
+    (tmp_path / "child.fds").write_text(
+        "&OBST XB=0,2,0,0.1,0,2 /\n&CATF OTHER_FILES='grand.fds' /\n&OBST XB=0,0.1,0,2,0,2 /\n",
+        encoding="utf-8")
+    root = tmp_path / "root.fds"
+    root.write_text("&HEAD CHID='r' /\n&CATF OTHER_FILES='child.fds' /\n&TAIL /\n",
+                    encoding="utf-8")
+    result = fds.load(str(root))
+    assert result.counts.get("wall") == 1
+    assert "fds-catf-nested" in [i.code for i in result.issues]
+
+
+def test_an_input_including_itself_is_not_spliced_twice(tmp_path):
+    root = tmp_path / "root.fds"
+    root.write_text("&HEAD CHID='r' /\n&OBST XB=0,2,0,0.1,0,2 /\n"
+                    "&CATF OTHER_FILES='root.fds' /\n&TAIL /\n", encoding="utf-8")
+    result = fds.load(str(root))
+    assert result.counts.get("wall") == 1
+    assert "fds-catf-cycle" in [i.code for i in result.issues]
+
+
+def test_a_missing_input_raises_its_own_error(tmp_path):
+    with pytest.raises(OSError):
+        fds.load(str(tmp_path / "no-such-model.fds"))
 
 
 def test_converting_bare_text_says_its_includes_went_unread(tmp_path):
@@ -735,10 +766,8 @@ def test_an_unreadable_include_is_reported_rather_than_thrown(tmp_path):
 
 def test_a_file_included_twice_is_not_reported_as_including_itself(tmp_path):
     (tmp_path / "common.fds").write_text("&SURF ID='C' /\n", encoding="utf-8")
-    (tmp_path / "a.fds").write_text("&CATF OTHER_FILES='common.fds' /\n", encoding="utf-8")
-    (tmp_path / "b.fds").write_text("&CATF OTHER_FILES='common.fds' /\n", encoding="utf-8")
     root = tmp_path / "root.fds"
-    root.write_text("&HEAD CHID='r' /\n&CATF OTHER_FILES='a.fds','b.fds' /\n&TAIL /\n",
+    root.write_text("&HEAD CHID='r' /\n&CATF OTHER_FILES='common.fds','common.fds' /\n&TAIL /\n",
                     encoding="utf-8")
     codes = [i.code for i in fds.load(str(root)).issues]
     assert "fds-catf-cycle" not in codes
@@ -781,3 +810,51 @@ def test_the_source_offset_puts_a_plan_coordinate_back_into_fds_coordinates():
     wall = next(w for w in plan.walls if w.id == "wall-1")
     fds_y = wall.polyline_m[0][1] + offset[1]
     assert fds_y == pytest.approx(3.65)      # the &OBST centreline, y = (3.60+3.70)/2
+
+
+# -- review 2026-09-22: shared cases, run by web/src/core/fds.test.ts too --
+
+_REVIEW_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                           "fixtures", "fds")
+with open(os.path.join(_REVIEW_DIR, "review-cases.json"), encoding="utf-8") as _fh:
+    _REVIEW_CASES = json.load(_fh)
+with open(os.path.join(_REVIEW_DIR, "review-cases.golden.json"), encoding="utf-8") as _fh:
+    _REVIEW_GOLDEN = json.load(_fh)
+
+
+@pytest.mark.parametrize("case", _REVIEW_CASES, ids=[c["name"] for c in _REVIEW_CASES])
+def test_review_case(case):
+    result = fds.to_plan(case["text"], "case.fds", fds.ImportOptions(imported_at="2026-08-15T00:00:00Z"))
+    assert result.counts == case["counts"]
+    offset = result.plan.data["meta"]["source"]["originOffset_m"]
+    if "originZ" in case:
+        assert offset[2] == pytest.approx(case["originZ"])
+    burners = [o for o in result.plan.data["objects"] if o["type"] == "burner"]
+    if "burnerHrrKw" in case:
+        if case["burnerHrrKw"] is None:
+            assert burners[0]["fire"].get("hrr_kw") is None
+        else:
+            assert burners[0]["fire"]["hrr_kw"] == pytest.approx(case["burnerHrrKw"])
+    if "burnerRimM" in case:
+        assert burners[0]["rimHeight_m"] == pytest.approx(case["burnerRimM"])
+    by_id = {o["id"]: o for o in result.plan.data["objects"]}
+    for oid, xyz in case.get("sourceXyz", []):
+        pos = by_id[oid]["transform"]["position_m"]
+        assert [pos[k] + offset[k] for k in range(3)] == pytest.approx(xyz, abs=1e-6)
+    codes = [i.code for i in result.issues]
+    for code in case.get("codes", []):
+        assert code in codes
+    for code in case.get("absentCodes", []):
+        assert code not in codes
+    result.plan.meta["created"] = "2026-08-15T00:00:00Z"
+    result.plan.meta["modified"] = "2026-08-15T00:00:00Z"
+    assert result.plan.dumps() == _REVIEW_GOLDEN[case["name"]]
+
+
+def test_repeated_quoted_strings_and_null_repeats_keep_their_places():
+    """Mirrored in web/src/core/fds.test.ts (FDSI-15, FDSI-16)."""
+    recs = namelist.read("&OBST SURF_ID6=2*'my surf','A' /\n&OBST SURF_ID6=2*,'A','B' /\n"
+                         "&DEVC IOR=1D400 /")
+    assert recs[0].strings("SURF_ID6") == ["my surf", "my surf", "A"]
+    assert recs[1].strings("SURF_ID6") == [None, None, "A", "B"]
+    assert recs[2].number("IOR") is None

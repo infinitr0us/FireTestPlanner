@@ -65,7 +65,8 @@ resident in 5090 VRAM. A 512³ sequence streams from system RAM without difficul
 ## 4. File format (`.ftp.json`)
 
 Human-readable, diffable, version-controlled. Stable key ordering so git diffs are
-meaningful. Validated against a published JSON Schema.
+meaningful. Validated against a published JSON Schema. The example below is a complete, valid
+1.0.0 plan (comments aside); `python/tests/test_docs.py` keeps it that way.
 
 ```jsonc
 {
@@ -73,53 +74,66 @@ meaningful. Validated against a published JSON Schema.
   "version": "1.0.0",
   "meta": {
     "title": "Pool fire test #3",
-    "author": "", "site": "",
+    "author": null, "siteName": null,
     "created": "2026-08-15T00:00:00Z",
     "modified": "2026-08-15T00:00:00Z",
-    "notes": ""
+    "notes": null
   },
   "units": {
     "length": "m", "angle": "rad", "power": "kW", "temperature": "C",
     "display": { "length": "ft", "angle": "deg" }
   },
   "coordinateSystem": {
-    "convention": "Z-up, right-handed",
-    "origin": "burner center, at floor level",
-    "northAzimuth_deg": 0
+    "convention": "Z-up-right-handed",           // CONVENTIONS §1
+    "origin": "burner-center-floor",
+    "northAzimuth_rad": null                     // compass bearing of +Y, when it matters
   },
   "objects": [
     {
       "id": "cam-t650",
       "type": "camera",
-      "name": "FLIR T650 LWIR",
+      "name": "FLIR T650sc LWIR",
       "transform": {
-        "position_m": [-2.74, 0.0, 1.50],
-        "rotation_quat": [0, 0, 0, 1],       // xyzw, camera-to-world
-        "aimTarget_m": [0, 0, 0.30]          // authoring intent; quat is authoritative
+        "position_m": [-2.74, 0.0, 1.5],
+        "rotation_quat": [0.386921, -0.386921, -0.591855, 0.591855], // xyzw, camera-to-world
+        "aimTarget_m": [0.0, 0.0, 0.3]           // authoring intent; quat is authoritative
       },
       "camera": {
         "modality": "LWIR",
-        "presetId": "flir-t650-25deg",
+        "presetId": "flir-t650sc-25deg",
         "resolution_px": [640, 480],
-        "sensor_mm": [10.88, 8.16],          // 640 x 17 um pitch
-        "focalLength_mm": 24.6,
-        "fov_deg": { "h": 25.0, "v": 18.8 },
+        "sensor_mm": [10.88, 8.16],              // 640 x 17 um pitch
+        "focalLength_mm": 24.6,                  // field of view is derived, never stored
+        "principalPoint_px": null,
+        "distortion": null,
+        "intrinsicsSource": "datasheet",
         "spectralBand_um": [7.5, 14.0],
         "framerate_hz": 30
       },
-      "mount": { "type": "tripod", "height_m": 1.50 },
-      "recording": null                      // RESERVED — see note below
+      "mount": { "type": "tripod", "height_m": 1.5 },
+      "recording": null                          // RESERVED — see note below
     },
     {
       "id": "burner-1",
       "type": "burner",
-      "shape": "circle",
-      "diameter_m": 0.30,
-      "transform": { "position_m": [0, 0, 0] },
-      "fire": { "fuel": "heptane", "hrr_kw": 120, "hrr_curve": null }
+      "transform": { "position_m": [0.0, 0.0, 0.0] },
+      "footprint": { "shape": "circle", "diameter_m": 0.3 },
+      "rimHeight_m": 0.05,
+      "fire": { "fuel": "n-heptane", "hrr_kw": 120, "hrrCurve": null }
     },
-    { "id": "hood-1", "type": "hood",  "...": "canopy + skirt + duct" },
-    { "id": "wall-n",  "type": "wall",  "...": "polyline + height + openings" }
+    {
+      "id": "hood-1",
+      "type": "hood",
+      "transform": { "position_m": [0.0, 0.0, 0.0] },
+      "opening_m": [2.4, 2.4], "height_m": 2.6, "skirtDepth_m": 0.3,
+      "duct": { "diameter_m": 0.4, "length_m": 2.0 }
+    },
+    {
+      "id": "wall-n",
+      "type": "wall",
+      "polyline_m": [[-3.0, 2.5], [3.0, 2.5]], "height_m": 3.0, "thickness_m": 0.2,
+      "openings": [{ "offset_m": 2.5, "width_m": 0.9, "sillHeight_m": 0.0, "height_m": 2.1 }]
+    }
   ]
 }
 ```
@@ -260,18 +274,22 @@ the same six numbers their `.fds` contains. The floor is the top of the lowest
 horizontal slab, not the bottom of the mesh — in their case those differ by 200 mm,
 and taking the mesh would have left the burner floating.
 
-**What the import immediately tells you about their case**, from the plan's own
-checks rather than from anything FDS-specific:
+**What the import immediately tells you about their case.** The first three rows come
+from the plan's own checks rather than from anything FDS-specific; the fourth is the
+import's report (`fds-gauge-range`), and the plan's report prints those gauges as
+"no range set" rather than as usable:
 
 | Finding | Why it matters |
 |---|---|
 | Mean flame tip at 2.17 m under a 2.4 m ceiling | 0.23 m of clearance; the intermittent tip is in the ceiling jet |
 | Nine of 23 gauges inside two effective diameters | The point-source model is an order of magnitude there, not a number to size a gauge on |
-| Two of 22 beads on each rake inside the flame envelope | Flame temperatures and radiation error, not a plume reading |
+| 13 of 22 beads on each rake in the flame or below its mean tip (two inside the drawn cone) | Intermittent flame temperatures and radiation error, not a plume reading |
 | 23 gauges with no full-scale range | FDS reports a flux at a point and has no gauge; the range has to be chosen |
 
-The last one is the shape of the whole import: nothing is guessed that the file does
-not say. No radiative fraction, no gauge range — and everything not imported is named
+The third row counts every plume bead at or below the mean tip: the flame is
+intermittent there even outside the cone drawn for its mean shape, so those beads are
+judged against flame temperature (CONVENTIONS §5b). The last row is the shape of the
+whole import: nothing is guessed that the file does not say. No radiative fraction, no gauge range — and everything not imported is named
 in the report rather than dropped quietly.
 
 ### What the reference layout demonstrates
@@ -279,14 +297,16 @@ in the report rather than dropped quietly.
 Loading `fixtures/pool-fire-camera-row.ftp.json` and selecting each camera shows the
 trade-off the tool exists to surface. At the sketch's 9 ft standoff:
 
-| Camera | Field of view | Plume in frame | Clips base / tip by | Resolution at the fire |
+| Camera | Field of view | Plume in frame | Flame axis lost at base / tip | Resolution at the fire |
 |---|---|---|---|---|
-| FLIR T650 LWIR | 24.9° × 18.8° | 72% | 131 mm / 209 mm | 2.17 mm/px |
-| FLIR A8303sc MWIR | 39.4° × 22.8° | 89% | 3 mm / 76 mm | 1.80 mm/px |
+| FLIR T650 LWIR | 24.9° × 18.8° | 72% | 137 mm / 177 mm | 2.17 mm/px |
+| FLIR A8303sc MWIR | 39.4° × 22.8° | 89% | 3 mm / 65 mm | 1.80 mm/px |
 | GoPro (wide) | 122° × 90.8° | 100% | — | 5.65 mm/px |
 | iPhone | 69.4° × 54.9° | 100% | — | 1.06 mm/px |
 
-The flame is 1.30 m tall and **neither IR camera frames it** at 9 ft. The A8303sc's
+The flame is 1.30 m tall and **neither IR camera frames it** at 9 ft. The fourth
+column is how much of the flame's centreline, from the fuel surface to the mean tip,
+falls outside the image below and above it. The A8303sc's
 wider field does markedly better — 89% of the plume against 72% — and is still short.
 Backing the IR row out to about 4.5 m frames the whole plume for both, at 2.7 and
 3.3 mm/px. That is a decision worth making before hauling gear to a site, and it is
@@ -298,7 +318,7 @@ Both cameras stand at 1.5 m and look **down** at mid-flame, so the flame tip is 
 level with the lens and falls much further off-axis than its height above the pan
 suggests. A flat-plane estimate — vertical field angle × standoff, compared against
 flame height — makes the A8303sc look like it fits with millimetres to spare. It does
-not; it loses 76 mm of tip.
+not; it loses 65 mm of tip.
 
 The instruments added in M9 make the same kind of point about selection rather than
 placement:
@@ -339,15 +359,18 @@ is invisible until someone works the arithmetic — or opens the plan.
   nothing here corrects a bare bead for radiation error or thermal lag.
 - **Digital zoom flatters the resolution readout.** The field of view is right at any
   zoom, but a digital zoom crops and interpolates, so mm/px describes the output
-  pixels rather than detail the detector resolved. The inspector says so above 1×.
+  pixels rather than detail the detector resolved. The inspector says so above 1×,
+  and the printed coverage table marks the zoom and says the same.
 - **Custom camera presets are not a portable file.** The desktop app keeps them in its
   own settings file and a browser tab keeps them in site data, so they follow the
   machine rather than the plan, and clearing site data clears a browser's copy. Plans
   are unaffected either way: every intrinsic is written into the camera itself, and the
   inspector says so when the library has nowhere durable to be stored.
 - **Wall openings do not appear in the exported elevations.** The 3D view cuts doors
-  and windows out of a wall; the drawing renders the wall as a solid rectangle. Worth
-  knowing before a drawing is handed to someone who will build from it.
+  and windows out of a wall, and the plan view breaks a wall at each doorway (an
+  opening from the wall's base up); the elevations render every wall as a solid
+  rectangle, and a window is not marked in plan. Worth knowing before a drawing is
+  handed to someone who will build from it.
 - **The FDS import classifies by shape, not by intent.** A box is a wall, a slab or an
   obstruction by aspect ratio (CONVENTIONS §9). A 0.4 m kerb reads as a low wall and a
   deep beam reads as a slab; both are defensible and neither is what the author meant.
@@ -357,17 +380,18 @@ is invisible until someone works the arithmetic — or opens the plan.
   a wall surface. That surface is imported as a wall with the fact in its `notes`,
   because this format has one fire and it is the burner. Nothing checks it.
 - **Only vertical device runs group into rakes.** A rake's beads lie along its local
-  +Z, so a horizontal row would have to be a rotated object — and a rotated rake reads
-  correctly in the 3D view but not in the elevations. A horizontal row arrives as one
-  object per `&DEVC`.
+  +Z, so a horizontal row would have to be a rotated object, and the import does not
+  make one: a horizontal row arrives as one object per `&DEVC`. A rake rotated by hand
+  is drawn where its beads are in the 3D view, the plan and the elevations.
 - **A gauge imported from FDS has no range**, so the over-range and low-signal checks
   stay quiet on it until one is set. That is deliberate — see CONVENTIONS §9 — and the
   import says so, but a plan taken straight from an import has not had those verdicts.
 - **The import is one-way.** A plan cannot yet emit `&OBST` / `&DEVC` back. The mapping
   is written so an exporter is an addition rather than a rewrite, but it is not there.
-- **Pitch and roll are honoured in the 3D view only** — checks, plan view and
-  elevations all read a tilted wall, hood or ceiling as if it were upright. Yaw is
-  handled consistently everywhere. See CONVENTIONS §5a.
+- **Pitch and roll of a wall, hood or ceiling are honoured in the 3D view only** —
+  checks, plan view and elevations all read a tilted one as if it were upright. Yaw
+  is handled consistently everywhere, and cameras, gauges and rakes use their full
+  orientation in every view. See CONVENTIONS §5a.
 - **Camera framing is judged against the primary burner only.** Hood, ceiling and
   instrument verdicts take every fire in the plan into account (CONVENTIONS §5b),
   but "does this lens frame the fire" and "aim at fire" mean the burner at the

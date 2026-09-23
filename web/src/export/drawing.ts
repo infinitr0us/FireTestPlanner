@@ -21,11 +21,12 @@ import {
   fuelSurfaceZM,
   gaugeViewAngleDeg,
   heatFluxSensors,
-  hfovRadOf,
+  hoodCanopyRiseM,
   hoodIntakeHeightM,
   hoodOpeningCornersXY,
   hoodOpeningZM,
   hoods,
+  imagePlaneExtents,
   objectColor,
   obstructionCornersXY,
   obstructions,
@@ -33,13 +34,14 @@ import {
   positionOf,
   quatOf,
   standoffHorizontalM,
+  standoffM,
   thermocouples,
   toWorld,
   walls,
 } from '../core/plan';
-import { forwardOf } from '../core/math';
+import { forwardOf, rangeOf } from '../core/math';
 import { formatLengthWithUnit } from '../core/units';
-import type { LengthUnit, PlanDocument, Vec3 } from '../core/types';
+import type { LengthUnit, PlanDocument, Vec3, WallObject } from '../core/types';
 
 export type DrawingView = 'plan' | 'front' | 'side';
 
@@ -140,12 +142,10 @@ function collectPoints(doc: PlanDocument): Vec3[] {
 function makeProjector(doc: PlanDocument, view: DrawingView): { projector: Projector; height: number } {
   const planar = collectPoints(doc).map((p) => planeOf(view, p));
 
-  const bounds: Bounds = {
-    minU: Math.min(...planar.map((q) => q[0])),
-    maxU: Math.max(...planar.map((q) => q[0])),
-    minV: Math.min(...planar.map((q) => q[1])),
-    maxV: Math.max(...planar.map((q) => q[1])),
-  };
+  // A loop, not a spread: an imported model can hold a hundred thousand boxes.
+  const [minU, maxU] = rangeOf(planar.map((q) => q[0]));
+  const [minV, maxV] = rangeOf(planar.map((q) => q[1]));
+  const bounds: Bounds = { minU, maxU, minV, maxV };
 
   const spanU = Math.max(bounds.maxU - bounds.minU, MIN_SPAN_M);
   const spanV = Math.max(bounds.maxV - bounds.minV, MIN_SPAN_M);
@@ -261,6 +261,114 @@ function dimension(
   ].join('');
 }
 
+/** Convex hull of page points (Andrew's monotone chain). */
+function hull(points: Array<[number, number]>): Array<[number, number]> {
+  const pts = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (pts.length < 3) return pts;
+  const turn = (o: [number, number], a: [number, number], b: [number, number]): number =>
+    (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const half = (list: Array<[number, number]>): Array<[number, number]> => {
+    const out: Array<[number, number]> = [];
+    for (const q of list) {
+      while (out.length >= 2 && turn(out[out.length - 2], out[out.length - 1], q) <= 0) out.pop();
+      out.push(q);
+    }
+    return out.slice(0, -1);
+  };
+  return [...half(pts), ...half([...pts].reverse())];
+}
+
+/** Below this horizontal share of a unit direction (sin 1 degree) there is no
+ *  heading to draw in plan: the instrument faces straight up or down. */
+const VERTICAL = Math.sin(Math.PI / 180);
+
+const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+
+/** The compass bearing of +Y, or null when the plan does not record one. */
+function northAzimuth(doc: PlanDocument): number | null {
+  const a = doc.coordinateSystem?.northAzimuth_rad;
+  return typeof a === 'number' && Number.isFinite(a) ? a : null;
+}
+
+/**
+ * What an elevation looks toward: the front view along +Y, the side view along +X,
+ * named on the compass when `coordinateSystem.northAzimuth_rad` records where +Y
+ * points. The headings used to say "looking north (+Y)" whatever the plan said --
+ * which is wrong for every site where +Y is not north.
+ */
+export function elevationHeading(doc: PlanDocument, view: 'front' | 'side'): string {
+  const axis = view === 'front' ? '+Y' : '+X';
+  const azimuth = northAzimuth(doc);
+  if (azimuth === null) return `looking along ${axis}`;
+  const bearing = azimuth + (view === 'side' ? Math.PI / 2 : 0);
+  const index = ((Math.round(bearing / (Math.PI / 4)) % 8) + 8) % 8;
+  return `looking ${COMPASS[index]} (${axis})`;
+}
+
+/**
+ * The plan's orientation mark, in the top-right margin: a north arrow where the
+ * plan records which way north is, otherwise an arrow along +Y labelled as such.
+ */
+function orientationMark(doc: PlanDocument): string {
+  const azimuth = northAzimuth(doc);
+  // Page directions: x right, y down. North is +Y turned by the azimuth.
+  const [dx, dy] = azimuth === null ? [0, -1] : [-Math.sin(azimuth), -Math.cos(azimuth)];
+  const cx = PAGE_WIDTH_PX - 30;
+  const cy = 30;
+  const length = 15;
+  const tip: [number, number] = [cx + dx * length, cy + dy * length];
+  const tail: [number, number] = [cx - dx * length, cy - dy * length];
+  const side = (sign: number): [number, number] =>
+    [tip[0] - dx * 7 + sign * -dy * 4, tip[1] - dy * 7 + sign * dx * 4];
+  return [
+    line(tail[0], tail[1], tip[0], tip[1], COLORS.ink, 'stroke-width="1.2"'),
+    polygon([tip, side(1), side(-1)], `fill="${COLORS.ink}"`),
+    text(tip[0] + dx * 9, tip[1] + dy * 9 + 3, azimuth === null ? '+Y' : 'N',
+      'class="dim-text" text-anchor="middle"'),
+  ].join('');
+}
+
+/**
+ * A wall's plan runs: the polyline with every doorway -- an opening from the
+ * wall's base up -- cut out, in the wall's local XY. A plan is read as a cut
+ * through the room, and a door is a gap in it; a window stands on wall that
+ * continues below it, so it is not cut.
+ */
+function wallPlanRuns(wl: WallObject): Array<Array<[number, number]>> {
+  const pts = wl.polyline_m;
+  const cumulative = [0];
+  for (let i = 1; i < pts.length; i += 1) {
+    cumulative.push(cumulative[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  }
+  const total = cumulative[cumulative.length - 1];
+  const pointAt = (s: number): [number, number] => {
+    let i = 1;
+    while (i < pts.length - 1 && cumulative[i] < s) i += 1;
+    const span = cumulative[i] - cumulative[i - 1];
+    const t = span > 0 ? (s - cumulative[i - 1]) / span : 0;
+    return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t];
+  };
+  const gaps = (wl.openings ?? [])
+    .filter((o) => (o.sillHeight_m ?? 0) <= 1e-9)
+    .map((o) => [Math.max(0, o.offset_m), Math.min(total, o.offset_m + o.width_m)] as [number, number])
+    .filter(([a, b]) => b > a)
+    .sort((a, b) => a[0] - b[0]);
+  const solid: Array<[number, number]> = [];
+  let from = 0;
+  for (const [a, b] of gaps) {
+    if (a > from) solid.push([from, a]);
+    from = Math.max(from, b);
+  }
+  if (from < total) solid.push([from, total]);
+  return solid
+    .filter(([a, b]) => b - a > 1e-9)
+    .map(([a, b]) => [
+      pointAt(a),
+      ...pts.filter((_, i) => cumulative[i] > a && cumulative[i] < b) as Array<[number, number]>,
+      pointAt(b),
+    ]);
+}
+
 // -- views ----------------------------------------------------------------
 
 function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
@@ -277,10 +385,12 @@ function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
   }
 
   for (const wl of walls(doc)) {
-    const pts = wl.polyline_m.map((v) => p.project([...footprintXY(wl, v), 0]));
-    const d = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
     const widthPx = Math.max((wl.thickness_m ?? 0.1) * p.pxPerMetre, 2);
-    out.push(`<path d="${d}" fill="none" stroke="${COLORS.wall}" stroke-width="${widthPx.toFixed(2)}" stroke-linecap="butt"/>`);
+    for (const run of wallPlanRuns(wl)) {
+      const pts = run.map((v) => p.project([...footprintXY(wl, v), 0]));
+      const d = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
+      out.push(`<path d="${d}" fill="none" stroke="${COLORS.wall}" stroke-width="${widthPx.toFixed(2)}" stroke-linecap="butt"/>`);
+    }
   }
 
   // Solid fill, unlike the dashed ceiling: an obstruction is something you walk
@@ -295,20 +405,21 @@ function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
       `fill="${COLORS.hood}" fill-opacity="0.06" stroke="${COLORS.hood}" stroke-width="1" stroke-dasharray="8 4"`));
   }
 
-  // Camera fields of view, drawn as wedges so overlap is visible at a glance.
+  // Camera fields of view, so overlap is visible at a glance: the frustum itself,
+  // cut a quarter past the fire and laid flat. Built from the image's own edges
+  // (fx, fy, principal point, zoom) through the camera's full orientation, like
+  // the 3D frustum -- a wedge of the horizontal FOV about the heading drew a rolled
+  // camera 60 percent too wide, and a camera looking straight down as a wedge with
+  // an invented heading, where it covers a patch of floor around its own tripod.
   for (const cam of cameras(doc)) {
-    const origin = positionOf(cam);
-    const fwd = forwardOf(quatOf(cam));
-    const heading = Math.atan2(fwd[1], fwd[0]);
-    const half = hfovRadOf(cam) / 2;
-    const reach = Math.max(standoffHorizontalM(cam) * 1.25, 1);
-    const [ax, ay] = p.project(origin);
-    const arm = (a: number): [number, number] =>
-      p.project([origin[0] + Math.cos(a) * reach, origin[1] + Math.sin(a) * reach, origin[2]]);
+    const depth = Math.max(standoffM(cam) * 1.25, 1);
+    const e = imagePlaneExtents(cam);
+    const corners = [[e.left, e.bottom], [e.right, e.bottom], [e.right, e.top], [e.left, e.top]]
+      .map(([u, v]) => p.project(toWorld(cam, [u * depth, v * depth, -depth])));
     // cameraColor already rejects anything but #rrggbb; escaping as well means a
     // future caller that widens it cannot break out of the attribute.
     const color = escapeXml(cameraColor(cam));
-    out.push(polygon([[ax, ay], arm(heading - half), arm(heading + half)],
+    out.push(polygon(hull([p.project(positionOf(cam)), ...corners]),
       `fill="${color}" fill-opacity="0.07" stroke="${color}" stroke-width="0.6" stroke-opacity="0.55"`));
   }
 
@@ -343,6 +454,7 @@ function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
   const [ox, oy] = p.project([0, 0, 0]);
   out.push(line(ox - 10, oy, ox + 10, oy, COLORS.ink, 'stroke-width="0.8"'));
   out.push(line(ox, oy - 10, ox, oy + 10, COLORS.ink, 'stroke-width="0.8"'));
+  out.push(orientationMark(doc));
 
   return out.join('\n');
 }
@@ -360,33 +472,53 @@ function drawInstrumentsPlan(doc: PlanDocument, p: Projector, labels: LabelStack
   for (const s of heatFluxSensors(doc)) {
     const origin = positionOf(s);
     const fwd = forwardOf(quatOf(s));
-    const heading = Math.atan2(fwd[1], fwd[0]);
+    const vertical = Math.hypot(fwd[0], fwd[1]) < VERTICAL;
     const color = escapeXml(objectColor(s));
     const [cx, cy] = p.project(origin);
     const reach = Math.max(Math.hypot(origin[0], origin[1]) * 0.6, 0.4);
     const viewAngle = gaugeViewAngleDeg(s);
-    const arm = (a: number): [number, number] =>
-      p.project([origin[0] + Math.cos(a) * reach, origin[1] + Math.sin(a) * reach, origin[2]]);
 
+    // Laid flat through the gauge's full orientation, like a camera's frustum. The
+    // heading alone gave a gauge facing the ceiling a sight line pointing west.
     if (viewAngle < 180) {
       const half = ((viewAngle / 2) * Math.PI) / 180;
-      out.push(polygon([[cx, cy], arm(heading - half), arm(heading + half)],
+      const rim = Array.from({ length: 24 }, (_, i): [number, number] => {
+        const t = (i / 24) * 2 * Math.PI;
+        const r = Math.sin(half) * reach;
+        return p.project(toWorld(s, [Math.cos(t) * r, Math.sin(t) * r, -Math.cos(half) * reach]));
+      });
+      out.push(polygon(hull([[cx, cy], ...rim]),
         `fill="${color}" fill-opacity="0.08" stroke="${color}" stroke-width="0.6" stroke-opacity="0.6"`));
-    } else {
-      const [ex, ey] = arm(heading);
+    } else if (!vertical) {
+      const [ex, ey] = p.project(toWorld(s, [0, 0, -reach]));
       out.push(line(cx, cy, ex, ey, color, 'stroke-width="0.8" stroke-dasharray="4 3"'));
+    } else {
+      out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="8" fill="none" stroke="${color}" stroke-width="0.8" stroke-dasharray="2 2"/>`);
     }
 
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${color}" stroke="#ffffff" stroke-width="1"/>`);
-    out.push(objectLabel(cx, stackedLabelY(cy, labels.claim(cx, cy), 9), displayName(s)));
+    const facing = vertical ? (fwd[2] > 0 ? ' (faces up)' : ' (faces down)') : '';
+    out.push(objectLabel(cx, stackedLabelY(cy, labels.claim(cx, cy), 9), displayName(s) + facing));
   }
 
   for (const tc of thermocouples(doc)) {
-    const beads = beadOffsetsOf(tc);
-    // An upright rake stacks every bead on one point in plan, so the count is the
-    // only thing plan view can honestly say about it.
+    const beads = beadOffsetsOf(tc).map((offset) => p.project(toWorld(tc, [0, 0, offset])));
     const [cx, cy] = p.project(positionOf(tc));
     const color = escapeXml(objectColor(tc));
+    const spread = Math.max(0, ...beads.map(([x, y]) => Math.hypot(x - beads[0][0], y - beads[0][1])));
+    if (beads.length > 1 && spread > 3) {
+      // A leaning or horizontal rake spreads its beads across the plan: they are
+      // drawn where they are, not collapsed onto the rake's origin.
+      const d = beads.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
+      out.push(`<path d="${d}" fill="none" stroke="${color}" stroke-width="1.2"/>`);
+      for (const [bx, by] of beads) {
+        out.push(`<circle cx="${bx.toFixed(2)}" cy="${by.toFixed(2)}" r="2.6" fill="${color}" stroke="#ffffff" stroke-width="0.7"/>`);
+      }
+      out.push(objectLabel(cx, stackedLabelY(cy, labels.claim(cx, cy), 9), displayName(tc)));
+      continue;
+    }
+    // An upright rake stacks every bead on one point in plan, so the count is the
+    // only thing plan view can honestly say about it.
     const arm = 4.5;
     out.push(line(cx - arm, cy, cx + arm, cy, color, 'stroke-width="1.4"'));
     out.push(line(cx, cy - arm, cx, cy + arm, color, 'stroke-width="1.4"'));
@@ -462,7 +594,9 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
     const opening = hoodOpeningZM(hd);
     const at = (u: number, z: number): [number, number] =>
       p.project(view === 'side' ? [0, u, z] : [u, 0, z]);
-    const apex = opening + Math.max(span * 0.45, 0.4);
+    // The rise the 3D view draws and Fit sizes the page for (`hoodCanopyRiseM`):
+    // one computed from the span on this page ran a wide canopy off the sheet.
+    const apex = opening + hoodCanopyRiseM(hd);
     out.push(polygon([
       at(centre - span / 2, intake),
       at(centre + span / 2, intake),
@@ -481,23 +615,31 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
 
   for (const b of burners(doc)) {
     const origin = positionOf(b);
-    const centre = lateral(origin);
     const surface = fuelSurfaceZM(b);
-    const dEff = burnerDiameterM(b);
     const at = (u: number, z: number): [number, number] =>
       p.project(view === 'side' ? [0, u, z] : [u, 0, z]);
+    // The pan's own extent along this view, like a wall's or a box's: a 2 m by
+    // 0.25 m line burner is 2 m wide seen from one side and 0.25 m from the other.
+    // The equal-area diameter drew it 0.8 m wide in both.
+    const [w, d] = b.footprint.size_m ?? [0.3, 0.3];
+    const coords = b.footprint.shape === 'circle'
+      ? [lateral(origin) - burnerDiameterM(b) / 2, lateral(origin) + burnerDiameterM(b) / 2]
+      : [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]]
+        .map(([x, y]) => lateral([...footprintXY(b, [x, y]), 0]));
+    const [lo, hi] = rangeOf(coords);
+    const centre = (lo + hi) / 2;
 
     out.push(polygon([
-      at(centre - dEff / 2, origin[2]),
-      at(centre + dEff / 2, origin[2]),
-      at(centre + dEff / 2, surface),
-      at(centre - dEff / 2, surface),
+      at(lo, origin[2]),
+      at(hi, origin[2]),
+      at(hi, surface),
+      at(lo, surface),
     ], `fill="${COLORS.burner}" fill-opacity="0.3" stroke="${COLORS.burner}" stroke-width="1.2"`));
 
     const tip = flameTipZM(b);
     if (tip !== null) {
       out.push(polygon([
-        at(centre - dEff / 2, surface), at(centre + dEff / 2, surface), at(centre, tip),
+        at(lo, surface), at(hi, surface), at(centre, tip),
       ], `fill="${COLORS.flame}" fill-opacity="0.35" stroke="${COLORS.flame}" stroke-width="1"`));
 
       // Plume envelope, dashed: it is a correlation, not a measurement.

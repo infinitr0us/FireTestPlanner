@@ -1,0 +1,89 @@
+[
+  {
+    "file": "fortran-order.npz",
+    "voxels": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.01,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.01,
+        0.02
+      ]
+    ],
+    "voxelSize": 0.01
+  },
+  {
+    "file": "big-endian.npz",
+    "voxels": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.01,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.01,
+        0.02
+      ]
+    ],
+    "voxelSize": 0.01
+  },
+  {
+    "file": "float32-stored.npz",
+    "voxels": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.009999999776482582,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.009999999776482582,
+        0.019999999552965164
+      ]
+    ],
+    "voxelSize": 0.009999999776482582
+  },
+  {
+    "file": "integer.npz",
+    "voxels": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        1,
+        0,
+        0
+      ]
+    ],
+    "voxelSize": 1
+  },
+  {
+    "file": "float16.npz",
+    "error": "expected a 4- or 8-byte float or integer"
+  },
+  {
+    "file": "bzip2.npz",
+    "error": "unsupported compression method 12"
+  }
+]

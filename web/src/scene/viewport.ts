@@ -48,7 +48,7 @@ import {
   buildThermocouple,
   buildWall,
 } from './builders';
-import { applyPlanCameraProjection, shownHits } from './camera-model';
+import { applyPlanCameraProjection, isLineLike, nearLineHits, shownHits } from './camera-model';
 import { FlameLayer, PREVIEW_CUBE_LIMIT } from './flame';
 
 export type GizmoMode = 'translate' | 'rotate';
@@ -65,6 +65,8 @@ export interface ViewportOptions {
 const ORTHO_HALF_HEIGHT = 10;
 /** How far above the floor the plan-mode camera sits. Only has to clear the scene. */
 const ORTHO_ELEVATION = 60;
+/** How close, in screen pixels, a click must come to a line to hit it. */
+const LINE_PICK_PX = 5;
 
 const DEFAULT_OPTIONS: ViewportOptions = {
   showFrustums: true,
@@ -104,6 +106,8 @@ export class Viewport {
   private previewInset = 0;
 
   private raycaster = new THREE.Raycaster();
+  /** Follows the viewport's own box, not the window's: see `bindEvents`. */
+  private resizeObserver: ResizeObserver | null = null;
   private groundPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
   private dragging = false;
   private frameHandle = 0;
@@ -232,7 +236,10 @@ export class Viewport {
     const size = this.store.document.environment?.floorSize_m ?? [20, 20];
     const extent = Math.max(size[0], size[1]);
     const step = gridStep(this.store.displayUnit);
-    const divisions = Math.max(2, Math.round(extent / step));
+    // An even count, so a grid line runs through the origin -- the burner centre
+    // every dimension is measured from. An odd one put the nearest lines half a
+    // step either side of it.
+    const divisions = Math.max(2, 2 * Math.round(extent / step / 2));
 
     const grid = new THREE.GridHelper(divisions * step, divisions, 0x334155, 0x1e293b);
     grid.rotation.x = Math.PI / 2; // GridHelper is XZ by default; the world is Z-up
@@ -258,6 +265,15 @@ export class Viewport {
 
   private bindEvents(): void {
     window.addEventListener('resize', this.resize);
+    // The window is not the only thing that sizes the viewport. It was sized once,
+    // before the toolbar had rendered, and kept that size until the window next
+    // changed -- a drawing buffer taller than its canvas, so picks landed up to
+    // 70 px from the pointer and labels floated off their objects. The toolbar
+    // wrapping, a panel opening and a docked bar all resize the container.
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.resize());
+      this.resizeObserver.observe(this.container);
+    }
 
     this.gizmo.addEventListener('dragging-changed', (e) => {
       this.dragging = Boolean(e.value);
@@ -386,19 +402,39 @@ export class Viewport {
     this.raycaster.setFromCamera(ndc, this.activeCamera);
     this.raycaster.layers.set(LAYER_DEFAULT);
     if (!this.isPlanMode) this.raycaster.layers.enable(LAYER_CEILING);
-    return shownHits(this.raycaster.intersectObjects(this.contentRoot.children, true), this.contentRoot);
+    // Lines are hit by distance, 1 m by default (see `nearLineHits`): the world
+    // test is widened to a few pixels out to well past the view target, and each
+    // line hit is then judged in pixels on screen.
+    const reach = this.worldPerPixel(rect.height) * LINE_PICK_PX;
+    this.raycaster.params.Line.threshold = reach;
+    this.raycaster.params.Points.threshold = reach;
+    const hits = nearLineHits(
+      this.raycaster.intersectObjects(this.contentRoot.children, true), this.activeCamera,
+      { x: clientX - rect.left, y: clientY - rect.top }, rect, LINE_PICK_PX);
+    return shownHits(hits, this.contentRoot);
+  }
+
+  /** World metres one screen pixel spans: exact for the orthographic views, and at
+   *  three times the orbit distance for the perspective one. */
+  private worldPerPixel(heightPx: number): number {
+    const height = Math.max(heightPx, 1);
+    if (this.isOrtho) return (this.ortho.top - this.ortho.bottom) / this.ortho.zoom / height;
+    const distance = 3 * this.perspective.position.distanceTo(this.orbitPerspective.target);
+    return (2 * distance * Math.tan(THREE.MathUtils.degToRad(this.perspective.fov) / 2)) / height;
   }
 
   /**
    * Exact surface point under the cursor, falling back to the floor plane.
    *
    * Only physical surfaces count. A selection-only proxy -- the invisible box a
-   * reconstructed flame carries over the envelope of all its frames -- is what a
-   * click selects by, not a face a ruler can land on: it is there whether the
-   * frame on screen is full or empty.
+   * reconstructed flame carries over the envelope of all its frames, or the
+   * predicted flame cone -- is what a click selects by, not a face a ruler can land
+   * on. Nor is a line: an outline, a plume ring or a tripod stem marks something,
+   * and has no surface to measure to.
    */
   private pickPoint(clientX: number, clientY: number): THREE.Vector3 | null {
-    const hit = this.hitsUnder(clientX, clientY).find((h) => !h.object.userData.selectionOnly);
+    const hit = this.hitsUnder(clientX, clientY)
+      .find((h) => !h.object.userData.selectionOnly && !isLineLike(h.object));
     if (hit) return hit.point.clone();
     return this.screenToGround(clientX, clientY);
   }
@@ -722,6 +758,7 @@ export class Viewport {
 
   /** Snapshot the transforms a multi-object drag will be applied to. */
   private beginGroupDrag(): void {
+    this.pivot.updateMatrix();
     this.pivotStart.copy(this.pivot.matrix);
     this.dragStart.clear();
     for (const obj of this.store.selected) {
@@ -730,7 +767,7 @@ export class Viewport {
       const q = quatOf(obj);
       this.dragStart.set(obj.id, {
         position: new THREE.Vector3(p[0], p[1], p[2]),
-        quaternion: new THREE.Quaternion(q[0], q[1], q[2], q[3]),
+        quaternion: new THREE.Quaternion(q[0], q[1], q[2], q[3]).normalize(),
       });
     }
   }
@@ -749,6 +786,10 @@ export class Viewport {
   private applyGroupDrag(): void {
     if (this.dragStart.size === 0) return;
 
+    // The gizmo has just moved (and snapped) the pivot's position and quaternion,
+    // but its matrix is only recomposed at the next render -- so the members used to
+    // follow the previous pointer event, and never the snapped pose.
+    this.pivot.updateMatrix();
     const inverse = this.pivotStart.clone().invert();
     const delta = this.pivot.matrix.clone().multiply(inverse);
 
@@ -786,7 +827,7 @@ export class Viewport {
           const p = positionOf(obj);
           const q = quatOf(obj);
           group.position.set(p[0], p[1], p[2]);
-          group.quaternion.set(q[0], q[1], q[2], q[3]);
+          group.quaternion.set(q[0], q[1], q[2], q[3]).normalize();
         }
       }
     });
@@ -842,7 +883,9 @@ export class Viewport {
     const p = positionOf(source);
     this.previewCamera.position.set(p[0], p[1], p[2]);
     const q = quatOf(source);
-    this.previewCamera.quaternion.set(q[0], q[1], q[2], q[3]);
+    // Normalised like every frame helper in core/math.ts: a non-unit quaternion in
+    // the file must not scale and skew what the checks read as a pure rotation.
+    this.previewCamera.quaternion.set(q[0], q[1], q[2], q[3]).normalize();
     // The projection comes from the plan's fx, fy and principal point -- the same
     // numbers the framing verdict is computed from -- not from a vertical field of
     // view and an aspect ratio, which agree with those only for square pixels and a
@@ -863,8 +906,16 @@ export class Viewport {
 
     const width = this.container.clientWidth;
     const height = this.container.clientHeight;
-    const pipWidth = Math.min(Math.round(width * 0.28), 420);
-    const pipHeight = Math.round(pipWidth / aspectOf(source));
+    const aspect = aspectOf(source);
+    let pipWidth = Math.min(Math.round(width * 0.28), 420);
+    let pipHeight = Math.round(pipWidth / aspect);
+    // A portrait camera's image is taller than it is wide, so the height is bounded
+    // as well -- a 1080 x 1920 phone used to run 60 px off the top of the viewport.
+    const maxHeight = Math.max(40, Math.round((height - this.previewInset) * 0.5));
+    if (pipHeight > maxHeight) {
+      pipHeight = maxHeight;
+      pipWidth = Math.round(pipHeight * aspect);
+    }
     const margin = 16;
     const x = width - pipWidth - margin;
     const y = margin + this.previewInset; // WebGL viewport origin is bottom-left
@@ -916,6 +967,8 @@ export class Viewport {
     const height = this.container.clientHeight;
     if (width === 0 || height === 0) return;
 
+    // Browser zoom and a move to another monitor change the pixel density.
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(width, height, false);
     this.labelRenderer.setSize(width, height);
 
@@ -1024,6 +1077,7 @@ export class Viewport {
     this.disposed = true;
     cancelAnimationFrame(this.frameHandle);
     window.removeEventListener('resize', this.resize);
+    this.resizeObserver?.disconnect();
     this.renderer.domElement.removeEventListener('pointerdown', this.onPointerDown);
     this.disposeTree(this.contentRoot);
     this.disposeTree(this.dimensionRoot);

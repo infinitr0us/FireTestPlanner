@@ -7,10 +7,8 @@
  * against the committed fixture.
  */
 
-import { maxVersion, requiredFormatVersion, type PlanDocument } from './types';
-
-/** 1 um -- finer than any tape measure on a test site, coarse enough to kill float noise. */
-const FLOAT_DECIMALS = 6;
+import { roundMicro } from './math';
+import { maxVersion, requiredFormatVersion, zoomIsDefault, type PlanDocument } from './types';
 
 const TOP = ['format', 'version', 'meta', 'units', 'coordinateSystem', 'environment', 'objects'];
 const META = ['title', 'testId', 'author', 'organization', 'siteName', 'created', 'modified', 'revision', 'notes', 'source'];
@@ -70,12 +68,10 @@ const isPlainObject = (v: Json): v is Obj =>
  */
 const hasOwn = (o: object, key: string): boolean => Object.prototype.hasOwnProperty.call(o, key);
 
+/** Geometry to 1 µm -- finer than any tape measure on a test site, coarse enough to
+ *  kill float noise. `roundMicro` is the one rule both writers share. */
 function roundFloats(value: Json): Json {
-  if (typeof value === 'number') {
-    if (Number.isInteger(value)) return value;
-    const f = 10 ** FLOAT_DECIMALS;
-    return Math.round(value * f) / f;
-  }
+  if (typeof value === 'number') return roundMicro(value);
   if (Array.isArray(value)) return value.map(roundFloats);
   if (isPlainObject(value)) {
     const out: Obj = Object.create(null);
@@ -133,6 +129,9 @@ function canonObject(raw: Obj): Obj {
         const spec = order(o.camera, CAMERA_SPEC);
         if (isPlainObject(spec.distortion)) spec.distortion = order(spec.distortion, DISTORTION);
         dropNull1_1(spec, 'zoomFactor');
+        // 1x is the absence of a zoom, and CONVENTIONS section 4 says a writer omits it
+        // rather than writing 1 -- which is also what keeps such a plan at 1.0.0.
+        if (zoomIsDefault(spec.zoomFactor)) delete spec.zoomFactor;
         o.camera = spec;
       }
       if (hasOwn(o, 'mount')) o.mount = orderIfObject(o.mount, MOUNT);
@@ -281,7 +280,20 @@ function collapseNumericArrays(text: string): string {
   });
 }
 
+/**
+ * NaN and Infinity are not JSON. `JSON.stringify` quietly writes them as `null`,
+ * which turned a bad number into a missing one -- a file that then failed to load,
+ * a long way from whatever produced it. Python's writer refuses them; so does this,
+ * with the same words (CONVENTIONS section 6).
+ */
+function refuseNonFinite(_key: string, value: unknown): unknown {
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new Error(`Out of range float values are not JSON compliant: ${value}`);
+  }
+  return value;
+}
+
 /** Serialise to canonical JSON text, newline-terminated. */
 export function serializePlan(data: PlanDocument): string {
-  return collapseNumericArrays(JSON.stringify(canonicalize(data), null, 2)) + '\n';
+  return collapseNumericArrays(JSON.stringify(canonicalize(data), refuseNonFinite, 2)) + '\n';
 }

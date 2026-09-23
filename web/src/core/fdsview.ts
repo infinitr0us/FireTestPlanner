@@ -27,9 +27,11 @@
 import { positionOf, quatOf, toWorld } from './plan';
 import { forwardOf } from './math';
 import type { Xb } from './fds';
+import { formatLengthWithUnit } from './units';
 import type {
   BurnerObject,
   CeilingObject,
+  LengthUnit,
   ObstructionObject,
   PlanDocument,
   PlanObject,
@@ -239,7 +241,9 @@ const normalisedXb = (raw: Xb, offset: Vec3): Xb => [
  * height of zero is not an object this format has, and writing it produced a plan
  * that saved and then refused to reopen.
  */
-export function xbProblem(obj: PlanObject, raw: Xb, offset: Vec3 = [0, 0, 0]): string | null {
+export function xbProblem(
+  obj: PlanObject, raw: Xb, offset: Vec3 = [0, 0, 0], unit: LengthUnit = 'm',
+): string | null {
   if (raw.some((v) => !Number.isFinite(v))) return 'every XB coordinate has to be a number';
   const xb = normalisedXb(raw, offset);
   const dx = xb[1] - xb[0];
@@ -255,8 +259,10 @@ export function xbProblem(obj: PlanObject, raw: Xb, offset: Vec3 = [0, 0, 0]): s
   if (obj.type === 'ceiling') {
     if (dx <= TOL_M || dy <= TOL_M) return 'a slab needs a footprint: X1 X2 and Y1 Y2 have to differ';
     if (xb[4] <= TOL_M) {
+      // In the unit the fields are typed in: a bare metre figure beside feet fields
+      // read as the wrong number.
       return `a ceiling's Z1 is its soffit, and it has to be above the floor (Z1 > `
-        + `${floorInFile}): a slab at floor level is the floor, not a ceiling`;
+        + `${formatLengthWithUnit(floorInFile, unit)}): a slab at floor level is the floor, not a ceiling`;
     }
     return null;
   }

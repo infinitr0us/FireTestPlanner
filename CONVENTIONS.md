@@ -48,7 +48,16 @@ Two things follow, and both are used throughout the codebase:
   generate them rather than making you place them.
 
 `coordinateSystem.northAzimuth_rad` gives the compass bearing of `+Y` when the site
-orientation matters (outdoor tests, wind direction). Null when it does not.
+orientation matters (outdoor tests, wind direction). Null when it does not. The
+drawings read it: the plan view carries a north arrow and the elevation headings
+name the compass direction they look in; without it they say `+Y` / `+X` rather than
+assume north.
+
+The equipment table — the report's and `Plan.equipment_table()` alike — gives each
+object's **standoff** as its plan distance from this origin (a reconstructed flame's,
+from its burner) and its **height** as its own extent above the floor: an
+instrument's lens or sensing face, a rake's top bead, a burner's fuel surface, a
+hood's intake, a ceiling's soffit, the top of a wall, box or flame envelope.
 
 ## 2. Units
 
@@ -126,8 +135,9 @@ moving the burner can re-aim the camera, and so a human reading the JSON can see
 a camera is oriented as it is.
 
 **`rotation_quat` is authoritative.** A writer must keep the two consistent.
-`Plan.validate()` warns when they disagree by more than 0.1°, which catches a
-hand-edited file where someone changed the target and forgot the quaternion.
+`Plan.check()` (and the editor's checks list) warns `aim-mismatch` when they disagree
+by more than 0.1°, which catches a hand-edited file where someone changed the target
+and forgot the quaternion.
 
 ### Aimed instruments (1.1)
 
@@ -192,8 +202,10 @@ cx = (res_x − 1) / 2
 cy = (res_y − 1) / 2
 ```
 
-COLMAP instead places the origin at the image corner and writes `w/2`. `to_colmap()`
-applies the `+0.5` shift; nothing else should.
+COLMAP and nerfstudio instead place the origin at the image corner, so a pixel's
+centre is at index + 0.5 and a centred principal point is `w/2`. An exporter for such
+a tool applies the `+0.5` shift on the way out -- `to_nerfstudio()` does -- and
+nothing else should.
 
 **`intrinsicsSource`** tells a consumer how much to trust the numbers:
 
@@ -256,10 +268,14 @@ opening size and a **position**, but not an accurate shape:
 
 - **Placement** — the plume rises from the burner, so capture is judged against a disk
   centred on the *burner*, evaluated in the hood's own opening axes (position and yaw
-  both count). A burner outside the opening footprint is `hood-offset`: this hood
-  captures nothing, and the two checks below are not meaningful for it.
-- **Flame impingement** — `L_f` approaching or exceeding `hood.height_m` means flame in
-  the canopy, not a free plume. Only for a hood that is actually over the burner.
+  both count). A fire that no hood's opening covers is `hood-offset`, filed once,
+  against the hood nearest to covering it; the two checks below are not meaningful for
+  a hood that is not over the fire, nor for one whose intake is below the fuel surface.
+- **Flame impingement** — the mean tip reaching the hood intake means flame in the
+  canopy, not a free plume; a flame filling more than 80 % of the gap between the fuel
+  surface and the intake is `flame-clearance`. (The ceiling checks use the same rule,
+  measured from the fuel surface, not the floor.) Only for a hood that is actually over
+  the burner.
 - **Plume capture** — the span the plume demands along an opening axis is
   `2·(offset + r(hood.height_m))`; exceeding that axis's opening dimension means the
   hood spills plume, and oxygen-consumption HRR will read low. A large hood parked to
@@ -311,6 +327,12 @@ for a pitched hood. Cameras are exempt: a camera's full orientation is authorita
 and used as stored. Tilting anything else produces a drawing that does not match the
 scene, so treat it as unsupported rather than as a feature.
 
+Instruments are the other exemption. The plan view lays a camera's frustum (from
+its image-plane extents), a gauge's view cone and a rake's beads flat through their
+full orientation, so a camera looking straight down covers the floor around its
+tripod, a gauge facing the ceiling is marked as facing up, and a horizontal rake is
+drawn bead by bead.
+
 ## 5b. Instrument models (1.1)
 
 Both are first-order estimates for **sizing and placement**, not measurements, and
@@ -326,8 +348,8 @@ flame on each. What is judged against which fire:
 |---|---|
 | Hood placement, impingement, capture | **every** burner with an HRR, one verdict per burner, named when there is more than one |
 | Ceiling impingement and clearance | every burner, likewise |
-| Thermocouple bead region | every burner: inside any flame cone is `flame`; else inside any plume envelope is `plume`, reading the **hotter** centreline; else `outside` |
-| Incident heat flux | the **sum** over every burner — radiation from independent sources adds. The distance, angle, view-cone and near-field figures refer to the source contributing most of the flux (the primary on a tie) |
+| Thermocouple bead region | every burner: inside any flame cone is `flame`; else inside any plume envelope is `plume`, reading the **hotter** centreline; else `outside`. A `plume` bead at or below that burner's mean flame tip is in the flame's height band and is judged against flame temperature for survival (`flameZone`), as a bead in the cone is |
+| Incident heat flux | the **sum** over every burner inside the gauge's acceptance cone — radiation from independent sources adds, and a view-limiting tube admits only what it can see. The distance, angle, view-cone and near-field figures refer to the admitted source contributing most of the flux (the primary on a tie; the strongest outside the cone when none is admitted) |
 | Camera framing, "aim at fire", the point-source position | the **primary only** |
 
 The last row is the asymmetry, and `checkPlan` / `Plan.check()` file
@@ -385,8 +407,8 @@ one.
 | `gauge-over-range` | error | Predicted flux exceeds full scale; the gauge pins |
 | `gauge-low-signal` | warning | Under 5% of full scale — the reading is in the gauge's own noise |
 | `gauge-near-field` | warning | Inside 2 effective diameters, where the model stops holding |
-| `tc-over-temperature` | error | A bead is past its letter type's limit, in flame or in plume |
-| `tc-in-flame` | warning | A bead the type survives, but reading flame rather than plume |
+| `tc-over-temperature` | error | A bead is past its letter type's limit, in flame (or below the mean tip inside the plume) or in plume |
+| `tc-in-flame` | warning | A bead the type survives, but reading flame rather than plume: in the cone, or below the mean tip inside the plume |
 | `tc-outside-plume` | info | No bead sees the fire. Legitimate for a wall rake; stated, not judged |
 
 ## 6. Forward compatibility
@@ -426,7 +448,12 @@ one.
   which tool last saved it is not byte-identical in any useful sense. The digits are
   never touched: both languages already emit the shortest decimal that round-trips, so
   only the layout needed reconciling. `NaN` and `Infinity` are not JSON and are refused
-  rather than written.
+  rather than written -- by both writers, and by `Plan.loads` on the way in.
+
+  The precision promise is about doubles. JavaScript reads every number as one, so an
+  integer beyond 2^53 in an unknown object reaches the web writer already rounded to
+  its nearest double; `fireplan` spells such an integer the same way (`12345678901234567890`
+  is written `12345678901234567000`) rather than writing bytes the other engine cannot.
 - **`recording` and `hrrCurve` are reserved and must be `null` throughout 1.x.**
   Reserving the keys means the post-test-record design can land later without a format
   version bump, and `cam.recording is None` already works.
@@ -442,7 +469,10 @@ in one file. Git history is the audit trail, so the writer optimises for readabl
 - Geometry floats are rounded to **1 µm** (6 decimal places) and emitted in the shortest form that
   round-trips, so a value that did not change never appears in a diff as
   `2.7432 → 2.74320000001`. Recorded `linkedFiles` samples retain their supplied
-  precision (section 10).
+  precision (section 10). The rounding is of the number's **exact binary value, ties
+  away from zero** -- JavaScript's `toFixed(6)`, `Decimal.quantize(ROUND_HALF_UP)` in
+  Python (`roundMicro` / `_round_micro`). One sixteenth of an inch, 0.0015875 m, is
+  stored in binary just below the tie and is written `0.001587` by both.
 - Arrays of coordinates stay on one line; objects break across lines.
 - `meta.modified` updates on save, and `version` is re-derived from the contents
   (section 8). Nothing else changes without user action.
@@ -457,12 +487,16 @@ than the file already said:
 version = max(declared, required(contents))
 ```
 
-`required` is 1.4.0 if the plan holds a `reconstructedFlame`; failing that, 1.3.0 if
+`required` is 1.4.0 if the plan holds a `reconstructedFlame`, or any object carries
+1.4's keys -- `display.opacity` or `display.colorMode`, or a link with a non-zero
+`timeOffset_s` (the 1.3 schema closes `linkedFile` and every earlier one closes
+`display`); failing that, 1.3.0 if
 an object carries `linkedFiles`; failing that, 1.2.0 if the
 plan holds an `obstruction`; failing that, 1.1.0 if it
-holds a `heatFluxSensor`, a `thermocouple`, a camera with a `zoomFactor` or a burner
-with a `radiativeFraction`; otherwise 1.0.0. It is `requiredFormatVersion` in
-`web/src/core/types.ts`, mirrored by `required_version` in
+holds a `heatFluxSensor`, a `thermocouple`, a camera with a `zoomFactor` other than
+1 or a burner with a `radiativeFraction`; otherwise 1.0.0. A `zoomFactor` of 1 (after
+rounding) is the absence of a zoom: writers omit it, and it raises nothing. It is
+`requiredFormatVersion` in `web/src/core/types.ts`, mirrored by `required_version` in
 `python/fireplan/serialize.py`.
 
 `meta.source` is in none of those tiers, and that is not an oversight. `meta` is open
@@ -544,7 +578,7 @@ Five of them, and the sample input in `fixtures/fds/` exercises the first three:
 | `&OBST` thin in z, above the floor | | `ceiling`, soffit at `z1` |
 | `&OBST` thin in z, lowest | | **the floor** — the `z = 0` plane, not an object |
 | anything else | | `obstruction` |
-| a face whose `SURF` has `HRRPUA` or `MLRPUA` | | `burner`, `hrr_kw = rate × area × max(RAMP F)` |
+| a face whose `SURF` has `HRRPUA` or `MLRPUA` | | `burner`, `hrr_kw = rate × area × max(RAMP F)` — `MLRPUA` × `HEAT_OF_COMBUSTION` (from the `&SURF` or the `&REAC`); with none stated, the burner is imported with no HRR and `fds-hrr-unknown` says so. A burning box's side faces add to its HRR (`fds-burner-sides`) |
 | `&HOLE` ∩ a wall | | a wall `opening`, by arc length along the polyline |
 | `&DEVC` + a heat-flux quantity, `IOR` | | `heatFluxSensor`, `IOR` as the outward normal |
 | `&DEVC` + a temperature quantity | | `thermocouple`; a vertical run at one XY is one rake |
@@ -554,17 +588,28 @@ Classification is by aspect ratio: a box is a slab when its height is at most
 `SLAB_ASPECT` (0.5) of its smaller plan dimension, and a wall when its thin plan
 dimension is at most `WALL_ASPECT` (0.5) of both its length and its height.
 
+A face's surface follows FDS's three spellings, each overriding the one before for the
+faces it names: `SURF_ID` for every face, `SURF_IDS` for top, sides and bottom,
+`SURF_ID6` face by face.
+
 `&MULT` is expanded — for `&OBST`, `&VENT`, `&HOLE` **and `&MESH`**, including the
 `*_SKIP` ranges that carve a hole out of the array, because a multiplied mesh moves
-the domain and the domain is what the origin falls back to when nothing burns.
+the domain and the domain is what the origin falls back to when nothing burns. The
+expansion transcribes FDS's `READ_MULT`: `DX`/`DY`/`DZ` override `DXB` pairs in both
+forms, the form is sequential whenever `N_LOWER` or `N_UPPER` is non-zero, `DX0`/`DY0`/
+`DZ0` offset every copy, and skip bounds default to −999/999, so `I_LOWER_SKIP=3` alone
+skips from 3 to the top of the array.
 
 `&CATF` includes are read and spliced in **at the position of the `&CATF` record**,
 because a split input with a geometry file and a devices file is the normal shape
 for anything past a demo. The position is the point: `&CATF` belongs in the body,
 before `&TAIL`, and reading stops at `&TAIL` — so a child appended after the parent's
-last line is a child nobody reads. That needs a filesystem, so it is the desktop
-shell that supplies the sibling files (`/api/read-fds-include`, confined to the
-folder the input came from). A browser tab is handed one file's bytes and cannot go
+last line is a child nobody reads. Each included file is copied as FDS copies it
+(`COPY_FILE_TO_CAT`): without its `&HEAD`, and only up to its own first `&TAIL` or
+`&CATF`. A child's `&TAIL` therefore ends the child, not the model, and nested includes
+are not followed (`fds-catf-nested` says so). That needs a filesystem, so it is the
+desktop shell that supplies the sibling files (`/api/read-fds-include`, confined to
+the folder the input came from, subfolders included). A browser tab is handed one file's bytes and cannot go
 looking: there, an unresolved `&CATF` is a prominent warning naming every file that
 went unread, never a silent omission.
 
@@ -615,7 +660,10 @@ the bottom of the mesh. The distinction is not academic: the sample's meshes sta
 `z = −0.2` while its floor slab's top is at `z = 0`, so taking the mesh would put
 every height in the plan 200 mm out and leave the burner floating. A burner's own pan
 is excluded from that search, or a model with no floor slab would put the floor at
-the top of the burner. **Below the burner** is load-bearing too: when every slab in
+the top of the burner — whether the pan burns itself or carries a fire `&VENT` on its
+top. A box under a fire vent is its pan when the box's footprint is at most four times
+the vent's (a room's floor slab under a small vent stays the floor); the pan is part of
+the burner, not drawn separately, and its base is where the burner stands. **Below the burner** is load-bearing too: when every slab in
 the model is above the fire — a floor-level fire under a ceiling, with no floor slab
 drawn — the floor is the burner's own base (`fds-floor-inferred` says so) and the
 slabs stay ceilings. Falling back to "any slab" took the ceiling as the floor,

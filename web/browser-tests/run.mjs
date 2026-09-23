@@ -151,6 +151,35 @@ try {
   const editorSpeeds = await evaluate('[...document.querySelector(".playback-bar [aria-label=\\"Playback speed\\"]").options].map(o=>[o.value,o.textContent])');
   check('editor and results expose identical playback speeds', JSON.stringify(resultsSpeeds)===JSON.stringify(editorSpeeds));
   await screenshot('editor');
+
+  // Inspector editing (review 2026-09-22): Tab after a committed edit keeps focus in
+  // the panel instead of dropping it to the page, where the next Backspace deleted
+  // the object (UI-1); a decimal comma is read as one (UI-4); Escape cancels what was
+  // typed (UI-7); and undo back to the loaded plan leaves it unmodified (UI-11).
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("Heptane pan"))');
+  const axis = i => 'document.querySelectorAll("#inspector .field__vec input")[' + i + ']';
+  await waitFor(() => evaluate('!!' + axis(0) + ' && ' + axis(0) + '.value==="0"'), 'burner inspector');
+  const rows = await evaluate('document.querySelectorAll(".outliner__row").length');
+  await evaluate('(() => { const e=' + axis(0) + '; e.focus(); e.select(); })()');
+  await send('Input.insertText', { text: '2,5' });
+  await key('Tab', 'Tab', 9);
+  await waitFor(() => evaluate(axis(0) + '.value==="2.5" && document.activeElement===' + axis(1)), 'focus after Tab from an edited field');
+  check('inspector keeps focus on Tab after an edit and reads a decimal comma', true);
+  await send('Input.insertText', { text: '9' });
+  await key('Escape', 'Escape', 27);
+  await new Promise(r => setTimeout(r, 150));
+  check('Escape in an inspector field cancels the typed value',
+    await evaluate(axis(1) + '.value==="0" && document.activeElement!==' + axis(1)));
+  await key('Backspace', 'Backspace', 8);
+  await new Promise(r => setTimeout(r, 150));
+  check('a key after leaving a field reaches the editor, not a lost focus', await evaluate('document.querySelectorAll(".outliner__row").length') === rows - 1);
+  for (let i = 0; i < 2; i += 1) {
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
+  }
+  await waitFor(() => evaluate('document.querySelectorAll(".outliner__row").length===' + rows), 'undo of the delete and the edit');
+  check('undo back to the loaded plan leaves it unmodified',
+    await evaluate('!document.querySelector(".toolbar__file").textContent.includes("•")'));
   check('no uncaught browser exceptions', errors.length===0);
   const result = { browser: executable, passed: checks.length, checks };
   if (process.env.BROWSER_TEST_OUTPUT) {

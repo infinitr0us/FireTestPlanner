@@ -87,6 +87,6 @@ are in [`../CONVENTIONS.md`](../CONVENTIONS.md) section 3.
 ## Tests
 
 ```bash
-python -m pytest python/tests -q        # from the repo root, 225 tests
+python -m pytest python/tests -q        # from the repo root
 python tools/build_fixtures.py          # regenerate reference fixtures
 ```

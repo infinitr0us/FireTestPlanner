@@ -10,6 +10,35 @@ import type { Quat, Vec3 } from './types';
 export const WORLD_UP: Vec3 = [0, 0, 1];
 export const IDENTITY_QUAT: Quat = [0, 0, 0, 1];
 
+/**
+ * A number rounded to 1 µm (six decimals) the way both writers round it.
+ *
+ * `toFixed` rounds the EXACT binary value, ties away from zero -- which Python's
+ * `Decimal(v).quantize(..., ROUND_HALF_UP)` reproduces digit for digit
+ * (`_round_micro` in python/fireplan/serialize.py). `Math.round(v * 1e6) / 1e6`
+ * did not: the product is rounded before the tie is decided, and Python's
+ * `round(v, 6)` breaks ties to even, so 1/16 in (0.0015875 m) was written 0.001588
+ * by one engine and 0.001587 by the other. Integers pass through untouched.
+ */
+export const roundMicro = (value: number): number =>
+  Number.isInteger(value) || !Number.isFinite(value) ? value : Number(value.toFixed(6));
+
+/**
+ * The smallest and largest of a list, as `[min, max]` (`[Infinity, -Infinity]` when
+ * empty). A loop, not `Math.min(...values)`: spreading passes every value as an
+ * argument, and past roughly a hundred thousand of them -- one `&MULT` of a 400 by
+ * 400 array -- the call overflows the stack and the whole import fails.
+ */
+export function rangeOf(values: Iterable<number>): [number, number] {
+  let lo = Number.POSITIVE_INFINITY;
+  let hi = Number.NEGATIVE_INFINITY;
+  for (const v of values) {
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  return [lo, hi];
+}
+
 export type Mat3 = [Vec3, Vec3, Vec3]; // [col0, col1, col2]
 
 export const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];

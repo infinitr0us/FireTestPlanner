@@ -93,6 +93,7 @@ def test_relative_shell_open_returns_an_absolute_base(shell, tmp_path, monkeypat
     (tmp_path / 'p.json').write_text('{}', encoding='utf-8')
     opened = shell.read_plan('p.json')
     assert opened['path'] == str(tmp_path / 'p.json')
+    shell.adopted(opened['token'])
     assert shell.recent_files() == [str(tmp_path / 'p.json')]
 
 
@@ -308,3 +309,14 @@ def test_save_target_does_not_write_and_isolated_token_survives_other_open(shell
     assert shell.save_plan('{"saved":true}', 'chosen.ftp.json', token=chosen['token'])['path'] == str(target)
     assert json.loads(target.read_text(encoding='utf-8')) == {'saved': True}
     assert other.read_text(encoding='utf-8') == '{}'
+
+
+@pytest.mark.parametrize('kind', [{'k': 1}, ['camera'], 7, None])
+def test_an_object_type_of_the_wrong_shape_does_not_crash_validation(kind):
+    """An unhashable `type` used to raise TypeError out of validate_schema (FMT-5)."""
+    plan = Plan.new('odd type')
+    plan.data['objects'].append({'id': 'x', 'type': kind, 'linkedFiles': []})
+    try:
+        plan.validate_schema()
+    except PlanError:
+        pass

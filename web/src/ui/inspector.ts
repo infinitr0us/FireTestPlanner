@@ -92,6 +92,7 @@ import type {
   LengthUnit,
   Modality,
   ObstructionObject,
+  PlanDocument,
   ReconstructedFlameObject,
   PlanObject,
   TcType,
@@ -185,6 +186,16 @@ export class Inspector {
     return this.flamePanel;
   }
 
+  /**
+   * A plan-level edit as one undoable step. These used to leave their run open, so
+   * two separate title edits undid as one, and the plan's notes merged with the next
+   * object's "Edit notes" (review 2026-09-22, UI-5).
+   */
+  private editPlan(label: string, fn: (doc: PlanDocument) => void): void {
+    this.store.edit(label, fn);
+    this.store.commit();
+  }
+
   /** Mutate the selected object as one undoable step. */
   private patch(id: string, label: string, fn: (obj: PlanObject) => void): void {
     this.store.edit(label, (doc) => {
@@ -194,14 +205,36 @@ export class Inspector {
     this.store.commit();
   }
 
+  private renderTimer: ReturnType<typeof setTimeout> | null = null;
+
   /**
-   * Re-render, keeping keyboard focus where it was.
+   * Re-render on the next task, coalesced -- never inside the event that asked.
+   *
+   * A committed field fires `change` while the browser is moving focus: Tab out of
+   * X, or a click on Z. Rebuilding synchronously there removed the control focus was
+   * heading to, focus fell to the page, and the next key went to the editor instead
+   * -- Backspace deleted the selected object, a digit switched the view, and what
+   * was typed next was lost. A selection change made while a field held uncommitted
+   * text did worse: removing the field fired its `change`, which rendered again from
+   * inside the first render and threw, leaving a placement half done. One task later
+   * the browser has finished moving focus, and there is only ever one render.
+   */
+  render(): void {
+    if (this.renderTimer !== null) return;
+    this.renderTimer = setTimeout(() => {
+      this.renderTimer = null;
+      this.renderNow();
+    }, 0);
+  }
+
+  /**
+   * Re-render now, keeping keyboard focus where it was.
    *
    * Every field edit rebuilds this panel, which would otherwise drop focus on each
    * committed value and make tabbing through X/Y/Z impossible. Restoring by index
    * is crude but the control order is stable within one selection.
    */
-  render(): void {
+  private renderNow(): void {
     const controls = () => Array.from(this.root.querySelectorAll('input, select, textarea'));
     const focusedIndex = controls().indexOf(document.activeElement as Element);
 
@@ -388,7 +421,7 @@ export class Inspector {
               // one the load boundary rejects must not enter the document, or it
               // saves and the plan then refuses to reopen. Nothing goes onto the
               // undo stack for a value that was never applied.
-              const problem = xbProblem(obj, next, offset);
+              const problem = xbProblem(obj, next, offset, unit);
               if (problem !== null) {
                 this.xbProblem = { id: obj.id, message: problem };
                 this.render();
@@ -481,18 +514,18 @@ export class Inspector {
     this.root.append(sectionTitle('Plan'));
     this.root.append(
       row('Title', textField(doc.meta?.title ?? '', (v) =>
-        this.store.edit('Edit title', (d) => { d.meta = { ...(d.meta ?? {}), title: v }; }))),
+        this.editPlan('Edit title', (d) => { d.meta = { ...(d.meta ?? {}), title: v }; }))),
       row('Test ID', textField(doc.meta?.testId ?? '', (v) =>
-        this.store.edit('Edit test ID', (d) => { d.meta = { ...(d.meta ?? {}), testId: v || null }; }))),
+        this.editPlan('Edit test ID', (d) => { d.meta = { ...(d.meta ?? {}), testId: v || null }; }))),
       row('Author', textField(doc.meta?.author ?? '', (v) =>
-        this.store.edit('Edit author', (d) => { d.meta = { ...(d.meta ?? {}), author: v || null }; }))),
+        this.editPlan('Edit author', (d) => { d.meta = { ...(d.meta ?? {}), author: v || null }; }))),
       row('Site', textField(doc.meta?.siteName ?? '', (v) =>
-        this.store.edit('Edit site', (d) => { d.meta = { ...(d.meta ?? {}), siteName: v || null }; }))),
+        this.editPlan('Edit site', (d) => { d.meta = { ...(d.meta ?? {}), siteName: v || null }; }))),
       row('Revision', textField(doc.meta?.revision ?? '', (v) =>
-        this.store.edit('Edit revision', (d) => { d.meta = { ...(d.meta ?? {}), revision: v || null }; })),
+        this.editPlan('Edit revision', (d) => { d.meta = { ...(d.meta ?? {}), revision: v || null }; })),
         'Plans are revised by saving a new file; this plus git history is the audit trail'),
       row('Notes', textField(doc.meta?.notes ?? '', (v) =>
-        this.store.edit('Edit notes', (d) => { d.meta = { ...(d.meta ?? {}), notes: v || null }; }))),
+        this.editPlan('Edit plan notes', (d) => { d.meta = { ...(d.meta ?? {}), notes: v || null }; }))),
     );
 
     const env = doc.environment ?? {};
@@ -500,14 +533,14 @@ export class Inspector {
     this.root.append(
       row(`Floor size (${unit})`,
         vecField(env.floorSize_m ?? [20, 20], unit, ['W', 'D'], (index, metres) =>
-          this.store.edit('Resize floor', (d) => {
+          this.editPlan('Resize floor', (d) => {
             const size = [...(d.environment?.floorSize_m ?? [20, 20])] as [number, number];
             size[index] = metres;
             d.environment = { ...(d.environment ?? {}), floorSize_m: size };
           }))),
       row('Ambient (°C)',
         numberField(env.ambientTemperature_C ?? 20, (v) =>
-          this.store.edit('Set ambient', (d) => {
+          this.editPlan('Set ambient', (d) => {
             d.environment = { ...(d.environment ?? {}), ambientTemperature_C: v };
           }), { step: 1 })),
     );

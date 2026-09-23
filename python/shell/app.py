@@ -27,11 +27,13 @@ import argparse
 import base64
 import json
 import os
+import re
 import secrets
 import socket
 import sys
 import tempfile
 import threading
+import time
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional
@@ -51,6 +53,12 @@ PLAN_FILTER = ("Fire test plan (*.ftp.json;*.json)", "All files (*.*)")
 FDS_FILTER = ("FDS input (*.fds)", "All files (*.*)")
 HTML_FILTER = ("Web page (*.html)", "All files (*.*)")
 MAX_BODY_BYTES = 256 * 1024 * 1024  # a plan with an embedded viewer can be large
+#: What the native close prompt says. pywebview shows it only while the page has
+#: reported unsaved changes (`Shell.set_dirty` flips `confirm_close`).
+CLOSE_PROMPT = "This plan has unsaved changes. Close the window and discard them?"
+#: Names Windows resolves to a device wherever they appear, extension or not. An
+#: `&CATF` include named `CON` would otherwise read the console and hang the import.
+_DEVICE_NAME = re.compile(r"^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9]|CONIN\$|CONOUT\$)(\..*)?$", re.I)
 
 _LOG_FILE: Optional[Any] = None
 
@@ -111,7 +119,14 @@ class Shell:
     def __init__(self) -> None:
         self.window: Any = None  # a webview.Window once the GUI is up
         self.selftest = False
+        # The HTTP server answers on several threads, and recent files, the last
+        # directory and the preset library all read-modify-write one dict.
+        self._settings_lock = threading.RLock()
         self._settings = self._load_settings()
+        #: True while the page reports unsaved changes. Drives the close prompt and
+        #: the title bullet; see `set_dirty`.
+        self.dirty = False
+        self._title_name: Optional[str] = None
         self._queued_plan: Optional[str] = None
         self.ready_info: Optional[Dict[str, Any]] = None
         # Absolute path of the plan most recently read or written, for the window
@@ -135,12 +150,33 @@ class Shell:
     # -- settings ------------------------------------------------------
 
     def _load_settings(self) -> Dict[str, Any]:
+        """The settings file, or an empty dict.
+
+        A corrupt or absent file must never stop the app opening -- but a corrupt
+        one is set aside rather than left where the next write would overwrite it.
+        It holds the user's camera preset library, and the first recent-file entry
+        written over it used to make a disk-full mishap permanent.
+        """
+        path = settings_path()
         try:
-            with open(settings_path(), "r", encoding="utf-8") as fh:
-                return json.load(fh)
-        except (OSError, ValueError):
-            # A corrupt or absent settings file must never stop the app opening.
+            with open(path, "r", encoding="utf-8-sig") as fh:
+                data = json.load(fh)
+        except FileNotFoundError:
             return {}
+        except (OSError, ValueError):
+            self._quarantine_settings(path)
+            return {}
+        if not isinstance(data, dict):
+            self._quarantine_settings(path)
+            return {}
+        return data
+
+    @staticmethod
+    def _quarantine_settings(path: str) -> None:
+        try:
+            os.replace(path, "{}.corrupt-{}".format(path, time.strftime("%Y%m%d-%H%M%S")))
+        except OSError:
+            pass
 
     def _save_settings(self) -> Optional[str]:
         """Write the settings file. None on success, or the reason it failed.
@@ -149,23 +185,91 @@ class Shell:
         a dialog -- but the preset library reports it, because the page words its
         own UI from whether the write actually landed rather than from the mere
         existence of somewhere to write to.
+
+        Written beside the destination and renamed over it, as a plan is: opening
+        the file for writing truncates it first, and a failure part-way through left
+        invalid JSON where the preset library had been.
         """
-        try:
-            with open(settings_path(), "w", encoding="utf-8") as fh:
-                json.dump(self._settings, fh, indent=2)
-        except OSError as exc:
-            return str(exc)
+        path = settings_path()
+        with self._settings_lock:
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                        "w", encoding="utf-8", dir=os.path.dirname(path), prefix=".settings.",
+                        suffix=".tmp", delete=False) as fh:
+                    temporary = fh.name
+                    json.dump(self._settings, fh, indent=2)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                os.replace(temporary, path)
+                temporary = None
+            except OSError as exc:
+                return str(exc)
+            finally:
+                if temporary is not None:
+                    try:
+                        os.remove(temporary)
+                    except OSError:
+                        pass
         return None
 
     def _remember(self, path: str) -> None:
-        recent: List[str] = [p for p in self._settings.get("recent", []) if p != path]
-        recent.insert(0, path)
-        self._settings["recent"] = recent[:RECENT_LIMIT]
-        self._save_settings()
+        with self._settings_lock:
+            stored = self._settings.get("recent")
+            recent: List[str] = [p for p in stored if isinstance(p, str) and p != path] \
+                if isinstance(stored, list) else []
+            recent.insert(0, path)
+            self._settings["recent"] = recent[:RECENT_LIMIT]
+            self._save_settings()
 
     def recent_files(self) -> List[str]:
         """Recent paths that still exist, so the list never offers a dead file."""
-        return [p for p in self._settings.get("recent", []) if os.path.isfile(p)]
+        stored = self._settings.get("recent")
+        if not isinstance(stored, list):
+            return []
+        return [p for p in stored if isinstance(p, str) and os.path.isfile(p)]
+
+    def open_recent(self, path: Any) -> Dict[str, Any]:
+        """A plan from the recent list -- and from nowhere else.
+
+        This route used to read whatever path it was handed and issue a write token
+        for it, which made the page's token a way to read and overwrite any file the
+        user can. A recent entry is a file the user opened or saved as a plan.
+        """
+        wanted = os.path.normcase(os.path.abspath(str(path or "")))
+        if not any(os.path.normcase(os.path.abspath(p)) == wanted for p in self.recent_files()):
+            return {"error": "That file is not in the recent list."}
+        result = self.read_plan(str(path))
+        return result if result is not None else {"error": "Could not read {}.".format(path)}
+
+    def adopted(self, token: Any) -> Dict[str, Any]:
+        """The page put the document `token` came with on screen.
+
+        Only now does the file join the recent list and the window title: a file the
+        page rejected as not a plan must not be offered again as one, nor sit in the
+        title bar over the document that is really open.
+        """
+        path = self._documents.get(str(token or ""))
+        if path is None:
+            return {"adopted": False}
+        self._remember(path)
+        self.current_path = path
+        self._set_title(os.path.basename(path))
+        return {"adopted": True}
+
+    def set_dirty(self, dirty: Any) -> Dict[str, Any]:
+        """Record whether the page holds unsaved changes.
+
+        pywebview prompts on close only while `confirm_close` is set, and WebView2
+        does not run the page's `beforeunload` when the host window closes -- so
+        without this, closing the window discarded unsaved work in silence.
+        """
+        self.dirty = bool(dirty)
+        if self.window is not None:
+            self.window.confirm_close = self.dirty
+        if self._title_name is not None:
+            self._set_title(self._title_name)
+        return {"dirty": self.dirty}
 
     # -- camera preset library -----------------------------------------
 
@@ -356,7 +460,9 @@ class Shell:
         drops the claim and the first Save lands in Save As, where it belongs.
         """
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            # utf-8-sig: a byte-order mark from a Windows editor is not part of the
+            # first record, and left in place it hid that record from one engine.
+            with open(path, "r", encoding="utf-8-sig", errors="replace") as fh:
                 text = fh.read()
         except OSError as exc:
             report("could not read {}: {}".format(path, exc))
@@ -381,11 +487,25 @@ class Shell:
         directory = self.fds_directory
         if not directory:
             return {"error": "no FDS input has been opened"}
-        if not name or os.path.isabs(name) or os.path.basename(name) != name:
-            return {"error": "an &CATF include is read by bare filename only"}
-        path = os.path.join(directory, name)
+        # A path relative to the input's folder -- FDS reads `&CATF` names relative
+        # to where it runs, and `geometry/walls.fds` is as common as a bare name --
+        # but never out of it: no absolute path, drive, stream or `..`.
+        parts = re.split(r"[\\/]+", name or "")
+        if (not name or os.path.isabs(name) or ":" in name
+                or any(part in ("", ".", "..") for part in parts)):
+            return {"error": "an &CATF include is read from the input's own folder only"}
+        if any(_DEVICE_NAME.match(part.rstrip(" .")) or part != part.rstrip(" .") for part in parts):
+            # CON, NUL, COM1... are devices in every folder; reading CON waits on
+            # the console. A received model must not be able to name one.
+            return {"error": "{} is not a file name an &CATF include can use".format(name)}
+        root = os.path.realpath(directory)
+        path = os.path.realpath(os.path.join(directory, *parts))
+        if os.path.commonpath([os.path.normcase(path), os.path.normcase(root)]) != os.path.normcase(root):
+            return {"error": "an &CATF include is read from the input's own folder only"}
+        if not os.path.isfile(path):
+            return {"error": "{} is not beside the FDS input".format(name)}
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            with open(path, "r", encoding="utf-8-sig", errors="replace") as fh:
                 return {"name": name, "text": fh.read()}
         except OSError as exc:
             return {"error": str(exc)}
@@ -403,18 +523,18 @@ class Shell:
         whether it adopted the document -- it may reject the file as not a plan -- so
         the token travels with the text and comes back only if the document did go
         on screen. A rejected `case.ftp.json` therefore cannot become the target of
-        the next Ctrl+S on the `case.ftp.json` that was open before it.
+        the next Ctrl+S on the `case.ftp.json` that was open before it. For the same
+        reason the recent list and the window title wait for `adopted`.
         """
         path = os.path.abspath(path)
         try:
-            with open(path, "r", encoding="utf-8") as fh:
+            # utf-8-sig: Notepad's byte-order mark is not part of the JSON, and a
+            # browser tab already drops it when it reads a picked file.
+            with open(path, "r", encoding="utf-8-sig") as fh:
                 text = fh.read()
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             report("could not read {}: {}".format(path, exc))
             return None
-        self._remember(path)
-        self.current_path = os.path.abspath(path)
-        self._set_title(os.path.basename(path))
         return {"path": path, "text": text, "token": self._issue_token(path)}
 
     def save_plan(self, text: str, suggested_name: str, save_as: bool = False,
@@ -535,35 +655,46 @@ class Shell:
         user, because 'the disk is full' is not something to leave in a log file.
         """
         directory = os.path.dirname(os.path.abspath(path))
-        temp = os.path.join(directory, ".{}.tmp".format(os.path.basename(path)))
+        temp: Optional[str] = None
         try:
+            # A unique temporary name: a fixed `.name.tmp` let two saves of one file
+            # (two windows, or two machines on a shared drive) write into the same
+            # temporary and rename a mixture of both over the plan.
             # newline="" keeps the LF the canonical writer emitted; letting Python
             # translate to CRLF would make every plan diff wholesale against one
             # saved on another platform.
-            with open(temp, "w", encoding="utf-8", newline="") as fh:
+            with tempfile.NamedTemporaryFile(
+                    "w", encoding="utf-8", newline="", dir=directory,
+                    prefix=".{}.".format(os.path.basename(path)), suffix=".tmp",
+                    delete=False) as fh:
+                temp = fh.name
                 fh.write(text)
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(temp, path)
+            temp = None
         except OSError as exc:
             message = "could not write {}: {}".format(path, exc)
             report(message)
-            try:
-                os.remove(temp)
-            except OSError:
-                pass
+            if temp is not None:
+                try:
+                    os.remove(temp)
+                except OSError:
+                    pass
             return message
-        self._settings["lastDirectory"] = directory
-        self._save_settings()
+        with self._settings_lock:
+            self._settings["lastDirectory"] = directory
+            self._save_settings()
         return None
 
     def _last_directory(self) -> str:
         directory = self._settings.get("lastDirectory", "")
-        return directory if os.path.isdir(directory) else ""
+        return directory if isinstance(directory, str) and os.path.isdir(directory) else ""
 
     def _set_title(self, name: str) -> None:
+        self._title_name = name
         if self.window is not None:
-            self.window.set_title("{} — {}".format(name, APP_NAME))
+            self.window.set_title("{}{} — {}".format(name, " •" if self.dirty else "", APP_NAME))
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -636,7 +767,11 @@ class Handler(SimpleHTTPRequestHandler):
                 self.shell.results.close(str(body.get("token", "")))
                 self._send_json({"closed": True})
             elif route == "/api/open-recent":
-                self._send_json(self.shell.read_plan(str(body.get("path", ""))))
+                self._send_json(self.shell.open_recent(body.get("path")))
+            elif route == "/api/adopted":
+                self._send_json(self.shell.adopted(body.get("token")))
+            elif route == "/api/dirty":
+                self._send_json(self.shell.set_dirty(body.get("dirty")))
             elif route == "/api/save":
                 token = body.get("token")
                 self._send_json(self.shell.save_plan(
@@ -824,8 +959,12 @@ def main() -> int:
         report("serving {} on port {}".format(root, port))
         report("window opening at {}".format(target.split("shell=")[0] + "shell=..."))
 
+    # confirm_close starts off and follows the page's unsaved-changes state
+    # (`Shell.set_dirty`), so closing a saved plan asks nothing and closing an
+    # edited one asks this.
     window = webview.create_window(
         APP_NAME, target, width=1600, height=1000, min_size=(1100, 700), text_select=True,
+        localization={"global.quitConfirmation": CLOSE_PROMPT},
     )
     shell.window = window
 

@@ -34,21 +34,47 @@ export const formatLengthWithUnit = (metres: number, unit: LengthUnit): string =
   `${formatLength(metres, unit)} ${unit}`;
 
 /**
+ * One run of digits, dots and commas, with its commas read -- or null.
+ *
+ * Commas used to be deleted outright, so `2,5` -- two and a half, typed with a
+ * decimal comma -- was stored as 25 m. Grouping is still read (`1,250.5`,
+ * `12,500,000`) and a comma that cannot be grouping is a decimal comma (`2,5`,
+ * `0,25`). A single comma before exactly three digits (`1,250`) is either, 1250 or
+ * 1.25, and is refused rather than guessed.
+ */
+function readCommas(token: string): string | null {
+  if (!token.includes(',')) return token;
+  if (/^\d{1,3}(?:,\d{3})+(?:\.\d*)?$/.test(token)) {
+    return token.includes('.') || token.split(',').length > 2 ? token.replace(/,/g, '') : null;
+  }
+  return /^\d*,\d+$/.test(token) ? token.replace(',', '.') : null;
+}
+
+/** A number as typed: digits with an optional fraction, a leading `.5`, or a
+ *  trailing `5.` -- which used to be refused. */
+const NUMBER = String.raw`(?:\d+\.?\d*|\.\d+)`;
+const FEET_INCHES = new RegExp(String.raw`^(-?${NUMBER})\s*(?:'|ft|feet|foot)\s*(${NUMBER})\s*(?:"|in|inch|inches)?$`);
+const SINGLE = new RegExp(String.raw`^(-?${NUMBER}(?:e[+-]?\d+)?)\s*([a-z"']*)$`);
+
+/**
  * Parse a length the user typed, in metres.
  *
  * A bare number means the current display unit, but an explicit suffix always
  * wins -- so someone working in metres can type `9ft` into any field without
  * switching modes, and feet-and-inches (`5' 6"`, `5ft 6in`) parses as one value.
- * Returns null when the text is not a length at all.
+ * Returns null when the text is not a length at all, or its commas are ambiguous.
  */
 export function parseLength(text: string, displayUnit: LengthUnit): number | null {
-  const s = text.trim().toLowerCase().replace(/,/g, '');
-  if (!s) return null;
+  let ambiguous = false;
+  const s = text.trim().toLowerCase().replace(/[\d.,]+/g, (token) => {
+    const read = readCommas(token);
+    if (read === null) ambiguous = true;
+    return read ?? token;
+  });
+  if (!s || ambiguous) return null;
 
   // Feet-and-inches, e.g. 5' 6", 5ft6in, 5 ft 6 in
-  const feetInches = s.match(
-    /^(-?\d*\.?\d+)\s*(?:'|ft|feet|foot)\s*(\d*\.?\d+)\s*(?:"|in|inch|inches)?$/,
-  );
+  const feetInches = s.match(FEET_INCHES);
   if (feetInches) {
     const sign = feetInches[1].startsWith('-') ? -1 : 1;
     const feet = Math.abs(parseFloat(feetInches[1]));
@@ -56,7 +82,7 @@ export function parseLength(text: string, displayUnit: LengthUnit): number | nul
     return sign * (feet * 0.3048 + inches * 0.0254);
   }
 
-  const single = s.match(/^(-?\d*\.?\d+(?:e[+-]?\d+)?)\s*([a-z"']*)$/);
+  const single = s.match(SINGLE);
   if (!single) return null;
 
   const value = parseFloat(single[1]);

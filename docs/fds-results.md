@@ -68,12 +68,15 @@ solver or an assessment of the simulation's physical validity.
    interpolation; no value is shown outside the series' coverage.
 6. For wall fields, enable **Cut away above Z (m)** to reveal the interior. **Fit**
    fits the clipped domain. Use orbit/zoom to inspect the region of interest.
-7. **PNG** exports the current view with quantity, time and scale. **Back to plan**
-   releases the file session and GPU resources and returns to the existing plan.
+7. **PNG** exports the current view with its quantity, time, dataset and mesh
+   selection, and the colour bar with its end values. **Back to plan** releases the
+   file session and GPU resources and returns to the existing plan.
 
 Color scales are fixed across playback, initialized from FDS `.bnd` bounds when
 available. Enter a different range or choose **Scale to this frame**; the resulting
 range remains fixed until changed. Nonfinite scalar values are not colored as zero.
+Values are shown to four significant figures, in exponent form below 0.01 and from
+10⁶, so a soot or species legend does not read "0 — 0".
 
 | Recorded output in the supplied run | Display |
 | --- | --- |
@@ -111,8 +114,16 @@ can show its history plot, but playback currently requires a supported spatial f
 
 The reader supports 32-bit Fortran record markers with either byte order and
 uncompressed `.sf`/`.bf` plus RLE `.s3d` with matching `.s3d.sz` indices. It rejects
-truncated records, mismatched labels/dimensions, invalid RLE, and changed desktop
-files. It targets completed runs; nonmonotonic/restarted timelines are unsupported.
+corrupt record markers, mismatched labels/dimensions, invalid RLE, and changed desktop
+files. A run stopped mid-write is read up to its last complete frame: the field note
+says how many files end part-way through a frame, a smoke index that runs ahead of its
+data is cut to the frames present, and a CSV's partial last row is dropped with a
+warning. Nonmonotonic/restarted timelines are unsupported.
+
+Outputs the `.smv` names in a subfolder — FDS `RESULTS_DIR` — are read from there,
+on the desktop as in a browser folder pick. A path that would leave the case folder
+(`..`, a drive or an absolute path) skips that one output with a warning; the rest of
+the case still opens.
 The time-range scrubber follows the first selected mesh; other selected meshes use
 their nearest available frame, report differing sample times and hide outside their
 coverage. Longer recordings on another mesh can be inspected by selecting that mesh.

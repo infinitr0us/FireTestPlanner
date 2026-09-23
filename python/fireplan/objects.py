@@ -98,11 +98,24 @@ class PlanObject:
 
     @property
     def _transform(self) -> Dict[str, Any]:
+        """The transform block to WRITE into, created when absent. Setters only."""
         return self.raw.setdefault("transform", {"position_m": [0.0, 0.0, 0.0]})
 
     @property
+    def _transform_view(self) -> Dict[str, Any]:
+        """The transform block to READ, or an empty one -- never inserted.
+
+        `transform` is optional in every schema, and reading a position is not an
+        edit: creating the block on read made `check()` rewrite objects it merely
+        inspected, unknown types included, so a plan that had only been checked
+        saved with bytes the web writer would not have written.
+        """
+        t = self.raw.get("transform")
+        return t if isinstance(t, dict) else {}
+
+    @property
     def position(self) -> np.ndarray:
-        return np.asarray(self._transform.get("position_m", [0.0, 0.0, 0.0]), dtype=float)
+        return np.asarray(self._transform_view.get("position_m", [0.0, 0.0, 0.0]), dtype=float)
 
     @position.setter
     def position(self, value: Iterable[float]) -> None:
@@ -110,7 +123,7 @@ class PlanObject:
 
     @property
     def quaternion(self) -> np.ndarray:
-        return np.asarray(self._transform.get("rotation_quat", IDENTITY_QUAT), dtype=float)
+        return np.asarray(self._transform_view.get("rotation_quat", IDENTITY_QUAT), dtype=float)
 
     @property
     def rotation_matrix(self) -> np.ndarray:
@@ -130,7 +143,7 @@ class PlanObject:
 
     @property
     def aim_target(self) -> Optional[np.ndarray]:
-        t = self._transform.get("aimTarget_m")
+        t = self._transform_view.get("aimTarget_m")
         return None if t is None else np.asarray(t, dtype=float)
 
     def aim_at(self, target: Iterable[float]) -> None:

@@ -493,7 +493,7 @@
         "height_m": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Height of the opening plane above the floor. Compared against flame height and plume width for the capture checks."
+          "description": "Height of the opening plane above the hood's own origin -- the floor, unless its transform moves the hood in Z. Compared against flame height and plume width for the capture checks."
         },
         "skirtDepth_m": {
           "type": ["number", "null"],
@@ -531,13 +531,13 @@
           "type": "array",
           "items": { "$ref": "#/$defs/vec2" },
           "minItems": 2,
-          "description": "Plan-view centreline of the wall run, in world XY."
+          "description": "Plan-view centreline of the wall run, in the wall's own XY -- world XY unless its transform moves or turns it."
         },
         "height_m": { "type": "number", "exclusiveMinimum": 0 },
         "thickness_m": { "type": ["number", "null"], "exclusiveMinimum": 0 },
         "baseHeight_m": {
           "type": ["number", "null"],
-          "description": "Bottom of the wall above the floor. Null or 0 means floor-standing."
+          "description": "Bottom of the wall above the wall's own origin -- the floor, unless its transform moves it in Z. Null or 0 means standing on that origin."
         },
         "openings": {
           "type": "array",
@@ -572,12 +572,12 @@
           "type": "array",
           "items": { "$ref": "#/$defs/vec2" },
           "minItems": 3,
-          "description": "Plan-view outline in world XY. Assumed closed; do not repeat the first point."
+          "description": "Plan-view outline in the ceiling's own XY -- world XY unless its transform moves or turns it. Assumed closed; do not repeat the first point."
         },
         "height_m": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Height of the UNDERSIDE above the floor. This is the surface a flame impinges on, so it is the one measured."
+          "description": "Height of the UNDERSIDE above the ceiling's own origin -- the floor, unless its transform moves it in Z. This is the surface a flame impinges on, so it is the one measured."
         },
         "thickness_m": {
           "type": ["number", "null"],

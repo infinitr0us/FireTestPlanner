@@ -137,3 +137,60 @@ describe('replacing the document', () => {
     expect(seen).toEqual(['broken', 'before']);
   });
 });
+
+describe('undo and the saved state (review 2026-09-22)', () => {
+  it('is clean again after undoing back to what was saved (UI-11)', () => {
+    const store = new Store();
+    store.replaceDocument(withCamera(), 'plan.ftp.json', 'tok');
+    store.edit('Rename', (d) => { d.meta = { ...d.meta, title: 'changed' }; });
+    store.commit();
+    expect(store.dirty).toBe(true);
+    store.undo();
+    expect(store.dirty).toBe(false);
+    store.redo();
+    expect(store.dirty).toBe(true);
+
+    // Saved in the changed state: undo now leaves the file behind, redo returns.
+    store.markSaved('plan.ftp.json', store.identity());
+    expect(store.dirty).toBe(false);
+    store.undo();
+    expect(store.dirty).toBe(true);
+    store.redo();
+    expect(store.dirty).toBe(false);
+  });
+
+  it('stays dirty through undo when no file holds the document', () => {
+    // An import is new work: no undo brings it back to a file.
+    const store = new Store();
+    store.replaceDocument(withCamera(), 'imported.ftp.json');
+    store.markDirty();
+    store.edit('Rename', (d) => { d.meta = { ...d.meta, title: 'changed' }; });
+    store.commit();
+    store.undo();
+    expect(store.dirty).toBe(true);
+  });
+
+  it('keeps the display unit on screen through undo and redo (UI-6)', () => {
+    const store = new Store(withCamera());
+    store.edit('Rename', (d) => { d.meta = { ...d.meta, title: 'changed' }; });
+    store.commit();
+    store.setDisplayUnit('ft');
+    store.undo();
+    expect(store.document.meta?.title).toBe('store test');
+    expect(store.displayUnit).toBe('ft');
+    store.redo();
+    expect(store.displayUnit).toBe('ft');
+    // The unit is not what the file holds, so undo does not call it saved.
+    store.undo();
+    expect(store.dirty).toBe(true);
+  });
+
+  it('tells every listener even when one throws, then reports the error', () => {
+    const store = new Store(withCamera());
+    const seen: string[] = [];
+    store.subscribe(() => { seen.push('first'); throw new Error('panel failed'); });
+    store.subscribe((event) => { seen.push(`second:${event}`); });
+    expect(() => store.select(['cam-1'])).toThrow('panel failed');
+    expect(seen).toEqual(['first', 'second:selection']);
+  });
+});

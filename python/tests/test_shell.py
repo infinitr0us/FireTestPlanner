@@ -39,6 +39,14 @@ def plan_file(tmp_path):
     return str(path)
 
 
+def open_and_adopt(shell, path):
+    """What the page does: read the file, put it on screen, tell the shell."""
+    opened = shell.read_plan(path)
+    assert opened is not None
+    shell.adopted(opened["token"])
+    return opened
+
+
 # -- file handling -------------------------------------------------------
 
 def test_reading_a_plan_returns_its_path_and_text(plan_file):
@@ -53,15 +61,18 @@ def test_reading_a_missing_file_returns_none_rather_than_raising():
     assert shell.read_plan(os.path.join("nowhere", "absent.ftp.json")) is None
 
 
-def test_reading_a_plan_adds_it_to_recent_files(plan_file):
+def test_reading_a_plan_adds_it_to_recent_files_once_adopted(plan_file):
     shell = shell_app.Shell()
-    shell.read_plan(plan_file)
+    opened = shell.read_plan(plan_file)
+    # A file the page might still reject is not a recent plan yet.
+    assert shell.recent_files() == []
+    shell.adopted(opened["token"])
     assert shell.recent_files() == [plan_file]
 
 
 def test_recent_files_hides_paths_that_no_longer_exist(plan_file, tmp_path):
     shell = shell_app.Shell()
-    shell.read_plan(plan_file)
+    open_and_adopt(shell, plan_file)
     os.remove(plan_file)
     # A recent list that offers a dead file is worse than a short one.
     assert shell.recent_files() == []
@@ -74,8 +85,8 @@ def test_recent_files_are_most_recent_first_without_duplicates(tmp_path):
         p = tmp_path / "plan{}.ftp.json".format(i)
         p.write_text("{}", encoding="utf-8")
         paths.append(str(p))
-        shell.read_plan(str(p))
-    shell.read_plan(paths[0])  # revisit the oldest
+        open_and_adopt(shell, str(p))
+    open_and_adopt(shell, paths[0])  # revisit the oldest
     assert shell.recent_files() == [paths[0], paths[2], paths[1]]
 
 
@@ -87,7 +98,7 @@ def test_recent_files_are_capped():
 
 
 def test_settings_survive_a_restart(plan_file):
-    shell_app.Shell().read_plan(plan_file)
+    open_and_adopt(shell_app.Shell(), plan_file)
     assert shell_app.Shell().recent_files() == [plan_file]
 
 
@@ -114,7 +125,7 @@ def test_saving_presets_reports_whether_the_write_landed(monkeypatch):
     def refuse(*args, **kwargs):
         raise OSError("read-only volume")
 
-    monkeypatch.setattr(shell_app, "open", refuse, raising=False)
+    monkeypatch.setattr(shell_app.tempfile, "NamedTemporaryFile", refuse)
     result = shell.save_camera_presets([{"id": "my-rig"}])
     assert result["saved"] is False
     assert "read-only" in result["error"]
@@ -398,7 +409,7 @@ def test_ready_triggers_the_selftest_hook_in_selftest_mode(server):
 
 def test_recent_is_served_over_the_api(server, plan_file):
     shell, _, base, _ = server
-    shell.read_plan(plan_file)
+    open_and_adopt(shell, plan_file)
     status, payload = request(base, "/api/recent", "test-token")
     assert status == 200
     assert payload == [plan_file]
@@ -416,7 +427,8 @@ def test_presets_round_trip_through_the_api(server):
 
 
 def test_open_recent_reads_through_the_api(server, plan_file):
-    _, _, base, _ = server
+    shell, _, base, _ = server
+    open_and_adopt(shell, plan_file)
     _, payload = request(base, "/api/open-recent", "test-token", {"path": plan_file})
     assert payload["text"].startswith('{"format"')
 
@@ -450,7 +462,8 @@ def test_dialog_routes_are_inert_without_a_window(server):
 def test_save_over_the_api_writes_back_only_with_the_token(server, plan_file):
     """The whole contract, end to end over HTTP: open hands out a token, save with it
     writes back with no dialog, save without it (or with a wrong one) asks."""
-    _, _, base, _ = server
+    shell, _, base, _ = server
+    open_and_adopt(shell, plan_file)
     _, opened = request(base, "/api/open-recent", "test-token", {"path": plan_file})
     assert isinstance(opened["token"], str) and opened["token"]
 
@@ -666,3 +679,138 @@ def test_pick_folder_is_inert_without_a_window(server):
     _, _, base, _ = server
     _, payload = request(base, "/api/pick-folder", "test-token", {})
     assert payload is None
+
+
+# -- review 2026-09-22 ---------------------------------------------------
+
+class _FakeWindow:
+    def __init__(self):
+        self.confirm_close = False
+        self.titles = []
+
+    def set_title(self, title):
+        self.titles.append(title)
+
+
+def test_unsaved_changes_arm_the_native_close_prompt():
+    """WebView2 does not run the page's beforeunload when the window closes, and
+    pywebview prompts only while confirm_close is set -- so the page's dirty state
+    has to reach the window, or closing it discards the work in silence."""
+    shell = shell_app.Shell()
+    shell.window = _FakeWindow()
+    shell._set_title("plan.ftp.json")
+    assert shell.set_dirty(True) == {"dirty": True}
+    assert shell.window.confirm_close is True
+    assert shell.window.titles[-1].startswith("plan.ftp.json •")
+    shell.set_dirty(False)
+    assert shell.window.confirm_close is False
+    assert not shell.window.titles[-1].startswith("plan.ftp.json •")
+
+
+def test_dirty_is_reported_over_the_api(server):
+    shell, _, base, _ = server
+    _, payload = request(base, "/api/dirty", "test-token", {"dirty": True})
+    assert payload == {"dirty": True} and shell.dirty is True
+
+
+def test_open_recent_reads_only_files_in_the_recent_list(server, tmp_path):
+    """The page's token used to be a way to read any file, and to get a write
+    token for it that /api/save then honoured."""
+    shell, _, base, _ = server
+    secret = tmp_path / "secrets.txt"
+    secret.write_text("SECRET=hunter2\n", encoding="utf-8")
+    _, payload = request(base, "/api/open-recent", "test-token", {"path": str(secret)})
+    assert "error" in payload and "text" not in payload and "token" not in payload
+    assert secret.read_text(encoding="utf-8") == "SECRET=hunter2\n"
+
+
+def test_a_rejected_file_never_joins_the_recent_list(plan_file):
+    shell = shell_app.Shell()
+    shell.read_plan(plan_file)             # the page refuses it: no adopted call
+    assert shell.recent_files() == []
+    assert shell.adopted("never-issued") == {"adopted": False}
+
+
+def test_a_byte_order_mark_is_not_part_of_the_plan(tmp_path):
+    path = tmp_path / "notepad.ftp.json"
+    path.write_bytes(b'\xef\xbb\xbf{"format": "fire-test-plan"}\n')
+    assert shell_app.Shell().read_plan(str(path))["text"] == '{"format": "fire-test-plan"}\n'
+
+
+def test_a_corrupt_settings_file_is_set_aside_not_overwritten():
+    """A half-written settings file held the preset library; the next recent-file
+    entry used to write over it and make the loss permanent."""
+    path = shell_app.settings_path()
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write('{"cameraPresets": [{"id": "my-rig"}], "rec')
+    shell = shell_app.Shell()
+    assert shell.camera_presets() == []
+    shell._remember("x.ftp.json")
+    kept = [n for n in os.listdir(os.path.dirname(path)) if n.startswith("settings.json.corrupt-")]
+    assert len(kept) == 1
+    with open(os.path.join(os.path.dirname(path), kept[0]), encoding="utf-8") as fh:
+        assert "my-rig" in fh.read()
+
+
+def test_settings_that_are_not_an_object_do_not_break_the_shell(plan_file):
+    with open(shell_app.settings_path(), "w", encoding="utf-8") as fh:
+        fh.write("[]")
+    shell = shell_app.Shell()
+    open_and_adopt(shell, plan_file)
+    assert shell.recent_files() == [plan_file]
+
+
+def test_a_failed_settings_write_leaves_the_previous_file(monkeypatch):
+    shell = shell_app.Shell()
+    assert shell.save_camera_presets([{"id": "kept"}]) == {"saved": True}
+
+    def explode(src, dst):
+        raise OSError(28, "No space left on device")
+
+    real_replace = shell_app.os.replace
+    monkeypatch.setattr(shell_app.os, "replace", explode)
+    result = shell.save_camera_presets([{"id": "lost"}])
+    assert result["saved"] is False
+    # Not monkeypatch.undo(): that would also drop the isolated settings home.
+    monkeypatch.setattr(shell_app.os, "replace", real_replace)
+    assert shell_app.Shell().camera_presets() == [{"id": "kept"}]
+    leftovers = [n for n in os.listdir(os.path.dirname(shell_app.settings_path())) if n.endswith(".tmp")]
+    assert leftovers == []
+
+
+def test_concurrent_saves_of_one_file_never_mix(tmp_path):
+    """Each save writes its own temporary; the plan ends as one save or the other."""
+    import threading
+    shell = shell_app.Shell()
+    out = tmp_path / "plan.ftp.json"
+    a, b = "A" * 200000 + "\n", "B" * 200000 + "\n"
+    for _ in range(10):
+        threads = [threading.Thread(target=shell._write, args=(str(out), text)) for text in (a, b)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert out.read_text(encoding="utf-8") in (a, b)
+    assert [n for n in os.listdir(tmp_path) if n.endswith(".tmp")] == []
+
+
+@pytest.mark.parametrize("name", ["CON", "nul", "COM1.fds", "CONIN$", "geom.fds."])
+def test_an_include_cannot_name_a_device(tmp_path, name):
+    fds = tmp_path / "case.fds"
+    fds.write_text("&HEAD CHID='case' /\n", encoding="utf-8")
+    shell = shell_app.Shell()
+    shell.read_fds(str(fds))
+    assert "error" in shell.read_fds_include(name)
+
+
+def test_an_include_may_sit_in_a_subfolder_of_the_input(tmp_path):
+    """FDS reads `&CATF` names relative to the run's folder; a subfolder is common."""
+    (tmp_path / "geometry").mkdir()
+    (tmp_path / "geometry" / "walls.fds").write_text("&OBST XB=0,1,0,1,0,1 /\n", encoding="utf-8")
+    (tmp_path / "root.fds").write_text("&HEAD CHID='r' /\n", encoding="utf-8")
+    shell = shell_app.Shell()
+    shell.read_fds(str(tmp_path / "root.fds"))
+    assert "OBST" in shell.read_fds_include("geometry/walls.fds")["text"]
+    assert "OBST" in shell.read_fds_include("geometry\\walls.fds")["text"]
+    for escape in ("geometry/../../x.fds", "..\\x.fds", "C:/x.fds", "geometry/nul"):
+        assert "error" in shell.read_fds_include(escape)

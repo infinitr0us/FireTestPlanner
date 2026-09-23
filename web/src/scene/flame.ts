@@ -275,7 +275,7 @@ export class FlameLayer {
     const p = flame.transform?.position_m ?? [0, 0, 0];
     const q = flame.transform?.rotation_quat ?? [0, 0, 0, 1];
     mesh.group.position.set(p[0], p[1], p[2]);
-    mesh.group.quaternion.set(q[0], q[1], q[2], q[3]);
+    mesh.group.quaternion.set(q[0], q[1], q[2], q[3]).normalize();
     mesh.group.visible = flame.display?.visible !== false;
     mesh.setAppearance(flame.display?.opacity ?? 1, flame.display?.colorMode ?? 'height');
   }

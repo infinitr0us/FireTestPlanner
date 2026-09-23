@@ -32,6 +32,7 @@ import {
 } from './fdsview';
 import { NamelistError, readNamelist, readOneRecord } from './namelist';
 import { spliceFdsIncludes } from '../io/files';
+import { rangeOf } from './math';
 import { checkPlan, newPlan, primaryBurner } from './plan';
 import { serializePlan } from './serialize';
 import type { BurnerObject, CeilingObject, ObstructionObject, PlanObject, ThermocoupleObject, Vec3, WallObject } from './types';
@@ -580,24 +581,24 @@ describe('what an import refuses to guess', () => {
     expect(result.issues.map((i) => i.code)).not.toContain('fds-catf-unresolved');
   });
 
-  it('reports a child that ends in &TAIL, and everything else the splice could not do', async () => {
-    // Reading stops at &TAIL, so a child that carries one ends the parent there:
-    // the parent's thermocouple after the &CATF line is not in this plan. Python
-    // has always said so; the splicer here dropped it in silence.
+  it('splices includes as FDS copies them, and reports everything else', async () => {
+    // FDS copies an included file without its &HEAD and only up to its first &TAIL
+    // or &CATF (COPY_FILE_TO_CAT, read.f90), then carries on with the parent. So a
+    // child's &TAIL ends the child, not the model, and nested includes are not read.
+    // Mirrored in python/tests/test_fds.py.
     const files: Record<string, string> = {
-      'child.fds': '&OBST XB=0,2,0,0.1,0,2 /\n&TAIL /\n',
+      'child.fds': "&HEAD CHID='child' /\n&OBST XB=0,2,0,0.1,0,2 /\n&TAIL /\n&OBST XB=3,5,0,0.1,0,2 /\n",
       'common.fds': "&SURF ID='C' /\n",
-      'a.fds': "&CATF OTHER_FILES='common.fds' /\n",
-      'b.fds': "&CATF OTHER_FILES='common.fds','b.fds' /\n",
+      'a.fds': "&CATF OTHER_FILES='common.fds' /\n&OBST XB=0,0.1,0,2,0,2 /\n",
     };
     const spliced = await spliceFdsIncludes(
-      "&HEAD CHID='catf' /\n&CATF OTHER_FILES='a.fds','b.fds','gone.fds','child.fds' /\n"
+      "&HEAD CHID='catf' /\n&CATF OTHER_FILES='a.fds','a.fds','catf.fds','gone.fds','child.fds' /\n"
       + "&DEVC ID='parent', XYZ=1,1,1, QUANTITY='TEMPERATURE' /\n&TAIL /\n",
-      async (name) => files[name] ?? null,
+      async (name) => files[name] ?? null, 'catf.fds',
     );
     const codes = spliced.issues.map((i) => i.code);
     expect(codes).toEqual(expect.arrayContaining(
-      ['fds-catf-repeat', 'fds-catf-cycle', 'fds-catf-missing', 'fds-catf-tail']));
+      ['fds-catf-repeat', 'fds-catf-cycle', 'fds-catf-missing', 'fds-catf-tail', 'fds-catf-nested']));
     expect(spliced.issues.find((i) => i.code === 'fds-catf-tail')?.message).toContain('child.fds');
     expect(spliced.issues.find((i) => i.code === 'fds-catf-missing')?.message).toContain('gone.fds');
 
@@ -605,8 +606,9 @@ describe('what an import refuses to guess', () => {
     const result = fdsToPlan(spliced.text, 'catf.fds',
       { includesResolved: true, includeIssues: spliced.issues });
     expect(result.issues.slice(0, spliced.issues.length)).toEqual(spliced.issues);
-    expect(result.counts.wall).toBe(1);
-    expect(result.counts.thermocouple).toBeUndefined();   // lost to the child's &TAIL
+    expect(result.counts.wall).toBe(1);           // only the child's box before its &TAIL
+    expect(result.counts.thermocouple).toBe(1);   // the parent carries on
+    expect(result.doc.meta?.title).toBe('catf');  // the child's &HEAD is not copied
     expect(result.issues.map((i) => i.code)).not.toContain('fds-catf-unresolved');
   });
 
@@ -823,5 +825,58 @@ describe('agreement with fireplan.fds', () => {
     result.doc.meta!.created = '2026-08-15T00:00:00Z';
     result.doc.meta!.modified = '2026-08-15T00:00:00Z';
     expect(serializePlan(result.doc)).toBe(GOLDEN_TEXT);
+  });
+});
+
+// -- review 2026-09-22: shared cases, run by python/tests/test_fds.py too -------
+
+describe('review 2026-09-22 FDS cases', () => {
+  interface Case {
+    name: string; text: string; counts: Record<string, number>;
+    burnerHrrKw?: number | null; burnerRimM?: number; originZ?: number;
+    sourceXyz?: Array<[string, Vec3]>; codes?: string[]; absentCodes?: string[];
+  }
+  const cases = JSON.parse(readFileSync(new URL('../../../fixtures/fds/review-cases.json', import.meta.url), 'utf8')) as Case[];
+  const golden = JSON.parse(readFileSync(new URL('../../../fixtures/fds/review-cases.golden.json', import.meta.url), 'utf8')) as Record<string, string>;
+
+  for (const c of cases) {
+    it(c.name, () => {
+      const result = fdsToPlan(c.text, 'case.fds', { importedAt: IMPORTED_AT });
+      expect(result.counts).toEqual(c.counts);
+      const offset = result.doc.meta!.source!.originOffset_m!;
+      if (c.originZ !== undefined) expect(offset[2]).toBeCloseTo(c.originZ, 9);
+      const burner = result.doc.objects.find((o) => o.type === 'burner') as BurnerObject | undefined;
+      if (c.burnerHrrKw !== undefined) {
+        if (c.burnerHrrKw === null) expect(burner!.fire!.hrr_kw ?? null).toBeNull();
+        else expect(burner!.fire!.hrr_kw).toBeCloseTo(c.burnerHrrKw, 9);
+      }
+      if (c.burnerRimM !== undefined) expect(burner!.rimHeight_m).toBeCloseTo(c.burnerRimM, 9);
+      for (const [id, xyz] of c.sourceXyz ?? []) {
+        near(byId(result, id).transform!.position_m.map((v, k) => v + offset[k]), xyz);
+      }
+      const codes = result.issues.map((i) => i.code);
+      for (const code of c.codes ?? []) expect(codes).toContain(code);
+      for (const code of c.absentCodes ?? []) expect(codes).not.toContain(code);
+      // And the same bytes Python wrote for it (tools/build_fixtures.py).
+      result.doc.meta!.created = '2026-08-15T00:00:00Z';
+      result.doc.meta!.modified = '2026-08-15T00:00:00Z';
+      expect(serializePlan(result.doc)).toBe(golden[c.name]);
+    });
+  }
+
+  it('reads a hundred thousand boxes without overflowing the stack (FDSI-10)', () => {
+    const values = Array.from({ length: 1_000_000 }, (_, i) => i - 500_000);
+    expect(rangeOf(values)).toEqual([-500_000, 499_999]);
+  });
+});
+
+describe('review 2026-09-22 namelist values', () => {
+  it('keeps repeated quoted strings and null repeats in their places', () => {
+    // Mirrored in python/tests/test_fds.py (FDSI-15, FDSI-16).
+    const recs = readNamelist("&OBST SURF_ID6=2*'my surf','A' /\n&OBST SURF_ID6=2*,'A','B' /\n"
+      + '&DEVC IOR=1D400 /');
+    expect(recs[0].strings('SURF_ID6')).toEqual(['my surf', 'my surf', 'A']);
+    expect(recs[1].strings('SURF_ID6')).toEqual([null, null, 'A', 'B']);
+    expect(recs[2].number('IOR')).toBeNull();
   });
 });

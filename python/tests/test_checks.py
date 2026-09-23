@@ -538,7 +538,13 @@ def test_nerfstudio_export_uses_opengl_poses_unflipped():
         cam = plan.cameras[frame["file_path"]]
         assert np.allclose(np.array(frame["transform_matrix"]), cam.extrinsics("opengl"))
         assert frame["fl_x"] == pytest.approx(cam.fx)
-        assert frame["cx"] == pytest.approx(cam.principal_point[0])
+        # nerfstudio puts a pixel's centre at index + 0.5 (cameras.py,
+        # get_image_coords(pixel_offset=0.5)); the plan's principal point is in the
+        # OpenCV convention of centres at integers, so a centred camera is w/2 there.
+        assert frame["cx"] == pytest.approx(cam.principal_point[0] + 0.5)
+        assert frame["cy"] == pytest.approx(cam.principal_point[1] + 0.5)
+        if cam.spec.get("principalPoint_px") is None:
+            assert (frame["cx"], frame["cy"]) == pytest.approx((frame["w"] / 2, frame["h"] / 2))
         assert [frame["w"], frame["h"]] == list(cam.resolution)
 
 
@@ -569,6 +575,43 @@ def test_equipment_table_covers_every_object():
     gopro = next(r for r in rows if r["id"] == "cam-gopro")
     assert gopro["standoff_m"] == pytest.approx(2.755, abs=1e-3)
     assert gopro["hfov_deg"] == pytest.approx(122.0, abs=0.5)
+
+
+def test_equipment_table_means_what_the_report_means():
+    """Review 2026-09-22, EXP-5/EXP-10: obstructions and reconstructed flames were
+    missing, and a burner's standoff and height disagreed with the editor's table
+    (3D distance and origin here, plan distance and flame tip there). Both now read
+    standoff as plan distance and height as the object's own extent above the floor.
+    Mirror of 'prints heights as each object's own extent' in export.test.ts."""
+    plan = Plan.load(os.path.join(FIXTURES, "flame", "flame-test.ftp.json"))
+    plan.add({
+        "id": "obst-1", "type": "obstruction", "name": "Box",
+        "transform": {"position_m": [1.0, 1.0, 0.5]}, "size_m": [1.0, 0.5, 0.8],
+    })
+    plan.add({
+        "id": "wall-up", "type": "wall", "name": "Upstand",
+        "transform": {"position_m": [0.0, 0.0, 0.0]},
+        "polyline_m": [[1.0, 0.0], [2.0, 0.0]], "height_m": 0.6, "baseHeight_m": 2.0,
+    })
+    rows = {r["id"]: r for r in plan.equipment_table()}
+    assert set(rows) == {o["id"] for o in plan.data["objects"]}
+
+    burner = rows["burner-main"]
+    assert burner["height_m"] == pytest.approx(0.1)      # the fuel surface
+    assert "80 kW" in burner["detail"] and "mean flame tip" in burner["detail"]
+    assert rows["obst-1"]["category"] == "obstruction"
+    assert rows["obst-1"]["height_m"] == pytest.approx(1.3)
+    assert rows["wall-up"]["height_m"] == pytest.approx(2.6)
+
+    flame = rows["flame-main"]
+    assert flame["category"] == "reconstructed flame"
+    assert flame["detail"] == "80 frames, 0-395 s, 15.7 mm voxels"
+    assert flame["height_m"] == pytest.approx(0.905)
+    assert flame["standoff_m"] is not None and flame["standoff_m"] < 0.05  # centred on its pan
+
+    # A hood's standoff is its plan distance too, as the editor now prints it.
+    hood = rows["hood-main"]
+    assert hood["standoff_m"] == pytest.approx(0.0)
 
 
 def test_modality_drives_the_default_colour():

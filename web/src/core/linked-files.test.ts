@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { linkedFilesProblem, parseReconstructionCsv } from './linked-files';
+import { isNetworkPath, linkedFilesProblem, parseReconstructionCsv } from './linked-files';
 import { newPlan } from './plan';
 import { serializePlan } from './serialize';
 import { requiredFormatVersion, type BurnerObject, type PlanDocument } from './types';
@@ -108,5 +108,16 @@ describe('linked records', () => {
     const text = readFileSync(new URL('../../../fixtures/linked-files/linked-test.ftp.json', import.meta.url), 'utf8');
     expect(serializePlan(JSON.parse(text) as PlanDocument)).toBe(text);
     expect(() => parseAndValidatePlan(text)).not.toThrow();
+  });
+});
+
+describe('network paths', () => {
+  it('recognises every spelling Windows sends over the network, and nothing local', () => {
+    // Resolving any of these contacts the host; a received plan must not do that
+    // on open (the desktop auto-load skips them).
+    for (const p of ['\\\\attacker\\share\\voxels', '//198.51.100.7/share/voxels', '\\\\host@SSL\\dav\\v',
+      '\\\\?\\UNC\\host\\share', '\\\\.\\pipe\\x']) expect(isNetworkPath(p)).toBe(true);
+    for (const p of ['C:\\data\\voxels', 'C:/data/voxels', 'voxels', '../run/voxels', '/mnt/data/voxels'])
+      expect(isNetworkPath(p)).toBe(false);
   });
 });

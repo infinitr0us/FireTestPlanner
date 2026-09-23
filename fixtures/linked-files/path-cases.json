@@ -5,5 +5,6 @@
   { "source": "//server/share/test/p.json", "path": "../video.mp4", "destination": "//SERVER/share/revisions/p.json", "absolute": "//server/share/video.mp4", "saved": "../video.mp4" },
   { "source": "//server/share/p.json", "path": "//server/other/video.mp4", "destination": "//server/share/p.json", "absolute": "//server/other/video.mp4", "saved": "//server/other/video.mp4" },
   { "source": "/tests/day1/p.json", "path": "../data.csv", "destination": "/tests/day2/p.json", "absolute": "/tests/data.csv", "saved": "../data.csv" },
-  { "source": "/test/p.json", "path": "/Test/data.csv", "destination": "/test/p.json", "absolute": "/Test/data.csv", "saved": "../Test/data.csv" }
+  { "source": "/test/p.json", "path": "/Test/data.csv", "destination": "/test/p.json", "absolute": "/Test/data.csv", "saved": "../Test/data.csv" },
+  { "source": "E:/plan/p.json", "path": "/mnt/data/v.csv", "destination": "E:/plan/q.json", "absolute": "/mnt/data/v.csv", "saved": "/mnt/data/v.csv" }
 ]

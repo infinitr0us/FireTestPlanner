@@ -24,6 +24,7 @@ import {
   flameSequenceLink,
   flameTipZM,
   framingOf,
+  fuelSurfaceZM,
   gaugeRangeKwM2,
   gaugeVerdict,
   gaugeViewAngleDeg,
@@ -52,7 +53,7 @@ import {
 import { fileName } from '../core/linked-files';
 import { formatLength, formatLengthWithUnit } from '../core/units';
 import type { Issue, LengthUnit, PlanDocument } from '../core/types';
-import { buildViewSvg, escapeXml } from './drawing';
+import { buildViewSvg, elevationHeading, escapeXml } from './drawing';
 
 const esc = escapeXml;
 
@@ -60,6 +61,14 @@ const cell = (v: string, cls = ''): string => `<td${cls ? ` class="${cls}"` : ''
 const head = (v: string): string => `<th>${esc(v)}</th>`;
 
 // -- tables ---------------------------------------------------------------
+
+/** A heat release rate as a person writes it: an FDS import computes 300 kW as
+ *  300.00000000000006, and the table printed every digit. */
+export const formatKw = (q: number): string => String(Number(q.toFixed(2)));
+
+/** Horizontal distance from the origin -- the burner centre every standoff is
+ *  measured from (CONVENTIONS.md section 1). */
+const planDistance = (p: readonly number[]): number => Math.hypot(p[0], p[1]);
 
 function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
   const rows: string[] = [];
@@ -79,13 +88,18 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
 
   for (const b of burners(doc)) {
     const tip = flameTipZM(b);
+    const fire = b.fire?.hrr_kw ? `${formatKw(b.fire.hrr_kw)} kW ${b.fire.fuel ?? ''}`.trim() : null;
+    const notes = [fire, tip === null ? null : `mean flame tip ${formatLengthWithUnit(tip, unit)}`]
+      .filter((n): n is string => n !== null).join(', ');
     rows.push('<tr>' + [
       `<td>${esc(displayName(b))}</td>`,
       cell('burner'),
       cell(`${b.footprint.shape}, D_eff ${formatLengthWithUnit(burnerDiameterM(b), unit)}`),
-      cell(b.fire?.hrr_kw ? `${b.fire.hrr_kw} kW ${b.fire.fuel ?? ''}`.trim() : '—'),
-      cell(formatLength(Math.hypot(positionOf(b)[0], positionOf(b)[1]), unit), 'num'),
-      cell(tip === null ? '—' : formatLength(tip, unit), 'num'),
+      cell(notes || '—'),
+      cell(formatLength(planDistance(positionOf(b)), unit), 'num'),
+      // The fuel surface, like every other row's own extent. This column used to
+      // print the mean flame tip here, unlabelled, beside heights of equipment.
+      cell(formatLength(fuelSurfaceZM(b), unit), 'num'),
       cell('—'),
     ].join('') + '</tr>');
   }
@@ -96,7 +110,7 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
       cell('hood'),
       cell(`${formatLength(hd.opening_m[0], unit)} × ${formatLengthWithUnit(hd.opening_m[1], unit)} opening`),
       cell(hd.duct ? `duct ⌀ ${formatLengthWithUnit(hd.duct.diameter_m, unit)}` : 'no duct'),
-      cell('—'),
+      cell(formatLength(planDistance(positionOf(hd)), unit), 'num'),
       cell(formatLength(hoodIntakeHeightM(hd), unit), 'num'),
       cell('—'),
     ].join('') + '</tr>');
@@ -105,13 +119,16 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
   for (const wl of walls(doc)) {
     const length = wl.polyline_m.slice(1).reduce((acc, p, i) =>
       acc + Math.hypot(p[0] - wl.polyline_m[i][0], p[1] - wl.polyline_m[i][1]), 0);
+    // The top of the wall above the floor: a 0.6 m upstand on a 2 m base was
+    // printed as 0.6.
+    const top = positionOf(wl)[2] + (wl.baseHeight_m ?? 0) + wl.height_m;
     rows.push('<tr>' + [
       `<td>${esc(displayName(wl))}</td>`,
       cell('wall'),
-      cell(`${formatLengthWithUnit(length, unit)} long`),
+      cell(`${formatLengthWithUnit(length, unit)} long, ${formatLengthWithUnit(wl.height_m, unit)} high`),
       cell(`${(wl.openings ?? []).length} opening(s)`),
       cell('—'),
-      cell(formatLength(wl.height_m, unit), 'num'),
+      cell(formatLength(top, unit), 'num'),
       cell('—'),
     ].join('') + '</tr>');
   }
@@ -169,7 +186,7 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
       cell(beads.length > 1
         ? `${formatLength(Math.min(...heights), unit)}–${formatLengthWithUnit(Math.max(...heights), unit)}`
         : `to ${tcMaxTemperatureC(tc)} °C`),
-      cell(formatLength(Math.hypot(positionOf(tc)[0], positionOf(tc)[1]), unit), 'num'),
+      cell(formatLength(planDistance(positionOf(tc)), unit), 'num'),
       cell(formatLength(Math.max(...heights), unit), 'num'),
       cell('—'),
     ].join('') + '</tr>');
@@ -218,7 +235,11 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
       'Item', 'Type', 'Detail', 'Notes', `Standoff (${unit})`, `Height (${unit})`, 'Intrinsics',
     ].map(head).join('')}</tr></thead>
     <tbody>${rows.join('')}</tbody>
-  </table>`;
+  </table>
+  <p class="note">Standoff is the plan distance from the burner centre (for a reconstructed
+  flame, from its burner). Height is above the floor: the lens or sensing face of an
+  instrument, the top bead of a rake, the fuel surface of a burner, the intake of a hood,
+  the soffit of a ceiling, and the top of a wall, box or flame envelope.</p>`;
 }
 
 function coverageTable(doc: PlanDocument, unit: LengthUnit): string {
@@ -228,10 +249,11 @@ function coverageTable(doc: PlanDocument, unit: LengthUnit): string {
   const rows = list.map((cam) => {
     const c = framingOf(doc, cam);
     const yesNo = (v: boolean): string => `<td class="${v ? 'ok' : 'bad'}">${v ? 'yes' : 'no'}</td>`;
+    const zoom = zoomOf(cam);
     return '<tr>' + [
       `<td><span class="swatch" style="background:${esc(cameraColor(cam))}"></span>${esc(displayName(cam))}</td>`,
       cell(formatLength(standoffM(cam), unit), 'num'),
-      cell(`${(groundSampleDistanceM(cam) * 1000).toFixed(2)}`, 'num'),
+      cell(`${(groundSampleDistanceM(cam) * 1000).toFixed(2)}${zoom === 1 ? '' : ` at ${zoom}×`}`, 'num'),
     ].join('')
       + (c ? yesNo(c.base) + yesNo(c.tip)
         + `<td class="num ${c.fraction > 0.999 ? 'ok' : 'bad'}">${(c.fraction * 100).toFixed(0)}%</td>`
@@ -246,7 +268,10 @@ function coverageTable(doc: PlanDocument, unit: LengthUnit): string {
     <tbody>${rows.join('')}</tbody>
   </table>
   <p class="note">Coverage is computed against the Heskestad mean flame height and a 15° plume
-  envelope. The intermittent flame tip reaches higher than the mean.</p>`;
+  envelope. The intermittent flame tip reaches higher than the mean.</p>${
+  list.some((cam) => zoomOf(cam) !== 1) ? `
+  <p class="note">mm/px for a zoomed camera is what its output pixels imply. A digital zoom
+  crops and interpolates: it does not resolve finer detail than the unzoomed detector.</p>` : ''}`;
 }
 
 /**
@@ -303,7 +328,7 @@ function instrumentTable(doc: PlanDocument, unit: LengthUnit): string {
 
     rows.push('<tr>' + swatch + [
       cell(`thermocouple, type ${tcTypeOf(tc)}`),
-      cell(formatLength(Math.hypot(positionOf(tc)[0], positionOf(tc)[1]), unit), 'num'),
+      cell(formatLength(planDistance(positionOf(tc)), unit), 'num'),
       cell(hottest === null ? '—' : `${hottest.toFixed(0)} °C`, 'num'),
       cell(`${inFire}/${beads.length}`, 'num'),
     ].join('')
@@ -425,10 +450,10 @@ export function buildReportBody(doc: PlanDocument, unit: LengthUnit): string {
     ${buildViewSvg(doc, 'plan', unit)}
 
     ${hasElevationContent ? `
-      <h2>Front elevation — looking north (+Y)</h2>
+      <h2>Front elevation — ${esc(elevationHeading(doc, 'front'))}</h2>
       ${buildViewSvg(doc, 'front', unit)}
 
-      <h2>Side elevation — looking east (+X)</h2>
+      <h2>Side elevation — ${esc(elevationHeading(doc, 'side'))}</h2>
       ${buildViewSvg(doc, 'side', unit)}
     ` : ''}
 

@@ -633,3 +633,108 @@ def test_instrument_colours_are_stable_and_sanitised():
     assert gauge.color == "#ef4444"
     gauge.raw["display"] = {"color": "#123abc"}
     assert gauge.color == "#123abc"
+
+
+# -- review 2026-09-22: mirrored in web/src/core/instruments.test.ts ------
+
+def _lit(plan, hrr_kw, position, obj_id, footprint=None, rim=0.1):
+    plan.add({
+        "id": obj_id, "type": "burner",
+        "transform": {"position_m": [float(v) for v in position]},
+        "footprint": footprint or {"shape": "square", "size_m": [0.3048, 0.3048]},
+        "rimHeight_m": rim,
+        "fire": {"fuel": "n-heptane", "hrr_kw": hrr_kw, "hrrCurve": None},
+    })
+
+
+def test_a_bead_below_the_mean_tip_is_judged_against_flame_temperature():
+    plan = _fire_plan()
+    burner = plan.burner
+    surface = burner.fuel_surface_z_m
+    z = surface + 0.95 * (burner.flame_tip_z_m() - surface)
+    rake = _rake(plan, (0.015, 0.0, 0.0), [z], tc_type="T")
+    bead = plan.thermocouple_beads(rake)[0]
+    assert (bead["region"], bead["flame_zone"]) == ("plume", True)
+    assert "tc-over-temperature" in codes(plan.instrument_checks())
+
+
+def _view_tube_plan(with_b):
+    plan = _fire_plan(1000.0)
+    if with_b:
+        _lit(plan, 500.0, (0.0, 4.0, 0.0), "burner-b")
+    aim = _fire_plan(1000.0).fire_point_source()
+    _gauge(plan, (-4.0, 0.0, float(aim[2])), aim=aim, range_kw_m2=None, view_angle_deg=20.0)
+    return plan
+
+
+def test_fires_outside_a_view_tube_are_left_out_of_the_sum():
+    alone = _view_tube_plan(False)
+    both = _view_tube_plan(True)
+    lone = alone.heat_flux_estimate(alone.heat_flux_sensors[0])["incident_kw_m2"]
+    assert both.heat_flux_estimate(both.heat_flux_sensors[0])["incident_kw_m2"] == pytest.approx(lone, abs=1e-9)
+    both.heat_flux_sensors[0].raw["gauge"]["range_kw_m2"] = lone * 1.1
+    assert "gauge-over-range" not in codes(both.instrument_checks())
+
+
+def test_clearance_is_from_the_fuel_surface_and_a_hood_below_the_fire_is_skipped():
+    plan = Plan.new("stand")
+    _lit(plan, 5.7, (0.0, 0.0, 1.9), "burner-main")
+    plan.add({"id": "slab", "type": "ceiling", "transform": {"position_m": [0, 0, 0]},
+              "polygon_m": [[-2, -2], [2, -2], [2, 2], [-2, 2]], "height_m": 2.6})
+    plan.add({"id": "hood", "type": "hood", "transform": {"position_m": [0, 0, 0]},
+              "opening_m": [2, 2], "height_m": 1.5})
+    found = codes(plan.check())
+    assert not found & {"ceiling-clearance", "flame-impingement", "hood-offset"}
+
+
+def test_hood_offset_is_filed_once_per_uncovered_fire():
+    plan = _fire_plan()
+    _lit(plan, 130.0, (5.0, 0.0, 0.0), "burner-2")
+    for hood_id, x in (("hood-a", 0.0), ("hood-b", 5.0)):
+        plan.add({"id": hood_id, "type": "hood", "transform": {"position_m": [x, 0, 0]},
+                  "opening_m": [2, 2], "height_m": 3})
+    assert [i for i in plan.check() if i.code == "hood-offset"] == []
+    plan.data["objects"] = [o for o in plan.data["objects"] if o["id"] != "hood-b"]
+    assert [i.object_id for i in plan.check() if i.code == "hood-offset"] == ["hood-a"]
+
+
+def _camera(plan, position, target, resolution, sensor, focal):
+    q = look_at_quat(np.asarray(position, dtype=float), np.asarray(target, dtype=float))
+    plan.add({"id": "cam", "type": "camera",
+              "transform": {"position_m": [float(v) for v in position], "rotation_quat": [float(v) for v in q]},
+              "camera": {"modality": "RGB", "resolution_px": list(resolution), "sensor_mm": list(sensor),
+                         "focalLength_mm": focal}})
+    return plan.cameras["cam"]
+
+
+def test_framing_samples_the_flame_at_the_pan_not_only_the_plume_cone():
+    plan = Plan.new("pool")
+    _lit(plan, 2000.0, (0.0, 0.0, 0.0), "pool", {"shape": "circle", "diameter_m": 2.5}, rim=0.0)
+    cam = _camera(plan, (-4, 0, 1), (0, 0, 1), (500, 1000), (5, 10), 10)
+    assert plan.framing(cam)["plume_fraction_visible"] < 1.0
+
+
+def test_framing_does_not_depend_on_which_way_the_room_is_drawn():
+    fractions = set()
+    for deg in (0, 15, 30, 45):
+        plan = _fire_plan()
+        a = math.radians(deg)
+        at = (-2.2 * math.cos(a), -2.2 * math.sin(a), 1.2)
+        cam = _camera(plan, at, (0, 0, 0.8), (640, 480), (10.88, 8.16), 24.6)
+        fractions.add(plan.framing(cam)["plume_fraction_visible"])
+    assert len(fractions) == 1
+
+
+def test_a_run_s_own_csv_matches_at_small_voxels_and_one_decimal_frame_names():
+    from fireplan.plan import plot_sequence_mismatch
+    manifest = {"grid": {"voxelSize_m": 0.005, "pitch_m": 0.005025, "resolution": 200},
+                "frames": [[0.3, 1003]]}
+    assert plot_sequence_mismatch([[0.30000000000000004, 0.000125, 0]], manifest) is None
+    assert plot_sequence_mismatch([[0.4, 0.000125, 0]], manifest) is not None
+
+
+def test_framing_answers_rather_than_raising_without_a_fire():
+    plan = Plan.new("no burner")
+    cam = _camera(plan, (-2, 0, 1), (0, 0, 0.5), (640, 480), (10, 7.5), 20)
+    report = plan.framing(cam)
+    assert report["flame_base_visible"] is None and report["plume_fraction_visible"] is None

@@ -115,15 +115,33 @@ export interface RawFrame {
   /** Flat `x0 y0 z0 x1 y1 z1 …`, world metres. */
   voxels: Float64Array;
   voxelSize_m: number;
+  /** The file the frame came from, for messages; absent for a synthesised frame. */
+  name?: string;
 }
+
+/**
+ * The numeric dtypes a frame may use: float or integer, 4 or 8 bytes, either byte
+ * order. Python's `np.load` reads all of these, so a frame written with
+ * `np.array(..., dtype='>f8')` or integer centres is one both engines read -- and
+ * `fireplan` refuses what is outside this set, so neither engine accepts a frame the
+ * other cannot (review 2026-09-22, FLM-5). Mirror of `_FRAME_DTYPES` in flame.py.
+ */
+const DTYPE_READERS: Record<string, (view: DataView, i: number) => number> = {
+  '<f8': (v, i) => v.getFloat64(i * 8, true), '>f8': (v, i) => v.getFloat64(i * 8, false),
+  '<f4': (v, i) => v.getFloat32(i * 4, true), '>f4': (v, i) => v.getFloat32(i * 4, false),
+  '<i8': (v, i) => Number(v.getBigInt64(i * 8, true)), '>i8': (v, i) => Number(v.getBigInt64(i * 8, false)),
+  '<i4': (v, i) => v.getInt32(i * 4, true), '>i4': (v, i) => v.getInt32(i * 4, false),
+};
 
 const readFloats = (array: NpyArray, what: string): Float64Array => {
   const view = new DataView(array.data.buffer, array.data.byteOffset, array.data.byteLength);
   const n = array.shape.reduce((a, b) => a * b, 1);
+  const read = DTYPE_READERS[array.dtype];
+  if (!read) throw new Error(`${what} has dtype ${array.dtype}; expected a 4- or 8-byte float or integer`);
+  const width = Number(array.dtype.slice(2));
+  if (array.data.byteLength < n * width) throw new Error(`${what} is shorter than its shape says`);
   const out = new Float64Array(n);
-  if (array.dtype === '<f8') for (let i = 0; i < n; i += 1) out[i] = view.getFloat64(i * 8, true);
-  else if (array.dtype === '<f4') for (let i = 0; i < n; i += 1) out[i] = view.getFloat32(i * 4, true);
-  else throw new Error(`${what} has dtype ${array.dtype}; expected little-endian float32 or float64`);
+  for (let i = 0; i < n; i += 1) out[i] = read(view, i);
   return out;
 };
 
@@ -137,21 +155,38 @@ export function frameTimestamp(name: string): number | null {
 export async function parseFrameFile(name: string, bytes: Uint8Array): Promise<RawFrame> {
   const timestamp = frameTimestamp(name);
   if (timestamp === null) throw new Error(`${name}: not named t_<seconds>s.npz`);
-  const entries = await readZip(bytes);
+  let entries: Map<string, Uint8Array>;
+  try {
+    entries = await readZip(bytes);
+  } catch (err) {
+    // A truncated or foreign file said "not a ZIP archive" with no name attached,
+    // in a folder of eighty of them.
+    throw new Error(`${name}: ${(err as Error).message}`);
+  }
   const voxelsEntry = entries.get('voxels.npy');
   const sizeEntry = entries.get('voxel_size.npy');
   if (!voxelsEntry || !sizeEntry) throw new Error(`${name}: not a reconstruction frame (needs voxels and voxel_size)`);
   const voxelsArray = parseNpy(voxelsEntry);
-  if (voxelsArray.shape.length !== 2 || voxelsArray.shape[1] !== 3 || voxelsArray.fortranOrder) {
-    throw new Error(`${name}: voxels must be a C-ordered (M, 3) array, got shape (${voxelsArray.shape.join(', ')})`);
+  if (voxelsArray.shape.length !== 2 || voxelsArray.shape[1] !== 3) {
+    throw new Error(`${name}: voxels must be an (M, 3) array, got shape (${voxelsArray.shape.join(', ')})`);
   }
-  const voxels = readFloats(voxelsArray, `${name}: voxels`);
+  let voxels = readFloats(voxelsArray, `${name}: voxels`);
+  if (voxelsArray.fortranOrder) {
+    // Column-major: all the x, then all the y, then all the z. `np.array([x, y, z]).T`
+    // saves exactly this, and it is the same array.
+    const m = voxelsArray.shape[0];
+    const rows = new Float64Array(voxels.length);
+    for (let i = 0; i < m; i += 1) for (let a = 0; a < 3; a += 1) rows[i * 3 + a] = voxels[a * m + i];
+    voxels = rows;
+  }
   for (let i = 0; i < voxels.length; i += 1) {
     if (!Number.isFinite(voxels[i])) throw new Error(`${name}: voxel coordinates must be finite`);
   }
   const size = readFloats(parseNpy(sizeEntry), `${name}: voxel_size`);
-  if (size.length !== 1 || !(size[0] > 0)) throw new Error(`${name}: voxel_size must be a positive number`);
-  return { timestamp_s: timestamp, voxels, voxelSize_m: size[0] };
+  if (size.length !== 1 || !(size[0] > 0) || !Number.isFinite(size[0])) {
+    throw new Error(`${name}: voxel_size must be a positive number`);
+  }
+  return { timestamp_s: timestamp, voxels, voxelSize_m: size[0], name };
 }
 
 // -- lattice ----------------------------------------------------------------
@@ -179,6 +214,16 @@ export function inferPitch(voxels: Float64Array): number {
 /** Voxels per axis of the pipeline's full grid, from the linspace identity
  *  `pitch = volume / (res - 1)`, `voxel_size = volume / res`. Null when the two are
  *  equal, which is a grid built some other way. */
+/** How close an inferred pitch has to be to the voxel size to BE the voxel size:
+ *  a grid built with `arange` has pitch = voxel_size, and the smallest float gap
+ *  lands a few ulps below it (float32 coordinates, further). A linspace grid's pitch
+ *  is a whole 1/(res-1) above, half a percent at 192. Mirror of flame.py. */
+export const PITCH_SNAP = 1e-4;
+
+/** The pitch, snapped to the voxel size when the two are the same grid spacing. */
+export const snapPitch = (pitch: number, voxelSize: number): number =>
+  Math.abs(pitch - voxelSize) <= PITCH_SNAP * voxelSize ? voxelSize : pitch;
+
 export function inferResolution(pitch: number, voxelSize: number): number | null {
   const gap = pitch - voxelSize;
   if (gap <= 1e-9 * pitch) return null;
@@ -217,6 +262,12 @@ export function packFrame(timestamp_s: number, voxels: Float64Array, originM: Ar
     if (k > hi[axis]) hi[axis] = k;
   }
   const dims: [number, number, number] = [hi[0] - lo[0] + 1, hi[1] - lo[1] + 1, hi[2] - lo[2] + 1];
+  // Refused here, where every frame is built, not only when packing for a page:
+  // the renderer addresses cells in 16 bits, and a longer axis drew its far cubes
+  // at wrapped positions metres from where they are. Same sentence as `pack`.
+  if (dims.some((d) => d > MAX_FRAME_DIM)) {
+    throw new Error(`frame at ${timestamp_s} s spans ${Math.max(dims[0], dims[1], dims[2])} cells on one axis; the packed form holds at most ${MAX_FRAME_DIM}`);
+  }
   const cells = dims[0] * dims[1] * dims[2];
   const bits = new Uint8Array(Math.ceil(cells / 8));
   let count = 0;
@@ -316,7 +367,7 @@ export class FlameSequence {
     const populated = sorted.filter((f) => f.voxels.length);
     if (!populated.length) throw new Error('every frame is empty; nothing to reconstruct a grid from');
     const fullest = populated.reduce((a, b) => (b.voxels.length > a.voxels.length ? b : a));
-    const pitch = inferPitch(fullest.voxels);
+    const pitch = snapPitch(inferPitch(fullest.voxels), voxelSize);
     const lo: [number, number, number] = [Infinity, Infinity, Infinity];
     const hi: [number, number, number] = [-Infinity, -Infinity, -Infinity];
     for (const f of populated) {
@@ -328,7 +379,11 @@ export class FlameSequence {
     }
     const frames = sorted.map((f) => {
       try { return packFrame(f.timestamp_s, f.voxels, lo, pitch); }
-      catch (err) { throw new Error(`t_${f.timestamp_s.toFixed(1).padStart(9, '0')}s.npz: ${(err as Error).message}`); }
+      catch (err) {
+        // The file's own name: a name rebuilt from the timestamp rounded 5.25 one way
+        // here and the other way in Python, naming a file that does not exist.
+        throw new Error(`${f.name ?? `t_${f.timestamp_s.toFixed(1).padStart(9, '0')}s.npz`}: ${(err as Error).message}`);
+      }
     });
     return new FlameSequence({ voxelSize_m: voxelSize, pitch_m: pitch, resolution: inferResolution(pitch, voxelSize) }, [lo, hi], frames);
   }

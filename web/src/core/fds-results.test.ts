@@ -3,7 +3,8 @@ import { readdirSync, statSync, readFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { decodeRle, parseResultCsv, parseSmv, Records, ResultReader, safeResultPath, type ResultSource, type ResultMesh, type ResultField } from './fds-results';
-import { resultSurface } from '../scene/fds-results';
+import { resultRampRgb, resultSurface, uniformSpacing } from '../scene/fds-results';
+import { measured } from '../ui/fds-results';
 
 function record(data: Uint8Array, little = true): Uint8Array {
   const out = new Uint8Array(data.length + 8), view = new DataView(out.buffer);
@@ -37,9 +38,12 @@ describe('bounded output reader', () => {
     expect(await reader.nearest(-1)).toBeNull(); expect(await reader.nearest(3)).toBeNull();
     expect((await reader.frame(2)).values).toEqual(new Float32Array([200, 201, 202, 203, 204, 205, 206, 207, 208]));
   });
-  it('rejects truncated frames and corrupt record trailers', async () => {
+  it('keeps the complete frames of a run stopped mid-write, and rejects corrupt trailers', async () => {
     const bytes = slice();
-    await expect(new ResultReader(source(bytes.slice(0, -1)), field, mesh).init()).rejects.toThrow('Truncated');
+    // A partial last record is a run stopped mid-write: the two whole frames before
+    // it are offered, and the reader says so (review 2026-09-22, FDSR-8).
+    const partial = await new ResultReader(source(bytes.slice(0, -1)), field, mesh).init();
+    expect([partial.count, partial.incomplete]).toEqual([2, true]);
     bytes[bytes.length - 1] = 4;
     const reader = await new ResultReader(source(bytes), field, mesh).init();
     await expect(reader.frame(2)).rejects.toThrow('markers disagree');
@@ -53,8 +57,23 @@ describe('bounded output reader', () => {
     for (const bytes of [[255], [255, 4], [255, 4, 0], [255, 4, 6], [1]]) expect(() => decodeRle(new Uint8Array(bytes), 5)).toThrow();
   });
   it('rejects unsafe result paths', () => {
-    for (const name of ['../x.sf', 'C:\\x.sf', '/x.sf', 'a/../x.sf', 'a//x.sf']) expect(() => safeResultPath(name)).toThrow();
+    for (const name of ['../x.sf', 'C:\\x.sf', '/x.sf', 'a/../x.sf']) expect(() => safeResultPath(name)).toThrow();
     expect(safeResultPath('sub\\test.sf')).toBe('sub/test.sf');
+    // FDS appends '/' to RESULTS_DIR, so `out\` in an input is `out\/x.sf` here.
+    expect(safeResultPath('out\\/x.sf')).toBe('out/x.sf');
+    expect(safeResultPath('a//x.sf')).toBe('a/x.sf');
+  });
+  it('skips one unsafe output rather than refusing the whole case (FDSR-5)', () => {
+    const text = readFileSync(fileURLToPath(new URL('../../../fixtures/fds-results/RC_BS_2.smv', import.meta.url)), 'utf8');
+    const good = parseSmv(text);
+    const smv = parseSmv(`${text}
+CSVF
+ devc
+ ../elsewhere.csv
+`);
+    expect(smv.fields.length).toBe(good.fields.length);
+    expect(smv.csv).toEqual(good.csv);
+    expect(smv.warnings.join(' ')).toContain('../elsewhere.csv');
   });
   it('rejects truncated record headers', () => { expect(() => new Records(new Uint8Array(2))).toThrow(); });
 });
@@ -87,7 +106,13 @@ describe('FDS histories', () => {
     expect(s.name).toBe('HRR, total'); expect(s.unit).toBe('kW'); expect(s.times).toEqual([0, .7, 2]); expect(s.values[1]).toBeNaN();
   });
   it('rejects malformed and restarted histories', () => {
-    for (const text of ['s,kW\nTime,HRR\n0,1\n0,2', 's,kW\nTime,HRR\n0,1,2', 's,kW\nTime,HRR\n,1']) expect(() => parseResultCsv(text)).toThrow();
+    for (const text of ['s,kW\nTime,HRR\n0,1\n0,2', 's,kW\nTime,HRR\n0,1,2\n1,2', 's,kW\nTime,HRR\n,1\n1,2']) expect(() => parseResultCsv(text)).toThrow();
+  });
+  it('drops a partial last row, and says so (FDSR-8)', () => {
+    const notes: string[] = [];
+    const series = parseResultCsv('s,kW\nTime,HRR\n0,1\n1,2\n2', (m) => notes.push(m));
+    expect(series[0].times).toEqual([0, 1]);
+    expect(notes).toHaveLength(1);
   });
 });
 
@@ -150,4 +175,32 @@ it('decodes a BNDC file and preserves sample offsets after omitted exterior patc
   const surface = resultSurface(mesh, boundaryField, frame.patches);
   expect(surface.indices.length).toBe(24);
   expect([...new Set(surface.indices)].map(i => frame.values[i])).toEqual([10, 20, 30, 40]);
+});
+
+describe('review 2026-09-22 results display', () => {
+  it('accepts FDS-rounded uniform meshes and refuses stretched ones (FDSR-2)', () => {
+    for (const n of [15, 18, 24, 30]) {
+      const coords = Array.from({ length: n + 1 }, (_, i) => Number((i / n).toFixed(5)));
+      expect(uniformSpacing(coords)).toBe(true);
+    }
+    expect(uniformSpacing([0, 0.1, 0.2, 0.35, 0.5])).toBe(false);
+  });
+
+  it('draws the PNG colour bar from the shader ramp the screen legend shows (FDSR-4)', () => {
+    // The five stops of .fds-results__ramp in styles.css.
+    expect([0, 0.25, 0.5, 0.75, 1].map(resultRampRgb)).toEqual([
+      [0, 0, 128], [0, 128, 255], [128, 255, 128], [255, 128, 0], [128, 0, 0],
+    ]);
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    expect(css).toContain('linear-gradient(90deg, #000080, #0080ff, #80ff80, #ff8000, #800000)');
+  });
+
+  it('prints small and large measured values with their digits (FDSR-3)', () => {
+    expect(measured(0.00042)).toBe('4.20e-4');
+    expect(measured(3.1e-5)).toBe('3.10e-5');
+    expect(measured(-0.0004)).toBe('-4.00e-4');
+    expect(measured(0)).toBe('0');
+    expect(measured(1221.230712890625)).toMatch(/^1,?221$/);
+    expect(measured(Number.NaN)).toBe('—');
+  });
 });

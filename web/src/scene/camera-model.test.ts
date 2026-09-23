@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { imagePlaneExtents, projectToPixels } from '../core/plan';
 import type { CameraObject, CeilingObject, WallObject } from '../core/types';
-import { applyPlanCameraProjection, isShown, shownHits } from './camera-model';
+import { applyPlanCameraProjection, isShown, nearLineHits, shownHits } from './camera-model';
 
 const camera = (over: Partial<CameraObject['camera']> = {}): CameraObject => ({
   id: 'c', type: 'camera',
@@ -95,6 +95,31 @@ describe('what a pick may hit', () => {
 
     const hits = [{ object: mesh, distance: 1 }, { object: shown, distance: 2 }];
     expect(shownHits(hits, root).map((h) => h.distance)).toEqual([2]);
+  });
+
+  it('takes a line only within a few pixels of the pointer (SCN-1)', () => {
+    // Plan view, 1 cm per pixel: a 800 x 800 canvas over an 8 m square.
+    const camera = new THREE.OrthographicCamera(-4, 4, 4, -4, 0.1, 100);
+    camera.position.set(0, 0, 50);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld(true);
+    const line = (x: number): THREE.Line => {
+      const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+        [new THREE.Vector3(x, -1, 0), new THREE.Vector3(x, 1, 0)]));
+      l.name = String(x);
+      return l;
+    };
+    const root = new THREE.Group();
+    root.add(line(0.5), line(0.03), new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.2).translate(0.03, 0.05, 0)));
+    root.updateMatrixWorld(true);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(0, 0), camera);
+    // Three's default: anything within 1 m of the ray. The outline half a metre
+    // away used to win the click.
+    const raw = ray.intersectObjects(root.children, true);
+    expect(raw.filter((h) => (h.object as THREE.Line).isLine).map((h) => h.object.name).sort()).toEqual(['0.03', '0.5']);
+    const kept = nearLineHits(raw, camera, { x: 400, y: 400 }, { width: 800, height: 800 }, 5);
+    expect(kept.map((h) => h.object.name || 'mesh').sort()).toEqual(['0.03', 'mesh']);
   });
 });
 
