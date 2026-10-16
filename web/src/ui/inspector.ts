@@ -71,6 +71,16 @@ import {
   type InstrumentStatus,
 } from '../core/plan';
 import {
+  applyLensToSpec,
+  collapseBodies,
+  compareLenses,
+  currentLensOf,
+  lensesOf,
+  lensName,
+  listedLabel,
+  withLens,
+} from '../core/lenses';
+import {
   applyPresetToSpec,
   cameraPresets,
   deleteCustomPreset,
@@ -79,6 +89,7 @@ import {
   presetFromCamera,
   presetsArePersistent,
   saveCustomPreset,
+  type CameraPreset,
 } from '../core/presets';
 import { formatLength, formatLengthWithUnit } from '../core/units';
 import type {
@@ -688,6 +699,7 @@ export class Inspector {
     );
 
     this.renderCameraCoverage(cam, unit);
+    this.renderLensComparison(cam, unit);
   }
 
   // -- camera presets ----------------------------------------------------
@@ -707,10 +719,18 @@ export class Inspector {
     const named = spec.presetId ?? '';
     const foreign = named !== '' && !library.some((p) => p.id === named);
 
+    const lenses = lensesOf(named);
     const options = [
       { value: '', label: '— custom —' },
       ...(foreign ? [{ value: named, label: `${named} — not in your library` }] : []),
-      ...library.map((p) => ({ value: p.id, label: p.label })),
+      // A body with several lenses is one entry, and the lens is chosen below it.
+      // The entry stands for the camera's own lens when the camera is that body, so
+      // it shows as selected; picked from another camera, it applies the lens the
+      // palette places.
+      ...collapseBodies(library).map((p) => ({
+        value: lenses.some((l) => l.id === p.id) ? named : p.id,
+        label: listedLabel(p),
+      })),
     ];
 
     const naming = this.pendingPreset?.cameraId === cam.id;
@@ -740,6 +760,7 @@ export class Inspector {
           });
         }),
         'Intrinsics are copied inline, so the plan stays self-contained'),
+      lenses.length > 0 ? this.lensRow(cam, lenses) : null,
       h('div', { class: 'panel__actions' }, actions),
       naming ? this.presetNameForm(cam) : null,
       foreign
@@ -750,6 +771,34 @@ export class Inspector {
         ])
         : null,
     ].filter(Boolean) as HTMLElement[]);
+  }
+
+  /**
+   * The lens, for a body whose datasheet lists several. Each option carries the
+   * field of view it would give this camera, at its zoom, so the choice reads as
+   * what it does rather than as a number on a barrel.
+   */
+  private lensRow(cam: CameraObject, lenses: CameraPreset[]): HTMLElement {
+    const mine = currentLensOf(cam);
+    const fov = (c: CameraObject): string => `${hfovDegOf(c).toFixed(1)}° × ${vfovDegOf(c).toFixed(1)}°`;
+    const options = [
+      ...(mine ? [] : [{ value: '', label: `${lensName(cam.camera.focalLength_mm)} (not a listed lens)` }]),
+      ...lenses.map((lens) => ({
+        value: lens.id,
+        label: `${lensName(lens.focalLength_mm)} (${fov(lens === mine ? cam : withLens(cam, lens))})`,
+      })),
+    ];
+    return row('Lens',
+      selectField(mine?.id ?? '', options, (id) => {
+        const lens = lenses.find((l) => l.id === id);
+        if (!lens) return;
+        this.patch(cam.id, 'Change lens', (o) => {
+          const c = o as CameraObject;
+          c.camera = applyLensToSpec(c.camera, lens);
+        });
+      }),
+      'The lenses this body\'s datasheet lists. Changing it keeps the zoom and the body\'s '
+      + 'settings, and drops a calibration made through the old lens');
   }
 
   private suggestedPresetName(cam: CameraObject): string {
@@ -866,7 +915,8 @@ export class Inspector {
           `A ${vfovDegOf(cam).toFixed(0)}° vertical field at ` +
           `${formatLengthWithUnit(standoffM(cam), unit)} covers about ` +
           `${formatLengthWithUnit(covers, unit)} across the frame. Move back, ` +
-          `${zoom > 1 ? 'zoom out, ' : ''}or fit a wider lens.`,
+          `${zoom > 1 ? 'zoom out, ' : ''}or fit a wider lens` +
+          `${lensesOf(cam.camera.presetId).length > 0 ? ' (Lens, under Optics)' : ''}.`,
         ]));
       }
     }
@@ -884,6 +934,52 @@ export class Inspector {
 
     this.root.append(sectionTitle('Coverage'));
     this.root.append(h('div', { class: 'readouts' }, items));
+  }
+
+  /**
+   * Every lens of this camera's body, fitted where the camera stands: the trade
+   * between field and detail, in the numbers Coverage uses. Read-only; the Lens
+   * field is where one is chosen, and the frustum and preview follow it.
+   */
+  private renderLensComparison(cam: CameraObject, unit: LengthUnit): void {
+    const rows = compareLenses(this.store.document, cam);
+    if (rows.length === 0) return;
+    const framed = rows.some((r) => r.framing !== null);
+    const zoom = zoomOf(cam);
+    const head = (text: string, title: string): HTMLElement => h('th', { scope: 'col', title }, [text]);
+
+    this.root.append(sectionTitle('Lens comparison'));
+    this.root.append(h('div', { class: 'readouts' }, [h('table', { class: 'lens-table' }, [
+      h('thead', {}, [h('tr', {}, [
+        head('Lens', 'Focal length. ▶ marks the lens on this camera'),
+        head('FOV', `Horizontal × vertical field of view${zoom === 1 ? '' : ` at ${zoom}×`}`),
+        head('mm/px', 'Resolution at the fire: millimetres per pixel at the slant standoff'),
+        framed ? head('Plume', 'Share of the mean flame envelope in frame; ✓ when all of it is') : null,
+      ])]),
+      h('tbody', {}, rows.map((r) => {
+        const whole = r.framing !== null && r.framing.fraction > 0.999;
+        return h('tr', {
+          class: `lens-table__row${r.current ? ' lens-table__row--current' : ''}`,
+          'aria-current': r.current ? 'true' : undefined,
+        }, [
+          h('th', { scope: 'row' }, [r.current ? '▶ ' : '', lensName(r.focalLength_mm)]),
+          h('td', {}, [`${r.hfovDeg.toFixed(1)}° × ${r.vfovDeg.toFixed(1)}°`]),
+          h('td', {}, [r.mmPerPx.toFixed(2)]),
+          framed
+            ? h('td', { class: r.framing ? (whole ? 'lens-table__good' : 'lens-table__bad') : undefined }, [
+              r.framing ? `${(r.framing.fraction * 100).toFixed(0)}% ${whole ? '✓' : '✗'}` : '—',
+            ])
+            : null,
+        ]);
+      })),
+    ]),
+    h('p', { class: 'readout__note' }, [
+      `This camera as placed and aimed, ${formatLengthWithUnit(standoffM(cam), unit)} slant `
+      + `standoff${zoom === 1 ? '' : `, at ${zoom}× zoom`}. mm/px is the detail at the fire; `
+      + (framed
+        ? 'Plume is how much of the mean flame envelope is in frame.'
+        : 'framing needs a burner with a heat release rate.'),
+    ])]));
   }
 
   // -- burner ------------------------------------------------------------

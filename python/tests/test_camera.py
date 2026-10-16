@@ -194,6 +194,25 @@ def test_the_a8303sc_preset_derives_its_sensor_from_the_detector_pitch():
     assert preset["intrinsicsSource"] == "datasheet"
 
 
+def test_the_a8303sc_body_carries_the_four_lenses_its_datasheet_lists():
+    # "Available Lenses: 17mm, 25 mm, 50 mm, 100 mm". One preset per lens, grouped
+    # by body; the lenses differ in focal length and nothing else, and the palette
+    # places the 25 mm one.
+    base = _preset("flir-a8303sc-25mm")
+    expected_fov = {17: (55.58, 33.03), 25: (39.44, 22.80), 50: (20.32, 11.51), 100: (10.24, 5.77)}
+    for mm, (h_deg, v_deg) in expected_fov.items():
+        preset = _preset("flir-a8303sc-{}mm".format(mm))
+        assert preset["body"] == "FLIR A8303sc"
+        assert preset["focalLength_mm"] == pytest.approx(mm)
+        for key in ("modality", "resolution_px", "sensor_mm", "spectralBand_um",
+                    "framerate_hz", "intrinsicsSource"):
+            assert preset[key] == base[key], key
+        h, v = _fov_deg(preset)
+        assert h == pytest.approx(h_deg, abs=0.01)
+        assert v == pytest.approx(v_deg, abs=0.01)
+        assert bool(preset.get("bodyDefault")) == (mm == 25)
+
+
 # -- extrinsics ----------------------------------------------------------
 
 def test_stored_frame_is_opengl():

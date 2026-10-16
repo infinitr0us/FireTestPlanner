@@ -10,7 +10,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
+import { applyLensToSpec } from '../core/lenses';
 import { checkPlan, firePointSourceM, newPlan, parsePlan, positionOf } from '../core/plan';
+import { findPreset } from '../core/presets';
 import { lookAtQuat } from '../core/math';
 import type { CameraObject, PlanDocument } from '../core/types';
 import { buildViewSvg, elevationHeading, escapeXml } from './drawing';
@@ -158,6 +160,64 @@ describe('report content', () => {
     expect(buildReportBody(doc, 'm')).not.toContain('at 2×');
     cam.camera.zoomFactor = 2;
     expect(buildReportBody(doc, 'm')).toContain('at 2×');
+  });
+
+  it('names the lens of a camera that has a choice of them, in the list and the drawings', () => {
+    // The crew mounts the lens from the printout (M14). A8303sc only: the other
+    // presets offer no lens choice, so their rows and labels stay as they were.
+    const doc = flameFixture();
+    const mwir = doc.objects.find((o) => o.id === 'cam-mwir') as CameraObject;
+    const equipmentRow = (name: string): string => {
+      const body = buildReportBody(doc, 'm');
+      return body.slice(body.indexOf('<h2>Equipment</h2>'), body.indexOf('<h2>Camera coverage</h2>'))
+        .split('<tr>').find((r) => r.includes(`${escapeXml(name)}</td>`)) as string;
+    };
+    const labelled = (text: string): boolean => (['plan', 'front', 'side'] as const)
+      .every((view) => buildViewSvg(doc, view, 'm').includes(`>${escapeXml(text)}</text>`));
+
+    expect(equipmentRow('FLIR A8303sc MWIR')).toContain('<td>1280×720, 25 mm lens</td>');
+    expect(labelled('FLIR A8303sc MWIR (25 mm)')).toBe(true);
+
+    mwir.camera = applyLensToSpec(mwir.camera, findPreset('flir-a8303sc-100mm')!);
+    expect(equipmentRow('FLIR A8303sc MWIR')).toContain('<td>1280×720, 100 mm lens</td>');
+    expect(labelled('FLIR A8303sc MWIR (100 mm)')).toBe(true);
+
+    // A focal length the datasheet does not list is printed as itself, never rounded
+    // to the lens a crew would then go and find.
+    mwir.camera.focalLength_mm = 35;
+    expect(equipmentRow('FLIR A8303sc MWIR')).toContain('<td>1280×720, 35 mm, not a listed lens</td>');
+    expect(labelled('FLIR A8303sc MWIR (35 mm)')).toBe(true);
+
+    expect(equipmentRow('GoPro')).toContain('<td>1920×1080</td>');
+    expect(labelled('GoPro')).toBe(true);
+  });
+
+  it('never prints two labels into each other, at any lens', () => {
+    // The Example's side elevation puts the T650 and the A8303sc half a metre apart
+    // at one height: different points, one baseline. With the lens in its name the
+    // A8303sc's label ran into the T650's. Spans use the drawing's own estimate of
+    // 5.4 px a character.
+    const clashes = (svg: string): string[] => {
+      const boxes = [...svg.matchAll(/<text x="([-\d.]+)" y="([-\d.]+)" class="obj-label" text-anchor="(\w+)">([^<]*)<\/text>/g)]
+        .map(([, x, y, anchor, s]) => {
+          const w = s.length * 5.4;
+          const x0 = anchor === 'start' ? +x : anchor === 'end' ? +x - w : +x - w / 2;
+          return { s, y: +y, x0, x1: x0 + w };
+        });
+      expect(boxes.length).toBeGreaterThan(3);
+      return boxes.flatMap((a, i) => boxes.slice(i + 1)
+        .filter((b) => Math.abs(a.y - b.y) < 11 && a.x0 < b.x1 && b.x0 < a.x1)
+        .map((b) => `${a.s} / ${b.s}`));
+    };
+    for (const doc of [fixture(), flameFixture()]) {
+      const mwir = doc.objects.find((o) => o.id === 'cam-mwir') as CameraObject;
+      for (const mm of [17, 25, 50, 100]) {
+        mwir.camera = applyLensToSpec(mwir.camera, findPreset(`flir-a8303sc-${mm}mm`)!);
+        for (const view of ['plan', 'front', 'side'] as const) {
+          expect(clashes(buildViewSvg(doc, view, 'm')), `${view}, ${mm} mm`).toEqual([]);
+        }
+      }
+    }
   });
 
   it('never prints a green verdict the checks list is calling an error', () => {

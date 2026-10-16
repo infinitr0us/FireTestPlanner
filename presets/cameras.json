@@ -1,5 +1,5 @@
 {
-  "$comment": "Camera preset library. Shared by the editor and the fixture builder. Presets are a convenience only: every intrinsic is copied inline into the plan when a camera is placed, so a plan opened without this file is still fully specified. intrinsicsSource records how much to trust the numbers -- see CONVENTIONS.md section 4.",
+  "$comment": "Camera preset library. Shared by the editor and the fixture builder. Presets are a convenience only: every intrinsic is copied inline into the plan when a camera is placed, so a plan opened without this file is still fully specified. intrinsicsSource records how much to trust the numbers -- see CONVENTIONS.md section 4. Presets that share a 'body' are the lenses of one camera: the palette lists the body once and places the entry marked 'bodyDefault', and the inspector offers the others under Lens.",
   "version": "1.0.0",
   "presets": [
     {
@@ -27,8 +27,23 @@
       "$note": "640x480 uncooled microbolometer at 12 um pitch gives the sensor size (the sheet lists 24/17/12 um as camera dependent and does not say which body takes which). FLIR designates this lens by angle rather than focal length -- 'Included Lenses: 24 deg' -- so the focal length is back-solved from that: 7.68 / (2 tan 12 deg) = 18.07 mm, reproducing 24.0 x 18.1 deg and 0.65 mrad/px. Derived, not printed -- see docs/datasheets/README.md. Other lenses: 6, 14, 42, 80 deg."
     },
     {
+      "id": "flir-a8303sc-17mm",
+      "label": "FLIR A8303sc — 17 mm lens",
+      "body": "FLIR A8303sc",
+      "modality": "MWIR",
+      "resolution_px": [1280, 720],
+      "sensor_mm": [17.92, 10.08],
+      "focalLength_mm": 17.0,
+      "spectralBand_um": [3.0, 5.0],
+      "framerate_hz": 60,
+      "intrinsicsSource": "datasheet",
+      "$note": "The A8303sc body with its 17 mm lens: 55.6 deg x 33.0 deg, 0.82 mrad per pixel, derived from the 14 um array -- the sheet prints the lens by focal length and no field of view."
+    },
+    {
       "id": "flir-a8303sc-25mm",
       "label": "FLIR A8303sc — 25 mm lens",
+      "body": "FLIR A8303sc",
+      "bodyDefault": true,
       "modality": "MWIR",
       "resolution_px": [1280, 720],
       "sensor_mm": [17.92, 10.08],
@@ -36,7 +51,33 @@
       "spectralBand_um": [3.0, 5.0],
       "framerate_hz": 60,
       "intrinsicsSource": "datasheet",
-      "$note": "Cooled InSb, 1280x720 at 14 um pitch, f/4.0, 60 Hz at full window, all printed on the bundled A8300sc sheet. The 25 mm lens gives 39.4 deg x 22.8 deg, derived from the array -- the sheet prints no field of view. The other lenses it lists are 17, 50 and 100 mm -- add them with 'Save as preset' after typing the focal length. Digital zoom is 1x/2x on this camera; set it in the Zoom field rather than by editing the focal length."
+      "$note": "Cooled InSb, 1280x720 at 14 um pitch, f/4.0, 60 Hz at full window, all printed on the bundled A8300sc sheet. The 25 mm lens gives 39.4 deg x 22.8 deg, 0.56 mrad per pixel, derived from the array -- the sheet prints no field of view. It lists four lenses, 17, 25, 50 and 100 mm, and each is a preset of this body; the inspector's Lens field switches between them. Digital zoom is 1x/2x on this camera; set it in the Zoom field rather than by editing the focal length."
+    },
+    {
+      "id": "flir-a8303sc-50mm",
+      "label": "FLIR A8303sc — 50 mm lens",
+      "body": "FLIR A8303sc",
+      "modality": "MWIR",
+      "resolution_px": [1280, 720],
+      "sensor_mm": [17.92, 10.08],
+      "focalLength_mm": 50.0,
+      "spectralBand_um": [3.0, 5.0],
+      "framerate_hz": 60,
+      "intrinsicsSource": "datasheet",
+      "$note": "The A8303sc body with its 50 mm lens: 20.3 deg x 11.5 deg, 0.28 mrad per pixel, derived from the 14 um array -- half the 25 mm lens's field at twice its detail."
+    },
+    {
+      "id": "flir-a8303sc-100mm",
+      "label": "FLIR A8303sc — 100 mm lens",
+      "body": "FLIR A8303sc",
+      "modality": "MWIR",
+      "resolution_px": [1280, 720],
+      "sensor_mm": [17.92, 10.08],
+      "focalLength_mm": 100.0,
+      "spectralBand_um": [3.0, 5.0],
+      "framerate_hz": 60,
+      "intrinsicsSource": "datasheet",
+      "$note": "The A8303sc body with its 100 mm lens: 10.2 deg x 5.8 deg, 0.14 mrad per pixel, derived from the 14 um array -- a quarter of the 25 mm lens's field at four times its detail."
     },
     {
       "id": "gopro-hero-wide",

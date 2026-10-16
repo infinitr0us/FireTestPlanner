@@ -48,6 +48,15 @@ export interface CameraPreset {
   framerate_hz: number | null;
   intrinsicsSource: IntrinsicsSource;
   note?: string;
+  /**
+   * The camera body this preset is one lens of, as the user reads it ("FLIR
+   * A8303sc"). Presets sharing a body are offered as that camera's lenses: the
+   * palette lists the body once, and the inspector switches between them (see
+   * `lenses.ts`). Seeded presets only; a user's preset is a single camera.
+   */
+  body?: string;
+  /** The lens the palette places for its body. Exactly one per body. */
+  bodyDefault?: boolean;
 }
 
 const STORAGE_KEY = 'fire-test-plan.cameraPresets.v1';
@@ -65,6 +74,8 @@ export const BUILTIN_CAMERA_PRESETS: CameraPreset[] = (library.presets as unknow
     framerate_hz: (p.framerate_hz as number | null) ?? null,
     intrinsicsSource: p.intrinsicsSource as IntrinsicsSource,
     note: p.$note ? String(p.$note) : undefined,
+    body: typeof p.body === 'string' && p.body ? p.body : undefined,
+    bodyDefault: p.bodyDefault === true ? true : undefined,
   };
 });
 

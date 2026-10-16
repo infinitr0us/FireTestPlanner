@@ -50,6 +50,7 @@ import {
   walls,
   zoomOf,
 } from '../core/plan';
+import { printedLensOf } from '../core/lenses';
 import { fileName } from '../core/linked-files';
 import { formatLength, formatLengthWithUnit } from '../core/units';
 import type { Issue, LengthUnit, PlanDocument } from '../core/types';
@@ -74,10 +75,13 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
   const rows: string[] = [];
 
   for (const cam of cameras(doc)) {
+    // The lens is what the crew screws on, so a body with a lens choice names it.
+    const lens = printedLensOf(cam);
     rows.push('<tr>' + [
       `<td><span class="swatch" style="background:${esc(cameraColor(cam))}"></span>${esc(displayName(cam))}</td>`,
       cell(cam.camera.modality),
-      cell(`${cam.camera.resolution_px[0]}×${cam.camera.resolution_px[1]}`),
+      cell(`${cam.camera.resolution_px[0]}×${cam.camera.resolution_px[1]}`
+        + (lens ? `, ${lens.name}${lens.listed ? ' lens' : ', not a listed lens'}` : '')),
       cell(`${hfovDegOf(cam).toFixed(1)}° × ${vfovDegOf(cam).toFixed(1)}°`
         + (zoomOf(cam) === 1 ? '' : ` at ${zoomOf(cam)}×`)),
       cell(formatLength(standoffHorizontalM(cam), unit), 'num'),

@@ -1,0 +1,3 @@
+Feedback from the fire safety engineers (relayed 2026-10-16): for the A8303 camera, add a selection for the lens, 50 mm or 100 mm, so that they can select it based on their real setup and know the effect of it.
+
+Agreed scope: offer all four lenses on the bundled datasheet (17, 25, 50, 100 mm), choose the lens in the inspector with the palette listing the camera once, and add a lens comparison so the effect can be read without switching back and forth.

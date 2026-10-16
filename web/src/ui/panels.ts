@@ -16,7 +16,8 @@ import { fdsFrame } from '../core/fdsview';
 import { NamelistError, readOneRecord } from '../core/namelist';
 import { checkPlan, displayName, hasObjectColor, MODALITY_COLORS, nextId, objectColor } from '../core/plan';
 import { isMounted } from '../core/types';
-import { cameraPresets, isCustomPreset, presetsArePersistent } from '../core/presets';
+import { collapseBodies, lensesOf, lensName, listedLabel } from '../core/lenses';
+import { cameraPresets, isCustomPreset, presetsArePersistent, type CameraPreset } from '../core/presets';
 import { setPosition } from '../core/transform';
 import type { Issue, PlanObject, Vec3 } from '../core/types';
 import { describeErrors, validateStructure } from '../core/validate';
@@ -34,6 +35,17 @@ const TYPE_ICON: Record<string, string> = {
   obstruction: '▢',
   reconstructedFlame: '✶',
 };
+
+/** A camera row's tooltip. A body is listed once, so its row says which lens it
+ *  places and where the others are. */
+function paletteTitle(preset: CameraPreset): string {
+  const lenses = lensesOf(preset.id);
+  if (lenses.length === 0) return preset.note ?? '';
+  const mm = lenses.map((l) => lensName(l.focalLength_mm).replace(/ mm$/, ''));
+  return `Placed with the ${lensName(preset.focalLength_mm)} lens. Choose `
+    + `${mm.slice(0, -1).join(', ')} or ${mm[mm.length - 1]} mm under Lens in the inspector.`
+    + (preset.note ? `\n\n${preset.note}` : '');
+}
 
 export class Palette {
   /** Set while a palette item is armed for click-to-place in the viewport. */
@@ -77,16 +89,16 @@ export class Palette {
 
     this.root.append(h('h3', { class: 'panel__section' }, ['Cameras']));
     this.root.append(
-      h('div', { class: 'palette__list' }, cameraPresets().map((preset) =>
+      h('div', { class: 'palette__list' }, collapseBodies(cameraPresets()).map((preset) =>
         h('button', {
           class: 'palette__row',
           type: 'button',
-          title: preset.note ?? '',
+          title: paletteTitle(preset),
           onclick: () => this.arm(() =>
             createCamera(this.store.document, preset, defaultCameraPosition(this.store.document))),
         }, [
           h('span', { class: 'palette__swatch', style: { background: MODALITY_COLORS[preset.modality] ?? MODALITY_COLORS.other } }),
-          h('span', { class: 'palette__row-label' }, [preset.label]),
+          h('span', { class: 'palette__row-label' }, [listedLabel(preset)]),
           isCustomPreset(preset.id)
             ? h('span', { class: 'palette__badge', title: 'Your own preset. Delete it from a camera that uses it.' }, ['mine'])
             : null,

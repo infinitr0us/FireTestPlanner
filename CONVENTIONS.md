@@ -230,6 +230,23 @@ own calibration and its own label.
 Wide-angle action cameras are badly served by a pinhole model; populate this after a
 real calibration if the plan will feed a reconstruction.
 
+### Lenses of one body
+
+A seeded preset may name a `body`. Presets that share one are the lenses of one
+camera (the A8303sc's 17, 25, 50 and 100 mm) and differ in focal length only. This is
+a property of the preset library, not of the file. A camera placed with one of them
+stores its intrinsics inline like any other, and its `presetId` names the lens
+(`flir-a8303sc-50mm`), so a plan still records which lens it was planned with. The
+format does not change and no version is bumped.
+
+Changing the lens writes less than changing the preset. It sets `focalLength_mm` and
+`presetId`, and keeps what the body owns (resolution, frame rate, band) and the
+`zoomFactor`, which belongs to the shot. A principal point and distortion are
+cleared, and a `calibrated` source steps down to the preset's grade, because a
+calibration was measured through the lens that came off. Which lens a camera has is
+read from its focal length, so a value typed by hand or calibrated (25.13 mm) is
+reported as not a listed lens rather than rounded to one.
+
 ## 5. Fire correlations
 
 Heskestad, as given in the SFPE Handbook. `Q̇` in kW, lengths in m.

@@ -143,7 +143,13 @@ seq.voxels(55.0)                     # (35960, 3) centres at t = 55 s
 ### Cameras this build has never heard of
 
 The preset list is seeded from `presets/cameras.json` — including the FLIR A700 and
-A8303sc, derived from the datasheets in `docs/datasheets/`. For anything else: place
+A8303sc, derived from the datasheets in `docs/datasheets/`. The A8303sc is listed
+once and placed with its 25 mm lens; its **Lens** field in the inspector switches
+between the four lenses on its datasheet (17, 25, 50 and 100 mm), keeping the
+camera's position, aim and zoom. Below Coverage, a **Lens comparison** shows each
+lens fitted where the camera stands: its field of view, the detail at the fire in
+mm/px, and how much of the flame envelope stays in frame. **Drawing…** prints the
+lens in the equipment list and beside the camera in every view. For anything else: place
 the nearest camera, correct its optics in the inspector, then **Save as preset**. It
 joins the list and persists — in the desktop app's settings file, or in site data in a
 browser tab — with **no file to keep beside your plans**. That works because `presetId` is only a

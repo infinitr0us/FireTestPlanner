@@ -7,27 +7,39 @@ files, so anything derived or assumed is labelled as such below.
 
 | File | What it actually is | Preset(s) it backs |
 |---|---|---|
-| `flir-a8303sc.pdf` | FLIR **A8300sc** datasheet, marked "Updated 09/28/15". The A8303sc is a temperature-range variant of this body; the imaging specifications the preset uses are the family's, and the sheet does not name the `03` variant. | `flir-a8303sc-25mm` |
+| `flir-a8303sc.pdf` | FLIR **A8300sc** datasheet, marked "Updated 09/28/15". The A8303sc is a temperature-range variant of this body; the imaging specifications the preset uses are the family's, and the sheet does not name the `03` variant. | `flir-a8303sc-17mm`, `-25mm`, `-50mm`, `-100mm` |
 | `flir-a400-a500-a700-science-kits.pdf` | FLIR A400 / A500 / A700 Science Kits, rev. 10/26/23. One sheet for three bodies, so several rows read "camera dependent" without saying which value belongs to the A700. | `flir-a700-24deg` |
 
 `sensor_mm` is printed on neither sheet. It is `resolution_px × detector pitch`, both of
 which are — that is the whole reason the pitch is quoted.
 
-## FLIR A8300sc / A8303sc, 25 mm lens
+## FLIR A8300sc / A8303sc, 17, 25, 50 and 100 mm lenses
 
 | Preset field | Value | Where it comes from |
 |---|---|---|
 | `resolution_px` | 1280 × 720 | printed — "Resolution" |
 | detector pitch | 14 µm | printed — "Detector Pitch" |
 | `sensor_mm` | 17.92 × 10.08 | derived — 1280 × 14 µm, 720 × 14 µm |
-| `focalLength_mm` | 25 | printed — "Available Lenses: 17mm, 25mm, 50mm, 100mm" |
+| `focalLength_mm` | 17, 25, 50, 100 | printed — "Available Lenses: 17mm, 25mm, 50mm, 100mm" |
 | `spectralBand_um` | 3.0 – 5.0 | printed — "Spectral Range" |
 | `framerate_hz` | 60 | printed — "Max Frame Rate: 60Hz @ Full Window" |
-| field of view 39.4° × 22.8° | derived from the sensor and the lens | the sheet prints no field of view |
+| field of view | per lens, below | derived from the sensor and the lens; the sheet prints no field of view |
 
-Nothing is back-solved here: the lens is designated by focal length, and the pitch and
-the designation are mutually consistent. Note the bundled sheet lists **four** lenses —
-17, 25, 50 and 100 mm. A 200 mm option is not on it.
+Nothing is back-solved here: the lenses are designated by focal length, and the pitch
+and the designations are mutually consistent. The bundled sheet lists **four** lenses;
+a 200 mm option is not on it. Each lens is its own preset, and all four carry
+`"body": "FLIR A8303sc"`, so the editor lists the camera once and offers the lens as
+a separate choice. They differ in focal length and nothing else. The 25 mm preset is
+the one the palette places (`"bodyDefault": true`).
+
+| Lens | Field of view (H × V) | IFOV |
+|---|---|---|
+| 17 mm | 55.6° × 33.0° | 0.82 mrad/px |
+| 25 mm | 39.4° × 22.8° | 0.56 mrad/px |
+| 50 mm | 20.3° × 11.5° | 0.28 mrad/px |
+| 100 mm | 10.2° × 5.8° | 0.14 mrad/px |
+
+All derived: `2·atan(sensor / 2f)` for the field of view and `pitch / f` for the IFOV.
 
 ## FLIR A700, 24° lens
 

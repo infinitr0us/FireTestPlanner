@@ -21,7 +21,10 @@ playback cancellation, looping, single-frame inspection and scale validation.
 The runner additionally sends real mouse/key input to check summary Space
 activation, focused transport shortcuts and native slider Home/End. It opens the
 built editor's Example plan to exercise window-level keyboard routing and compares
-transport typography, dimensions and speed options between workspaces.
+transport typography, dimensions and speed options between workspaces. On its
+A8303sc camera it checks the single palette entry, the Lens options, a lens change
+by a real key on the Lens select (comparison row, field of view and focal length)
+and its undo.
 
 For manual inspection, run `npm run dev -- --host 127.0.0.1` and open
 `/browser-tests/visual-consistency.html` at the URL and port Vite prints.

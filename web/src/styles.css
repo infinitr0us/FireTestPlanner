@@ -410,6 +410,20 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
   color: var(--text-faint);
 }
 
+/* The lens comparison: a readouts box laid out as a table, because it compares
+   rows. Same type, surface and verdict colours as Coverage; the camera's own lens
+   is the selected row, so it takes the accent and a marker rather than colour alone. */
+.lens-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.lens-table th, .lens-table td { padding: 2px 4px; text-align: right; font-weight: normal; white-space: nowrap; }
+.lens-table thead th { color: var(--text-dim); font-size: 11.5px; border-bottom: 1px solid var(--border); }
+.lens-table tbody th, .lens-table td { font-family: var(--mono); }
+.lens-table th:first-child { text-align: left; }
+.lens-table__row--current { background: var(--bg-raised); }
+.lens-table__row--current th, .lens-table__row--current td { font-weight: 600; }
+.lens-table__row--current th { color: var(--accent); }
+.lens-table__good { color: var(--good); }
+.lens-table__bad { color: var(--bad); }
+
 /* -- buttons ------------------------------------------------------------ */
 
 .btn {

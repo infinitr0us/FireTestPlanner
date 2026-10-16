@@ -233,6 +233,7 @@ tool to exist.
 | M11 | **Linked test files** | External videos and spreadsheets, saved plot snapshots | **done** |
 | M12 | **Reconstructed flame playback** | Format 1.4 voxel sequences, shared playback clock, PNG and embedded examples | **done** |
 | M13 | **FDS results** | Separate simulation session, slices, boundary fields, Smoke3D preview and device histories | **done** |
+| M14 | **Lens choice** | A8303sc lenses from its datasheet (17/25/50/100 mm), a Lens field and a lens comparison in the inspector | **done** |
 
 Phase 1 is complete and Phase 2 has landed. Current verification is recorded with the review evidence.
 
@@ -536,3 +537,37 @@ preview showed the hull.
   says so, and it resumes on pause.
 - **The PNG snapshot has no labels.** Object labels are HTML over the canvas, and
   the snapshot is the canvas.
+
+## M14 — Lens choice for the A8303sc (2026-10-16)
+
+Implemented the request archived in `docs/feature-requests/2026-10-a8303-lens.txt`:
+pick the A8303sc's lens to match the real setup, and see what it changes.
+
+The datasheet lists four lenses, 17, 25, 50 and 100 mm. Each is a seeded preset
+(`flir-a8303sc-50mm`) grouped by `body`, so the palette and the preset picker list
+the camera once, it is placed with the 25 mm lens, and a **Lens** field under
+Preset switches between the four. A lens swap sets the focal length and `presetId`
+and keeps the body's settings, the position, the aim and the zoom; a calibration is
+cleared because it belongs to the old lens (CONVENTIONS section 4). No format change.
+
+The effect is shown three ways: the frustum and the camera preview follow the lens
+as before, each Lens option names the field of view it gives this camera, and a
+**Lens comparison** below Coverage fits every lens where the camera stands, with its
+field of view, mm/px at the fire and the share of the mean flame envelope in frame.
+For the Example's MWIR camera, 3.2 m from the pan, that reads 100% framed at 17 mm,
+96% at 25 mm, 58% at 50 mm and 29% at 100 mm, at 2.65, 1.80, 0.90 and 0.45 mm/px.
+
+The printout names the lens for the crew who mount it: the equipment list's detail
+reads "1280×720, 50 mm lens", and the camera's label in the plan and both
+elevations reads "FLIR A8303sc MWIR (50 mm)". A focal length the datasheet does not
+list is printed as itself ("35 mm, not a listed lens"), never rounded to the
+nearest. The longer label exposed a weakness in the drawing: labels were stacked
+only when their markers shared a point, so the Example's T650 and A8303sc, half a
+metre apart at one height in the side elevation, printed on one baseline and ran
+together. A label now also moves up its stack until its text clears every label
+already on that line; labels that do not collide stay where they were.
+
+The mechanism is generic: another body's lenses are a data change in
+`presets/cameras.json`. The A700's optional lenses (6°, 14°, 42°, 80°) are not
+added; its sheet designates lenses by angle, so each focal length would be
+back-solved like the 24° one.

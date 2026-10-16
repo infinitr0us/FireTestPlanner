@@ -181,13 +181,58 @@ try {
   check('undo back to the loaded plan leaves it unmodified',
     await evaluate('!document.querySelector(".toolbar__file").textContent.includes("•")'));
 
+  // Lens choice (2026-10-16): the A8303sc is one palette row and one picker entry; its
+  // inspector offers the datasheet's four lenses, a real key on the Lens select swaps
+  // the lens and moves the comparison's current row, and undo puts the 25 mm back.
+  const ctrlZ = async () => {
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
+  };
+  check('the palette lists the A8303sc body once',
+    await evaluate('[...document.querySelectorAll(".palette__row-label")].map(e=>e.textContent).filter(t=>t.includes("A8303")).join("|")') === 'FLIR A8303sc');
+  const field = label => '[...document.querySelectorAll("#inspector label.field")].find(l=>l.querySelector(".field__label")?.textContent==="' + label + '")?.querySelector("select,input")';
+  const lensSelect = field('Lens');
+  const currentLens = 'document.querySelector("#inspector .lens-table__row--current th")?.textContent';
+  const fovReadout = '[...document.querySelectorAll("#inspector .readout")].find(r=>r.querySelector(".readout__label").textContent==="Field of view")?.querySelector(".readout__value").textContent';
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("FLIR A8303sc MWIR"))');
+  await waitFor(() => evaluate('!!' + lensSelect + ' && !!document.querySelector("#inspector .lens-table")'), 'A8303sc lens select and comparison');
+  const lensOptions = await evaluate('[...(' + lensSelect + ').options].map(o=>o.textContent).join("|")');
+  check('the Lens select lists the datasheet lenses with their fields of view (' + lensOptions + ')',
+    lensOptions === '17 mm (55.6° × 33.0°)|25 mm (39.4° × 22.8°)|50 mm (20.3° × 11.5°)|100 mm (10.2° × 5.8°)'
+    && await evaluate('(' + lensSelect + ').value') === 'flir-a8303sc-25mm');
+  check('the preset picker names the body, not one lens',
+    await evaluate('(' + field('Preset') + ').selectedOptions[0].textContent') === 'FLIR A8303sc');
+  const before = await evaluate('[...document.querySelectorAll("#inspector .lens-table tbody tr")].map(r=>r.textContent).join("|")');
+  check('the comparison has a row per lens, the 25 mm current, with plume verdicts (' + before + ')',
+    await evaluate(currentLens) === '▶ 25 mm'
+    && await evaluate('document.querySelectorAll("#inspector .lens-table tbody tr").length') === 4
+    && await evaluate('document.querySelectorAll("#inspector .lens-table td.lens-table__good, #inspector .lens-table td.lens-table__bad").length') === 4);
+  await evaluate('(' + lensSelect + ').focus()');
+  await key('End', 'End', 35);
+  await waitFor(() => evaluate(currentLens + '==="▶ 100 mm"'), 'comparison follows the lens key');
+  check('a key on the Lens select fits the 100 mm lens everywhere',
+    await evaluate(fovReadout) === '10.2° × 5.8°'
+    && await evaluate('(' + field('Focal length (mm)') + ').value') === '100'
+    && await evaluate('(' + lensSelect + ').value') === 'flir-a8303sc-100mm');
+  await evaluate('document.querySelector("#inspector .lens-table").scrollIntoView({block:"center"})');
+  await screenshot('lens');
+  await evaluate('document.activeElement?.blur()');
+  await ctrlZ();
+  await waitFor(() => evaluate(currentLens + '==="▶ 25 mm"'), 'undo of the lens change');
+  check('undo of a lens change restores the 25 mm lens and an unmodified plan',
+    await evaluate(fovReadout) === '39.4° × 22.8°'
+    && await evaluate('!document.querySelector(".toolbar__file").textContent.includes("•")'));
+
   // Tab from the last field onto a button keeps focus there through the rebuild,
   // and a rebuild into a different panel does not push focus into a field (Codex
   // review of 5f8333d).
   await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("Heptane pan"))');
   // The object's Notes: the last text field, just before Duplicate and Delete.
   const notes = '[...document.querySelectorAll("#inspector input[type=text]")].pop()';
-  await waitFor(() => evaluate('!!' + notes + ' && !!document.querySelector("#inspector .panel__actions")'), 'burner notes field');
+  // Wait for the burner's own panel: the previous selection's panel also has a last
+  // text field and actions, and typing into it is lost when the burner's replaces it.
+  await waitFor(() => evaluate('!!' + notes + ' && !!document.querySelector("#inspector .panel__actions")'
+    + ' && [...document.querySelectorAll("#inspector .panel__section")].some(s=>s.textContent==="Fuel pan")'), 'burner notes field');
   await evaluate('(() => { const e=' + notes + '; e.focus(); e.select(); })()');
   await send('Input.insertText', { text: 'checked' });
   await key('Tab', 'Tab', 9);

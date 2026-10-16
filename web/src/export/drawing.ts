@@ -39,9 +39,10 @@ import {
   toWorld,
   walls,
 } from '../core/plan';
+import { printedLensOf } from '../core/lenses';
 import { forwardOf, rangeOf } from '../core/math';
 import { formatLengthWithUnit } from '../core/units';
-import type { LengthUnit, PlanDocument, Vec3, WallObject } from '../core/types';
+import type { CameraObject, LengthUnit, PlanDocument, Vec3, WallObject } from '../core/types';
 
 export type DrawingView = 'plan' | 'front' | 'side';
 
@@ -170,7 +171,7 @@ const polygon = (points: Array<[number, number]>, extra: string): string =>
   `<polygon points="${points.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ')}" ${extra}/>`;
 
 /**
- * Keeps co-located labels from overprinting into an unreadable smear.
+ * Keeps labels from overprinting into an unreadable smear.
  *
  * Instruments cluster: a gauge and a rake on the same wall are one point in plan,
  * and a camera row is one point in elevation. Both views need the same treatment,
@@ -178,15 +179,44 @@ const polygon = (points: Array<[number, number]>, extra: string): string =>
  */
 class LabelStacker {
   private occupied = new Map<string, number>();
+  /** Every label placed so far: its baseline and the span its text covers. */
+  private placed: Array<{ y: number; x0: number; x1: number }> = [];
 
   /** How many labels already sit near this point. Call once per label. */
-  claim(x: number, y: number): number {
+  private claim(x: number, y: number): number {
     const key = `${Math.round(x / 12)}:${Math.round(y / 12)}`;
     const n = this.occupied.get(key) ?? 0;
     this.occupied.set(key, n + 1);
     return n;
   }
+
+  /**
+   * The label for a marker at (x, y), `gap` above it, and whether it is the first
+   * label claimed at that point (the one that also gets the height beside it).
+   *
+   * Labels at one point stack a line apart, as they always have. Markers that are
+   * merely close are not one point, though: tripods half a metre apart in a side
+   * elevation each label on the same baseline, and a long name ("FLIR A8303sc
+   * MWIR (50 mm)") ran into its neighbour's. So a label also moves up its own stack
+   * until its text clears every label already on that line. Labels that do not
+   * collide stay exactly where the point count puts them.
+   */
+  label(x: number, y: number, gap: number, s: string): { svg: string; first: boolean } {
+    const first = this.claim(x, y);
+    const { x0, x1 } = labelSpan(x, s);
+    const clashes = (baseline: number): boolean => this.placed.some((b) =>
+      Math.abs(b.y - baseline) < LABEL_LINE_PX && x0 < b.x1 + LABEL_PAD_PX && b.x0 < x1 + LABEL_PAD_PX);
+    let n = first;
+    // Bounded: a label that cannot clear in that many lines is printed rather than lost.
+    while (n < first + 24 && clashes(stackedLabelY(y, n, gap))) n += 1;
+    const baseline = stackedLabelY(y, n, gap);
+    this.placed.push({ y: baseline, x0, x1 });
+    return { svg: objectLabel(x, baseline, s), first: first === 0 };
+  }
 }
+
+/** Clear space kept between two labels on one line. */
+const LABEL_PAD_PX = 4;
 
 /** One line of stacked-label clearance. */
 const LABEL_LINE_PX = 11;
@@ -222,17 +252,27 @@ function stackedLabelY(y: number, n: number, gap: number): number {
  * `stackedLabelY`'s, since only the caller knows how deep the stack is.
  */
 function objectLabel(x: number, y: number, s: string): string {
-  const estimated = s.length * 5.4;
-  let anchor = 'middle';
-  let dx = 0;
-  if (x - estimated / 2 < 4) {
-    anchor = 'start';
-    dx = 6;
-  } else if (x + estimated / 2 > PAGE_WIDTH_PX - 4) {
-    anchor = 'end';
-    dx = -6;
-  }
+  const { anchor, dx } = labelSpan(x, s);
   return text(x + dx, y, s, `class="obj-label" text-anchor="${anchor}"`);
+}
+
+/**
+ * How a label at x is anchored, and the span its text covers. The width is an
+ * estimate, 5.4 px a character: a little over what 10 px Segoe UI measures on
+ * average, so a neighbour is not judged clear when it is not.
+ */
+function labelSpan(x: number, s: string): { anchor: string; dx: number; x0: number; x1: number } {
+  const w = s.length * 5.4;
+  if (x - w / 2 < 4) return { anchor: 'start', dx: 6, x0: x + 6, x1: x + 6 + w };
+  if (x + w / 2 > PAGE_WIDTH_PX - 4) return { anchor: 'end', dx: -6, x0: x - 6 - w, x1: x - 6 };
+  return { anchor: 'middle', dx: 0, x0: x - w / 2, x1: x + w / 2 };
+}
+
+/** A camera's label, with its lens when the body has a choice of them: the drawing
+ *  is what the crew sets up from, and the lens is part of the setup. */
+function cameraLabel(cam: CameraObject): string {
+  const lens = printedLensOf(cam);
+  return lens ? `${displayName(cam)} (${lens.name})` : displayName(cam);
 }
 
 /**
@@ -446,7 +486,7 @@ function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
     const [ox, oy] = p.project([0, 0, 0]);
     out.push(dimension(ox, oy, cx, cy, formatLengthWithUnit(standoffHorizontalM(cam), unit)));
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${escapeXml(cameraColor(cam))}" stroke="#ffffff" stroke-width="1"/>`);
-    out.push(objectLabel(cx, stackedLabelY(cy, labels.claim(cx, cy), 9), displayName(cam)));
+    out.push(labels.label(cx, cy, 9, cameraLabel(cam)).svg);
   }
 
   out.push(drawInstrumentsPlan(doc, p, labels));
@@ -498,7 +538,7 @@ function drawInstrumentsPlan(doc: PlanDocument, p: Projector, labels: LabelStack
 
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${color}" stroke="#ffffff" stroke-width="1"/>`);
     const facing = vertical ? (fwd[2] > 0 ? ' (faces up)' : ' (faces down)') : '';
-    out.push(objectLabel(cx, stackedLabelY(cy, labels.claim(cx, cy), 9), displayName(s) + facing));
+    out.push(labels.label(cx, cy, 9, displayName(s) + facing).svg);
   }
 
   for (const tc of thermocouples(doc)) {
@@ -514,7 +554,7 @@ function drawInstrumentsPlan(doc: PlanDocument, p: Projector, labels: LabelStack
       for (const [bx, by] of beads) {
         out.push(`<circle cx="${bx.toFixed(2)}" cy="${by.toFixed(2)}" r="2.6" fill="${color}" stroke="#ffffff" stroke-width="0.7"/>`);
       }
-      out.push(objectLabel(cx, stackedLabelY(cy, labels.claim(cx, cy), 9), displayName(tc)));
+      out.push(labels.label(cx, cy, 9, displayName(tc)).svg);
       continue;
     }
     // An upright rake stacks every bead on one point in plan, so the count is the
@@ -523,8 +563,8 @@ function drawInstrumentsPlan(doc: PlanDocument, p: Projector, labels: LabelStack
     out.push(line(cx - arm, cy, cx + arm, cy, color, 'stroke-width="1.4"'));
     out.push(line(cx, cy - arm, cx, cy + arm, color, 'stroke-width="1.4"'));
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="2" fill="${color}"/>`);
-    out.push(objectLabel(cx, stackedLabelY(cy, labels.claim(cx, cy), 9),
-      beads.length > 1 ? `${displayName(tc)} (×${beads.length})` : displayName(tc)));
+    out.push(labels.label(cx, cy, 9,
+      beads.length > 1 ? `${displayName(tc)} (×${beads.length})` : displayName(tc)).svg);
   }
 
   return out.join('\n');
@@ -674,12 +714,12 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
     const [cx, cy] = at(u, origin[2]);
     const [fx, fy] = at(u, 0);
 
-    const stacked = labels.claim(cx, cy);
+    const label = labels.label(cx, cy, 9, cameraLabel(cam));
 
     out.push(line(cx, cy, fx, fy, COLORS.faint, 'stroke-width="1" stroke-dasharray="3 3"'));
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${escapeXml(cameraColor(cam))}" stroke="#ffffff" stroke-width="1"/>`);
-    out.push(objectLabel(cx, stackedLabelY(cy, stacked, 9), displayName(cam)));
-    if (stacked === 0) {
+    out.push(label.svg);
+    if (label.first) {
       out.push(text(cx + 7, cy + 4, formatLengthWithUnit(origin[2], unit), 'class="dim-text"'));
     }
   }
@@ -694,12 +734,12 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
     const [fx, fy] = at(lateral(origin), 0);
     const color = escapeXml(objectColor(s));
 
-    const stacked = labels.claim(cx, cy);
+    const label = labels.label(cx, cy, 9, displayName(s));
 
     out.push(line(cx, cy, fx, fy, COLORS.faint, 'stroke-width="1" stroke-dasharray="3 3"'));
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${color}" stroke="#ffffff" stroke-width="1"/>`);
-    out.push(objectLabel(cx, stackedLabelY(cy, stacked, 9), displayName(s)));
-    if (stacked === 0) {
+    out.push(label.svg);
+    if (label.first) {
       out.push(text(cx + 7, cy + 4, formatLengthWithUnit(origin[2], unit), 'class="dim-text"'));
     }
   }
@@ -723,8 +763,7 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
       const [bx, by] = at(bead);
       out.push(`<circle cx="${bx.toFixed(2)}" cy="${by.toFixed(2)}" r="2.6" fill="${color}" stroke="#ffffff" stroke-width="0.7"/>`);
     }
-    out.push(objectLabel(top[0], stackedLabelY(top[1], labels.claim(top[0], top[1]), 8),
-      displayName(tc)));
+    out.push(labels.label(top[0], top[1], 8, displayName(tc)).svg);
   }
 
   return out.join('\n');
