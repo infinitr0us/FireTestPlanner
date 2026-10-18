@@ -33,7 +33,7 @@ const focals = (presets: CameraPreset[]): number[] => presets.map((p) => p.focal
 
 describe('the A8303sc lenses', () => {
   it('offers the four the datasheet prints, whichever lens a camera has', () => {
-    // "Available Lenses: 17mm, 25 mm, 50 mm, 100 mm" -- docs/datasheets/flir-a8303sc.pdf.
+    // "Available Lenses: 17mm, 25 mm, 50 mm, 100 mm" -- the A8300sc datasheet, docs/datasheets/README.md.
     for (const mm of [17, 25, 50, 100]) {
       expect(focals(lensesOf(`flir-a8303sc-${mm}mm`))).toEqual([17, 25, 50, 100]);
     }

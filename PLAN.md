@@ -28,7 +28,7 @@ Supersedes nothing; complements `ideas.md`.
 | Origin | Burner centre at floor level = `(0,0,0)`, +Z up, right-handed |
 | Reader default convention | OpenCV / COLMAP (X right, Y down, Z forward); others opt-in |
 | Recorded-data references | Format 1.3 `linkedFiles`; `camera.recording` stays reserved |
-| Reconstructed flame | Format 1.4 `reconstructedFlame` object, its data a `voxelSequence` link with a manifest; the pipeline's NPZ folder read directly, no numpy in the exe; surface voxels as instanced cubes; one session clock for flame, plot and bar. `docs/flame-playback-design.md` |
+| Reconstructed flame | Format 1.4 `reconstructedFlame` object, its data a `voxelSequence` link with a manifest; the NPZ folder read directly, no numpy in the exe; surface voxels as instanced cubes; one session clock for flame, plot and bar. `docs/flame-playback-design.md` |
 
 ## 2. Why one core, two shells
 
@@ -253,39 +253,40 @@ Two asks, one file. They live in FDS, and both were about meeting them there.
 
 | Ask | How it landed |
 |---|---|
-| Read a test plan out of an FDS input | The whole overlap: geometry, the fire, and the devices that correspond to instruments someone has to mount. Their sample case converts to 4 walls with a door, a ceiling, a 300 kW burner and 25 instruments, with no manual fixing |
+| Read a test plan out of an FDS input | The whole overlap: geometry, the fire, and the devices that correspond to instruments someone has to mount. Their case converted with no manual fixing; the public sample written for this repository, `fixtures/fds/room_corner.fds`, converts to 4 walls with a door, a ceiling, a 300 kW burner and 17 instruments |
 | Use their open-source reader, `fdsreader` | **Not usable, and it is worth knowing why.** It reads simulation *output* through the `.smv` file FDS writes after a run; it cannot open a `.fds` input at all. So the reader is ours — about 250 lines, and no numpy in the exe |
 | Create an object the way FDS does | A **Fields / FDS** switch in the inspector: `XB` for a box, `XYZ` + `IOR` for a device, in the source file's own coordinates. Plus a paste box that turns one `&OBST` or `&DEVC` into an object, through the importer's own converter |
 | — | Format 1.2's `obstruction`: an FDS model is full of boxes that are neither wall nor slab, and this format had nowhere to put them |
 
-**Three syntax rules decide whether the reader works, and their sample exercises all
-three.** A record ends at the first `/` *outside a string* — their `&HEAD` title
-contains `34.2x1000/300=114s`, so a naive reader truncates the first record in the
-file. Parameters separate on commas *or* whitespace — their `&SURF`, `&MATL` and
-`&PROP` records use newlines and no commas, so a comma-splitter silently loses
-`HRRPUA` and the thermocouple `DIAMETER`. And a line without a leading `&` is a
-comment — their `REAC` carrying `RADIATIVE_FRACTION=0.29` is one, and reading it
-would have changed every predicted heat flux in the plan.
+**Three syntax rules decide whether the reader works.** Their case exercised all
+three, and the public sample is written to exercise them the same way. A record ends
+at the first `/` *outside a string*: the sample's `&HEAD` title contains a slash, so a
+naive reader truncates the first record in the file. Parameters separate on commas
+*or* whitespace: its `&SURF`, `&MATL` and `&PROP` records use newlines and no commas,
+so a comma-splitter silently loses `HRRPUA` and the thermocouple `DIAMETER`. And a
+line without a leading `&` is a comment: its disabled `REAC` carrying
+`RADIATIVE_FRACTION=0.32` is one, and reading it would change every predicted heat
+flux in the plan.
 
 **The origin is the interesting part.** This format's origin is the burner centre at
 floor level; an FDS file's is wherever the author put it. The import re-origins and
 records the shift in `meta.source.originOffset_m`, which costs no version bump
 (`meta` is open in every 1.x schema) and is what lets the inspector show an engineer
 the same six numbers their `.fds` contains. The floor is the top of the lowest
-horizontal slab, not the bottom of the mesh — in their case those differ by 200 mm,
-and taking the mesh would have left the burner floating.
+horizontal slab, not the bottom of the mesh. In their case and in the public sample
+those differ by 200 mm, and taking the mesh would leave the burner floating.
 
-**What the import immediately tells you about their case.** The first three rows come
+**What the import immediately tells you about the public sample.** The first three rows come
 from the plan's own checks rather than from anything FDS-specific; the fourth is the
 import's report (`fds-gauge-range`), and the plan's report prints those gauges as
 "no range set" rather than as usable:
 
 | Finding | Why it matters |
 |---|---|
-| Mean flame tip at 2.17 m under a 2.4 m ceiling | 0.23 m of clearance; the intermittent tip is in the ceiling jet |
-| Nine of 23 gauges inside two effective diameters | The point-source model is an order of magnitude there, not a number to size a gauge on |
-| 13 of 22 beads on each rake in the flame or below its mean tip (two inside the drawn cone) | Intermittent flame temperatures and radiation error, not a plume reading |
-| 23 gauges with no full-scale range | FDS reports a flux at a point and has no gauge; the range has to be chosen |
+| Mean flame tip at 2.39 m under a 2.4 m ceiling | 0.01 m of clearance; the intermittent tip is in the ceiling jet |
+| Four of 13 gauges inside two effective diameters | The point-source model is an order of magnitude there, not a number to size a gauge on |
+| Three of six beads on each back-wall rake and two of six on each side-wall rake in the flame or below its mean tip | Intermittent flame temperatures and radiation error, not a plume reading |
+| 13 gauges with no full-scale range | FDS reports a flux at a point and has no gauge; the range has to be chosen |
 
 The third row counts every plume bead at or below the mean tip: the flame is
 intermittent there even outside the cone drawn for its mean shape, so those beads are
@@ -474,16 +475,17 @@ absolute references keep undo and concurrent edits safe across Save As. Python
 `Plan.save` rebases references and `Plan.linked_file_path` resolves without reading.
 Neither load nor plotting launches external files automatically.
 
-The supplied CSV and MP4 now live under `fixtures/linked-files/`, together with a
-rebuildable demonstration plan. The video is a simulation illustration, not a claim
-that the reference camera captured that scene. See `docs/linked-files.md` for the
+A synthetic CSV and a 6 s test-pattern video live under `fixtures/linked-files/`,
+together with a rebuildable demonstration plan; the CSV and MP4 supplied for this
+milestone are not distributed. The video only demonstrates linking; it is not a claim
+that the reference camera captured anything. See `docs/linked-files.md` for the
 workflow, CSV contract, portability and deliberate limits (external originals,
 no playback synchronization, no workbook parsing or automatic file watching).
 
 
 Validation of the initial M11 build: 303 web tests and 362 Python tests passed;
 `npm run build` and the rebuilt `FireTestPlanner.exe --selftest` passed. Browser
-checks linked the supplied CSV and MP4, inspected the 100-point two-axis readout,
+checks linked the then-supplied CSV and MP4, inspected the 100-point two-axis readout,
 verified collapse/expand and sensor controls, and reopened the plot in an exported
 HTML viewer without selecting the source CSV. Native Open/Show in folder dispatch
 is covered through the desktop bridge with OS-launch calls mocked; external Excel
@@ -502,10 +504,10 @@ second opinion, and the two decisions that opinion changed are recorded there.
 |---|---|
 | Where it plays | In the viewport, with a bar docked along its bottom edge. The camera preview shows the hull from the camera's view for free, the elevations show it under the predicted cone, the burner's plot follows the same clock |
 | Document model | A `reconstructedFlame` object — world-anchored, its transform the rig-frame correction, created locked — whose data is a `voxelSequence` link carrying a manifest. A link, not a bespoke `source.path`, because only `linkedFiles` is rebased on Save As |
-| What the file holds | The reference and the manifest, never the voxels. A shared page embeds the packed frames under a 25 MB cap; the Example carries the fixture's (49 KB) |
-| Reading | The pipeline's NPZ directly in the page — ZIP central directory, `DecompressionStream`, the `.npy` header — so the exe still has no numpy. The desktop shell lists and serves a linked folder; a browser tab picks it |
+| What the file holds | The reference and the manifest, never the voxels. A shared page embeds the packed frames under a 25 MB cap; the Example carries the synthetic fixture's (64 KB) |
+| Reading | The NPZ frames directly in the page — ZIP central directory, `DecompressionStream`, the `.npy` header — so the exe still has no numpy. The desktop shell lists and serves a linked folder; a browser tab picks it |
 | The lattice | Pitch inferred from the coordinates, never from `voxel_size`: an endpoint-inclusive `linspace` puts them half a percent apart, enough to mis-index a voxel a hundred cells out |
-| Rendering | Surface cells (a fifth of the voxels) as instanced cubes at the pitch, the pipeline's height ramp on a fixed sequence-wide scale, hashed transparency, no shadows. Not points (a cloud, not a volume), not an isosurface (smoother than the data), not ray-marching (nothing to march) |
+| Rendering | Surface cells (about a fifth of the voxels) as instanced cubes at the pitch, a height ramp on a fixed sequence-wide scale, hashed transparency, no shadows. Not points (a cloud, not a volume), not an isosurface (smoother than the data), not ray-marching (nothing to march) |
 | Time | A `Playhead` outside the store; frames hold until the next timestamp; ×1–×60 real time, ×10 default |
 
 Held together by `fixtures/flame/`: the fixture plan byte-identical from both
@@ -523,8 +525,8 @@ preview showed the hull.
   of the frames beside the cone is the natural addition.
 - **No video sync.** Linked videos remain files to find and open. The clock takes a
   fourth follower without change, and `timeOffset_s` is reserved on links.
-- **Large runs are read on every open.** The fixture's scale — 80 frames, 36k
-  voxels at most — reads in a tenth of a second; a 200³ run with two million voxels
+- **Large runs are read on every open.** The fixture's scale (80 frames, 31k
+  voxels at most) reads in a fraction of a second; a 200³ run with two million voxels
   a frame would take tens of seconds and a few hundred megabytes. The packed form
   exists; a packed-file source or a desktop cache is the step if such runs appear.
 - **No worker.** Frames are parsed on the main thread with a yield between them;

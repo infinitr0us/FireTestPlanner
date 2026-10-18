@@ -1,18 +1,24 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "fireplan"
-version = "0.1.0"
+version = "0.7.0"
 description = "Read, validate and export fire test plans (.ftp.json)"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Yuchuan Li" }]
 dependencies = [
     "numpy>=1.20",
     "jsonschema>=4.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/infinitr0us/FireTestPlanner"
+Changelog = "https://github.com/infinitr0us/FireTestPlanner/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]

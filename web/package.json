@@ -1,9 +1,14 @@
 {
   "name": "fire-test-plan-editor",
-  "version": "0.1.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "3D editor for fire test plans (.ftp.json)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/infinitr0us/FireTestPlanner.git"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

@@ -2,7 +2,7 @@
 
 Source documents for the seeded entries in `presets/cameras.json`, listed so that
 `intrinsicsSource: "datasheet"` is a claim someone can check rather than one they have
-to take on trust — which is only true if every number here can be found in *these*
+to take on trust. That holds only if every number here can be found in *these*
 documents, so anything derived or assumed is labelled as such below.
 
 The datasheets are Teledyne FLIR's copyrighted documents and are not redistributed in
