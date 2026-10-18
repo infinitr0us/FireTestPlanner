@@ -1,14 +1,19 @@
 # Manufacturer datasheets
 
-Source documents for the seeded entries in `presets/cameras.json`. Kept in the repo so
-that `intrinsicsSource: "datasheet"` is a claim someone can check rather than one they
-have to take on trust — which is only true if every number here can be found in *these*
-files, so anything derived or assumed is labelled as such below.
+Source documents for the seeded entries in `presets/cameras.json`, listed so that
+`intrinsicsSource: "datasheet"` is a claim someone can check rather than one they have
+to take on trust — which is only true if every number here can be found in *these*
+documents, so anything derived or assumed is labelled as such below.
 
-| File | What it actually is | Preset(s) it backs |
-|---|---|---|
-| `flir-a8303sc.pdf` | FLIR **A8300sc** datasheet, marked "Updated 09/28/15". The A8303sc is a temperature-range variant of this body; the imaging specifications the preset uses are the family's, and the sheet does not name the `03` variant. | `flir-a8303sc-17mm`, `-25mm`, `-50mm`, `-100mm` |
-| `flir-a400-a500-a700-science-kits.pdf` | FLIR A400 / A500 / A700 Science Kits, rev. 10/26/23. One sheet for three bodies, so several rows read "camera dependent" without saying which value belongs to the A700. | `flir-a700-24deg` |
+The datasheets are Teledyne FLIR's copyrighted documents and are not redistributed in
+this repository. Download them from the product pages below (the datasheet is under
+*Resources*). The SHA-256 identifies the exact revision the presets were checked
+against; a later revision may differ.
+
+| Document | Where to get it | What it actually is | Preset(s) it backs |
+|---|---|---|---|
+| FLIR A8300sc datasheet (`flir-a8303sc.pdf`, SHA-256 `db28d573112ed24ee44ce684d4027456f3a2f749e70194fa52406e5a58f5c839`) | [FLIR A8300sc product page](https://www.flir.com/products/a8300sc/) | Marked "Updated 09/28/15". The A8303sc is a temperature-range variant of this body; the imaging specifications the preset uses are the family's, and the sheet does not name the `03` variant. | `flir-a8303sc-17mm`, `-25mm`, `-50mm`, `-100mm` |
+| FLIR A400 / A500 / A700 Science Kits datasheet (`flir-a400-a500-a700-science-kits.pdf`, SHA-256 `ec7b4b65ce871d8f746368fb0b98d66fedac755f749738864d3a425a48a1e406`) | [FLIR A400/A700 Science Kits product page](https://www.flir.com/products/a400-a700-science-kits/) | Rev. 10/26/23. One sheet for three bodies, so several rows read "camera dependent" without saying which value belongs to the A700. | `flir-a700-24deg` |
 
 `sensor_mm` is printed on neither sheet. It is `resolution_px × detector pitch`, both of
 which are — that is the whole reason the pitch is quoted.
@@ -26,7 +31,7 @@ which are — that is the whole reason the pitch is quoted.
 | field of view | per lens, below | derived from the sensor and the lens; the sheet prints no field of view |
 
 Nothing is back-solved here: the lenses are designated by focal length, and the pitch
-and the designations are mutually consistent. The bundled sheet lists **four** lenses;
+and the designations are mutually consistent. The referenced sheet lists **four** lenses;
 a 200 mm option is not on it. Each lens is its own preset, and all four carry
 `"body": "FLIR A8303sc"`, so the editor lists the camera once and offers the lens as
 a separate choice. They differ in focal length and nothing else. The 25 mm preset is
@@ -58,11 +63,11 @@ The optional lenses are printed the same way (6°, 14°, 42°, 80°), which is t
 the A-series sheet names lenses by field of view throughout. The "17 mm" that appears on
 the page is a **minimum focus distance** in macro mode, not a focal length.
 
-## Not backed by a bundled sheet
+## Not backed by a referenced sheet
 
-`flir-t650sc-25deg` carries `intrinsicsSource: "datasheet"` but has no PDF here. Its
+`flir-t650sc-25deg` carries `intrinsicsSource: "datasheet"` but has no sheet listed here. Its
 numbers — 640 × 480 at 17 µm, 24.6 mm standard lens — come from FLIR's published T650sc
-specification. Bundle that sheet or downgrade the preset before treating it as
+specification. Reference that sheet or downgrade the preset before treating it as
 checkable; today it is the one seeded preset whose audit trail stops at this sentence.
 
 `CONVENTIONS.md` section 4 is the normative statement of which quantities are stored and

@@ -51,7 +51,7 @@
       "spectralBand_um": [3.0, 5.0],
       "framerate_hz": 60,
       "intrinsicsSource": "datasheet",
-      "$note": "Cooled InSb, 1280x720 at 14 um pitch, f/4.0, 60 Hz at full window, all printed on the bundled A8300sc sheet. The 25 mm lens gives 39.4 deg x 22.8 deg, 0.56 mrad per pixel, derived from the array -- the sheet prints no field of view. It lists four lenses, 17, 25, 50 and 100 mm, and each is a preset of this body; the inspector's Lens field switches between them. Digital zoom is 1x/2x on this camera; set it in the Zoom field rather than by editing the focal length."
+      "$note": "Cooled InSb, 1280x720 at 14 um pitch, f/4.0, 60 Hz at full window, all printed on the A8300sc sheet. The 25 mm lens gives 39.4 deg x 22.8 deg, 0.56 mrad per pixel, derived from the array -- the sheet prints no field of view. It lists four lenses, 17, 25, 50 and 100 mm, and each is a preset of this body; the inspector's Lens field switches between them. Digital zoom is 1x/2x on this camera; set it in the Zoom field rather than by editing the focal length."
     },
     {
       "id": "flir-a8303sc-50mm",
