@@ -55,13 +55,19 @@ describe('SMV probe directions', () => {
   });
 });
 
-const path = fileURLToPath(new URL('../../../fixtures/fds-results/RC_BS_2.smv', import.meta.url));
-it('retains all 67 supplied probes at 23 locations, including the upward floor gauge', () => {
+const path = fileURLToPath(new URL('../../../fixtures/fds-results/room_corner.smv', import.meta.url));
+it('retains all 40 public-case probes at 16 locations, including the upward floor gauge', () => {
   const data = parseSmv(readFileSync(path, 'utf8'));
-  expect(deviceKinds.map(k => data.devices.filter(d => deviceKind(d) === k).length)).toEqual([22, 22, 23, 0]);
+  expect(deviceKinds.map(k => data.devices.filter(d => deviceKind(d) === k).length)).toEqual([12, 12, 13, 3]);
   const sites = deviceSites(data.devices, all());
-  expect(sites).toHaveLength(23); expect(sites.filter(s => s.devices.length === 3)).toHaveLength(22);
-  expect(data.devices.find(d => d.id === 'HF_23')).toMatchObject({ position: [1.1995, 1.8, 0], orientation: [0, 0, 1] });
+  expect(sites).toHaveLength(16); expect(sites.filter(s => s.devices.length === 3)).toHaveLength(12);
+  expect(data.devices.find(d => d.id === 'FLOOR_HF')).toMatchObject({ position: [2.25, 4.45, 0.5], orientation: [0, 0, 1] });
+  for (const site of sites.filter(s => s.devices.length === 3)) {
+    expect(new Set(site.devices.map(deviceKind))).toEqual(new Set(['thermocouple', 'surface', 'flux']));
+  }
+  expect(data.devices.find(d => d.id === 'BACK_HF_1')).toMatchObject({ position: [1.15, 2.001, .85], orientation: [0, 1, 0] });
+  expect(data.devices.find(d => d.id === 'SIDE_HF_1')).toMatchObject({ position: [1.001, 2.35, .85], orientation: [1, 0, 0] });
+  expect(data.devices.filter(d => d.quantity === 'V-VELOCITY').map(d => d.id)).toEqual(['DOOR_V_LOW', 'DOOR_V_MID', 'DOOR_V_HIGH']);
 });
 
 it.each(['THERMOCOUPLE', 'TEMPERATURE', 'PRESSURE'])('does not mistake the default SMV normal for a facing on %s', quantity => {

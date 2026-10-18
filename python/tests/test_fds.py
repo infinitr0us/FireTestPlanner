@@ -6,9 +6,9 @@ looks exactly like the file not having it. The mapping either puts geometry wher
 the file put it or moves the whole model, and an origin that is 100 mm out is
 invisible in a screenshot and wrong in every dimension on the drawing.
 
-The sample input in `fixtures/fds/` is a real case from a fire safety engineer, not
-a synthesised one, and it exercises all three of the syntax traps in the reader's
-docstring. That is why it is the fixture.
+The sample input in `fixtures/fds/` is a public ISO 9705-style room-corner case
+written for this repository. It exercises the syntax traps and also generates the
+real simulation output used by the results workspace.
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ from fireplan import Plan, fds, namelist
 from fireplan.namelist import NamelistError
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SAMPLE = os.path.join(ROOT, "fixtures", "fds", "IR401_0.fds")
-GOLDEN = os.path.join(ROOT, "fixtures", "fds", "IR401_0.ftp.json")
+SAMPLE = os.path.join(ROOT, "fixtures", "fds", "room_corner.fds")
+GOLDEN = os.path.join(ROOT, "fixtures", "fds", "room_corner.ftp.json")
 
 
 @pytest.fixture(scope="module")
@@ -44,34 +44,34 @@ def by_id(result, obj_id):
 # -- the namelist reader --------------------------------------------------
 
 def test_a_slash_inside_a_quoted_string_does_not_end_the_record():
-    # The sample's own &HEAD title contains "34.2x1000/300=114s". A reader that
+    # The sample's own &HEAD title contains "Public room corner / shortened two-stage propane fire". A reader that
     # stops at the first slash truncates the first record in the file and loses
     # every parameter after it.
-    text = "&HEAD CHID='x', TITLE='burnout=34.2/300=114s' /\n&TIME T_END=60. /"
+    text = "&HEAD CHID='x', TITLE='Public / room' /\n&TIME T_END=60. /"
     records = namelist.read(text)
     assert [r.group for r in records] == ["HEAD", "TIME"]
-    assert records[0].string("TITLE") == "burnout=34.2/300=114s"
+    assert records[0].string("TITLE") == "Public / room"
     assert records[1].number("T_END") == 60.0
 
 
 def test_parameters_separate_on_whitespace_as_well_as_commas():
     # The sample's &SURF, &MATL and &PROP records use newlines and no commas, so a
     # comma-splitter reads the whole body as one value of the first parameter.
-    text = "&SURF ID = 'FIRE'\n      COLOR = 'RED'\n      HRRPUA = 7500. /"
+    text = "&SURF ID = 'FIRE'\n      COLOR = 'RED'\n      HRRPUA = 9259.25925925926 /"
     rec = namelist.read(text)[0]
     assert rec.string("ID") == "FIRE"
     assert rec.string("COLOR") == "RED"
-    assert rec.number("HRRPUA") == 7500.0
+    assert rec.number("HRRPUA") == 9259.25925925926
 
 
 def test_a_line_without_an_ampersand_is_a_comment():
     # This is how an FDS line gets disabled, and the sample does exactly this to a
-    # REAC carrying RADIATIVE_FRACTION=0.29. Reading it would change every predicted
+    # REAC carrying RADIATIVE_FRACTION=0.32. Reading it would change every predicted
     # heat flux in the plan.
-    text = "REAC FUEL='PROPANE', RADIATIVE_FRACTION=0.29 /\n&REAC FUEL='POLYURETHANE' /"
+    text = "REAC FUEL='METHANE', RADIATIVE_FRACTION=0.32 /\n&REAC FUEL='PROPANE' /"
     records = namelist.read(text)
     assert len(records) == 1
-    assert records[0].string("FUEL") == "POLYURETHANE"
+    assert records[0].string("FUEL") == "PROPANE"
     assert records[0].number("RADIATIVE_FRACTION") is None
 
 
@@ -169,35 +169,35 @@ def test_read_one_names_the_mistake_people_actually_make():
 def test_the_sample_converts_to_a_valid_plan(sample):
     sample.plan.validate_schema()
     assert sample.counts == {
-        "wall": 4, "ceiling": 1, "burner": 1, "heatFluxSensor": 23, "thermocouple": 2,
+        "wall": 4, "ceiling": 1, "burner": 1, "heatFluxSensor": 13, "thermocouple": 4,
     }
     assert not sample.errors
 
 
 def test_the_origin_lands_on_the_burner_centre_at_floor_level(sample):
-    # The fire is a 0.2 m square at (0.1, 0.1) standing on a slab whose top is z=0,
-    # so the whole model shifts by (-0.1, -0.1, 0).
-    assert sample.origin_m == pytest.approx((0.1, 0.1, 0.0))
+    # The 0.18 m burner is centred at (1.11, 2.11); the slab top is z=0.5.
+    # Subtract all three components to place its base at the plan origin.
+    assert sample.origin_m == pytest.approx((1.11, 2.11, 0.5))
     burner = one(sample, "burner")
     assert burner["transform"]["position_m"] == pytest.approx([0.0, 0.0, 0.0])
-    assert sample.plan.meta["source"]["originOffset_m"] == pytest.approx([0.1, 0.1, 0.0])
+    assert sample.plan.meta["source"]["originOffset_m"] == pytest.approx([1.11, 2.11, 0.5])
 
 
 def test_the_floor_is_the_slab_top_not_the_bottom_of_the_mesh(sample):
-    # The meshes start at z = -0.2 and the floor slab's top is z = 0. Taking the mesh
+    # The meshes start at z = 0.3 and the floor slab's top is z = 0.5. Taking the mesh
     # would put every height in the plan 200 mm out and leave the burner floating.
-    assert sample.origin_m[2] == 0.0
+    assert sample.origin_m[2] == 0.5
     assert one(sample, "ceiling")["height_m"] == pytest.approx(2.4)
 
 
 def test_hrr_comes_from_hrrpua_times_area_times_the_ramp_peak(sample):
-    # SURF 'FIRE' is 7500 kW/m2 over a 0.2 x 0.2 m face, and RAMP 'fire_ramp' peaks
+    # SURF 'FIRE' is 9259.25925925926 kW/m2 on 0.18 x 0.18 m; 'burner_steps' peaks
     # at F = 1.0, so 300 kW.
     burner = one(sample, "burner")
     assert burner["fire"]["hrr_kw"] == pytest.approx(300.0)
-    assert burner["footprint"] == {"shape": "square", "size_m": pytest.approx([0.2, 0.2])}
-    assert burner["rimHeight_m"] == pytest.approx(0.1)
-    assert burner["fire"]["fuel"] == "polyurethane"
+    assert burner["footprint"] == {"shape": "square", "size_m": pytest.approx([0.18, 0.18])}
+    assert burner["rimHeight_m"] == pytest.approx(0.3)
+    assert burner["fire"]["fuel"] == "propane"
 
 
 def test_a_ramp_that_never_reaches_one_scales_the_heat_release():
@@ -234,19 +234,19 @@ def test_an_explicit_radiative_fraction_is_kept():
 # -- geometry --------------------------------------------------------------
 
 def test_a_thin_tall_obstruction_becomes_a_wall_on_its_centreline(sample):
-    # &OBST XB=-0.10,2.50, 3.60,3.70, -0.10,2.5 -- 2.6 m long, 0.1 m thick, running
-    # along X at y = 3.65, which is 3.55 once the origin moves.
+    # Front wall: XB=0.9,3.5,5.6,5.7,0.4,3.0. Its centreline y=5.65
+    # becomes 3.54 after subtracting the burner-centre offset.
     wall = by_id(sample, "wall-1")
     assert [c for point in wall["polyline_m"] for c in point] == pytest.approx(
-        [-0.2, 3.55, 2.4, 3.55])
+        [-0.21, 3.54, 2.39, 3.54])
     assert wall["thickness_m"] == pytest.approx(0.1)
     assert wall["baseHeight_m"] == pytest.approx(0.0)
 
 
 def test_a_wall_buried_below_the_floor_keeps_its_top_where_the_file_put_it(sample):
-    # Every wall in the sample starts at z = -0.1, 100 mm into the slab. Clamping the
-    # base to the floor without shortening the wall would put its top at 2.6 m
-    # instead of the 2.5 m the file asks for.
+    # Every wall in the sample starts at z = 0.4, 100 mm into the slab. Clamping the
+    # base without shortening the wall would put its top 2.6 m above the floor
+    # instead of the 2.5 m (FDS Z=3.0) the file asks for.
     assert by_id(sample, "wall-1")["height_m"] == pytest.approx(2.5)
 
 
@@ -257,7 +257,7 @@ def test_the_floor_slab_is_not_imported_as_an_object(sample):
 
 
 def test_a_hole_becomes_an_opening_positioned_along_the_wall(sample):
-    # &HOLE XB=0.8,1.6, 3.60,3.80, 0.0,2.0 cuts the wall that starts at x = -0.1.
+    # HOLE X=1.8..2.6, Z=0.5..2.5 cuts the wall starting at X=0.9.
     openings = by_id(sample, "wall-1")["openings"]
     assert len(openings) == 1
     assert openings[0]["offset_m"] == pytest.approx(0.9)
@@ -326,35 +326,35 @@ def test_a_surface_that_burns_is_recorded_in_the_notes(sample):
     # The plan has nowhere structured to say "this lining is combustible", and it is
     # exactly the sort of thing that decides where a gauge can survive.
     assert "burns" in by_id(sample, "wall-2")["notes"]
-    assert "UPHOLSTERY" in by_id(sample, "wall-2")["notes"]
+    assert "LINING" in by_id(sample, "wall-2")["notes"]
 
 
 # -- devices ---------------------------------------------------------------
 
 def test_a_thermocouples_quantity_is_found_through_its_prop(sample):
-    # &DEVC PROP_ID='TC' carries no QUANTITY of its own. Every thermocouple in the
+    # &DEVC PROP_ID='BEAD' carries no QUANTITY of its own. Every thermocouple in the
     # sample is written this way, so a reader that only looks at QUANTITY imports none.
-    rake = by_id(sample, "tc-tc1-tc22")
-    assert rake["thermocouple"]["beadDiameter_mm"] == pytest.approx(3.2)
+    rake = by_id(sample, "tc-back-tc-1-back-tc-6")
+    assert rake["thermocouple"]["beadDiameter_mm"] == pytest.approx(1.5)
 
 
 def test_a_vertical_run_of_devices_becomes_one_rake(sample):
-    rake = by_id(sample, "tc-tc1-tc22")
-    assert len(rake["beadOffsets_m"]) == 22
+    rake = by_id(sample, "tc-back-tc-1-back-tc-6")
+    assert len(rake["beadOffsets_m"]) == 6
     assert rake["beadOffsets_m"][0] == 0.0
-    assert rake["beadOffsets_m"][-1] == pytest.approx(2.1)
-    assert rake["transform"]["position_m"] == pytest.approx([0.0, -0.1, 0.2])
+    assert rake["beadOffsets_m"][-1] == pytest.approx(2.0)
+    assert rake["transform"]["position_m"] == pytest.approx([0.04, -0.109, 0.35])
 
 
 def test_rake_grouping_can_be_turned_off():
     result = fds.load(SAMPLE, fds.ImportOptions(group_rakes=False))
-    assert result.counts["thermocouple"] == 44
+    assert result.counts["thermocouple"] == 24
 
 
 def test_a_wall_temperature_stays_distinct_from_a_gas_temperature(sample):
-    # Both sit at the same 22 points in this file. They are different instruments and
+    # Both sit at the same 12 points in this file. They are different instruments and
     # the plan says which is which rather than merging them.
-    surface, gas = by_id(sample, "tc-c1-c22"), by_id(sample, "tc-tc1-tc22")
+    surface, gas = by_id(sample, "tc-back-wt-1-back-wt-6"), by_id(sample, "tc-back-tc-1-back-tc-6")
     assert surface["mount"]["type"] == "wall"
     assert gas["mount"]["type"] == "pole"
     assert "surface temperature" in surface["notes"]
@@ -363,7 +363,7 @@ def test_a_wall_temperature_stays_distinct_from_a_gas_temperature(sample):
 def test_ior_becomes_the_gauge_normal(sample):
     # IOR=2 means the device sits on a surface facing +Y, which is this format's
     # outward normal for a gauge -- and the fire is on the +Y side of it.
-    gauge = by_id(sample, "hf-hf-1")
+    gauge = by_id(sample, "hf-back-hf-1")
     position = gauge["transform"]["position_m"]
     target = gauge["transform"]["aimTarget_m"]
     assert target[1] > position[1]
@@ -374,7 +374,7 @@ def test_ior_becomes_the_gauge_normal(sample):
 def test_a_gauge_arrives_without_an_invented_range(sample):
     # FDS reports a flux at a point; it has no gauge and no full scale. Making one up
     # would turn every over-range and low-signal verdict in the plan into fiction.
-    assert by_id(sample, "hf-hf-1")["gauge"]["range_kw_m2"] is None
+    assert by_id(sample, "hf-back-hf-1")["gauge"]["range_kw_m2"] is None
     assert any(i.code == "fds-gauge-range" for i in sample.issues)
 
 
@@ -397,10 +397,10 @@ def test_skipping_geometry_does_not_move_the_instruments(sample):
     devices_only = fds.load(SAMPLE, fds.ImportOptions(geometry=False))
     assert devices_only.origin_m == pytest.approx(sample.origin_m)
     assert "wall" not in devices_only.counts
-    assert devices_only.counts["heatFluxSensor"] == 23
+    assert devices_only.counts["heatFluxSensor"] == 13
 
-    gauge = next(o for o in devices_only.plan.data["objects"] if o["id"] == "hf-hf-1")
-    reference = by_id(sample, "hf-hf-1")
+    gauge = next(o for o in devices_only.plan.data["objects"] if o["id"] == "hf-back-hf-1")
+    reference = by_id(sample, "hf-back-hf-1")
     assert gauge["transform"]["position_m"] == pytest.approx(
         reference["transform"]["position_m"])
 
@@ -415,21 +415,21 @@ def test_the_device_map_can_be_overridden():
 # -- what the import tells you --------------------------------------------
 
 def test_a_lining_that_burns_is_reported_but_is_not_offered_as_a_burner(sample):
-    """The sample's 'UPHOLSTERY' burns on three wall faces and the ceiling soffit.
+    """The sample's 'LINING' burns on two wall faces and the ceiling soffit.
 
     None of those is a floor-standing source, so the only candidate is the ignition
     pan -- and the lining is named in the report rather than passed over. Offering
-    it as a burner produced a 2.6 x 3.7 m pan with a 2.4 m rim: a solid box the size
+    it as a burner would produce a 2.6 x 3.8 m pan with a 2.4 m rim: a solid box the size
     of the room, reaching from the floor to the ceiling.
     """
     assert sample.burner_surf == "FIRE"
     assert sample.burner_candidates == ["FIRE"]
     lining = [i for i in sample.issues if i.code == "fds-fire-not-a-burner"]
-    assert len(lining) == 1 and "UPHOLSTERY" in lining[0].message
+    assert len(lining) == 1 and "LINING" in lining[0].message
 
     # Asking for it anyway falls back to the pan, and says so rather than quietly
     # describing a fire somewhere else.
-    other = fds.load(SAMPLE, fds.ImportOptions(burner_surf="UPHOLSTERY"))
+    other = fds.load(SAMPLE, fds.ImportOptions(burner_surf="LINING"))
     assert other.burner_surf == "FIRE"
     assert any(i.code == "fds-burner-unavailable" for i in other.issues)
     other.plan.validate_schema()
@@ -800,7 +800,7 @@ def test_the_fixture_still_loads_as_a_plan():
 
 def test_from_fds_is_the_one_liner_for_a_notebook():
     plan = Plan.from_fds(SAMPLE)
-    assert plan.meta["testId"] == "IR401_0"
+    assert plan.meta["testId"] == "room_corner"
     assert len(plan.walls) == 4
 
 
@@ -809,7 +809,7 @@ def test_the_source_offset_puts_a_plan_coordinate_back_into_fds_coordinates():
     offset = plan.meta["source"]["originOffset_m"]
     wall = next(w for w in plan.walls if w.id == "wall-1")
     fds_y = wall.polyline_m[0][1] + offset[1]
-    assert fds_y == pytest.approx(3.65)      # the &OBST centreline, y = (3.60+3.70)/2
+    assert fds_y == pytest.approx(5.65)      # the &OBST centreline, y = (5.6+5.7)/2
 
 
 # -- review 2026-09-22: shared cases, run by web/src/core/fds.test.ts too --

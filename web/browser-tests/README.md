@@ -30,7 +30,9 @@ and its undo.
 
 For manual inspection, run `npm run dev -- --host 127.0.0.1` and open
 `/browser-tests/visual-consistency.html` at the URL and port Vite prints.
-Add `?interactive=1` to leave a three-frame results fixture open after the checks.
+The page also opens the public `room_corner` subset, selects a directed gauge and
+its history, renders every recorded quantity, and seeks to the final 60 s frame.
+Add `?interactive=1` to leave that three-frame results fixture open after the checks.
 
 The fixture does not use a native file picker, write plan files or contact an
 external service. Chromium checks are separate from native WebView2 startup and

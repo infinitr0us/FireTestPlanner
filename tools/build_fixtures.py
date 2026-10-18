@@ -286,7 +286,7 @@ def build_fds_import() -> Plan:
     reference the TypeScript importer is held against.
     """
     result = fds.load(
-        os.path.join(ROOT, "fixtures", "fds", "IR401_0.fds"),
+        os.path.join(ROOT, "fixtures", "fds", "room_corner.fds"),
         fds.ImportOptions(imported_at="2026-08-15T00:00:00Z"),
     )
     for issue in result.issues:
@@ -298,9 +298,9 @@ def build_fds_review_golden() -> dict:
     """Python's conversion of every snippet in fixtures/fds/review-cases.json.
 
     The comprehensive review of 2026-09-22 found the two importers disagreeing on
-    inputs the IR401 sample never exercises (rake coordinates, BOMs, MULT forms).
+    inputs outside the room-corner sample (rake coordinates, BOMs, MULT forms).
     These small cases are the ones behind its fixes; the web suite converts each and
-    must write these bytes, exactly as it must for IR401_0.
+    must write these bytes, exactly as it must for room_corner.
     """
     with open(os.path.join(ROOT, "fixtures", "fds", "review-cases.json"), encoding="utf-8") as fh:
         cases = json.load(fh)
@@ -327,7 +327,7 @@ def main() -> None:
     for name, plan in [
         ("pool-fire-camera-row.ftp.json", build_camera_row()),
         ("forward-compat.ftp.json", build_forward_compat()),
-        (os.path.join("fds", "IR401_0.ftp.json"), build_fds_import()),
+        (os.path.join("fds", "room_corner.ftp.json"), build_fds_import()),
     ]:
         plan.validate_schema()
         # Fixed timestamps: a rebuild that changes nothing should produce no diff.

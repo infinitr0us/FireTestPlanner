@@ -551,7 +551,7 @@ defaults for the same reason.
 An FDS input describes a simulation; a plan describes what will be built and where
 the instruments go. The overlap is real but partial, and the importer is about the
 overlap only. `python/fireplan/fds.py` and `web/src/core/fds.ts` are mirrors, and
-`fixtures/fds/IR401_0.ftp.json` is the golden fixture both are held to **byte for
+`fixtures/fds/room_corner.ftp.json` is the golden fixture both are held to **byte for
 byte** — two importers that agree about the syntax but not about which box is a wall
 would hand a fire safety engineer and a data scientist two different rooms from one
 file.
@@ -565,13 +565,13 @@ Everything an import needs is in the input, before any simulation runs.
 Five of them, and the sample input in `fixtures/fds/` exercises the first three:
 
 - **A record ends at the first `/` outside a string.** The sample's `&HEAD` title
-  contains `34.2x1000/300=114s`, so a reader that stops at the first `/` truncates
-  the very first record in the file.
+  contains `Public room corner / shortened two-stage propane fire`; stopping at
+  its slash truncates the very first record in the file.
 - **Parameters separate on commas *or* whitespace.** Its `&SURF`, `&MATL` and
   `&PROP` records use newlines and no commas, so a comma-splitter silently loses
   `HRRPUA` and a thermocouple's `DIAMETER`.
 - **A line without a leading `&` is a comment.** That is how an FDS line gets
-  disabled, and the sample does it to a `REAC` carrying `RADIATIVE_FRACTION=0.29`.
+  disabled, and the sample does it to a `REAC` carrying `RADIATIVE_FRACTION=0.32`.
   Reading it would change every predicted heat flux in the plan.
 - **`!` starts a comment, outside a string, anywhere on a line.** That is the
   Fortran namelist rule and FDS reads these records with Fortran's own namelist
@@ -678,7 +678,7 @@ file's coordinates**, so `source_xyz = plan_xyz + originOffset_m`.
 
 The floor is the **top face of the lowest horizontal slab below the burner**, not
 the bottom of the mesh. The distinction is not academic: the sample's meshes start at
-`z = −0.2` while its floor slab's top is at `z = 0`, so taking the mesh would put
+`z = 0.3` while its floor slab's top is at `z = 0.5`, so taking the mesh would put
 every height in the plan 200 mm out and leave the burner floating. A burner's own pan
 is excluded from that search, or a model with no floor slab would put the floor at
 the top of the burner — whether the pan burns itself or carries a fire `&VENT` on its

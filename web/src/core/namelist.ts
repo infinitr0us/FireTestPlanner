@@ -5,15 +5,15 @@
  * outside a record is a comment, which is how FDS files carry prose -- and it is
  * also how a line gets disabled, either by deleting its leading `&` or by putting a
  * `!` in front of it. Neither point is a curiosity: the sample file in
- * `fixtures/fds/` has a `REAC` line carrying `RADIATIVE_FRACTION=0.29` that FDS
+ * `fixtures/fds/` has a `REAC` line carrying `RADIATIVE_FRACTION=0.32` that FDS
  * never reads, and a reader that picks it up is quietly wrong about the fire.
  *
- * Five rules here are the ones a quick regex gets wrong, and the first three are
- * exercised by that same sample file:
+ * Five rules here are the ones a quick regex gets wrong. The regression tests cover
+ * all five; the public sample exercises quoted slashes and comma-free parameters:
  *
  * - **A record ends at the first `/` that is not inside a string.** The sample's
- *   `&HEAD` title contains `34.2x1000/300=114s`, so a reader that stops at the first
- *   `/` truncates the very first record in the file.
+ *   `&HEAD` title contains `Public room corner / shortened two-stage propane fire`,
+ *   so a reader that stops at the first `/` truncates the very first record.
  * - **Parameters separate on commas *or* whitespace.** The sample's `&SURF`,
  *   `&MATL` and `&PROP` records use newlines and no commas at all, so a
  *   comma-splitter silently loses `HRRPUA` and a thermocouple's `DIAMETER`.

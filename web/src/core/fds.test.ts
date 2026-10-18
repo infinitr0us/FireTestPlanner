@@ -7,8 +7,8 @@
  * a data scientist two different rooms from one file, which is the failure this whole
  * format exists to prevent.
  *
- * The sample in `fixtures/fds/` is a real case from a fire safety engineer, and it
- * exercises all three of the syntax traps in `namelist.ts`.
+ * The sample in `fixtures/fds/` is a public ISO 9705-style room-corner case written
+ * for this repository. Its completed run also supplies the results fixtures.
  */
 
 import { readFileSync } from 'node:fs';
@@ -39,14 +39,14 @@ import type { BurnerObject, CeilingObject, ObstructionObject, PlanObject, Thermo
 import { requiredFormatVersion } from './types';
 import { validateStructure } from './validate';
 
-const SAMPLE_PATH = fileURLToPath(new URL('../../../fixtures/fds/IR401_0.fds', import.meta.url));
+const SAMPLE_PATH = fileURLToPath(new URL('../../../fixtures/fds/room_corner.fds', import.meta.url));
 const SAMPLE_TEXT = readFileSync(SAMPLE_PATH, 'utf8');
-const GOLDEN_PATH = fileURLToPath(new URL('../../../fixtures/fds/IR401_0.ftp.json', import.meta.url));
+const GOLDEN_PATH = fileURLToPath(new URL('../../../fixtures/fds/room_corner.ftp.json', import.meta.url));
 const GOLDEN_TEXT = readFileSync(GOLDEN_PATH, 'utf8');
 
 const IMPORTED_AT = '2026-08-15T00:00:00Z';
 const sample = (): FdsImportResult =>
-  fdsToPlan(SAMPLE_TEXT, 'IR401_0.fds', { importedAt: IMPORTED_AT });
+  fdsToPlan(SAMPLE_TEXT, 'room_corner.fds', { importedAt: IMPORTED_AT });
 
 const byId = (result: FdsImportResult, id: string): PlanObject =>
   result.doc.objects.find((o) => o.id === id)!;
@@ -60,7 +60,7 @@ const only = (result: FdsImportResult, type: string): PlanObject => {
 /**
  * Compare coordinates the way the file does: to 1 um.
  *
- * `3.65 - 0.1` is 3.5500000000000003 in IEEE double arithmetic and 3.55 on paper.
+ * Decimal subtraction can leave a binary rounding remainder.
  * The writer rounds to 1 um before anything reaches disk, so exact equality here
  * would be testing floating point rather than the mapping.
  */
@@ -80,30 +80,30 @@ const nearPairs = (
 
 describe('namelist reader', () => {
   it('does not end a record at a slash inside a quoted string', () => {
-    // The sample's own &HEAD title contains "34.2x1000/300=114s". A reader that stops
+    // The sample's own &HEAD title contains "Public room corner / shortened two-stage propane fire". A reader that stops
     // at the first slash truncates the first record in the file.
     const records = readNamelist(
-      "&HEAD CHID='x', TITLE='burnout=34.2/300=114s' /\n&TIME T_END=60. /");
+      "&HEAD CHID='x', TITLE='Public / room' /\n&TIME T_END=60. /");
     expect(records.map((r) => r.group)).toEqual(['HEAD', 'TIME']);
-    expect(records[0].string('TITLE')).toBe('burnout=34.2/300=114s');
+    expect(records[0].string('TITLE')).toBe('Public / room');
     expect(records[1].number('T_END')).toBe(60);
   });
 
   it('separates parameters on whitespace as well as commas', () => {
     // The sample's &SURF, &MATL and &PROP records use newlines and no commas.
-    const rec = readNamelist("&SURF ID = 'FIRE'\n  COLOR = 'RED'\n  HRRPUA = 7500. /")[0];
+    const rec = readNamelist("&SURF ID = 'FIRE'\n  COLOR = 'RED'\n  HRRPUA = 9259.25925925926 /")[0];
     expect(rec.string('ID')).toBe('FIRE');
     expect(rec.string('COLOR')).toBe('RED');
-    expect(rec.number('HRRPUA')).toBe(7500);
+    expect(rec.number('HRRPUA')).toBe(9259.25925925926);
   });
 
   it('treats a line without a leading ampersand as a comment', () => {
     // This is how an FDS line gets disabled, and the sample does exactly this to a
-    // REAC carrying RADIATIVE_FRACTION=0.29.
+    // REAC carrying RADIATIVE_FRACTION=0.32.
     const records = readNamelist(
-      "REAC FUEL='PROPANE', RADIATIVE_FRACTION=0.29 /\n&REAC FUEL='POLYURETHANE' /");
+      "REAC FUEL='METHANE', RADIATIVE_FRACTION=0.32 /\n&REAC FUEL='PROPANE' /");
     expect(records).toHaveLength(1);
-    expect(records[0].string('FUEL')).toBe('POLYURETHANE');
+    expect(records[0].string('FUEL')).toBe('PROPANE');
     expect(records[0].number('RADIATIVE_FRACTION')).toBeNull();
   });
 
@@ -186,31 +186,32 @@ describe('importing the sample', () => {
     const result = sample();
     expect(validateStructure(result.doc)).toEqual([]);
     expect(result.counts).toEqual({
-      wall: 4, ceiling: 1, burner: 1, heatFluxSensor: 23, thermocouple: 2,
+      wall: 4, ceiling: 1, burner: 1, heatFluxSensor: 13, thermocouple: 4,
     });
   });
 
   it('lands the origin on the burner centre at floor level', () => {
-    // The fire is a 0.2 m square at (0.1, 0.1) standing on a slab whose top is z = 0.
+    // The 0.18 m square burner stands on the slab at FDS Z=0.5 m.
     const result = sample();
-    expect(result.originM).toEqual([0.1, 0.1, 0]);
+    near(result.originM, [1.11, 2.11, 0.5]);
     expect(only(result, 'burner').transform!.position_m).toEqual([0, 0, 0]);
-    expect(result.doc.meta!.source!.originOffset_m).toEqual([0.1, 0.1, 0]);
+    near(result.doc.meta!.source!.originOffset_m!, [1.11, 2.11, 0.5]);
   });
 
   it('takes the floor from the slab top, not the bottom of the mesh', () => {
-    // The meshes start at z = -0.2 and the floor slab's top is z = 0. Taking the mesh
+    // The meshes start at z = 0.3 and the floor slab's top is z = 0.5. Taking the mesh
     // would put every height in the plan 200 mm out and leave the burner floating.
-    expect(only(sample(), 'ceiling') as CeilingObject).toMatchObject({ height_m: 2.4 });
+    expect((only(sample(), 'ceiling') as CeilingObject).height_m).toBeCloseTo(2.4, 9);
   });
 
   it('computes HRR from HRRPUA, area and the ramp peak', () => {
-    // 7500 kW/m² over a 0.2 × 0.2 m face, RAMP peaking at F = 1.0.
+    // 9259.25925925926 kW/m² over a 0.18 × 0.18 m face, ramp peak F=1.
     const burner = only(sample(), 'burner') as BurnerObject;
     expect(burner.fire!.hrr_kw).toBeCloseTo(300, 9);
-    expect(burner.footprint).toEqual({ shape: 'square', size_m: [0.2, 0.2] });
-    expect(burner.rimHeight_m).toBeCloseTo(0.1, 9);
-    expect(burner.fire!.fuel).toBe('polyurethane');
+    expect(burner.footprint.shape).toBe('square');
+    near(burner.footprint.size_m!, [0.18, 0.18]);
+    expect(burner.rimHeight_m).toBeCloseTo(0.3, 9);
+    expect(burner.fire!.fuel).toBe('propane');
   });
 
   it('spells a long simulation time the way Python spells it', () => {
@@ -228,12 +229,12 @@ describe('importing the sample', () => {
   });
 
   it('turns a thin tall obstruction into a wall on its centreline', () => {
-    // &OBST XB=-0.10,2.50, 3.60,3.70, -0.10,2.5 runs along X at y = 3.65.
+    // Front OBST XB=0.9,3.5,5.6,5.7,0.4,3.0 has centreline Y=5.65.
     const wall = byId(sample(), 'wall-1') as WallObject;
-    nearPairs(wall.polyline_m, [[-0.2, 3.55], [2.4, 3.55]]);
+    nearPairs(wall.polyline_m, [[-0.21, 3.54], [2.39, 3.54]]);
     expect(wall.thickness_m).toBeCloseTo(0.1, 9);
     // Buried 100 mm into the slab; clamping the base without shortening the wall
-    // would put its top at 2.6 m instead of the 2.5 m the file asks for.
+    // would put its top at 2.6 m above the floor instead of 2.5 m (FDS Z=3.0).
     expect(wall.baseHeight_m).toBe(0);
     expect(wall.height_m).toBeCloseTo(2.5, 9);
   });
@@ -247,24 +248,24 @@ describe('importing the sample', () => {
   });
 
   it('collapses a vertical run of devices into one rake', () => {
-    const rake = byId(sample(), 'tc-tc1-tc22') as ThermocoupleObject;
-    expect(rake.beadOffsets_m).toHaveLength(22);
-    expect(rake.transform!.position_m).toEqual([0, -0.1, 0.2]);
+    const rake = byId(sample(), 'tc-back-tc-1-back-tc-6') as ThermocoupleObject;
+    expect(rake.beadOffsets_m).toHaveLength(6);
+    near(rake.transform!.position_m, [0.04, -0.109, 0.35]);
     // The quantity is on the &PROP, not the &DEVC: a reader that only looks at
     // QUANTITY imports none of this file's thermocouples.
-    expect(rake.thermocouple!.beadDiameter_mm).toBeCloseTo(3.2, 9);
+    expect(rake.thermocouple!.beadDiameter_mm).toBeCloseTo(1.5, 9);
   });
 
   it('keeps a wall temperature distinct from a gas temperature at the same point', () => {
     const result = sample();
-    expect((byId(result, 'tc-c1-c22') as ThermocoupleObject).mount!.type).toBe('wall');
-    expect((byId(result, 'tc-tc1-tc22') as ThermocoupleObject).mount!.type).toBe('pole');
+    expect((byId(result, 'tc-back-wt-1-back-wt-6') as ThermocoupleObject).mount!.type).toBe('wall');
+    expect((byId(result, 'tc-back-tc-1-back-tc-6') as ThermocoupleObject).mount!.type).toBe('pole');
   });
 
   it('reads IOR as the gauge normal', () => {
     // IOR=2 means the device sits on a surface facing +Y, and the fire is on the +Y
     // side of it.
-    const gauge = byId(sample(), 'hf-hf-1');
+    const gauge = byId(sample(), 'hf-back-hf-1');
     const position = gauge.transform!.position_m;
     const target = gauge.transform!.aimTarget_m!;
     expect(target[1]).toBeGreaterThan(position[1]);
@@ -273,17 +274,17 @@ describe('importing the sample', () => {
   });
 
   it('reports a burning lining without offering it as a burner', () => {
-    // The sample's 'UPHOLSTERY' burns on three wall faces and the ceiling soffit.
+    // The sample's 'LINING' burns on two wall faces and the ceiling soffit.
     // None of those is a floor-standing source, so the only candidate is the
     // ignition pan -- and the lining is named in the report rather than passed over.
-    // Offering it as a burner produced a 2.6 x 3.7 m pan with a 2.4 m rim: a solid
+    // Offering it as a burner would produce a 2.6 x 3.8 m pan with a 2.4 m rim: a solid
     // box the size of the room, reaching from the floor to the ceiling.
     const result = sample();
     expect(result.burnerSurf).toBe('FIRE');
     expect(result.burnerCandidates).toEqual(['FIRE']);
     const lining = result.issues.filter((i) => i.code === 'fds-fire-not-a-burner');
     expect(lining).toHaveLength(1);
-    expect(lining[0].message).toContain('UPHOLSTERY');
+    expect(lining[0].message).toContain('LINING');
   });
 
   it('names everything it skipped', () => {
@@ -298,7 +299,7 @@ describe('importing the sample', () => {
     // taken as a burner, its rim height is the height of the ceiling.
     // Asking for it anyway falls back to the pan, and says so rather than quietly
     // describing a fire somewhere else.
-    const result = fdsToPlan(SAMPLE_TEXT, null, { burnerSurf: 'UPHOLSTERY' });
+    const result = fdsToPlan(SAMPLE_TEXT, null, { burnerSurf: 'LINING' });
     expect(result.burnerSurf).toBe('FIRE');
     expect(result.issues.map((i) => i.code)).toContain('fds-burner-unavailable');
     expect(validateStructure(result.doc)).toEqual([]);
@@ -322,17 +323,17 @@ describe('importing the sample', () => {
     // `geometry: false` means "do not emit walls", not "do not read them". The
     // obstructions are what locate the fire and the floor, and therefore the origin.
     const full = sample();
-    const devicesOnly = fdsToPlan(SAMPLE_TEXT, 'IR401_0.fds', { geometry: false });
+    const devicesOnly = fdsToPlan(SAMPLE_TEXT, 'room_corner.fds', { geometry: false });
     near(devicesOnly.originM, full.originM);
     expect(devicesOnly.counts.wall).toBeUndefined();
     near(
-      byId(devicesOnly, 'hf-hf-1').transform!.position_m,
-      byId(full, 'hf-hf-1').transform!.position_m,
+      byId(devicesOnly, 'hf-back-hf-1').transform!.position_m,
+      byId(full, 'hf-back-hf-1').transform!.position_m,
     );
   });
 
   it('can leave the rakes ungrouped', () => {
-    expect(fdsToPlan(SAMPLE_TEXT, null, { groupRakes: false }).counts.thermocouple).toBe(44);
+    expect(fdsToPlan(SAMPLE_TEXT, null, { groupRakes: false }).counts.thermocouple).toBe(24);
   });
 });
 
@@ -667,10 +668,10 @@ describe('what an import refuses to guess', () => {
 
 describe('creating one object from a pasted record', () => {
   it('classifies a pasted &OBST exactly as the full importer would', () => {
-    const rec = readOneRecord("&OBST XB=-0.10,2.50,3.60,3.70,-0.10,2.5, SURF_ID='WALL' /");
-    const wall = obstructionFromRecord(rec, [0.1, 0.1, 0]) as WallObject;
+    const rec = readOneRecord("&OBST XB=0.9,3.5,5.6,5.7,0.4,3.0, SURF_ID='WALL' /");
+    const wall = obstructionFromRecord(rec, [1.11, 2.11, 0.5]) as WallObject;
     expect(wall.type).toBe('wall');
-    nearPairs(wall.polyline_m, [[-0.2, 3.55], [2.4, 3.55]]);
+    nearPairs(wall.polyline_m, [[-0.21, 3.54], [2.39, 3.54]]);
     expect(wall.thickness_m).toBeCloseTo(0.1, 9);
   });
 
@@ -718,22 +719,22 @@ describe('reading a plan object as FDS spells it', () => {
     const result = sample();
     const frame = fdsFrame(result.doc);
     expect(frame.fromImport).toBe(true);
-    expect(frame.file).toBe('IR401_0.fds');
+    expect(frame.file).toBe('room_corner.fds');
 
     const view = xbOfObject(byId(result, 'wall-1'), frame.offset)!;
     expect(view.editable).toBe(true);
-    // &OBST XB=-0.10,2.50, 3.60,3.70, -0.10,2.5 -- with Z1 at the floor, because
+    // &OBST XB=0.9,3.5,5.6,5.7,0.4,3.0 -- with Z1 at the floor, because
     // the plan clamped the buried 100 mm away rather than keeping a wall below the
     // slab it stands on.
-    near(view.xb, [-0.1, 2.5, 3.6, 3.7, 0, 2.5]);
+    near(view.xb, [0.9, 3.5, 5.6, 5.7, 0.5, 3.0]);
   });
 
   it('round-trips an XB through the object and back', () => {
     const result = sample();
     const wall = byId(result, 'wall-1');
-    const next: Xb = [-0.1, 4.0, 3.6, 3.7, 0, 2.5];
-    expect(applyXbToObject(wall, next, [0.1, 0.1, 0])).toBeNull();
-    near(xbOfObject(wall, [0.1, 0.1, 0])!.xb, next);
+    const next: Xb = [0.9, 4.5, 5.6, 5.7, 0.5, 3.0];
+    expect(applyXbToObject(wall, next, result.originM)).toBeNull();
+    near(xbOfObject(wall, result.originM)!.xb, next);
   });
 
   it('round-trips a wall XB below the floor into a loadable document', () => {
@@ -777,13 +778,13 @@ describe('reading a plan object as FDS spells it', () => {
     const wall = byId(result, 'wall-1') as WallObject;
 
     // A diagonal run is not an XB, and writing one back would straighten it.
-    wall.polyline_m = [[-0.2, 3.55], [2.4, 4.2]];
+    wall.polyline_m = [[-0.21, 3.54], [2.39, 4.2]];
     let view = xbOfObject(wall)!;
     expect(view.editable).toBe(false);
     expect(view.why).toContain('diagonal');
 
     // Nor is a three-point run.
-    wall.polyline_m = [[-0.2, 3.55], [2.4, 3.55], [2.4, 1.0]];
+    wall.polyline_m = [[-0.21, 3.54], [2.39, 3.54], [2.39, 1.0]];
     view = xbOfObject(wall)!;
     expect(view.editable).toBe(false);
     expect(view.why).toContain('3 points');
@@ -819,15 +820,15 @@ describe('reading a plan object as FDS spells it', () => {
 
   it('reads a gauge\'s IOR back off its normal, and only when it is on an axis', () => {
     const result = sample();
-    const gauge = byId(result, 'hf-hf-1');
+    const gauge = byId(result, 'hf-back-hf-1');
     expect(xyzOfObject(gauge, result.originM)!.ior).toBe(2);
-    near(xyzOfObject(gauge, result.originM)!.xyz, [0.1, 0.0, 0.2]);
+    near(xyzOfObject(gauge, result.originM)!.xyz, [1.15, 2.001, 0.85]);
 
     // The last gauge in the file sits on the floor looking up.
-    expect(xyzOfObject(byId(result, 'hf-hf-23'), result.originM)!.ior).toBe(3);
+    expect(xyzOfObject(byId(result, 'hf-floor-hf'), result.originM)!.ior).toBe(3);
 
     // A thermocouple has no facing, so it has no IOR either.
-    const rake = xyzOfObject(byId(result, 'tc-tc1-tc22'), result.originM)!;
+    const rake = xyzOfObject(byId(result, 'tc-back-tc-1-back-tc-6'), result.originM)!;
     expect(rake.aimable).toBe(false);
     expect(rake.ior).toBeNull();
   });

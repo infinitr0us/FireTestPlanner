@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readdirSync, statSync, readFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import { decodeRle, parseResultCsv, parseSmv, Records, ResultReader, safeResultPath, type ResultSource, type ResultMesh, type ResultField } from './fds-results';
 import { resultRampRgb, resultSurface, uniformSpacing } from '../scene/fds-results';
 import { measured } from '../ui/fds-results';
@@ -64,7 +65,7 @@ describe('bounded output reader', () => {
     expect(safeResultPath('a//x.sf')).toBe('a/x.sf');
   });
   it('skips one unsafe output rather than refusing the whole case (FDSR-5)', () => {
-    const text = readFileSync(fileURLToPath(new URL('../../../fixtures/fds-results/RC_BS_2.smv', import.meta.url)), 'utf8');
+    const text = readFileSync(fileURLToPath(new URL('../../../fixtures/fds-results/room_corner.smv', import.meta.url)), 'utf8');
     const good = parseSmv(text);
     const smv = parseSmv(`${text}
 CSVF
@@ -117,8 +118,33 @@ describe('FDS histories', () => {
 });
 
 const portableFolder = fileURLToPath(new URL('../../../fixtures/fds-results/', import.meta.url));
-const runs = [{ name: 'portable real FDS 6.9.1 samples', folder: portableFolder, full: false }];
-if (process.env.FDS_FULL_RESULTS_DIR) runs.push({ name: 'explicit full external FDS inventory', folder: process.env.FDS_FULL_RESULTS_DIR, full: true });
+it('pins the public source input and every extracted result file by hash', () => {
+  const manifest = JSON.parse(readFileSync(portableFolder + '/manifest.json', 'utf8'));
+  const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+  expect(digest(readFileSync(new URL('../../../fixtures/fds/room_corner.fds', import.meta.url)))).toBe(manifest.inputSha256);
+  expect(manifest.fullCounts).toEqual({ slice: 16, boundary: 10, smoke: 6 });
+  expect(manifest.subsetCounts).toEqual({ slice: 5, boundary: 3, smoke: 6 });
+  for (const [name, info] of Object.entries(manifest.files) as [string, { bytes: number; sha256: string }][]) {
+    const bytes = readFileSync(portableFolder + '/' + name);
+    expect(bytes.length, name).toBe(info.bytes);
+    expect(digest(bytes), name).toBe(info.sha256);
+  }
+  // Headers and each extracted frame have their own source-record hash.
+  for (const field of manifest.fields) {
+    const bytes = readFileSync(portableFolder + '/' + field.file);
+    expect(field.sourceFrames).toBe(61);
+    expect(field.samples.map((s: { index: number }) => s.index)).toEqual([0, 30, 60]);
+    expect(digest(bytes.subarray(0, field.headerBytes))).toBe(field.headerSha256);
+    let offset = field.headerBytes;
+    for (const sample of field.samples) {
+      expect(digest(bytes.subarray(offset, offset + sample.bytes))).toBe(sample.sha256);
+      offset += sample.bytes;
+    }
+    expect(offset, field.file).toBe(bytes.length);
+  }
+});
+const runs = [{ name: 'portable public FDS 6.9.1 samples', folder: portableFolder, full: false }];
+if (process.env.FDS_FULL_RESULTS_DIR) runs.push({ name: 'explicit full public FDS inventory', folder: process.env.FDS_FULL_RESULTS_DIR, full: true });
 describe.each(runs)('$name', ({ folder, full }) => {
   const caseSource: ResultSource = {
     files: new Map(readdirSync(folder).map(name => [name, statSync(folder + '/' + name).size])),
@@ -128,35 +154,55 @@ describe.each(runs)('$name', ({ folder, full }) => {
       finally { await f.close(); }
     },
   };
+  it('reads every actual device and HRR history with units and recorded times', () => {
+    const devices = parseResultCsv(readFileSync(folder + '/room_corner_devc.csv', 'utf8'));
+    const hrr = parseResultCsv(readFileSync(folder + '/room_corner_hrr.csv', 'utf8'));
+    const metadata = parseSmv(readFileSync(folder + '/room_corner.smv', 'utf8'));
+    expect(devices).toHaveLength(40); expect(hrr).toHaveLength(12);
+    expect(new Set(devices.map(s => s.name))).toEqual(new Set(metadata.devices.map(d => d.id)));
+    for (const series of [...devices, ...hrr]) {
+      expect(series.unit).not.toBe('');
+      expect(series.times).toHaveLength(full ? 61 : 3);
+      expect(series.times[0]).toBe(0); expect(series.times.at(-1)).toBe(60);
+      expect(series.values.every(Number.isFinite)).toBe(true);
+    }
+    // Gas-side bead placement must sample heated gas, rather than a solid cell.
+    for (const series of devices.filter(s => s.name.includes('_TC_'))) {
+      expect(series.unit).toBe('C');
+      expect(series.values[full ? 30 : 1]).toBeGreaterThan(20);
+    }
+    expect(devices.find(s => s.name === 'DOOR_V_HIGH')!.unit).toBe('m/s');
+    expect(hrr.find(s => s.name === 'HRR')!.unit).toBe('kW');
+  });
   it('inventories every actual field and decodes first, middle and last frames in every file', async () => {
-    const data = parseSmv(readFileSync(folder + '/RC_BS_2.smv', 'utf8'));
-    expect(data.version).toContain('6.9.1'); expect(data.meshes.length).toBe(20);
-    expect(data.fields.filter(f => f.kind === 'slice').length).toBe(full ? 72 : 2);
-    expect(data.fields.filter(f => f.kind === 'boundary').length).toBe(full ? 80 : 2);
-    expect(data.fields.filter(f => f.kind === 'smoke').length).toBe(full ? 60 : 6);
-    expect(data.devices.length).toBe(67); expect(data.warnings).toEqual([]);
+    const data = parseSmv(readFileSync(folder + '/room_corner.smv', 'utf8'));
+    expect(data.version).toContain('6.9.1'); expect(data.meshes.length).toBe(2);
+    expect(data.fields.filter(f => f.kind === 'slice').length).toBe(full ? 16 : 5);
+    expect(data.fields.filter(f => f.kind === 'boundary').length).toBe(full ? 10 : 3);
+    expect(data.fields.filter(f => f.kind === 'smoke').length).toBe(6);
+    expect(data.devices.length).toBe(40); expect(data.warnings).toEqual([]);
     for (const f of data.fields) {
       const r = await new ResultReader(caseSource, f, data.meshes[f.mesh]).init();
-      expect(r.count, f.file).toBe(full ? 3001 : 3);
-      for (const i of [0, full ? 1500 : 1, r.count - 1]) {
+      expect(r.count, f.file).toBe(full ? 61 : 3);
+      for (const i of [0, full ? 30 : 1, r.count - 1]) {
         const frame = await r.frame(i);
         expect(frame.values.length).toBeGreaterThan(0); expect(Number.isFinite(frame.time)).toBe(true);
         if (i === 0) expect(frame.time).toBe(0);
-        if (i === r.count - 1) expect(frame.time).toBeGreaterThanOrEqual(1199);
+        if (i === r.count - 1) expect(frame.time).toBe(60);
       }
       if (f.kind !== 'smoke' && (f.kind === 'slice' || r.patches.some(p => p.obstruction > 0))) expect(resultSurface(data.meshes[f.mesh], f, r.patches).positions.length, f.file).toBeGreaterThan(0);
       // Independent FDSreader 1.11.7 reference, with its low ghost row/column removed.
-      if (f.file === 'RC_BS_2_1_1.sf') {
-        const frame = await r.frame(full ? 1500 : 1);
+      if (f.file === 'room_corner_1_1.sf') {
+        const frame = await r.frame(full ? 30 : 1);
         const used: number[] = [];
-        for (let k = 1; k <= 66; k++) for (let j = 1; j <= 34; j++) used.push(frame.values[j + k * 35]);
-        expect(frame.time).toBe(600.00341796875);
-        expect(Math.min(...used)).toBe(19.99260902404785);
-        expect(Math.max(...used)).toBe(1221.230712890625);
-        expect([used[0], used[33], used[34 * 65], used[used.length - 1]]).toEqual([
-          19.99999237060547, 20.00063705444336, 20.000335693359375, 20.000837326049805,
+        for (let k = 1; k <= 28; k++) for (let j = 1; j <= 38; j++) used.push(frame.values[j + k * 39]);
+        expect(frame.time).toBe(30.004154205322266);
+        expect(Math.min(...used)).toBe(19.99980354309082);
+        expect(Math.max(...used)).toBe(1353.847900390625);
+        expect([used[0], used[37], used[38 * 27], used[used.length - 1]]).toEqual([
+          20, 20, 20.000019073486328, 20.003232955932617,
         ]);
-        expect(resultSurface(data.meshes[f.mesh], f, r.patches).positions[0]).toBeCloseTo(.225);
+        expect(resultSurface(data.meshes[f.mesh], f, r.patches).positions[0]).toBeCloseTo(1.1500000953674316, 6);
       }
       r.clearFrame();
     }
@@ -200,7 +246,7 @@ describe('review 2026-09-22 results display', () => {
     expect(measured(3.1e-5)).toBe('3.10e-5');
     expect(measured(-0.0004)).toBe('-4.00e-4');
     expect(measured(0)).toBe('0');
-    expect(measured(1221.230712890625)).toMatch(/^1,?221$/);
+    expect(measured(1353.847900390625)).toMatch(/^1,?354$/);
     expect(measured(Number.NaN)).toBe('—');
   });
 });

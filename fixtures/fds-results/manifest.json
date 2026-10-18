@@ -1,0 +1,666 @@
+{
+  "chid": "room_corner",
+  "inputSha256": "5e2fcf65f90480da62dcec595f72de646e99a5b4c7d4ecae9b316f3c0ac52f57",
+  "fullCounts": {
+    "slice": 16,
+    "boundary": 10,
+    "smoke": 6
+  },
+  "fullFrames": {
+    "room_corner_1_1.s3d": 61,
+    "room_corner_1_2.s3d": 61,
+    "room_corner_1_3.s3d": 61,
+    "room_corner_1_1.sf": 61,
+    "room_corner_1_2.sf": 61,
+    "room_corner_1_3.sf": 61,
+    "room_corner_1_4.sf": 61,
+    "room_corner_1_5.sf": 61,
+    "room_corner_1_6.sf": 61,
+    "room_corner_1_7.sf": 61,
+    "room_corner_1_8.sf": 61,
+    "room_corner_1_1.bf": 61,
+    "room_corner_1_2.bf": 61,
+    "room_corner_1_3.bf": 61,
+    "room_corner_1_4.bf": 61,
+    "room_corner_1_5.bf": 61,
+    "room_corner_2_1.s3d": 61,
+    "room_corner_2_2.s3d": 61,
+    "room_corner_2_3.s3d": 61,
+    "room_corner_2_1.sf": 61,
+    "room_corner_2_2.sf": 61,
+    "room_corner_2_3.sf": 61,
+    "room_corner_2_4.sf": 61,
+    "room_corner_2_5.sf": 61,
+    "room_corner_2_6.sf": 61,
+    "room_corner_2_7.sf": 61,
+    "room_corner_2_8.sf": 61,
+    "room_corner_2_1.bf": 61,
+    "room_corner_2_2.bf": 61,
+    "room_corner_2_3.bf": 61,
+    "room_corner_2_4.bf": 61,
+    "room_corner_2_5.bf": 61
+  },
+  "subsetCounts": {
+    "slice": 5,
+    "boundary": 3,
+    "smoke": 6
+  },
+  "fields": [
+    {
+      "file": "room_corner_1_1.s3d",
+      "kind": "smoke",
+      "mesh": 1,
+      "quantity": "SOOT DENSITY",
+      "unit": "kg/m3",
+      "sourceFrames": 61,
+      "headerBytes": 40,
+      "headerSha256": "3a2f112c3d385b3e76391f3969c04635eb02261f37bf840020d1ee121422f0a2",
+      "samples": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "offset": 40,
+          "bytes": 399,
+          "sha256": "bbf9cc9c9023ad4ac05836f577492cafebfb30079064059537230774646f9286"
+        },
+        {
+          "index": 30,
+          "time": 30.004154205322266,
+          "offset": 265473,
+          "bytes": 11601,
+          "sha256": "403fc473129057332fd795ad9765f5d7c2e17e9f20ef1886435f868049921dcc"
+        },
+        {
+          "index": 60,
+          "time": 60.0,
+          "offset": 658496,
+          "bytes": 14590,
+          "sha256": "28f973792a5c5f82349f6591e4f4723dfa3d56ad57c1418d7a2977ff1bbae276"
+        }
+      ]
+    },
+    {
+      "file": "room_corner_1_2.s3d",
+      "kind": "smoke",
+      "mesh": 1,
+      "quantity": "HRRPUV",
+      "unit": "kW/m3",
+      "sourceFrames": 61,
+      "headerBytes": 40,
+      "headerSha256": "3a2f112c3d385b3e76391f3969c04635eb02261f37bf840020d1ee121422f0a2",
+      "samples": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "offset": 40,
+          "bytes": 399,
+          "sha256": "bbf9cc9c9023ad4ac05836f577492cafebfb30079064059537230774646f9286"
+        },
+        {
+          "index": 30,
+          "time": 30.004154205322266,
+          "offset": 35365,
+          "bytes": 1956,
+          "sha256": "00ae43daf1ff2a5e3d6562d701ff6e8c9c0c30fa871b96b4f633705f728a5a70"
+        },
+        {
+          "index": 60,
+          "time": 60.0,
+          "offset": 226681,
+          "bytes": 10346,
+          "sha256": "807ab928874e7e61ba43e5e5e5d96add17f84b698f872fd0dfe03f671f0b2438"
+        }
+      ]
+    },
+    {
+      "file": "room_corner_1_3.s3d",
+      "kind": "smoke",
+      "mesh": 1,
+      "quantity": "TEMPERATURE",
+      "unit": "C",
+      "sourceFrames": 61,
+      "headerBytes": 40,
+      "headerSha256": "3a2f112c3d385b3e76391f3969c04635eb02261f37bf840020d1ee121422f0a2",
+      "samples": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "offset": 40,
+          "bytes": 399,
+          "sha256": "bbf9cc9c9023ad4ac05836f577492cafebfb30079064059537230774646f9286"
+        },
+        {
+          "index": 30,
+          "time": 30.004154205322266,
+          "offset": 274784,
+          "bytes": 12520,
+          "sha256": "dedd601e3d2311faf26fdc4d32410781102428c514badcb1da335b6c8abf077a"
+        },
+        {
+          "index": 60,
+          "time": 60.0,
+          "offset": 753101,
+          "bytes": 19659,
+          "sha256": "8f2d462a9af15e4542020cc4ccb771dde55b998924211a926f1d23010f264283"
+        }
+      ]
+    },
+    {
+      "file": "room_corner_1_1.sf",
+      "kind": "slice",
+      "mesh": 1,
+      "quantity": "TEMPERATURE",
+      "unit": "C",
+      "sourceFrames": 61,
+      "headerBytes": 146,
+      "headerSha256": "0831c0a30764a6eb46d9b1d1f383c50146504bff4095bc0fefd151b0f18aa56e",
+      "samples": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "offset": 146,
+          "bytes": 4544,
+          "sha256": "efd517c15ed250694683e6943887379e322de70305cffeba602b8291651d9785"
+        },
+        {
+          "index": 30,
+          "time": 30.004154205322266,
+          "offset": 136466,
+          "bytes": 4544,
+          "sha256": "a6f3a17a9825e7c2f77e00d05ce1c997837521f6f43af9ef90afb740958059b8"
+        },
+        {
+          "index": 60,
+          "time": 60.0,
+          "offset": 272786,
+          "bytes": 4544,
+          "sha256": "fe350f5522fac9381bef0c9d47aee4d06e3dfadb9ec0a1caeb7620ce9a3c2ac8"
+        }
+      ]
+    },
+    {
+      "file": "room_corner_1_1.bf",
+      "kind": "boundary",
+      "mesh": 1,
+      "quantity": "WALL TEMPERATURE",
+      "unit": "C",
+      "sourceFrames": 61,
+      "headerBytes": 1138,
+      "headerSha256": "111b3e362309d8ac96126322a61d84fb7dd68ed9d7302295934636bcc92203dd",
+      "samples": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "offset": 1138,
+          "bytes": 46508,
+          "sha256": "8020b267a2329844337621f9b623b71ecf9dff181b092a39002ed979f1d435c2"
+        },
+        {
+          "index": 30,
+          "time": 30.004154205322266,
+          "offset": 1396378,
+          "bytes": 46508,
+          "sha256": "32e92d283ac8b5210d8616baadfe75ac3558739ba56e67bfb44554dcef9b6499"
+        },
+        {
+          "index": 60,
+          "time": 60.0,
+          "offset": 2791618,
+          "bytes": 46508,
+          "sha256": "4aa3ae9cc58d802944cdc7a1845bcba4f1c6151b7dec75795bfd4286e9303ba7"
+        }
+      ]
+    },
+    {
+      "file": "room_corner_1_2.bf",
+      "kind": "boundary",
+      "mesh": 1,
+      "quantity": "TOTAL HEAT FLUX",
+      "unit": "kW/m2",
+      "sourceFrames": 61,
+      "headerBytes": 1138,
+      "headerSha256": "dcb70e20310e106ff8a9938636fd6cb77db304e3c23ee52fc2d3468859285430",
+      "samples": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "offset": 1138,
+          "bytes": 46508,
+          "sha256": "573f285261c718f223803f84d15d8f1faf5088a02405e0fa91177021b41d2344"
+        },
+        {
+          "index": 30,
+          "time": 30.004154205322266,
+          "offset": 1396378,
+          "bytes": 46508,
+          "sha256": "cc6d24a16d318d09db04c93dcfa90dd2e7bef40618a8c5ebd9c530e2af9c7336"
+        },
+        {
+          "index": 60,
+          "time": 60.0,
+          "offset": 2791618,
+          "bytes": 46508,
+          "sha256": "6041b8b73ebe54d0baadcb6865b6304829e9a4e0cf02e26f068664372d91b5b8"
+        }
+      ]
+    },
+    {
+      "file": "room_corner_2_1.s3d",
+      "kind": "smoke",
+      "mesh": 2,
+      "quantity": "SOOT DENSITY",
+      "unit": "kg/m3",
+      "sourceFrames": 61,
+      "headerBytes": 40,
+      "headerSha256": "9cdedb595b2c0b1927f3a6b6ef7d958dc99c36152d86f1825b00f28260127133",
+      "samples": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "offset": 40,
+          "bytes": 159,
+          "sha256": "7ad1494e7e8a8ae720a0f7fdbcca4791cadf4750f99ac3d852ad8f70e0b0ea47"
+        },
+        {
+          "index": 30,
+          "time": 30.004154205322266,
+          "offset": 32489,
+          "bytes": 1856,
+          "sha256": "c396dfaa76b383ad778fe9f9c84bfcb7508c2075ad11790e5c137732f9487d40"
+        },
+        {
+          "index": 60,
+          "time": 60.0,
+          "offset": 99750,
+          "bytes": 2632,
+          "sha256": "a44c774004435e5a914853b5c675645bf9d1e002c99c88afb1cc8c71474d7f8e"
+        }
+      ]
+    },
+    {
+      "file": "room_corner_2_2.s3d",
+      "kind": "smoke",
+      "mesh": 2,
+      "quantity": "HRRPUV",
+      "unit": "kW/m3",
+      "sourceFrames": 61,
+      "headerBytes": 40,
+      "headerSha256": "9cdedb595b2c0b1927f3a6b6ef7d958dc99c36152d86f1825b00f28260127133",
+      "samples": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "offset": 40,
+          "bytes": 159,
+          "sha256": "7ad1494e7e8a8ae720a0f7fdbcca4791cadf4750f99ac3d852ad8f70e0b0ea47"
+        },
+        {
+          "index": 30,
+          "time": 30.004154205322266,
+          "offset": 4810,
+          "bytes": 159,
+          "sha256": "4b9df25e6a55afa7a8b404a984bfdd334de582bb0492567d0fa1c89b1023d888"
+        },
+        {
+          "index": 60,
+          "time": 60.0,
+          "offset": 25393,
+          "bytes": 1533,
+          "sha256": "07a68f4c18628d795c24a48713abdf37f60d5dd578f751d43f01b8a19faa0fc8"
+        }
+      ]
+    },
+    {
+      "file": "room_corner_2_3.s3d",
+      "kind": "smoke",
+      "mesh": 2,
+      "quantity": "TEMPERATURE",
+      "unit": "C",
+      "sourceFrames": 61,
+      "headerBytes": 40,
+      "headerSha256": "9cdedb595b2c0b1927f3a6b6ef7d958dc99c36152d86f1825b00f28260127133",
+      "samples": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "offset": 40,
+          "bytes": 159,
+          "sha256": "7ad1494e7e8a8ae720a0f7fdbcca4791cadf4750f99ac3d852ad8f70e0b0ea47"
+        },
+        {
+          "index": 30,
+          "time": 30.004154205322266,
+          "offset": 26551,
+          "bytes": 1567,
+          "sha256": "3e45b02f591723f8029200dac7f9ea786760c27ae433e20f3f336740bd7382ac"
+        },
+        {
+          "index": 60,
+          "time": 60.0,
+          "offset": 86551,
+          "bytes": 2600,
+          "sha256": "41c58561e42b05a1504335f7a4d2bae5093d7efccf26b9678a033fc2cd30cd5e"
+        }
+      ]
+    },
+    {
+      "file": "room_corner_2_5.sf",
+      "kind": "slice",
+      "mesh": 2,
+      "quantity": "TEMPERATURE",
+      "unit": "C",
+      "sourceFrames": 61,
+      "headerBytes": 146,
+      "headerSha256": "6b22a4b380fcc83fc6afcd8fbfc6c4daf6219fb58b514dc088a4c30bb4f73eee",
+      "samples": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "offset": 146,
+          "bytes": 1528,
+          "sha256": "a5ed6e1baaf72b6d6c83bb2d3c9127aeb578b15cad1d38f4ff461486c2df5e13"
+        },
+        {
+          "index": 30,
+          "time": 30.004154205322266,
+          "offset": 45986,
+          "bytes": 1528,
+          "sha256": "b3c4c935831a7f7d01afa56578e1402e3b56b1004ab0cd0404d955d1673db321"
+        },
+        {
+          "index": 60,
+          "time": 60.0,
+          "offset": 91826,
+          "bytes": 1528,
+          "sha256": "917216705308114652b43a87f5dbd680685f5e3ebb62e28ad1bbbb303e7b2a6c"
+        }
+      ]
+    },
+    {
+      "file": "room_corner_2_6.sf",
+      "kind": "slice",
+      "mesh": 2,
+      "quantity": "U-VELOCITY",
+      "unit": "m/s",
+      "sourceFrames": 61,
+      "headerBytes": 146,
+      "headerSha256": "459c99d8e3c1827900d3f22bf5031a8651e129b3df33903f241f9ed4e796590d",
+      "samples": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "offset": 146,
+          "bytes": 1528,
+          "sha256": "f4254317d142763ac02213298eca58e63784d2b0b83a8514e1fb7d379de1c170"
+        },
+        {
+          "index": 30,
+          "time": 30.004154205322266,
+          "offset": 45986,
+          "bytes": 1528,
+          "sha256": "56e9e7adaf2cec7ac79be02d03bd76e6d96bb49f8e52e4baba1fbf1aaa5d2341"
+        },
+        {
+          "index": 60,
+          "time": 60.0,
+          "offset": 91826,
+          "bytes": 1528,
+          "sha256": "8e05ced7ad5784abc6bdb2bf86efc1d2d6695ba6a92320ac9c9aa603725c82f7"
+        }
+      ]
+    },
+    {
+      "file": "room_corner_2_7.sf",
+      "kind": "slice",
+      "mesh": 2,
+      "quantity": "V-VELOCITY",
+      "unit": "m/s",
+      "sourceFrames": 61,
+      "headerBytes": 146,
+      "headerSha256": "47a5fda8e14d9c32b92a575114197a6a510ace28d4878953b9dc479882062219",
+      "samples": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "offset": 146,
+          "bytes": 1528,
+          "sha256": "d428d5fa17d36325bd3267a1cc829fe6493ab385ea17e44c6b2a48a96b841473"
+        },
+        {
+          "index": 30,
+          "time": 30.004154205322266,
+          "offset": 45986,
+          "bytes": 1528,
+          "sha256": "18d2093c169895a8ab7d60ab1e47b8c979c64aba6d120e2c7af944ab6e1099c4"
+        },
+        {
+          "index": 60,
+          "time": 60.0,
+          "offset": 91826,
+          "bytes": 1528,
+          "sha256": "06c418f3265490198a602fce3793bb629034683c7f98703051c776b3c326cff9"
+        }
+      ]
+    },
+    {
+      "file": "room_corner_2_8.sf",
+      "kind": "slice",
+      "mesh": 2,
+      "quantity": "W-VELOCITY",
+      "unit": "m/s",
+      "sourceFrames": 61,
+      "headerBytes": 146,
+      "headerSha256": "70afb86554d223d08b0e27286b26c9fe1a93e4afdef4c951e71946c03bde421f",
+      "samples": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "offset": 146,
+          "bytes": 1528,
+          "sha256": "5d1cc8167ea694cb4b0b90d40688a7168a6def86c230426bb36a865450df77e8"
+        },
+        {
+          "index": 30,
+          "time": 30.004154205322266,
+          "offset": 45986,
+          "bytes": 1528,
+          "sha256": "3234c5ff9499e61059aa8e7d237713fcf8dacb91039d7aecf347320e7bea78d5"
+        },
+        {
+          "index": 60,
+          "time": 60.0,
+          "offset": 91826,
+          "bytes": 1528,
+          "sha256": "0e24d014d83acf57b804825f544da0e225a7fc937fbac0c0406ed346c5213856"
+        }
+      ]
+    },
+    {
+      "file": "room_corner_2_1.bf",
+      "kind": "boundary",
+      "mesh": 2,
+      "quantity": "WALL TEMPERATURE",
+      "unit": "C",
+      "sourceFrames": 61,
+      "headerBytes": 522,
+      "headerSha256": "e5179027d428c0b70dca763e612050855bff3f34e4a6d7855b3bb109846544b8",
+      "samples": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "offset": 522,
+          "bytes": 14548,
+          "sha256": "b4008d49eefac05af1da641ed6d45b2fc5fd2a62d1ac5d0f5287e3cc3cbe3466"
+        },
+        {
+          "index": 30,
+          "time": 30.004154205322266,
+          "offset": 436962,
+          "bytes": 14548,
+          "sha256": "1d27851bc739f5e21cb5fbc2d25d7ef3b51a67fe47bfccde73e3c676099b40af"
+        },
+        {
+          "index": 60,
+          "time": 60.0,
+          "offset": 873402,
+          "bytes": 14548,
+          "sha256": "dd69d902dd6f14bbcfbde7d6656db804cbcd9f25547c4bb2f4792dd41aada6b3"
+        }
+      ]
+    }
+  ],
+  "csv": {
+    "room_corner_devc.csv": {
+      "sourceRows": 61,
+      "indices": [
+        0,
+        30,
+        60
+      ],
+      "times": [
+        0.0,
+        30.004154,
+        60.0
+      ]
+    },
+    "room_corner_hrr.csv": {
+      "sourceRows": 61,
+      "indices": [
+        0,
+        30,
+        60
+      ],
+      "times": [
+        0.0,
+        30.004154,
+        60.0
+      ]
+    }
+  },
+  "files": {
+    "room_corner.smv": {
+      "bytes": 24621,
+      "sha256": "b5c7b7f8572ec7ddb7d411bde73afc18748b9650fd3c46164e6b24f34edd1be8"
+    },
+    "room_corner_1_1.bf": {
+      "bytes": 140662,
+      "sha256": "37c24f5e325ac9c401d90f911cd56c251597a9e6da1377277254b4a4b3a4480e"
+    },
+    "room_corner_1_1.bf.bnd": {
+      "bytes": 42,
+      "sha256": "cc09ad8a58a90e8d4c1c8223d6c2c3ac42f0146243c0b67b420daf4991bb4d41"
+    },
+    "room_corner_1_1.s3d": {
+      "bytes": 26630,
+      "sha256": "7bbe9af6a925bdcfef9c6b84d31baa2c268f26edb11f15e89613092005c8ec1f"
+    },
+    "room_corner_1_1.s3d.sz": {
+      "bytes": 178,
+      "sha256": "42bf3ac4afb6d600efd6f856cf7d04b235a9c6ffa9c80bb7deb3df3be7c06d45"
+    },
+    "room_corner_1_1.sf": {
+      "bytes": 13778,
+      "sha256": "f9d74abc630caeff5ed3c300d44b8bae56a4c24e827c31cdee3ec0431c2b6009"
+    },
+    "room_corner_1_1.sf.bnd": {
+      "bytes": 42,
+      "sha256": "a5cc18e1bb46cc87595f9ba6278c02ac9988870ee16f63d14d49b8e7db52b1d0"
+    },
+    "room_corner_1_2.bf": {
+      "bytes": 140662,
+      "sha256": "4c9b043c8dab5b9bb5994998b63265773e784881e9b241233fff33a8996f2daa"
+    },
+    "room_corner_1_2.bf.bnd": {
+      "bytes": 42,
+      "sha256": "87c7557db2ea9d2cee820a3e132c0f35700b24005e07c6b09ad2563c1b0614dc"
+    },
+    "room_corner_1_2.s3d": {
+      "bytes": 12741,
+      "sha256": "bb6bf65e81b0044468f04d1e81942c1eb63665faef1275955d0101bc431cd4e5"
+    },
+    "room_corner_1_2.s3d.sz": {
+      "bytes": 178,
+      "sha256": "56e5a25ffc4fa7deaa11ddbfd1765e481d6e033f23e590a6a32b4a784870fd3e"
+    },
+    "room_corner_1_3.s3d": {
+      "bytes": 32618,
+      "sha256": "6b8dd37399ce1831bf9a82e45adfe28e72d2ebf56795ec8f2354037794cf7407"
+    },
+    "room_corner_1_3.s3d.sz": {
+      "bytes": 178,
+      "sha256": "c5163a1cbe4d4a90d6bf8b5b4800687e5db75bb250f6acea5f24a6e5e86b12e8"
+    },
+    "room_corner_2_1.bf": {
+      "bytes": 44166,
+      "sha256": "50da1cdb07854745f21e6b16ee37fd6b66eb13becd616561880a313a292c7397"
+    },
+    "room_corner_2_1.bf.bnd": {
+      "bytes": 42,
+      "sha256": "ccb6a295805176d41907bc1ef94bf63e881eb40122346fa508e0a1708ff7b05e"
+    },
+    "room_corner_2_1.s3d": {
+      "bytes": 4687,
+      "sha256": "2713d98be346c31406eb1c5a631e1d96128d10546764babba31a61faaa9fa9df"
+    },
+    "room_corner_2_1.s3d.sz": {
+      "bytes": 178,
+      "sha256": "b55e7c1b0291079113b3dced2915c64f42421969629103a23a610894c0e99f3f"
+    },
+    "room_corner_2_2.s3d": {
+      "bytes": 1891,
+      "sha256": "8ca9a9a02caeb5b0973df237246a20291ebd1266ca48a1db4efbc837980610ea"
+    },
+    "room_corner_2_2.s3d.sz": {
+      "bytes": 178,
+      "sha256": "f173d3c3e9b9d5d78638e68ff62baf98ab78d60d6937eeb4f4b77e9e148109a4"
+    },
+    "room_corner_2_3.s3d": {
+      "bytes": 4366,
+      "sha256": "6721a4ef23b286a91a719bdeed8801e347a84a2370d196e8915bcb9beddbc2f8"
+    },
+    "room_corner_2_3.s3d.sz": {
+      "bytes": 178,
+      "sha256": "7e02de621c99dc77c33c00e0a6cc1043776b3a9e03fd830174345512172e63aa"
+    },
+    "room_corner_2_5.sf": {
+      "bytes": 4730,
+      "sha256": "ad9f9b517ba0e7d8aa2a3868d3b5cf4b0add510e09b2559bdda15780f764812c"
+    },
+    "room_corner_2_5.sf.bnd": {
+      "bytes": 42,
+      "sha256": "9771a67440b7c6db6472505fcf82949f865492956bf82372e7eb45d4363f6ae8"
+    },
+    "room_corner_2_6.sf": {
+      "bytes": 4730,
+      "sha256": "b810ffb034d8dd211c4db97be447441964ffb62341efadfa5e2841fdaec20193"
+    },
+    "room_corner_2_6.sf.bnd": {
+      "bytes": 42,
+      "sha256": "1cfde2331e13fdb7b03e7805be5599eeb91435531862e3515e89b555ed361e83"
+    },
+    "room_corner_2_7.sf": {
+      "bytes": 4730,
+      "sha256": "1fba307bdbe1487f62cbbe0c499da24c960a03264a309e4eb33af03de3bd8476"
+    },
+    "room_corner_2_7.sf.bnd": {
+      "bytes": 42,
+      "sha256": "3cc96c77cb8bc4b58d7046640c8112704ee7e874083c7df66277ce599adb82a2"
+    },
+    "room_corner_2_8.sf": {
+      "bytes": 4730,
+      "sha256": "2c1faac162641a4bdf9e984588778acc6dcad34b1e5b3c2515202b7c8a7af04c"
+    },
+    "room_corner_2_8.sf.bnd": {
+      "bytes": 42,
+      "sha256": "931b6c761aff6399036cd7d85d5185ea444b7bf3af46186c431f2bc1f74e5437"
+    },
+    "room_corner_devc.csv": {
+      "bytes": 2596,
+      "sha256": "f28dda9b39a884fee3ca7509b6f580a6aa88e59b98b2b336607ef9945b1b0462"
+    },
+    "room_corner_hrr.csv": {
+      "bytes": 767,
+      "sha256": "cbc4da0a573e16fc09060321da3b3e709633be686b7b0dff2207dc859b59bbd8"
+    }
+  }
+}

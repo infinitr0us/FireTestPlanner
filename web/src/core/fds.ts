@@ -742,7 +742,7 @@ export function isWallBox(xb: Xb): boolean {
  *
  * The lowest horizontal slab's TOP face -- the surface things stand on -- rather
  * than the bottom of the mesh. The distinction is not academic: the sample input's
- * meshes start at z = −0.2 while its floor slab's top is at z = 0, so taking the
+ * meshes start at z = 0.3 while its floor slab's top is at z = 0.5, so taking the
  * mesh would put every height in the plan 200 mm out and leave the burner floating.
  */
 function detectFloor(
@@ -1543,7 +1543,7 @@ export function fdsToPlan(
   const chid = head ? head.string('CHID') : null;
   const fdsTitle = head ? head.string('TITLE') : null;
   // CHID, not TITLE: CHID is the job name and fits a toolbar and a drawing sheet,
-  // while TITLE is free prose -- the sample input's is a 200-character paragraph.
+  // while TITLE is free prose and can be much longer.
   const doc = newPlan(chid ?? (fdsTitle ?? 'Imported FDS model').slice(0, 60));
 
   const objects: PlanObject[] = [];
@@ -1632,8 +1632,8 @@ export function fdsToPlan(
     // floorSize is centred on the origin, and the origin is the burner rather than
     // the middle of anything, so the plane has to reach the further side. Sized on
     // the objects rather than the mesh: an FDS domain is routinely far larger than
-    // the compartment inside it -- three times larger, in the sample input -- and a
-    // floor plane that size dwarfs the plan drawn on it.
+    // the compartment inside it, and a
+    // floor plane sized to that domain can dwarf the plan drawn on it.
     env.floorSize_m = [
       Math.max(2 * Math.max(Math.abs(span[0]), Math.abs(span[1])) + 2, 4),
       Math.max(2 * Math.max(Math.abs(span[2]), Math.abs(span[3])) + 2, 4),

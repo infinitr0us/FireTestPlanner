@@ -5,10 +5,13 @@ FDS…** command still converts input geometry into an editable test plan.
 
 ## External results and coordinate system
 
-The external engineer-supplied `RC_BS_2.smv` (locally kept in the ignored
-`fixtures/fds_2/` directory; not included in a clone) describes an FDS 6.9.1 room-corner simulation with
-20 meshes and a requested duration of 1200 seconds. The folder contains about
-9.3 GiB: 72 slice files, 80 boundary files, 60 smoke files, and device/HRR CSVs.
+The public `room_corner` case in `fixtures/fds/room_corner.fds` was written for
+this repository. It models an ISO 9705-style room and an exterior region with two
+uniform 0.1 m meshes, a shortened 60 s propane-burner programme, and a combustible
+lining. Its FDS 6.9.1 run supplies both the input-import and results regressions.
+The complete run records 16 slice files, ten boundary files, six Smoke3D files,
+and device/HRR CSVs. See [the fixture README](../fixtures/fds-results/README.md)
+for the geometry, limitations, provenance and commands to regenerate it.
 The metadata, rather than filename numbering or the requested end time, determines
 the quantities, mesh associations and actual recorded frames.
 
@@ -24,8 +27,9 @@ times, validate Fortran record markers, and expose missing/unsupported files.
 FDSreader was evaluated against its upstream documentation and source. It reads
 output through `.smv`, supports the relevant data families, and is useful for
 independent scientific checks. However, accessing a lazy-loaded slice/smoke object's
-data materializes its entire time series. One sample smoke quantity would occupy
-roughly 10 GiB as float32 across all 20 meshes and 3001 frames. The application
+data materializes its entire time series. Validation with an engineers' external
+run established the need to avoid materializing large smoke histories. No data from
+that run is distributed. The application
 instead uses a shared TypeScript range reader for browser File/Blob objects and
 the desktop's authenticated local file bridge. This also preserves the offline,
 single-file browser distribution without a Python runtime requirement.
@@ -86,7 +90,7 @@ Values are shown to four significant figures, in exponent form below 0.01 and fr
 | Radiative, convective, total heat flux | Obstruction-face maps in kW/m2 |
 | Burning rate | Obstruction-face maps in kg/m2/s |
 | Soot, HRRPUV, temperature Smoke3D | GPU volume previews, one quantity at a time |
-| 67 device channels, 12 HRR/energy/mass channels | History plot and synchronized sample readout |
+| 40 device channels, 12 HRR/energy/mass channels | History plot and synchronized sample readout |
 
 The smoke byte stream is **encoded display data**, not a float32 physical field.
 For soot, opacity is encoded using the extinction coefficient and X cell width;
@@ -159,10 +163,11 @@ thermocouples. No companion input file or aligned planning document is required.
 - Device markers, labels and selected arrows are included in PNG snapshots. Closing
   or changing simulations releases the overlay and resets its controls.
 
-The supplied run has 67 probes at 23 distinct recorded positions: 22 sites shared by
-wall temperature, heat flux and thermocouple devices, plus the floor heat-flux probe.
-The latter is recorded at X=1.1995 m in SMV, slightly different from X=1.2 m in the
-input; the viewer deliberately retains the output metadata's position.
+The public run has 40 probes at 16 distinct recorded positions: twelve sites
+shared by wall temperature, heat flux and thermocouple devices on the two
+burner-side walls, an upward-facing floor heat-flux probe, and three doorway
+velocity probes. The viewer preserves SMV coordinates, including any adjustment
+made by FDS when locating a device on its mesh.
 
 Planned cameras, hoods and added test equipment are not overlaid. Device rendering is
 an independent layer, leaving room for a future explicitly aligned equipment layer
@@ -185,19 +190,22 @@ with file, offset, expected length and actual length, and retried once.
 
 ## Regression data
 
-`fixtures/fds-results/` contains a portable subset of the external run: all source
-mesh/device metadata, ten fields from two meshes, and three unchanged samples per
-field (original frames 0, 1500 and 3000), plus three actual CSV rows. The ordinary
-web suite always reads it, including the independent FDSreader reference sample;
-missing fixture files fail the suite. See its README for provenance and rebuilding.
+`fixtures/fds-results/` contains a portable subset of the public run: all source
+mesh/device metadata, burner-plane temperature in the room, temperature and
+velocity components at the doorway in the exterior, wall temperature on both
+meshes, room total heat flux, and three Smoke3D quantities on both meshes. Each
+field retains three unchanged samples (first, middle and last),
+and each CSV retains three actual rows. The ordinary web suite always reads it,
+including the independent FDSreader reference sample; missing fixture files fail
+the suite. See its README and generated manifest for exact frame counts and hashes.
 
-To opt into the separate 212-file, 3001-frame external inventory in PowerShell:
+To opt into the complete 32-field, 61-frame run in PowerShell:
 
 ```powershell
-$env:FDS_FULL_RESULTS_DIR = 'E:\path\to\completed-run'
+$env:FDS_FULL_RESULTS_DIR = (Resolve-Path 'local/fds-run/completed').Path
 npm --prefix web test
 Remove-Item Env:FDS_FULL_RESULTS_DIR
 ```
 
-An explicitly requested external inventory fails if its data is absent. The full
-multi-gigabyte run is neither committed nor required in a fresh clone.
+An explicitly requested full inventory fails if its data is absent. The full
+run is neither committed nor required in a fresh clone.

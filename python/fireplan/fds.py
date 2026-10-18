@@ -722,8 +722,8 @@ def _fire_faces(boxes: List[_Box], vents: List[_Box], surfs: Dict[str, Record],
                 issues: List[Issue], domain: Optional[Xb] = None) -> List[_FireFace]:
     """Every surface in the model that releases heat.
 
-    A model can easily have several: the sample input has a 7500 kW/m2 ignition
-    source *and* a 300 kW/m2 burning wall lining. Both are found; which one becomes
+    A model can easily have several: the sample input has a 9259.25925925926 kW/m2 ignition
+    source *and* a 120 kW/m2 burning wall lining. Both are found; which one becomes
     the plan's burner is decided separately, and is overridable.
     """
     off: List[str] = []
@@ -914,7 +914,7 @@ def _detect_floor(slabs: List[_Box], burner_base: Optional[float],
 
     The lowest horizontal slab's TOP face -- the surface things stand on -- rather
     than the bottom of the mesh. The distinction is not academic: the sample input's
-    meshes start at z = -0.2 while its floor slab's top is at z = 0, so taking the
+    meshes start at z = 0.3 while its floor slab's top is at z = 0.5, so taking the
     mesh would put every height in the plan 200 mm out and leave the burner floating.
     """
     # With a burner, only a slab UNDER it can be the floor. Falling back to every
@@ -1336,7 +1336,7 @@ def to_plan(text: str, filename: Optional[str] = None,
     chid = head.string("CHID") if head else None
     fds_title = head.string("TITLE") if head else None
     # CHID, not TITLE: CHID is the job name and fits a toolbar and a drawing sheet,
-    # while TITLE is free prose -- the sample input's is a 200-character paragraph.
+    # while TITLE is free prose and can be much longer.
     # The prose is kept, in the notes, where length costs nothing.
     plan = Plan.new(chid or (fds_title or "Imported FDS model")[:60])
 
@@ -1429,8 +1429,8 @@ def to_plan(text: str, filename: Optional[str] = None,
         # floorSize is centred on the origin, and the origin is the burner rather
         # than the middle of anything, so the plane has to reach the further side.
         # Sized on the objects rather than the mesh: an FDS domain is routinely far
-        # larger than the compartment inside it -- three times larger, in the sample
-        # input -- and a floor plane that size dwarfs the plan drawn on it.
+        # larger than the compartment inside it; a floor plane sized to that domain
+        # can dwarf the plan drawn on it.
         env["floorSize_m"] = [
             max(2.0 * max(abs(span[0]), abs(span[1])) + 2.0, 4.0),
             max(2.0 * max(abs(span[2]), abs(span[3])) + 2.0, 4.0),

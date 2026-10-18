@@ -14,7 +14,7 @@ half of that handoff.
 An FDS input file converts straight into a plan, re-origined onto the burner as this
 format requires and carrying the offset back to the source coordinates:
 
-    >>> Plan.from_fds("fixtures/fds/IR401_0.fds")
+    >>> Plan.from_fds("fixtures/fds/room_corner.fds")
     >>> from fireplan import fds
     >>> fds.load("model.fds").issues     # and everything the conversion left behind
 

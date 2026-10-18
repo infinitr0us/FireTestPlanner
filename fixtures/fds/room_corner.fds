@@ -1,0 +1,132 @@
+! Public regression case authored for FireTestPlanner; released with the repository.
+! ISO 9705-style geometry, not a standard-duration test or a validated lining model.
+! Public geometry source: NISTIR 5904, "A simple model of the ISO 9705 ignition source".
+! Interior: X=1.0..3.4, Y=2.0..5.6, Z=0.5..2.9 m. Door faces +Y.
+! The translated floor and buried walls deliberately exercise importer coordinates.
+&HEAD CHID='room_corner', TITLE='Public room corner / shortened two-stage propane fire' /
+&TIME T_END=60. /
+&MISC TMPA=20. /
+&DUMP NFRAMES=60, DT_DEVC=1., DT_HRR=1., DT_RESTART=1000000. /
+
+&MESH ID='room', IJK=26,38,28, XB=0.9,3.5,1.9,5.7,0.3,3.1 /
+&MESH ID='exterior', IJK=26,12,28, XB=0.9,3.5,5.7,6.9,0.3,3.1 /
+
+! Deliberately disabled: neither FDS nor the importer should read this record.
+REAC FUEL='PROPANE', RADIATIVE_FRACTION=0.32 /
+&REAC FUEL='PROPANE', SOOT_YIELD=0.015, CO_YIELD=0.005 /
+
+! Generic thermal properties; the lining is a prescribed heat-up-and-burn surrogate.
+&MATL ID='BOARD'
+      CONDUCTIVITY=0.16
+      SPECIFIC_HEAT=1.3
+      DENSITY=600. /
+&MATL ID='MASONRY'
+      CONDUCTIVITY=0.8
+      SPECIFIC_HEAT=0.9
+      DENSITY=1600. /
+&SURF ID='WALL'
+      MATL_ID='MASONRY'
+      THICKNESS=0.10
+      COLOR='GRAY' /
+&SURF ID='LINING'
+      MATL_ID='BOARD'
+      THICKNESS=0.012
+      BACKING='INSULATED'
+      IGNITION_TEMPERATURE=280.
+      HRRPUA=120.
+      RAMP_Q='lining_growth'
+      HEAT_OF_VAPORIZATION=1500.
+      COLOR='TAN' /
+&RAMP ID='lining_growth', T=0., F=0. /
+&RAMP ID='lining_growth', T=5., F=1. /
+&RAMP ID='lining_growth', T=60., F=1. /
+
+! 0.18 x 0.18 m nominal sand surface, 0.30 m above the floor.
+! FDS snaps it to 0.20 x 0.20 m and adjusts mass flux to preserve specified HRR.
+! 9259.25925925926 * 0.18^2 = 300 kW; the first plateau has F=1/3.
+&SURF ID='FIRE'
+      HRRPUA=9259.25925925926
+      RAMP_Q='burner_steps'
+      COLOR='ORANGE' /
+&RAMP ID='burner_steps', T=0., F=0. /
+&RAMP ID='burner_steps', T=1., F=0.3333333333333333 /
+&RAMP ID='burner_steps', T=25., F=0.3333333333333333 /
+&RAMP ID='burner_steps', T=26., F=1. /
+&RAMP ID='burner_steps', T=60., F=1. /
+
+! Front wall first: its door must become the opening in importer object wall-1.
+&OBST XB=0.9,3.5,5.6,5.7,0.4,3.0, SURF_ID='WALL' /
+&OBST XB=0.9,3.5,1.9,2.0,0.4,3.0, SURF_ID6='WALL','WALL','WALL','LINING','WALL','WALL' /
+&OBST XB=0.9,1.0,2.0,5.6,0.4,3.0, SURF_ID6='WALL','LINING','WALL','WALL','WALL','WALL' /
+&OBST XB=3.4,3.5,2.0,5.6,0.4,3.0, SURF_ID='WALL' /
+&OBST XB=0.9,3.5,1.9,6.9,0.3,0.5, SURF_ID='WALL' /
+&OBST XB=0.9,3.5,1.9,5.7,2.9,3.0, SURF_ID6='WALL','WALL','WALL','WALL','LINING','WALL' /
+&HOLE XB=1.8,2.6,5.5,5.8,0.5,2.5 /
+&OBST XB=1.02,1.20,2.02,2.20,0.5,0.8, SURF_ID6='WALL','WALL','WALL','WALL','WALL','FIRE' /
+
+! Exterior sides and top are open; mesh interfaces remain connected automatically.
+&VENT MB='XMIN', SURF_ID='OPEN' /
+&VENT MB='XMAX', SURF_ID='OPEN' /
+&VENT MB='YMIN', SURF_ID='OPEN' /
+&VENT MB='YMAX', SURF_ID='OPEN' /
+&VENT MB='ZMAX', SURF_ID='OPEN' /
+
+! Every gas thermocouple obtains its quantity ONLY through this multiline PROP.
+&PROP ID='BEAD'
+      QUANTITY='THERMOCOUPLE'
+      DIAMETER=0.0015 /
+
+! Six coincident triplets by each burner-side wall, 0.4 m apart.
+! All three quantities use the same gas-side point, 1 mm off the wall; surface
+! probes select that wall by IOR. This avoids placing gas beads inside solid cells.
+&DEVC ID='BACK_TC_1', XYZ=1.15,2.001,0.85, PROP_ID='BEAD' /
+&DEVC ID='BACK_WT_1', XYZ=1.15,2.001,0.85, QUANTITY='WALL TEMPERATURE', IOR=2 /
+&DEVC ID='BACK_HF_1', XYZ=1.15,2.001,0.85, QUANTITY='GAUGE HEAT FLUX', IOR=2 /
+&DEVC ID='BACK_TC_2', XYZ=1.15,2.001,1.25, PROP_ID='BEAD' /
+&DEVC ID='BACK_WT_2', XYZ=1.15,2.001,1.25, QUANTITY='WALL TEMPERATURE', IOR=2 /
+&DEVC ID='BACK_HF_2', XYZ=1.15,2.001,1.25, QUANTITY='GAUGE HEAT FLUX', IOR=2 /
+&DEVC ID='BACK_TC_3', XYZ=1.15,2.001,1.65, PROP_ID='BEAD' /
+&DEVC ID='BACK_WT_3', XYZ=1.15,2.001,1.65, QUANTITY='WALL TEMPERATURE', IOR=2 /
+&DEVC ID='BACK_HF_3', XYZ=1.15,2.001,1.65, QUANTITY='GAUGE HEAT FLUX', IOR=2 /
+&DEVC ID='BACK_TC_4', XYZ=1.15,2.001,2.05, PROP_ID='BEAD' /
+&DEVC ID='BACK_WT_4', XYZ=1.15,2.001,2.05, QUANTITY='WALL TEMPERATURE', IOR=2 /
+&DEVC ID='BACK_HF_4', XYZ=1.15,2.001,2.05, QUANTITY='GAUGE HEAT FLUX', IOR=2 /
+&DEVC ID='BACK_TC_5', XYZ=1.15,2.001,2.45, PROP_ID='BEAD' /
+&DEVC ID='BACK_WT_5', XYZ=1.15,2.001,2.45, QUANTITY='WALL TEMPERATURE', IOR=2 /
+&DEVC ID='BACK_HF_5', XYZ=1.15,2.001,2.45, QUANTITY='GAUGE HEAT FLUX', IOR=2 /
+&DEVC ID='BACK_TC_6', XYZ=1.15,2.001,2.85, PROP_ID='BEAD' /
+&DEVC ID='BACK_WT_6', XYZ=1.15,2.001,2.85, QUANTITY='WALL TEMPERATURE', IOR=2 /
+&DEVC ID='BACK_HF_6', XYZ=1.15,2.001,2.85, QUANTITY='GAUGE HEAT FLUX', IOR=2 /
+&DEVC ID='SIDE_TC_1', XYZ=1.001,2.35,0.85, PROP_ID='BEAD' /
+&DEVC ID='SIDE_WT_1', XYZ=1.001,2.35,0.85, QUANTITY='WALL TEMPERATURE', IOR=1 /
+&DEVC ID='SIDE_HF_1', XYZ=1.001,2.35,0.85, QUANTITY='GAUGE HEAT FLUX', IOR=1 /
+&DEVC ID='SIDE_TC_2', XYZ=1.001,2.35,1.25, PROP_ID='BEAD' /
+&DEVC ID='SIDE_WT_2', XYZ=1.001,2.35,1.25, QUANTITY='WALL TEMPERATURE', IOR=1 /
+&DEVC ID='SIDE_HF_2', XYZ=1.001,2.35,1.25, QUANTITY='GAUGE HEAT FLUX', IOR=1 /
+&DEVC ID='SIDE_TC_3', XYZ=1.001,2.35,1.65, PROP_ID='BEAD' /
+&DEVC ID='SIDE_WT_3', XYZ=1.001,2.35,1.65, QUANTITY='WALL TEMPERATURE', IOR=1 /
+&DEVC ID='SIDE_HF_3', XYZ=1.001,2.35,1.65, QUANTITY='GAUGE HEAT FLUX', IOR=1 /
+&DEVC ID='SIDE_TC_4', XYZ=1.001,2.35,2.05, PROP_ID='BEAD' /
+&DEVC ID='SIDE_WT_4', XYZ=1.001,2.35,2.05, QUANTITY='WALL TEMPERATURE', IOR=1 /
+&DEVC ID='SIDE_HF_4', XYZ=1.001,2.35,2.05, QUANTITY='GAUGE HEAT FLUX', IOR=1 /
+&DEVC ID='SIDE_TC_5', XYZ=1.001,2.35,2.45, PROP_ID='BEAD' /
+&DEVC ID='SIDE_WT_5', XYZ=1.001,2.35,2.45, QUANTITY='WALL TEMPERATURE', IOR=1 /
+&DEVC ID='SIDE_HF_5', XYZ=1.001,2.35,2.45, QUANTITY='GAUGE HEAT FLUX', IOR=1 /
+&DEVC ID='SIDE_TC_6', XYZ=1.001,2.35,2.85, PROP_ID='BEAD' /
+&DEVC ID='SIDE_WT_6', XYZ=1.001,2.35,2.85, QUANTITY='WALL TEMPERATURE', IOR=1 /
+&DEVC ID='SIDE_HF_6', XYZ=1.001,2.35,2.85, QUANTITY='GAUGE HEAT FLUX', IOR=1 /
+&DEVC ID='FLOOR_HF', XYZ=2.25,4.45,0.5, QUANTITY='GAUGE HEAT FLUX', IOR=3 /
+&DEVC ID='DOOR_V_LOW', XYZ=2.25,5.65,0.85, QUANTITY='V-VELOCITY' /
+&DEVC ID='DOOR_V_MID', XYZ=2.25,5.65,1.45, QUANTITY='V-VELOCITY' /
+&DEVC ID='DOOR_V_HIGH', XYZ=2.25,5.65,2.15, QUANTITY='V-VELOCITY' /
+
+! Two distinct requests: burner plane and door centre plane, on both meshes.
+&SLCF PBX=1.11, QUANTITY='TEMPERATURE', CELL_CENTERED=.TRUE., VECTOR=.TRUE. /
+&SLCF PBX=2.20, QUANTITY='TEMPERATURE', CELL_CENTERED=.TRUE., VECTOR=.TRUE. /
+&BNDF QUANTITY='WALL TEMPERATURE' /
+&BNDF QUANTITY='TOTAL HEAT FLUX' /
+&BNDF QUANTITY='RADIATIVE HEAT FLUX' /
+&BNDF QUANTITY='CONVECTIVE HEAT FLUX' /
+&BNDF QUANTITY='BURNING RATE' /
+! With combustion and soot, FDS 6.9.1 writes soot, HRRPUV and temperature Smoke3D by default.
+&TAIL /

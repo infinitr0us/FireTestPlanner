@@ -176,6 +176,39 @@ try {
   low.value='0'; low.dispatchEvent(new Event('change'));
   await waitFor(()=>modal.querySelector('[role=status]').dataset.kind==='info');
   check('valid scale clears error state',!low.hasAttribute('aria-invalid'));
+  // Exercise the shipped real FDS subset as well as the small timing edge cases.
+  const publicUrls=import.meta.glob('../../fixtures/fds-results/room_corner*', {query:'?url',import:'default',eager:true});
+  const publicFiles=await Promise.all(Object.entries(publicUrls).map(async ([path,url])=>{
+    const response=await fetch(url);
+    if (!response.ok) throw Error('Missing public fixture: '+path);
+    return new File([await response.arrayBuffer()],path.split('/').at(-1));
+  }));
+  await dialog.load(browserResultsSource(publicFiles,'room_corner.smv'),'room_corner.smv');
+  const ready=()=>document.querySelector('dialog [role=status]')?.textContent.includes('mesh file(s) shown');
+  await waitFor(ready);
+  check('public room case opens all fourteen fields on two meshes',
+    modal.querySelector('.fds-results__info').textContent.includes('2 meshes · 14/14 field files available'));
+  const devices=modal.querySelector('[aria-label="Simulation device"]');
+  check('public case exposes forty probes including doorway velocities',
+    devices.querySelectorAll('optgroup option').length===40 && devices.textContent.includes('DOOR_V_HIGH'));
+  devices.value=[...devices.options].find(o=>o.textContent.includes('SIDE_HF_1')).value;
+  devices.dispatchEvent(new Event('change'));
+  check('public gauge keeps recorded coordinates, direction and matching history',
+    modal.querySelector('.fds-results__device-detail').textContent.includes('(1.001, 2.35, 0.85)') &&
+    modal.querySelector('.fds-results__device-detail').textContent.includes('(1, 0, 0)') &&
+    modal.querySelector('[aria-label="Device or heat release history"]').selectedOptions[0].textContent.includes('SIDE_HF_1'));
+  const dataset=modal.querySelector('[aria-label="Result dataset"]');
+  for (const option of dataset.options) {
+    dataset.value=option.value; dataset.dispatchEvent(new Event('change'));
+    await waitFor(ready);
+    check('public field renders: '+option.textContent, modal.querySelector('[role=status]').dataset.kind!=='error');
+  }
+  // A real 60-second record still uses recorded-frame stepping, not a fabricated cadence.
+  key(modal.querySelector('.fds-results__view canvas'),'End');
+  await waitFor(()=>modal.querySelector('output').textContent.includes('60 s · frame 3/3'));
+  check('public run seeks to its recorded final time',true);
+  dataset.value='0'; dataset.dispatchEvent(new Event('change')); await waitFor(ready);
+  // run.mjs continues with real key input on the small timing case.
   if (new URLSearchParams(location.search).has('interactive')) await load([0,.25,.75]);
   else dialog.close();
   output.textContent=JSON.stringify({passed:results.length,checks:results},null,2);

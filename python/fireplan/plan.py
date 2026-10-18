@@ -246,7 +246,7 @@ class Plan:
         taken to be the burner, where the origin went -- and the editor's import
         preview is built on that. This is the one-liner for a notebook.
 
-            >>> Plan.from_fds("fixtures/fds/IR401_0.fds")
+            >>> Plan.from_fds("fixtures/fds/room_corner.fds")
 
         The import re-origins onto the burner centre at floor level, as this format
         requires, and records the shift in `meta.source.originOffset_m` so the source
