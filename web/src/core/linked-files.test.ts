@@ -20,15 +20,15 @@ describe('reconstruction CSV', () => {
     if (c.error) expect(() => parseReconstructionCsv(c.text, DATE)).toThrow(c.error);
     else expect(parseReconstructionCsv(c.text, DATE)).toEqual({ importedAt: DATE, samples: c.samples });
   });
-  it('reproduces the complete engineer snapshot', () => {
+  it('reproduces the complete synthetic snapshot', () => {
     const doc = JSON.parse(readFileSync(new URL('../../../fixtures/linked-files/linked-test.ftp.json', import.meta.url), 'utf8')) as PlanDocument;
     expect(parseReconstructionCsv(CSV, DATE)).toEqual(doc.objects.find((o) => o.id === 'burner-main')!.linkedFiles![0].plot);
   });
-  it('reads all engineer measurements in SI with the expected endpoints', () => {
+  it('reads all synthetic samples in SI with the expected endpoints', () => {
     const plot = parseReconstructionCsv(CSV, DATE);
     expect(plot.samples).toHaveLength(100);
     expect(plot.samples[0]).toEqual([0, 0, 0]);
-    expect(plot.samples[1]).toEqual([2, 0.13565, 2.455]);
+    expect(plot.samples[1]).toEqual([2, 0.005168, 0.1798]);
     expect(plot.samples.at(-1)![0]).toBe(198);
     expect(plot.importedAt).toBe(DATE);
   });

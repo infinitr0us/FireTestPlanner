@@ -146,7 +146,7 @@ def _write_atomic(path: str, text: str) -> None:
         raise
 
 
-#: The reconstruction pipeline's volume rounding in `volumes.csv`: one microlitre.
+#: Six-decimal cubic-metre rounding in `volumes.csv`: one millilitre.
 PLOT_VOLUME_ROUNDING_M3 = 1e-6
 #: Half the tenth of a second a frame file's name carries, and a hair more.
 FRAME_NAME_TIME_TOLERANCE_S = 0.05 + 1e-9

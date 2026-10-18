@@ -606,7 +606,7 @@ def test_equipment_table_means_what_the_report_means():
     flame = rows["flame-main"]
     assert flame["category"] == "reconstructed flame"
     assert flame["detail"] == "80 frames, 0-395 s, 15.7 mm voxels"
-    assert flame["height_m"] == pytest.approx(0.905)
+    assert flame["height_m"] == pytest.approx(1.534)
     assert flame["standoff_m"] is not None and flame["standoff_m"] < 0.05  # centred on its pan
 
     # A hood's standoff is its plan distance too, as the editor now prints it.

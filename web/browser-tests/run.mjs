@@ -150,6 +150,23 @@ try {
   check('editor and results transport typography and dimensions match', JSON.stringify(resultsStyle)===JSON.stringify(editorStyle));
   const editorSpeeds = await evaluate('[...document.querySelector(".playback-bar [aria-label=\\"Playback speed\\"]").options].map(o=>[o.value,o.textContent])');
   check('editor and results expose identical playback speeds', JSON.stringify(resultsSpeeds)===JSON.stringify(editorSpeeds));
+  // The bundled Example must render the synthetic payload, including a nonempty
+  // frame and its matching CSV cursor; a loaded manifest alone is insufficient.
+  for (let i = 0; i < 11; i += 1) await key('.', 'Period', 190);
+  const frameValue = 'document.querySelector(".playback-bar input[aria-label=\\"Frame\\"]").value';
+  await waitFor(() => evaluate(frameValue + '==="11"'), 'synthetic frame at 55 s');
+  check('synthetic Example draws the pinned surface count at 55 s',
+    /frame 12\/80.*4[,\s]?758 cubes/.test(await evaluate('document.querySelector(".playback-bar__readout").textContent')));
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("Heptane pan"))');
+  await waitFor(() => evaluate('document.querySelector(".reconstruction-plot input[aria-label=\\"Measurement sample\\"]")?.value==="11"'), 'synthetic CSV cursor at 55 s');
+  check('synthetic Example CSV follows the flame frame', true);
+  await click('document.querySelector(".playback-bar button[aria-label=\\"Play (Space)\\"]")');
+  await waitFor(() => evaluate('Number(' + frameValue + ')>11'), 'synthetic Example playback advances');
+  await click('document.querySelector(".playback-bar button[aria-label=\\"Pause (Space)\\"]")');
+  check('synthetic Example plays and pauses', true);
+  // Return to the pinned nonempty frame for visual review and later input checks.
+  await click(editorFirst);
+  for (let i = 0; i < 11; i += 1) await key('.', 'Period', 190);
   await screenshot('editor');
 
   // Inspector editing (review 2026-09-22): Tab after a committed edit keeps focus in

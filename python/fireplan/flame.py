@@ -1,18 +1,22 @@
 """Reconstructed flame sequences: the visual-hull voxel frames a plan links to.
 
-The reconstruction pipeline (`fixtures/flame/reconstruct_revised.py`) writes one
-`t_<seconds>s.npz` per timestep, holding the world coordinates of the occupied
-voxel centres and the pipeline's `voxel_size`. This module reads a folder of them,
+The format is one `t_<seconds>s.npz` per timestep, holding `voxels` (M x 3
+float64, C order, occupied centres in metres in the Z-up rig frame) and
+`voxel_size` (scalar float64); an empty frame is (0, 3). The timestamp exists
+only in the filename. This module reads a folder of them,
 infers the lattice they sit on, describes the run as the manifest a plan stores
 (format 1.4, `linkedFiles[].sequence`), and packs the frames into the compact form
 the editor embeds in a shared page. Mirror of `web/src/core/flame.ts`; the two are
 held to identical manifests and identical packed bytes on the fixture.
 
-The one trap is the lattice pitch. The pipeline builds its grid with an
+The synthetic fixture generator is `tools/build_synthetic_flame.py`; its rig
+frame equals the plan frame. Its 192-cubed grid spans x/y [-1.5, 1.5] m and
+z [-0.1, 2.9] m. The one trap is the lattice pitch: the format permits an
 endpoint-inclusive `linspace`, so neighbouring centres are `volume / (res - 1)`
 apart while its `voxel_size` is `volume / res` -- half a percent less. Indexing
 voxels by `voxel_size` is off by one a hundred voxels out, so the pitch is inferred
-from the coordinates and `voxel_size` is carried along as what the pipeline said.
+from the coordinates and `voxel_size` is preserved as stored (3/192 m in the
+fixture, versus 3/191 m pitch). See CONVENTIONS.md section 11.
 """
 
 from __future__ import annotations

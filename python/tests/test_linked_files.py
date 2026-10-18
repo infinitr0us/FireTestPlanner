@@ -40,7 +40,7 @@ def test_shared_path_cases(case):
     assert data == before
 
 
-def test_complete_engineer_snapshot_and_csv_limits(linked_plan):
+def test_complete_synthetic_snapshot_and_csv_limits(linked_plan):
     text = (ROOT / 'fixtures/linked-files/volumes.csv').read_text(encoding='utf-8')
     expected = linked_plan.burners[0].linked_files[0]['plot']
     assert parse_reconstruction_csv(text, imported_at=expected['importedAt']) == expected

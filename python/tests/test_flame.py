@@ -260,10 +260,10 @@ def test_fixture_surface_cells_match_the_pinned_digest(sequence):
     assert digest.hexdigest() == EXPECTED['surfaceCellsSha256']
 
 
-def test_fixture_voxels_round_trip_to_the_pipeline_files(sequence):
+def test_fixture_voxels_round_trip_to_the_synthetic_files(sequence):
     original, _ = read_frame(str(FLAME / 'voxels/t_0000055.0s.npz'))
     rebuilt = sequence.voxels(55.0)
-    assert len(rebuilt) == len(original) == 35960
+    assert len(rebuilt) == len(original) == 25639
     key = lambda v: v[np.lexsort(v.T[::-1])]
     assert np.abs(key(original) - key(rebuilt)).max() < 1e-12
 
@@ -285,7 +285,7 @@ def test_fixture_is_canonical_valid_and_declares_1_4(flame_plan):
     assert len(flame.manifest['frames']) == 80
     assert flame.opacity == 1.0 and flame.color_mode == 'height'
     assert flame_plan.flame_burner(flame).id == 'burner-main'
-    # The HRR is the test record's, not the reference layout's 130 kW.
+    # The HRR is the synthetic design fire specification.
     assert flame_plan.burners[0].hrr_kw == 80
     assert flame.bounds_corners().shape == (8, 3)
     assert not [i for i in flame_plan.check() if i.code.startswith('flame-')]

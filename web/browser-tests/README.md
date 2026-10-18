@@ -22,6 +22,8 @@ The runner additionally sends real mouse/key input to check summary Space
 activation, focused transport shortcuts and native slider Home/End. It opens the
 built editor's Example plan to exercise window-level keyboard routing and compares
 transport typography, dimensions and speed options between workspaces. On its
+synthetic flame it checks the 55 s surface count, the linked CSV cursor, and actual
+play/pause advancement, and captures a nonempty frame for visual review. On its
 A8303sc camera it checks the single palette entry, the Lens options, a lens change
 by a real key on the Lens select (comparison row, field of view and focal length)
 and its undo.

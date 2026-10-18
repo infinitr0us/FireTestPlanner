@@ -3,8 +3,8 @@
  *
  * `fixtures/flame/expected.json` is written by `python/fireplan/flame.py`: the
  * manifest, the packed bytes' digest, and the surface cells' digest. Two readers
- * that agree about the file format but not about where a voxel sits would draw the
- * data scientist and the engineer two different flames from one folder.
+ * that agree about the file format but not about where a voxel sits would draw
+ * two different flames from one folder.
  */
 
 import { createHash } from 'node:crypto';
@@ -60,14 +60,14 @@ describe('frame files', () => {
     expect(frameTimestamp('t_-5.0s.npz')).toBeNull();
   });
 
-  it('parses the pipeline\'s npz through the central directory', async () => {
+  it('parses the synthetic npz through the central directory', async () => {
     const entries = await readZip(new Uint8Array(readFileSync(FOLDER + 't_0000055.0s.npz')));
     expect([...entries.keys()].sort()).toEqual(['voxel_size.npy', 'voxels.npy']);
     const voxels = parseNpy(entries.get('voxels.npy')!);
-    expect(voxels).toMatchObject({ dtype: '<f8', shape: [35960, 3], fortranOrder: false });
+    expect(voxels).toMatchObject({ dtype: '<f8', shape: [25639, 3], fortranOrder: false });
     const frame = await parseFrameFile('t_0000055.0s.npz', new Uint8Array(readFileSync(FOLDER + 't_0000055.0s.npz')));
     expect(frame.timestamp_s).toBe(55);
-    expect(frame.voxels.length).toBe(35960 * 3);
+    expect(frame.voxels.length).toBe(25639 * 3);
     expect(frame.voxelSize_m).toBe(0.015625);
   });
 

@@ -122,17 +122,17 @@ describe('report content', () => {
     // list has to name it, and a flame-only plan is not a plan with no objects.
     const doc = flameFixture();
     const body = buildReportBody(doc, 'm');
-    const row = body.split('<tr>').find((r) => r.includes('Visual hull')) as string;
+    const row = body.split('<tr>').find((r) => r.includes('<td>Synthetic flame</td>')) as string;
     expect(row).toContain('<td>reconstructed flame</td>');
     expect(row).toContain('80 frames, 0–395 s, 15.7 mm voxels');
-    expect(row).toContain('run Visual hull frames, on Heptane pan, 1 ft square');
-    expect(row).toMatch(/<td class="num">0\.\d+<\/td>/); // the envelope's offset from the pan, and its top
-    expect(row).toContain('<td class="num">0.905</td>');
+    expect(row).toContain('run Synthetic flame frames, on Heptane pan, 1 ft square');
+    expect(row).toContain('<td class="num">0</td>'); // the synthetic envelope is centred on the pan
+    expect(row).toContain('<td class="num">1.534</td>');
 
     doc.objects = doc.objects.filter((o) => o.type === 'reconstructedFlame');
     const alone = buildReportBody(doc, 'm');
     expect(alone).not.toContain('No objects in this plan');
-    expect(alone).toContain('Visual hull');
+    expect(alone).toContain('Synthetic flame');
     delete doc.objects[0].linkedFiles;
     expect(buildReportBody(doc, 'm')).toContain('no voxel folder linked');
   });

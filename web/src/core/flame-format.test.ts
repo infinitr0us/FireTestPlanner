@@ -59,9 +59,9 @@ describe('the flame fixture', () => {
     const manifest = flameManifest(flame)!;
     expect(manifest.grid).toEqual({ voxelSize_m: 0.015625, pitch_m: 0.015706806282722363, resolution: 192 });
     expect(manifest.frames).toHaveLength(80);
-    expect(manifest.frames[11]).toEqual([55, 35960]);
+    expect(manifest.frames[11]).toEqual([55, 25639]);
     expect(flameBurner(doc, flame)!.id).toBe('burner-main');
-    // The HRR is the test record's, not the reference layout's 130 kW.
+    // The HRR is the synthetic design fire specification.
     expect(burnerOf(doc).fire!.hrr_kw).toBe(80);
     expect(checkPlan(doc).filter((i) => i.code.startsWith('flame-'))).toEqual([]);
   });
@@ -214,7 +214,7 @@ describe('checks', () => {
     expect(plotSequenceMismatch(samples, manifest)).toBe('is sampled at 16 s where the sequence has a frame at 15 s');
     samples[3][0] = 15;
     samples[11][1] = 0.1;
-    expect(plotSequenceMismatch(samples, manifest)).toBe('records 0.1 m³ at 55 s where the frame holds 35960 voxels');
+    expect(plotSequenceMismatch(samples, manifest)).toBe('records 0.1 m³ at 55 s where the frame holds 25639 voxels');
   });
 
   it('runs with no burner in the plan at all', () => {

@@ -1,8 +1,8 @@
 /** Application entry point: wires the store, viewport and panels together. */
 
-// The Example is the reference layout with a flame reconstructed from a test on
-// its site: the plan, and the packed frames the page carries so nothing has to be
-// on disk. Both come from fixtures/flame/ via tools/build_flame_fixture.py.
+// The Example is the reference layout with a synthetic 80 kW design fire from
+// tools/build_synthetic_flame.py. The plan and packed frames are built by
+// tools/build_flame_fixture.py, so playback needs no external files.
 import examplePlan from '../../fixtures/flame/flame-test.ftp.json';
 import exampleFlameUrl from '../../fixtures/flame/flame-test.fvs?url';
 

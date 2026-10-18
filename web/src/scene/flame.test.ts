@@ -37,7 +37,7 @@ describe('FlameMesh', () => {
     expect(mesh.cubeCount).toBe(0); // t = 0 is empty
     expect(mesh.setFrame(0)).toBe(false); // already there
     expect(mesh.setFrame(11)).toBe(true); // t = 55 s
-    expect(mesh.cubeCount).toBe(6132);
+    expect(mesh.cubeCount).toBe(4758);
     expect(mesh.setFrame(-1)).toBe(true);
     expect(mesh.cubeCount).toBe(0);
     mesh.setSequence(null);

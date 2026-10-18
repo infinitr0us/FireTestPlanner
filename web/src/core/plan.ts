@@ -1455,7 +1455,7 @@ export function plotFollowsFlame(
   });
 }
 
-/** The reconstruction pipeline's volume rounding in `volumes.csv`: one microlitre. */
+/** Six-decimal cubic-metre rounding in `volumes.csv`: one millilitre. */
 export const PLOT_VOLUME_ROUNDING_M3 = 1e-6;
 /** Half the tenth of a second a frame file's name carries, and a hair more. */
 export const FRAME_NAME_TIME_TOLERANCE_S = 0.05 + 1e-9;

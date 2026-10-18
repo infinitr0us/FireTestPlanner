@@ -30,7 +30,7 @@ describe('desktop link/save bridge', () => {
     expect(writes).toHaveLength(2);
     for (const text of writes) {
       expect(text).toBe(serializePlan(JSON.parse(text)));
-      expect(text).toContain('[2, 0.13565, 2.455]');
+      expect(text).toContain('[2, 0.005168, 0.1798]');
     }
     expect(writes[0]).toBe(disk);
     expect(serializePlan(JSON.parse(opened.text))).toBe(working);

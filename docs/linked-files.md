@@ -1,5 +1,16 @@
 # Link a layout to its test data
 
+The distributed `fixtures/linked-files/linked-test.ftp.json` uses synthetic data.
+`tools/build_synthetic_flame.py` generates its independent CSV-only large run:
+100 rows at 2 s (0–198 s), a 200³ grid at 10 mm, two illustrative valid views,
+and a broad two-view hull reaching 2.028915 m³. Column definitions are in that
+generator's docstring; only the three columns below are plotted. This large run
+is separate from the generator's synthetic 80 kW flame example.
+
+Its linked video is a 6 s, 640×360 H.264 test pattern with no audio, captioned
+“FireTestPlanner synthetic example video”. It is assigned to GoPro only to
+demonstrate linking, with no camera provenance or synchronization with the CSV.
+
 Select a burner, camera, heat flux gauge or thermocouple. **Linked files** appears
 near the top of the inspector. Cameras accept multiple videos; the other three
 types accept multiple spreadsheets. A thermocouple rake links its data at the
@@ -23,7 +34,7 @@ Link a UTF-8 CSV or TSV to a burner with these named columns, in any order:
 ```csv
 timestamp_s,volume_m3,surface_area_m2
 0,0,0
-2,0.13565,2.455
+2,0.005168,0.1798
 ```
 
 Extra columns are retained in the external file and ignored by the plot. Quoted

@@ -2,10 +2,9 @@
  * Reconstructed flames in the scene: surface voxels as instanced cubes.
  *
  * Cubes are the honest representation of a visual hull -- the blockiness IS the
- * resolution -- and only the surface cells are drawn, which is a fifth of them.
+ * resolution -- and only cells with an empty six-neighbour are drawn.
  * One instance attribute of `(i, j, k)` shorts, sized once for the fullest frame,
- * is refilled on a frame switch: 6 bytes a cube, a few hundred kilobytes for the
- * biggest frame anyone has produced, and one GPU buffer that dies with its
+ * is refilled on a frame switch: 6 bytes a cube, and one GPU buffer that dies with its
  * geometry. Each frame's cells are extracted on first use and kept, so a second
  * pass through the sequence allocates nothing.
  *

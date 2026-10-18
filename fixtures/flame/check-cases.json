@@ -11,7 +11,7 @@
   },
   {
     "name": "one-pitch-below-floor-tolerated",
-    "note": "The lowest voxel centre is half a voxel above z=0; a pitch of slack covers a hull that touches the floor.",
+    "note": "The lowest synthetic centre is 0.009947643979057563 m above z=0; at -0.02 m its bottom remains within one pitch of the floor.",
     "flame": { "transform": { "position_m": [0, 0, -0.02], "rotation_quat": [0, 0, 0, 1] } },
     "expect": []
   },
@@ -49,7 +49,7 @@
   },
   {
     "name": "csv-with-fewer-rows",
-    "plotSamples": [[0, 0, 0], [5, 0.0000610, 0.002], [10, 0.034027, 1.1]],
+    "plotSamples": [[0, 0, 0], [5, 0, 0], [10, 0.006241, 0.421875]],
     "expect": ["flame-csv-mismatch"]
   },
   {
@@ -66,7 +66,7 @@
   },
   {
     "name": "csv-volume-within-a-voxel",
-    "note": "The CSV rounds to a microlitre (an eighth of a voxel here); a voxel of slack is the tolerance.",
+    "note": "The CSV rounds to six decimal places (about a quarter of a voxel here); a voxel of slack is the tolerance.",
     "plotVolumeDelta": { "row": 11, "voxels": 0.5 },
     "expect": []
   }
