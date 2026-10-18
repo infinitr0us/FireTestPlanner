@@ -34,3 +34,7 @@ fixtures/flame/voxels/*.ply
 
 # External engineer-supplied run; portable regression data is in fds-results.
 fixtures/fds_2/
+
+# Private data kept beside the checkout and never published (engineer-supplied
+# test data and recordings). The committed fixtures are synthetic or public.
+local/

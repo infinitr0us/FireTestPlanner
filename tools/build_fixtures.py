@@ -106,7 +106,7 @@ def thermocouple(obj_id, name, position, bead_offsets, mount_type="wall", tc_typ
 
 
 def build_camera_row() -> Plan:
-    """The layout in example.jpg: a four-camera row at 9 ft, pan under a hood.
+    """The layout of a hand sketch: a four-camera row at 9 ft, pan under a hood.
 
     Extended past the sketch with a wall corner and the instrumentation that
     normally goes with it, so the reference plan exercises every object type the
@@ -121,7 +121,7 @@ def build_camera_row() -> Plan:
         "siteName": "Fire test bay",
         "revision": "B",
         "notes": (
-            "Reference fixture reconstructed from the hand sketch in example.jpg, with a "
+            "Reference fixture reconstructed from a hand sketch of the layout, with a "
             "wall corner and instrumentation added. "
             "The camera row sits 9 ft back from the pan centre in X and is spread in Y, "
             "so each camera's radial standoff is a little over 9 ft. "

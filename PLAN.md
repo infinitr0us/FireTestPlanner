@@ -159,7 +159,7 @@ Design notes:
 Because the origin is the burner centre at floor level, standoff distance is just
 `norm(position)` and the sketch's `9F` / `3F` / `2.5F` callouts map straight onto
 coordinates — which is also why the dimension tool can auto-generate the fire-to-camera
-dimension lines that dominate `example.jpg`.
+dimension lines that dominate the hand sketch.
 
 ## 5. Python reader (`python/fireplan/`)
 
