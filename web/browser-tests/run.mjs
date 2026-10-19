@@ -37,6 +37,10 @@ const profile = await mkdtemp(join(tmpdir(), 'fireplan-browser-'));
 const server = await createServer({ root: web, server: { host: '127.0.0.1', port: 0, open: false } });
 let browser, socket, send;
 const checks = [], errors = [];
+// Progress on stderr, so a timeout on a slow machine says which phase it was in;
+// stdout stays the JSON report.
+const started = Date.now();
+const phase = label => console.error('[browser-tests] ' + ((Date.now() - started) / 1000).toFixed(1) + ' s  ' + label);
 const check = (name, ok) => {
   if (!ok) throw new Error(name);
   checks.push({ name, passed: true });
@@ -80,11 +84,20 @@ try {
     pending.set(next, { resolve, reject, timer });
     socket.send(JSON.stringify({ id: next, method, params, ...(session ? { sessionId: session } : {}) }));
   });
-  const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
-  ({ sessionId } = await send('Target.attachToTarget', { targetId, flatten: true }));
-  await send('Runtime.enable');
-  await send('Page.enable');
-  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  let targetId;
+  // A fresh tab per page under test: navigating away from a page still busy with
+  // software WebGL can stall for minutes on a slow runner.
+  const openTab = async () => {
+    const previous = targetId;
+    ({ targetId } = await send('Target.createTarget', { url: 'about:blank' }, null));
+    ({ sessionId } = await send('Target.attachToTarget', { targetId, flatten: true }, null));
+    await send('Runtime.enable');
+    await send('Page.enable');
+    await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+    if (previous) await send('Target.closeTarget', { targetId: previous }, null);
+  };
+  phase('browser ready');
+  await openTab();
   const evaluate = async expression => {
     const response = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
     if (response.exceptionDetails) throw new Error(response.exceptionDetails.exception?.description ?? response.exceptionDetails.text);
@@ -107,6 +120,7 @@ try {
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
   };
+  phase('DOM/WebGL regression page');
   await send('Page.navigate', { url: origin + '/browser-tests/visual-consistency.html?interactive=1' });
   const report = await waitFor(async () => {
     const text = await evaluate('document.querySelector("#report")?.textContent ?? ""');
@@ -114,6 +128,7 @@ try {
     try { const result = JSON.parse(text); return result.passed ? result : false; } catch { return false; }
   }, 'DOM/WebGL regression page');
   checks.push(...report.checks);
+  phase('results transport keys');
   await evaluate('document.querySelector("dialog details").open=false; document.querySelector("dialog summary").focus()');
   await key(' ', 'Space', 32);
   check('native Space opens coverage without playing', await evaluate('document.querySelector("dialog details").open && !!document.querySelector("button[aria-label=\\"Play (Space)\\"]")'));
@@ -135,8 +150,11 @@ try {
   const resultsStyle = await evaluate('(() => { const s=getComputedStyle(document.querySelector("dialog .playback-bar__btn")); return [s.fontFamily,s.fontSize,s.lineHeight,s.padding,s.borderRadius]; })()');
 
   // Exercise the built single-file editor, including its window-level key routing.
+  phase('built editor');
+  await openTab();
   await send('Page.navigate', { url: origin + '/dist/index.html' });
   await waitFor(() => evaluate('[...document.querySelectorAll("button")].some(b=>b.textContent==="Example")'), 'built editor');
+  phase('Example flame playback');
   await click('[...document.querySelectorAll("button")].find(b=>b.textContent==="Example")');
   await waitFor(() => evaluate('!!document.querySelector(".playback-bar:not([hidden]) input[aria-label=\\"Frame\\"]:not(:disabled)")'), 'example flame');
   const editorFirst = 'document.querySelector(".playback-bar button[aria-label=\\"First frame (Home)\\"]")';
@@ -172,6 +190,7 @@ try {
   for (let i = 0; i < 11; i += 1) await key('.', 'Period', 190);
   await screenshot('editor');
 
+  phase('inspector editing');
   // Inspector editing (review 2026-09-22): Tab after a committed edit keeps focus in
   // the panel instead of dropping it to the page, where the next Backspace deleted
   // the object (UI-1); a decimal comma is read as one (UI-4); Escape cancels what was
@@ -201,6 +220,7 @@ try {
   check('undo back to the loaded plan leaves it unmodified',
     await evaluate('!document.querySelector(".toolbar__file").textContent.includes("•")'));
 
+  phase('lens choice');
   // Lens choice (2026-10-16): the A8303sc is one palette row and one picker entry; its
   // inspector offers the datasheet's four lenses, a real key on the Lens select swaps
   // the lens and moves the comparison's current row, and undo puts the 25 mm back.
@@ -243,6 +263,7 @@ try {
     await evaluate(fovReadout) === '39.4° × 22.8°'
     && await evaluate('!document.querySelector(".toolbar__file").textContent.includes("•")'));
 
+  phase('focus after rebuild');
   // Tab from the last field onto a button keeps focus there through the rebuild,
   // and a rebuild into a different panel does not push focus into a field (Codex
   // review of 5f8333d).
