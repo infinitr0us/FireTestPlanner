@@ -8,7 +8,9 @@ runner uses Node's built-in WebSocket and Chromium's DevTools protocol.
 Chrome and Edge are detected in their usual Windows locations; Chrome on macOS
 and common Linux Chromium locations are also checked. Set `BROWSER_BIN` to an
 executable path if needed. Node 22 or newer is required. The browser must be
-allowed to launch renderer/GPU subprocesses.
+allowed to launch renderer/GPU subprocesses. Every wait and DevTools call gives up
+after 15 s; set `BROWSER_TEST_TIMEOUT_MS` higher on a slow machine (CI uses 90 s,
+because its runners render WebGL in software on few cores).
 
 Set `BROWSER_TEST_OUTPUT` to a JSON file path to save the report and two adjacent
 screenshots. The temporary browser profile is removed after the run. Checks,

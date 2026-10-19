@@ -26,7 +26,17 @@ def test_synthetic_files_regenerate_byte_for_byte(tmp_path, monkeypatch):
     files = [p for p in generated if p.is_file()]
     assert len(files) == 82
     for path in files:
-        assert path.read_bytes() == (ROOT / path.relative_to(tmp_path)).read_bytes(), path.name
+        committed = ROOT / path.relative_to(tmp_path)
+        if path.suffix != '.npz':
+            assert path.read_bytes() == committed.read_bytes(), path.name
+            continue
+        # The ZIP container is not byte-stable across Python versions (zipfile's
+        # ZIP64 local headers changed in 3.12, and zlib builds compress
+        # differently), so compare what the readers decode: the .npy members.
+        with zipfile.ZipFile(path) as fresh, zipfile.ZipFile(committed) as kept:
+            assert fresh.namelist() == kept.namelist(), path.name
+            for member in kept.namelist():
+                assert fresh.read(member) == kept.read(member), (path.name, member)
 
 
 def test_synthetic_csv_matches_all_frame_counts_and_exposed_faces():

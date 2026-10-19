@@ -179,7 +179,9 @@ def resolve_path(path, plan_path=None):
     if not local_path(path):
         raise ValueError('Linked files need local paths, not URLs.')
     path_module = _path_module(path, plan_path)
-    if path_module.isabs(path):
+    # A rooted link without a drive (`/mnt/data/run.csv`) is absolute, as in
+    # link-paths.ts. ntpath.isabs stopped saying so in Python 3.13.
+    if path_module.isabs(path) or path[:1] in ('/', '\\'):
         return path_module.normpath(path)
     if not plan_path:
         raise ValueError('A relative link needs a plan loaded from or saved to a file.')

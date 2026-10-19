@@ -56,4 +56,6 @@ jobs:
       # Chrome at the path browser-tests/run.mjs looks for first.
       - name: Browser checks
         if: runner.os == 'Windows'
+        env:
+          BROWSER_TEST_TIMEOUT_MS: "90000"
         run: node browser-tests/run.mjs

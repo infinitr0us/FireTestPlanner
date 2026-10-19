@@ -9,7 +9,10 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 
 const web = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const waitFor = async (predicate, label, timeout = 15000) => {
+// Slow machines (CI runners render WebGL in software) can raise the limit for
+// every wait and DevTools call with BROWSER_TEST_TIMEOUT_MS.
+const TIMEOUT_MS = Number(process.env.BROWSER_TEST_TIMEOUT_MS) || 15000;
+const waitFor = async (predicate, label, timeout = TIMEOUT_MS) => {
   const start = Date.now();
   while (Date.now() - start < timeout) {
     const result = await predicate();
@@ -73,7 +76,7 @@ try {
   });
   send = (method, params = {}, session = sessionId) => new Promise((resolve, reject) => {
     const next = ++id;
-    const timer = setTimeout(() => { pending.delete(next); reject(new Error('CDP timeout: ' + method + '\n' + browserLog)); }, 15000);
+    const timer = setTimeout(() => { pending.delete(next); reject(new Error('CDP timeout: ' + method + '\n' + browserLog)); }, TIMEOUT_MS);
     pending.set(next, { resolve, reject, timer });
     socket.send(JSON.stringify({ id: next, method, params, ...(session ? { sessionId: session } : {}) }));
   });
