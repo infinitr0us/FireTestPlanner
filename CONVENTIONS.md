@@ -1045,9 +1045,9 @@ Neither export changes the stored plan or its format version.
 Run `python tools/check_fds_device_export.py` for an FDS setup check outside pytest.
 It combines the room corner source geometry with the current writer's devices and
 `T_END=0.`, runs in a temporary directory under `local/`, and requires `Set-up only`
-with no `ERROR` line. Set `FDS_BIN` to an executable or bin directory; the default
-is `C:/Program Files/firemodels/FDS6/bin/`. On Windows it calls the adjacent
-`fdsinit.bat` first. A missing default installation is reported as skipped; an
+with no `ERROR` line. Set `FDS_BIN` to an executable or bin directory; without it
+the tool uses the `fds` on PATH, where the FDS installer puts it. On Windows it
+calls the adjacent `fdsinit.bat` first. No FDS on PATH is reported as skipped; an
 invalid explicit `FDS_BIN` fails. The tool leaves the source fixtures unchanged.
 
 ### Nothing is guessed that the file does not say

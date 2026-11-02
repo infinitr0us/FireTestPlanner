@@ -2,8 +2,8 @@
 
 Run from any directory: python tools/check_fds_device_export.py
 FDS_BIN may name the executable or its bin directory. When it is unset, use the
-portable FDS 6.9.1 installation documented in CONVENTIONS.md. Missing default
-installations are reported as skipped; an invalid explicit FDS_BIN is an error.
+`fds` on PATH, where the FDS installer puts it. No FDS on PATH is reported as
+skipped; an invalid explicit FDS_BIN is an error.
 All generated input and FDS output stay in a temporary directory under local/.
 """
 from __future__ import annotations
@@ -13,6 +13,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,8 +23,6 @@ sys.path.insert(0, str(ROOT / 'python'))
 
 from fireplan._math import look_at_quat
 from fireplan import Plan, namelist  # noqa: E402
-
-DEFAULT_BIN = Path('C:/Program Files/firemodels/FDS6/bin')
 
 
 def setup_input() -> str:
@@ -61,15 +60,18 @@ def main() -> int:
     parser.add_argument('--timeout', type=float, default=120, help='FDS timeout in seconds (default: 120)')
     args = parser.parse_args()
     configured = os.environ.get('FDS_BIN')
-    binary = Path(configured) if configured else DEFAULT_BIN
+    if not configured:
+        found = shutil.which('fds')
+        if found is None:
+            print('SKIP: FDS is not on PATH. Set FDS_BIN to its executable or bin directory.')
+            return 0
+        configured = found
+    binary = Path(configured)
     if binary.is_dir():
         binary /= 'fds.exe' if os.name == 'nt' else 'fds'
     if not binary.is_file():
-        if configured:
-            print('FAIL: FDS_BIN does not identify an FDS executable: {}'.format(binary), file=sys.stderr)
-            return 1
-        print('SKIP: FDS was not found at {}. Set FDS_BIN to its executable or bin directory.'.format(DEFAULT_BIN))
-        return 0
+        print('FAIL: FDS_BIN does not identify an FDS executable: {}'.format(binary), file=sys.stderr)
+        return 1
     binary = binary.resolve()
     # Keep all generated files in the worktree, including temporary cleanup.
     local = (ROOT / 'local').resolve()
