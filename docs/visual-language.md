@@ -143,7 +143,7 @@ Current screen values (the CSS definitions remain authoritative):
 |---|---|
 | bg, panel, raised, input, hover | `#0f172a`, `#131c31`, `#1c2740`, `#0b1220`, `#253352` |
 | overlay, label, backdrop | `rgba(19,28,49,.97)`, `rgba(9,14,28,.82)`, `rgb(2 6 23 / 72%)` |
-| border, text, dim, faint | `#263251`, `#e2e8f0`, `#94a3b8`, `#64748b` |
+| border, text, dim, faint | `#263251`, `#e2e8f0`, `#94a3b8`, `#8190a6` |
 | accent, good, warn, bad | `#38bdf8`, `#34d399`, `#fbbf24`, `#f87171` |
 | plot primary, secondary, grid, cursor | `#65caff`, `#ffbe66`, `#405066`, `#cbd5e1` |
 | plot planned, limit, ramp low, ramp high | `#e2e8f0`, `#7b8aa1`, `#7a68e0`, `#e6e0fd` |
