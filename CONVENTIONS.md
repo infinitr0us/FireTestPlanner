@@ -143,6 +143,21 @@ cam.extrinsics(world_to_camera=True)   # OpenCV, world-to-camera (COLMAP images.
 cam.extrinsics("opengl")               # as stored, no flip
 ```
 
+`cam.extrinsics(convention="opencv", world_to_camera=False, pose="best")`
+selects the as-built transform when present, otherwise the planned transform.
+`pose="planned"` always selects the plan; `pose="as-built"` raises `ValueError`
+if no survey exists. `cam.pose_used(pose="best")` returns `"planned"` or
+`"as-built"` using the same selection and errors. This leaves the return value
+of `extrinsics` an ordinary NumPy 4x4 array. Every convention applies its usual
+axis flip after selecting the transform, and world-to-camera inverts that pose.
+Position, rotation, projection, framing and checks still read the planned pose.
+
+`Plan.to_nerfstudio()` explicitly selects `best` in the OpenGL frame. Its
+`metadata.poses` maps every camera ID to `{pose: "as-built" | "planned",
+measured: "YYYY-MM-DD" | null}`. A null measured date does not prevent selection
+of an existing as-built pose. Intrinsics and the pixel-centre conversion do not
+change.
+
 Storage is OpenGL and the reader default is OpenCV. That is deliberate, not an
 oversight: storage matches the tool that writes it, reading matches the tools that
 consume it. Both ends are explicit, and neither has to remember the other's choice.
@@ -397,6 +412,34 @@ curve made elsewhere, such as `fds-ramp:<ID>`, keeps its source until replaced.
 
 ## 5a. Object frames
 
+### As-built transforms (1.7)
+
+Any object with a planned `transform`, including an unknown type, may carry
+`asBuilt: {transform, measured, note}`. All three fields are required: transform
+has the same position, optional XYZW quaternion and optional aim target shape as
+the planned transform; measured is a valid ISO calendar date (`YYYY-MM-DD`) or
+null; note is text or null. Null `asBuilt` is invalid; remove the key to clear it.
+The stored OpenGL frame and authoritative quaternion rule apply to both poses.
+Survey transforms receive the same six-decimal rounding as planned geometry.
+
+The planned transform remains authoritative for checks, coverage, drawings and
+set-out. The editor copies it into a survey with today's local calendar date as
+one undoable edit, then edits only that copy. The offset readout uses world X/Y
+when no north bearing is known, or east/north when one is recorded; height remains
+world Z. The measured aim fields maintain quaternion/target consistency.
+
+`setOutCheck(doc)` and `Plan.set_out_check()` return object-origin coordinates,
+horizontal plan distance, signed measured-minus-planned height difference, the
+angle between facing directions in degrees for aimed objects, and survey date.
+A velocity probe with an unstated axis in either pose has no aim difference.
+The drawing appends these rows as **Set-out check**, only when surveys exist.
+The instrument CSV adds measured X/Y/Z in display units, empty without a survey;
+each rake bead uses the measured transform including its rotation.
+
+Writer order places `asBuilt` immediately after `transform`, with child keys
+`transform, measured, note`. On an unknown object these owned pose blocks are
+canonicalized, while unrelated keys retain their order and full precision.
+
 `transform.rotation_quat` applies to every object, not just cameras. Vertex lists
 (`polyline_m`, `polygon_m`, hood openings, rectangular burner footprints, and a
 thermocouple's `beadOffsets_m` along local `+Z`) are in the object's **local** frame, so anything that consumes them — the 3D scene, the semantic
@@ -616,10 +659,10 @@ one.
   in an older tool does not silently lose objects, and does not silently lose digits off
   a calibration coefficient either.
 
-  One narrow exception, and it is two format 1.0 blocks this version genuinely owns and
-  can edit: an unknown object's `transform` and `display` are canonicalised normally,
-  because the editor can drag, hide and lock one, and raw gizmo output is float noise.
-  Every other number is re-emitted digit for digit.
+  The editor-owned `transform`, `asBuilt` and `display` blocks are canonicalised
+  normally, because the editor can move, survey, hide and lock an unknown object.
+  Every unrelated number is re-emitted digit for digit. An as-built block follows
+  transform; the relative order of all other unknown keys is preserved.
 
   **Unknown keys on a *known* object type are not covered by this.** A `calibration`
   block added to a v1.2 *camera* is preserved and kept in order, but its numbers go
@@ -658,8 +701,9 @@ one.
 
 ## 7. Writing files
 
-Plans are revised by **editing into a new file**, not by storing planned-versus-as-built
-in one file. Git history is the audit trail, so the writer optimises for readable diffs:
+Plans are revised by **editing into a new file**. A survey may sit beside its planned
+pose in `asBuilt`; it does not replace the plan. Git history is the audit trail,
+so the writer optimises for readable diffs:
 
 - Keys are emitted in a **fixed order**, never hash order.
 - Geometry floats are rounded to **1 µm** (6 decimal places) and emitted in the shortest form that
@@ -672,6 +716,26 @@ in one file. Git history is the audit trail, so the writer optimises for readabl
 - Arrays of coordinates stay on one line; objects break across lines.
 - `meta.modified` updates on save, and `version` is re-derived from the contents
   (section 8). Nothing else changes without user action.
+
+### Series metadata and the next test
+
+`meta.series` is free text naming the project and test series. It follows `testId`
+in canonical metadata order and costs no version bump because meta is open in
+every 1.x schema. One file still represents one test.
+
+`Plan.next_test()` and `nextTest(doc)` return independent deep copies. A trailing
+ASCII decimal number in `testId` is incremented with its zero padding retained
+(`T-007` to `T-008`, `EX-001` to `EX-002`, `T-999` to `T-1000`). Without one,
+append `-2`; absent, null or empty IDs therefore become `-2`. The revision becomes
+null, created and modified become the same current UTC timestamp, and series and
+rig geometry remain. Remove root `testData`, all reconstructed flame objects,
+and every object's `linkedFiles` and `asBuilt`, including unknown object types.
+The original plan and its file destination remain unchanged.
+
+**Next test…** uses a new native save destination on desktop and a download in a
+browser, then opens the new copy and names the data left behind. Cancellation or
+failure keeps the current plan. If the current plan changes while saving, the
+copy is saved but the newer editor state is retained with an explanation.
 
 ## 8. Declaring a version
 
@@ -698,7 +762,7 @@ remaining contents. Unknown higher declarations remain untouched.
 | 1.4.0 | `reconstructedFlame`, any object's `display.opacity` or `display.colorMode`, or a link's non-zero `timeOffset_s` |
 | 1.5.0 | `units.display.length` is `ft-in` |
 | 1.6.0 | Non-empty root `testData` |
-| 1.7.0 | Non-null `fire.hrrCurve`, `velocityProbe`, `gasSampling`, `loadCell`, or a `plate-thermometer` / `thin-skin` gauge kind |
+| 1.7.0 | Any object's `asBuilt`, non-null `fire.hrrCurve`, `velocityProbe`, `gasSampling`, `loadCell`, or a `plate-thermometer` / `thin-skin` gauge kind |
 
 The 1.3 schema closes `linkedFile` and earlier schemas close `display`, which is
 why the 1.4 keys count even on an older object type. Only the `ft-in` preference

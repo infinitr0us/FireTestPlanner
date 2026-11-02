@@ -1,5 +1,6 @@
 import { isNewInstrument, isVelocityProbe, isGasSampling, isLoadCell } from '../core/types';
 import { curveSummary, hrrAt } from '../core/hrr';
+import { setOutCheck } from '../core/asbuilt';
 /**
  * The printable deliverable: dimensioned plan, elevations, equipment list and
  * camera coverage, in a layout you can staple to a test protocol.
@@ -140,6 +141,15 @@ function setOutTable(doc: PlanDocument, unit: LengthUnit): string {
     <p class="note">Lengths in ${esc(unit)}. P1, P2, … follow each wall polyline; base/top give its height limits. Aim is the recorded target; a gauge's facing names the plan axis its sensing face looks along, any turn off that axis, and its tilt.</p>
     <table class="set-out"><thead><tr>${['Item', 'Type', 'X', 'Y', 'Height (Z)', 'Aim point (X, Y, Z)', 'Standoff (plan / slant)', 'Facing / setup'].map(head).join('')}</tr></thead>
     <tbody>${rows.join('\n')}</tbody></table>`;
+}
+
+function setOutCheckTable(doc: PlanDocument, unit: LengthUnit): string {
+  const rows = setOutCheck(doc);
+  if (!rows.length) return '';
+  const fmt = (v: number): string => formatLength(v, unit, { fixed: true });
+  return `<h2>Set-out check</h2><p class="note">Survey of object origins in ${esc(unit)}. Height difference is measured minus planned; aim difference compares facing directions. Sign-off: ____________________</p>
+    <table class="set-out set-out-check"><thead><tr>${['Item', 'Planned (X, Y, Z)', 'Measured (X, Y, Z)', 'Plan distance', 'Height difference', 'Aim difference (deg)', 'Measured date'].map(head).join('')}</tr></thead>
+    <tbody>${rows.map(r => `<tr data-object-id="${esc(r.id)}">${[r.name, r.planned.map(fmt).join(', '), r.measured.map(fmt).join(', '), fmt(r.plan_distance_m), fmt(r.height_difference_m), r.aim_difference_deg === null ? 'Unstated' : r.aim_difference_deg.toFixed(1), r.date ?? 'Unstated'].map(v => cell(v, 'coord')).join('')}</tr>`).join('\n')}</tbody></table>`;
 }
 
 function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
@@ -562,6 +572,7 @@ export function buildReportBody(doc: PlanDocument, unit: LengthUnit): string {
 
     <h2>Set-out</h2>
     ${setOutTable(doc, unit)}
+    ${setOutCheckTable(doc, unit)}
 
     <h2>Camera coverage</h2>
     ${coverageTable(doc, unit)}

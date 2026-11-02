@@ -2,6 +2,14 @@
 
 Status: design, 2026-11-02. Phase C of [PLAN.md section 9](../PLAN.md#9-next-round-2026-11).
 
+Sections 3 and 5 implemented on `feat/asbuilt-series`: as-built poses extend 1.7.0;
+series remains open metadata. Pose provenance is `cam.pose_used(pose)`, and
+nerfstudio records every camera's selected pose and survey date in `metadata.poses`.
+Survey dates are calendar dates or null; Set-out check compares object origins
+and authoritative facing directions. Next-test copies retain ID zero padding,
+clear revision to null and remove survey poses as well as the previous test's
+data. With no trailing ID number they append `-2`, including an empty ID.
+
 Five pieces, one format version. Each is small on its own; they share a version so a
 plan written by this release declares 1.7.0 only when it uses one of them.
 

@@ -1,0 +1,78 @@
+{
+  "format": "fire-test-plan",
+  "version": "1.7.0",
+  "meta": {
+    "title": "As built rig",
+    "testId": "T-007",
+    "series": "Room fire series",
+    "created": "2026-01-01T00:00:00Z",
+    "modified": "2026-01-01T00:00:00Z",
+    "revision": "B"
+  },
+  "units": {
+    "length": "m",
+    "angle": "rad",
+    "power": "kW",
+    "temperature": "C"
+  },
+  "coordinateSystem": {
+    "convention": "Z-up-right-handed",
+    "origin": "burner-center-floor"
+  },
+  "objects": [
+    {
+      "id": "cam",
+      "type": "camera",
+      "name": "Measured camera",
+      "transform": {
+        "position_m": [1, 2, 3],
+        "rotation_quat": [0, 0, 0, 1]
+      },
+      "asBuilt": {
+        "transform": {
+          "position_m": [1.3, 2.4, 2.96],
+          "rotation_quat": [0, 1, 0, 0]
+        },
+        "measured": "2026-11-02",
+        "note": "Crew survey"
+      },
+      "camera": {
+        "modality": "MWIR",
+        "resolution_px": [640, 512],
+        "sensor_mm": [16, 12.8],
+        "focalLength_mm": 25
+      }
+    },
+    {
+      "id": "tc",
+      "type": "thermocouple",
+      "transform": {
+        "position_m": [0, 0, 0]
+      },
+      "asBuilt": {
+        "transform": {
+          "position_m": [0.1, 0, 0.2],
+          "rotation_quat": [0, 1, 0, 0]
+        },
+        "measured": null,
+        "note": null
+      },
+      "beadOffsets_m": [0, 1]
+    },
+    {
+      "id": "future-precision",
+      "type": "future",
+      "coefficient": 1.23456789e-8,
+      "transform": {
+        "position_m": [0, 1, 2]
+      },
+      "asBuilt": {
+        "transform": {
+          "position_m": [0.123457, 1, 2]
+        },
+        "measured": "2024-02-29",
+        "note": "Unknown object survey"
+      }
+    }
+  ]
+}

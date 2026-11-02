@@ -1,5 +1,8 @@
 import { curvePeak, hrrAt } from '../core/hrr';
 import { nearestOpening } from '../core/instrument-placement';
+import { recordAsBuilt, asBuiltProblem } from '../core/asbuilt';
+import { isAimable, type Quat } from '../core/types';
+import { forwardOf } from '../core/math';
 import { isVelocityProbe, isGasSampling, isLoadCell, GAS_SPECIES, type VelocityProbeObject, type GasSamplingObject, type LoadCellObject } from '../core/types';
 /**
  * Property inspector for the selected object.
@@ -357,6 +360,7 @@ export class Inspector {
       this.root.append(...this.flamePanel.render(obj, (label, fn) => this.patch(obj.id, label, (o) => fn(o as ReconstructedFlameObject))));
     }
     this.renderTransform(obj, unit);
+    if (obj.transform) this.renderAsBuilt(obj, unit);
 
     if (isCamera(obj)) this.renderCamera(obj, unit);
     else if (isBurner(obj)) this.renderBurner(obj, unit);
@@ -395,6 +399,62 @@ export class Inspector {
   }
 
   // -- shared ------------------------------------------------------------
+
+  private renderAsBuilt(obj: PlanObject, unit: LengthUnit): void {
+    const panel = h('div', { class: 'as-built' }, [sectionTitle('As built')]);
+    this.root.append(panel);
+    if (!obj.asBuilt) {
+      panel.append(button('Record as built', () => this.patch(obj.id, 'Record as built', recordAsBuilt)));
+      return;
+    }
+    const t = obj.asBuilt.transform;
+    const edit = (label: string, fn: (o: PlanObject) => void): void => this.patch(obj.id, label, o => {
+      // Only the surveyed transform is editable here; mount and planned pose stay independent.
+      const proxy: PlanObject = { id: o.id, type: o.type, transform: o.asBuilt!.transform };
+      fn(proxy);
+    });
+    panel.append(row(`Measured position (${unit})`, vecField(t.position_m, unit, ['X', 'Y', 'Z'], (i, value) =>
+      edit('Move as built', o => { const p = [...o.transform!.position_m] as Vec3; p[i] = value; setPosition(o, p); }))));
+    if (isAimable(obj)) {
+      const direction = forwardOf(t.rotation_quat ?? [0, 0, 0, 1]);
+      const aim = t.aimTarget_m ?? t.position_m.map((v, i) => v + direction[i]) as Vec3;
+      panel.append(row(`Measured aim (${unit})`, vecField(aim, unit, ['X', 'Y', 'Z'], (i, value) =>
+        edit('Aim as built', o => { const a = [...aim] as Vec3; a[i] = value; setAimTarget(o as AimableObject, a); }))));
+    }
+    // Quaternion fields also allow roll and objects without an aim target.
+    const q = t.rotation_quat ?? [0, 0, 0, 1];
+    panel.append(row('Rotation (XYZW)', h('div', { class: 'field__vec as-built__quaternion' }, q.map((v, i) => {
+      const input = numberField(v, value => edit('Rotate as built', o => {
+        const next = [...q] as Quat; next[i] = value;
+        const length = Math.hypot(...next);
+        if (length < 1e-9) return;
+        o.transform!.rotation_quat = next.map(n => n / length) as Quat;
+        o.transform!.aimTarget_m = null;
+      }), { step: 0.01 });
+      input.setAttribute('aria-label', `Measured quaternion ${['X', 'Y', 'Z', 'W'][i]}`);
+      return h('span', { class: 'field__vec-cell' }, [
+        h('span', { class: 'field__vec-axis' }, [['X', 'Y', 'Z', 'W'][i]]), input,
+      ]);
+    }))));
+    const delta = t.position_m.map((v, i) => v - obj.transform!.position_m[i]);
+    const fmt = (v: number): string => formatLengthWithUnit(Math.abs(v), unit);
+    const azimuth = this.store.document.coordinateSystem.northAzimuth_rad;
+    const x = azimuth == null ? delta[0] : delta[0] * Math.cos(azimuth) + delta[1] * Math.sin(azimuth);
+    const y = azimuth == null ? delta[1] : -delta[0] * Math.sin(azimuth) + delta[1] * Math.cos(azimuth);
+    const directions = azimuth == null ? [x < 0 ? 'in -X' : 'in +X', y < 0 ? 'in -Y' : 'in +Y'] : [x < 0 ? 'west' : 'east', y < 0 ? 'south' : 'north'];
+    panel.append(h('p', { class: 'panel__hint as-built__offset' }, [
+      `As built is ${fmt(x)} ${directions[0]}, ${fmt(y)} ${directions[1]} and ${fmt(delta[2])} ${delta[2] < 0 ? 'low' : 'high'} of the plan (plan offset ${fmt(Math.hypot(...delta.slice(0, 2)))}).`,
+    ]));
+    const date = textField(obj.asBuilt.measured ?? '', value => {
+      const candidate = { ...obj, asBuilt: { ...obj.asBuilt!, measured: value || null } };
+      if (asBuiltProblem(candidate)) { date.setAttribute('aria-invalid', 'true'); return; }
+      this.patch(obj.id, 'Survey date', o => { o.asBuilt!.measured = value || null; });
+    });
+    date.type = 'date';
+    panel.append(row('Measured date', date), row('Survey note', textField(obj.asBuilt.note ?? '', value =>
+      this.patch(obj.id, 'Survey note', o => { o.asBuilt!.note = value || null; }))),
+      button('Clear', () => this.patch(obj.id, 'Clear as built', o => { delete o.asBuilt; })));
+  }
 
   private renderTransform(obj: PlanObject, unit: LengthUnit): void {
     const canFds = hasXbView(obj) || hasXyzView(obj);
@@ -597,6 +657,8 @@ export class Inspector {
         this.editPlan('Edit title', (d) => { d.meta = { ...(d.meta ?? {}), title: v }; }))),
       row('Test ID', textField(doc.meta?.testId ?? '', (v) =>
         this.editPlan('Edit test ID', (d) => { d.meta = { ...(d.meta ?? {}), testId: v || null }; }))),
+      row('Series', textField(doc.meta?.series ?? '', (v) =>
+        this.editPlan('Edit series', (d) => { d.meta = { ...(d.meta ?? {}), series: v || null }; }))),
       row('Author', textField(doc.meta?.author ?? '', (v) =>
         this.editPlan('Edit author', (d) => { d.meta = { ...(d.meta ?? {}), author: v || null }; }))),
       row('Site', textField(doc.meta?.siteName ?? '', (v) =>

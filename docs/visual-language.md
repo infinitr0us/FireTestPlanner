@@ -29,6 +29,7 @@ the feature:
 | HRR curve readout in inspector, drawing and import preview | `core/hrr.ts`: `curveSummary` |
 | Making a curve in the inspector, and its sparkline | `ui/hrr-curve-editor.ts`, with `ui/hrr-curve-model.ts` |
 | Fire clock marks, the cone's time and the Q readout | `state/fire-clock.ts` |
+| As-built ghost opacity and connection opacity | `core/visual.ts`: `AS_BUILT_STYLE`, with `core/plan.ts` object identity colors |
 | Plot series, grid and cursor | `--plot-*` tokens in `styles.css` |
 | Viewport plot frame, collapse and view selector | `ui/plot-panel.ts` |
 | Plot dashes, bead ramp, ticks and time axis | `ui/plot-svg.ts` |
@@ -205,6 +206,20 @@ and focus returns to the same control after an apply even when the HRR field abo
 it becomes a readout. The readout sits beside a 96 × 34 px sparkline: the curve in
 solid `--plot-planned` on a `--plot-grid` baseline, the first peak marked with a dot,
 and its peak and time as the accessible name.
+The **As built** inspector section uses the existing unit-aware fields, buttons
+and hint text. Survey vectors use the full inspector width so XYZ and quaternion
+values stay legible. Record copies the planned pose as one edit; position, aim,
+rotation, date, note and Clear are undoable. World-axis offsets are named unless
+the plan records a north bearing, when compass directions are meaningful.
+
+Survey ghosts use `objectColor`, preserving camera modality, device identity and
+explicit user colors. `AS_BUILT_STYLE` gives geometry 0.25 opacity and outlines
+and the thin planned-to-measured connection 0.55 opacity. Camera ghosts contain
+only the frustum outline. Ghosts are editor annotations: they are not pickable,
+do not enter camera previews or planning checks, and follow object visibility.
+**As built** in the toolbar view group shows or hides them, initially shown.
+The next-test action lives beside Save as in the file group, and its completion
+message names the previous test's data that was left behind.
 
 ## Playback
 
@@ -336,6 +351,12 @@ world coordinates as set-out, with one row per thermocouple bead. Facing words
 come from `core/facing.ts` for both exports. The toolbar wraps on narrow screens
 and the schedule action reuses its existing native button and focus styling.
 
+**Set-out check** follows Set-out when surveys exist. It uses the same print ink,
+fixed display-unit precision, repeated table headings and unbroken object rows.
+The table compares object origins, gives signed height and facing-angle changes,
+and includes survey dates and a sign-off line. Measured schedule columns transform
+each rake bead through its surveyed pose.
+
 For future changes, reuse existing identity and interface tokens, preserve the
 meaning of data colors, and document a difference when it helps the task. Verify
 real focus, selection, playback and export behavior when touching those paths.
@@ -357,6 +378,7 @@ Token reuse alone is not an accessibility or scientific-validation claim.
 | HRR curve sparkline | Solid `--plot-planned` line, not Planned's long dash | At 96 px a 10 4 dash breaks the curve into a few marks; the sparkline stands alone beside its readout, not among measured and simulated lines | Keep |
 | New planning instrument glyphs | Tube 0.24 m, ring radius 0.06 m, unstated load platform 0.18 m square are symbolic; a recorded platform uses its actual dimensions | Visible, pickable hardware proxies; these display sizes never enter checks, stored fields or results coordinates | Keep; magnitude probes have no directional tube |
 | Print | Paper background and dark ink; instrument defaults still shared | Screen surfaces are unsuitable for paper | Keep |
+| As-built camera ghosts | Frustum outline only; other objects use translucent geometry | The survey overlay shows camera pose without duplicating hardware or obscuring the planned view | Keep |
 | Length precision | Fixed decimals on dimensions and set-out coordinates; trimmed decimals in inspector fields | Adjacent construction labels need consistent precision; fields stay compact and editable | Keep; fractional ft-in uses the same reduced sixteenths everywhere |
 | Rake plots | Bead lines take the ordinal `--plot-ramp-*` colours instead of `--plot-primary`/`--plot-secondary` | Colour encodes bead height; the measured/simulated distinction is carried by dash, as on every instrument plot | Keep |
 | Gauge range on plots | Drawn only while within twice the plotted maximum; otherwise an off-scale label | A 50 kW/m² range on a 5 kW/m² reading would flatten the data the plot is for | Keep |

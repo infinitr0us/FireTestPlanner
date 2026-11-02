@@ -10,13 +10,16 @@ const csv = (s: string): string => /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""'
 export function instrumentScheduleCsv(doc: PlanDocument, unit: LengthUnit): string {
   const sources = doc.testData ?? [];
   const rows: string[][] = [['Name', 'Type', 'ID', `X (${unit})`, `Y (${unit})`, `Height (${unit})`,
-    `Aim point (${unit}; X, Y, Z)`, 'Facing', 'Gauge range (kW/m²)', 'Probe range (m/s)', 'Gas species', 'In duct', 'Capacity (kg)', `Platform (${unit}; W, D)`, ...sources.map(s => s.name)]];
+    `Aim point (${unit}; X, Y, Z)`, 'Facing', 'Gauge range (kW/m²)', 'Probe range (m/s)', 'Gas species', 'In duct', 'Capacity (kg)', `Platform (${unit}; W, D)`,
+    `Measured X (${unit})`, `Measured Y (${unit})`, `Measured Z (${unit})`, ...sources.map(s => s.name)]];
   const fmt = (v: number): string => formatLength(v, unit, { fixed: true });
   for (const o of doc.objects) {
     if (!isHeatFluxSensor(o) && !isThermocouple(o) && !isCamera(o) && !isNewInstrument(o)) continue;
     const beads = isThermocouple(o) ? beadOffsetsOf(o) : [null];
     beads.forEach((offset, bead) => {
       const p = offset === null ? positionOf(o) : toWorld(o, [0, 0, offset]);
+      const surveyed = o.asBuilt ? { ...o, transform: o.asBuilt.transform } : null;
+      const measured = surveyed ? (offset === null ? positionOf(surveyed) : toWorld(surveyed, [0, 0, offset])) : null;
       const name = displayName(o) + (beads.length > 1 ? `_${bead + 1}` : '');
       const aim = isAimable(o) ? o.transform?.aimTarget_m : undefined;
       const range = isHeatFluxSensor(o) ? gaugeRangeKwM2(o) : null;
@@ -27,6 +30,7 @@ export function instrumentScheduleCsv(doc: PlanDocument, unit: LengthUnit): stri
         isGasSampling(o) ? o.species.join('; ') : '', isGasSampling(o) ? String(o.inDuct) : '',
         isLoadCell(o) && o.capacity_kg != null ? String(o.capacity_kg) : '',
         isLoadCell(o) && o.platform_m ? o.platform_m.map(fmt).join(', ') : '',
+        ...(measured ? measured.map(fmt) : ['', '', '']),
         ...sources.map(s => s.channels.filter(c => c.object === o.id
           && (isThermocouple(o) ? c.bead === bead : c.bead === undefined)).map(c => c.channel).join('; '))]);
     });

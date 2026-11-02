@@ -367,12 +367,26 @@ class Camera(PlanObject):
             )
         return self.rotation_matrix @ flip
 
+    def pose_used(self, pose: str = "best") -> str:
+        """Return 'planned' or 'as-built'; reject an unavailable explicit survey."""
+        if pose not in ("best", "planned", "as-built"):
+            raise ValueError("pose must be best, planned or as-built")
+        present = self.raw.get("asBuilt") is not None
+        if pose == "as-built" and not present:
+            raise ValueError("camera has no as-built pose")
+        return "as-built" if present and pose != "planned" else "planned"
+
     def extrinsics(
-        self, convention: str = "opencv", world_to_camera: bool = False
+        self, convention: str = "opencv", world_to_camera: bool = False, pose: str = "best"
     ) -> np.ndarray:
-        """4x4 pose. Camera-to-world by default; OpenCV frame by default."""
-        r = self.rotation(convention)
-        t = self.position
+        """4x4 pose, best available, camera-to-world and OpenCV by default.
+
+        pose_used(pose) reports provenance. Projection and checks stay planned.
+        """
+        source = self if self.pose_used(pose) == "planned" else Camera(
+            dict(self.raw, transform=self.raw["asBuilt"]["transform"]))
+        r = source.rotation(convention)
+        t = source.position
         m = np.eye(4)
         if world_to_camera:
             m[:3, :3] = r.T
