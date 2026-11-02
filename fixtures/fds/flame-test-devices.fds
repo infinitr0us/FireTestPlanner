@@ -1,0 +1,17 @@
+! Plan: Synthetic flame demonstration
+! Test ID: EX-001
+! Instruments only: no geometry, mesh, surfaces or reactions
+! plan frame: origin at the burner centre at floor level
+! Written by FireTestPlanner
+
+&PROP ID='TC 1.5 mm', DIAMETER=0.0015 /
+
+&DEVC ID='East wall gauge', XYZ=1.45,0,0.9, QUANTITY='RADIATIVE HEAT FLUX GAS', ORIENTATION=-0.9946,0.0000,-0.1043 /
+&DEVC ID='North wall gauge', XYZ=0,1.95,0.9, QUANTITY='GAUGE HEAT FLUX', IOR=-2, ORIENTATION=0.0000,-0.9970,-0.0777 /
+&DEVC ID='East wall rake_1', XYZ=1.45,0,0.3, QUANTITY='WALL TEMPERATURE', IOR=-1 /
+&DEVC ID='East wall rake_2', XYZ=1.45,0,0.9, QUANTITY='WALL TEMPERATURE', IOR=-1 /
+&DEVC ID='East wall rake_3', XYZ=1.45,0,1.5, QUANTITY='WALL TEMPERATURE', IOR=-1 /
+&DEVC ID='East wall rake_4', XYZ=1.45,0,2.1, QUANTITY='WALL TEMPERATURE', IOR=-1 /
+&DEVC ID='Plume rake_1', XYZ=0.25,0,1.6, QUANTITY='THERMOCOUPLE', PROP_ID='TC 1.5 mm' /
+&DEVC ID='Plume rake_2', XYZ=0.25,0,1.9, QUANTITY='THERMOCOUPLE', PROP_ID='TC 1.5 mm' /
+&DEVC ID='Plume rake_3', XYZ=0.25,0,2.2, QUANTITY='THERMOCOUPLE', PROP_ID='TC 1.5 mm' /

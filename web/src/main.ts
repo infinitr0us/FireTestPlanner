@@ -39,6 +39,7 @@ import { Playhead } from './state/playhead';
 import { Store } from './state/store';
 import { h, qs } from './ui/dom';
 import { FdsImportDialog } from './ui/import-fds';
+import { FdsExportDialog } from './ui/export-fds';
 import { FdsResultsDialog } from './ui/fds-results';
 import { Inspector } from './ui/inspector';
 import { ChecksPanel, Outliner, Palette } from './ui/panels';
@@ -253,6 +254,7 @@ viewport.onMeasureChange = (count) => {
 
 const reportOverlay = new ReportOverlay((html, name) => { void saveHtml(html, name); });
 const fdsImport = new FdsImportDialog();
+const fdsExport = new FdsExportDialog(open => viewport.setSuspended(open));
 const fdsResults = new FdsResultsDialog(open => viewport.setSuspended(open));
 
 /** Write an HTML export, and say so if it fails rather than doing nothing visible. */
@@ -358,6 +360,8 @@ function renderToolbar(): void {
       btn('Save as…', () => { void savePlan(true); }),
       btn('Import FDS…', () => { void importFds(); },
         'Build a plan from an FDS input file — geometry, the burner and the devices'),
+      btn('Export to FDS…', () => { playhead.pause(); fdsExport.open(store.document, store.fileName); },
+        'Write gauges and thermocouple beads as FDS devices'),
       btn('FDS results…', () => { playhead.pause(); fdsResults.open(); }, 'Visualize and play recorded FDS simulation output'),
       btn('Example', loadExample, 'Load the reference plan built from the hand sketch'),
     ]),
@@ -725,7 +729,7 @@ window.addEventListener('focusin', noteCommitted);
 window.addEventListener('change', (e) => { if (e.target === committedText?.el) noteCommitted(e); }, true);
 
 window.addEventListener('keydown', (e) => {
-  if (fdsResults.isOpen) return;
+  if (fdsResults.isOpen || fdsExport.isOpen) return;
   const target = e.target as HTMLElement | null;
   const control = target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName) ? target : null;
   // Escape cancels what was typed, then hands the keyboard back to the editor.

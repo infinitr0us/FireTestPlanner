@@ -459,6 +459,34 @@ def test_dialog_routes_are_inert_without_a_window(server):
     assert payload is None
 
 
+def test_fds_export_save_route(server, tmp_path, monkeypatch):
+    shell, _, base, _ = server
+    destination = tmp_path / 'devices'
+    asked = []
+
+    def choose(name, filters):
+        asked.append((name, filters))
+        return str(destination)
+
+    monkeypatch.setattr(shell, '_ask_save', choose)
+    text = "! Café\n&DEVC ID='TC', XYZ=1,2,3, QUANTITY='THERMOCOUPLE' /\n"
+    body = {'text': text, 'name': 'devices.fds'}
+    with pytest.raises(urllib.error.HTTPError) as refused:
+        request(base, '/api/save-fds', None, body)
+    assert refused.value.code == 403
+    assert not asked
+    _, payload = request(base, '/api/save-fds', 'test-token', body)
+    assert payload == {'path': str(destination) + '.fds'}
+    assert asked == [('devices.fds', shell_app.FDS_FILTER)]
+    assert (tmp_path / 'devices.fds').read_bytes() == text.encode('utf-8')
+    assert not shell.dirty and not shell.recent_files()
+    monkeypatch.setattr(shell, '_ask_save', lambda *_: None)
+    assert request(base, '/api/save-fds', 'test-token', body)[1] is None
+    monkeypatch.setattr(shell, '_ask_save', choose)
+    monkeypatch.setattr(shell, '_write', lambda *_: 'Disk full')
+    assert request(base, '/api/save-fds', 'test-token', body)[1] == {'error': 'Disk full'}
+
+
 def test_save_over_the_api_writes_back_only_with_the_token(server, plan_file):
     """The whole contract, end to end over HTTP: open hands out a token, save with it
     writes back with no dialog, save without it (or with a wrong one) asks."""

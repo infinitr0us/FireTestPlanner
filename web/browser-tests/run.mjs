@@ -158,6 +158,21 @@ try {
   await click('[...document.querySelectorAll("button")].find(b=>b.textContent==="Example")');
   await waitFor(() => evaluate('!!document.querySelector(".playback-bar:not([hidden]) input[aria-label=\\"Frame\\"]:not(:disabled)")'), 'example flame');
   const editorFirst = 'document.querySelector(".playback-bar button[aria-label=\\"First frame (Home)\\"]")';
+  phase('Example FDS device export');
+  const exportButton = '[...document.querySelectorAll("button")].find(b=>b.textContent==="Export to FDS…")';
+  await click(exportButton);
+  await waitFor(() => evaluate('!!document.querySelector("dialog.fds-export[open]")'), 'FDS export dialog');
+  check('Example export reports quantities and omissions', await evaluate(
+    'document.querySelector(".fds-export__summary").textContent === "9 devices: 1 gauge heat flux, 1 radiative heat flux gas, 3 thermocouple beads, 4 surface thermocouple beads. Cameras and geometry are not exported."'));
+  const firstExportedDevice = await evaluate('document.querySelector(".fds-export__text").value.split("\\n").find(line=>line.startsWith("&DEVC"))');
+  check('Example export first DEVC retains its position and normal', firstExportedDevice ===
+    "&DEVC ID='East wall gauge', XYZ=1.45,0,0.9, QUANTITY='RADIATIVE HEAT FLUX GAS', ORIENTATION=-0.9946,0.0000,-0.1043 /");
+  check('FDS preview is read only, focused and uses shared monospace', await evaluate(
+    '(() => { const t=document.querySelector(".fds-export__text"); return t.readOnly && document.activeElement===t && getComputedStyle(t).fontFamily.includes("Cascadia Mono"); })()'));
+  await screenshot('fds-export');
+  await key('Escape', 'Escape', 27);
+  check('Escape closes FDS preview and restores toolbar focus', await evaluate(
+    '!document.querySelector("dialog.fds-export") && document.activeElement.textContent === "Export to FDS…"'));
   await click(editorFirst);
   await key('.', 'Period', 190);
   await waitFor(() => evaluate('document.querySelector(".playback-bar input[aria-label=\\"Frame\\"]").value==="1"'), 'editor step after mouse click');

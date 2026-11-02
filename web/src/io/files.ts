@@ -51,6 +51,7 @@ export interface ShellBridge {
     text: string, suggestedName: string, saveAs: boolean, token: string | null,
   ): Promise<SavedPlan | null>;
   saveHtml(html: string, suggestedName: string): Promise<string | null>;
+  saveFds(text: string, suggestedName: string): Promise<string | null>;
   recentFiles(): Promise<string[]>;
   /** A plan from the recent list. Rejects with the shell's reason otherwise. */
   openRecent(path: string): Promise<OpenedPlan | null>;
@@ -158,6 +159,8 @@ export function connectShell(onReady: () => void): void {
     },
     saveHtml: (html, name) =>
       call<SaveResult>('/api/save-html', { html, name }).then((r) => unwrapSave(r)?.path ?? null),
+    saveFds: (text, name) =>
+      call<SaveResult>('/api/save-fds', { text, name }).then((r) => unwrapSave(r)?.path ?? null),
     recentFiles: () => call<string[]>('/api/recent').then((r) => (Array.isArray(r) ? r : [])),
     openRecent: async (path) => {
       const result = await call<{ path: string; text: string; token?: unknown; error?: string } | null>(
@@ -234,6 +237,12 @@ export function captureBootHtml(): void {
 export function embeddedPlanText(): string | null {
   const el = document.getElementById(EMBED_ID);
   return el?.textContent?.trim() || null;
+}
+
+export async function saveFdsText(text: string, suggestedName: string): Promise<string | null> {
+  if (bridge) return bridge.saveFds(text, suggestedName);
+  download(new Blob([text], { type: 'text/plain;charset=utf-8' }), suggestedName);
+  return suggestedName;
 }
 
 function download(blob: Blob, filename: string): void {

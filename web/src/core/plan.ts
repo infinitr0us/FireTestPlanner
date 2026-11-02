@@ -779,6 +779,10 @@ export const beadOffsetsOf = (t: ThermocoupleObject): number[] => {
   return clean.length > 0 ? clean : [0];
 };
 
+/** Geometry alone, shared by predictions and device export. */
+export const beadPositions = (t: ThermocoupleObject): Vec3[] =>
+  beadOffsetsOf(t).map(offset => toWorld(t, [0, 0, offset]));
+
 export interface BeadState {
   index: number;
   /** Offset along the rake, from the object origin. */
@@ -818,8 +822,9 @@ export function thermocoupleBeads(d: PlanDocument, t: ThermocoupleObject): BeadS
   const ambient = d.environment?.ambientTemperature_C ?? 20;
   const primary = primaryBurner(d);
 
-  return beadOffsetsOf(t).map((offsetM, index) => {
-    const world = toWorld(t, [0, 0, offsetM]);
+  const offsets = beadOffsetsOf(t);
+  return beadPositions(t).map((world, index) => {
+    const offsetM = offsets[index];
     const radialTo = (b: BurnerObject): number => {
       const bp = positionOf(b);
       return Math.hypot(world[0] - bp[0], world[1] - bp[1]);
