@@ -1,6 +1,6 @@
 {
   "format": "fire-test-plan",
-  "version": "1.1.0",
+  "version": "1.7.0",
   "meta": {
     "title": "room_corner",
     "testId": "room_corner",
@@ -142,7 +142,16 @@
       "fire": {
         "fuel": "propane",
         "hrr_kw": 300,
-        "hrrCurve": null
+        "hrrCurve": {
+          "points": [
+            [0, 0],
+            [1, 100],
+            [25, 100],
+            [26, 300],
+            [60, 300]
+          ],
+          "source": "fds-ramp:burner_steps"
+        }
       },
       "display": {
         "color": "#ffa500"

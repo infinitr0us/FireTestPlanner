@@ -1,3 +1,4 @@
+import { curveProblem } from './hrr';
 /**
  * Structural validation at load time.
  *
@@ -296,7 +297,9 @@ function validateByType(obj: PlanObject, err: Reporter): void {
       }
       checkOptionalLength(raw, 'rimHeight_m', id, err, { label: 'Burner' });
       const fire = raw.fire as Record<string, unknown> | undefined;
-      if (isStated(fire?.hrr_kw) && !isPositive(fire!.hrr_kw)) {
+      const problem = curveProblem(fire?.hrrCurve);
+      if (problem) err('bad-hrr-curve', `Burner "${id}": ${problem}`, id);
+      if (isStated(fire?.hrr_kw) && !(isPositive(fire!.hrr_kw) || (fire?.hrrCurve != null && fire.hrr_kw === 0))) {
         err('bad-hrr', `Burner "${id}" has a non-positive hrr_kw.`, id);
       }
       // Not merely a schema range. `radiativeFractionOf` substitutes the 0.3

@@ -26,6 +26,7 @@ the feature:
 | Results quantity families and symbols | `core/fds-devices.ts`, preserving the recorded quantity |
 | Results scalar colour scale | `scene/fds-results.ts`: the shader's `ramp`, and `resultRampRgb` for anything drawn outside it (the PNG colour bar); `.fds-results__ramp` shows the same five stops |
 | Playback controls and shortcuts | `ui/transport.ts`; speeds from `state/playhead.ts` |
+| HRR curve readout in inspector, drawing and import preview | `core/hrr.ts`: `curveSummary` |
 | Plot series, grid and cursor | `--plot-*` tokens in `styles.css` |
 
 Reuse those definitions rather than copying their current values into a new
@@ -163,6 +164,12 @@ toolbar focus, and the plan's playback and keyboard commands pause while it is
 open. Desktop Download uses the native save bridge; browsers download the same
 UTF-8 text. Browser regressions cover the preview separately from native dialogs.
 
+The burner curve readout uses the existing note/readout styles and shared buttons.
+The peak replaces the editable steady HRR field while a curve is present. Remove
+curve keeps the peak as the steady rate (a zero peak becomes an unset steady rate)
+and is undoable. The full point count, peak, first peak time and source also appear
+in the drawing's equipment row. Source text wraps at narrow inspector widths.
+
 ## Playback
 
 `ui/transport.ts` supplies the shared five button glyphs, accessible names and
@@ -259,6 +266,7 @@ Token reuse alone is not an accessibility or scientific-validation claim.
 | History renderers | Results canvas; reconstruction SVG | Different interaction/export paths already work | Keep |
 | PNG export | Results use current pixel ratio capped at 2 with labels/caption; editor uses 3× without DOM labels | Preserve current export semantics; resolution parity is separate work | Keep |
 | Scientific ramps | Slice, smoke/fire and reconstructed-height palettes retain their own meanings | A data scale is not an interaction accent | Keep |
+| HRR curve inspector and cone | Curve readout and undoable removal; cone remains at peak | Curve authoring and a fire clock are deferred; sizing checks remain at peak | Keep for M17 model/import part |
 | Print | Paper background and dark ink; instrument defaults still shared | Screen surfaces are unsuitable for paper | Keep |
 | Length precision | Fixed decimals on dimensions and set-out coordinates; trimmed decimals in inspector fields | Adjacent construction labels need consistent precision; fields stay compact and editable | Keep; fractional ft-in uses the same reduced sixteenths everywhere |
 

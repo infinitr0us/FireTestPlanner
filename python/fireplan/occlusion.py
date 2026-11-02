@@ -13,8 +13,8 @@ HOOD_SKIRT_PANEL_THICKNESS_M = 0.01
 _EPS = 1e-10
 
 
-def flame_centreline_samples(burner):
-    base, tip = burner.fuel_surface_z_m, burner.flame_tip_z_m()
+def flame_centreline_samples(burner, t=None):
+    base, tip = burner.fuel_surface_z_m, burner.flame_tip_z_m(t)
     x, y = burner.position[:2]
     return [[x, y, base + (tip - base) * i / (FLAME_SAMPLE_COUNT - 1)]
             for i in range(FLAME_SAMPLE_COUNT)]

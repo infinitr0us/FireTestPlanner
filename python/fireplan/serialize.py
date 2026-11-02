@@ -136,7 +136,7 @@ _TYPES_1_4 = ("reconstructedFlame",)
 #: Baseline, and the highest this build writes. Mirror of FORMAT_VERSIONS in
 #: web/src/core/types.ts.
 _VERSION_MIN = "1.0.0"
-_VERSION_LATEST = "1.6.0"
+_VERSION_LATEST = "1.7.0"
 
 
 _JS_NUMERIC = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
@@ -178,6 +178,8 @@ def required_version(data: Dict[str, Any]) -> str:
     factor, a radiative fraction or a sensor, it says 1.1.0 and means it. Mirror of
     `requiredFormatVersion` in web/src/core/types.ts.
     """
+    if any(isinstance(o, dict) and o.get("type") == "burner" and (o.get("fire") or {}).get("hrrCurve") is not None for o in data.get("objects", [])):
+        return "1.7.0"
     if isinstance(data.get("testData"), list) and data["testData"]:
         return "1.6.0"
     units = data.get("units")
@@ -212,11 +214,13 @@ def required_version(data: Dict[str, Any]) -> str:
 def effective_version(data: Dict[str, Any]) -> str:
     """The version to write: whichever of declared and required is higher.
 
-    Only ever upward, and a version this build does not recognise is left alone
-    rather than downgraded -- a 2.0 file re-saved here keeps saying 2.0.
+    Format 1.7 is declared only while a curve is present. Other declared versions,
+    including unknown future versions, retain the existing no-downgrade rule.
     """
     declared = str(data.get("version") or "")
     needed = required_version(data)
+    if declared == "1.7.0" and needed != "1.7.0":
+        return needed
     return declared if _version_tuple(declared) >= _version_tuple(needed) else needed
 
 
@@ -320,6 +324,15 @@ def _canon_object(obj: Dict[str, Any]) -> Dict[str, Any]:
             o["footprint"] = _canon_sub(o["footprint"], _FOOTPRINT)
         if "fire" in o:
             o["fire"] = _drop_null_1_1(_canon_sub(o["fire"], _FIRE), "radiativeFraction")
+            from .hrr import curve_problem, curve_peak
+            curve = o["fire"].get("hrrCurve")
+            problem = curve_problem(curve)
+            if problem:
+                raise ValueError(problem)
+            if curve is not None:
+                o["fire"]["hrr_kw"] = curve_peak(curve)
+                o["fire"]["hrrCurve"] = _order(curve, ["points", "source"])
+                o["fire"] = _order(o["fire"], _FIRE)
     elif kind == "hood":
         if isinstance(o.get("duct"), dict):
             o["duct"] = _order(o["duct"], _DUCT)
@@ -341,6 +354,8 @@ def _canon_object(obj: Dict[str, Any]) -> Dict[str, Any]:
     # Recorded measurements are not geometry; preserve their supplied precision.
     if isinstance(o.get("linkedFiles"), list):
         result["linkedFiles"] = o["linkedFiles"]
+    if kind == "burner" and (o.get("fire") or {}).get("hrrCurve") is not None:
+        result["fire"]["hrrCurve"]["points"] = [[t, _round_micro(float(q))] for t, q in o["fire"]["hrrCurve"]["points"]]
     return result
 
 

@@ -28,7 +28,8 @@ describe('format 1.6 test data', () => {
   it('writes the Python fixture byte for byte, with the correct version and no semantic mapping warnings', () => {
     const doc = parseAndValidatePlan(disk);
     expect(serializePlan(doc)).toBe(disk);
-    expect(requiredFormatVersion(doc)).toBe(FORMAT_VERSION_LATEST);
+    expect(requiredFormatVersion(doc)).toBe('1.6.0');
+    expect(FORMAT_VERSION_LATEST).toBe('1.7.0');
     expect(checkPlan(doc).filter(i => i.code.startsWith('test-data-'))).toEqual([]);
     doc.version = '1.0.0';
     expect(checkPlan(doc).some(i => i.code === 'version-understated')).toBe(true);

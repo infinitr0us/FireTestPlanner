@@ -18,9 +18,9 @@ export const FORMAT = 'fire-test-plan';
  * newest this build can write -- see `requiredFormatVersion`. So `FORMAT_VERSION`
  * is the floor a new plan starts at, and `FORMAT_VERSION_LATEST` is the ceiling.
  */
-export const FORMAT_VERSIONS = ['1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0', '1.5.0', '1.6.0'] as const;
+export const FORMAT_VERSIONS = ['1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0', '1.5.0', '1.6.0', '1.7.0'] as const;
 export const FORMAT_VERSION = '1.0.0';
-export const FORMAT_VERSION_LATEST = '1.6.0';
+export const FORMAT_VERSION_LATEST = '1.7.0';
 
 export type Vec2 = [number, number];
 export type Vec3 = [number, number, number];
@@ -149,6 +149,8 @@ export interface Footprint {
   size_m?: Vec2 | null;
 }
 
+export interface HrrCurve { points: [number, number][]; source?: string }
+
 export interface BurnerObject extends BaseObject {
   type: 'burner';
   footprint: Footprint;
@@ -158,7 +160,7 @@ export interface BurnerObject extends BaseObject {
     hrr_kw?: number | null;
     /** Format 1.1. Radiated fraction of the HRR; absent means 0.3. */
     radiativeFraction?: number | null;
-    hrrCurve?: null;
+    hrrCurve?: HrrCurve | null;
   };
 }
 
@@ -499,6 +501,7 @@ const uses1_4Keys = (o: PlanObject): boolean => {
  * Mirror of `required_version` in python/fireplan/serialize.py.
  */
 export function requiredFormatVersion(doc: PlanDocument): string {
+  if (Array.isArray(doc.objects) && doc.objects.some(o => o && isBurner(o) && o.fire?.hrrCurve != null)) return '1.7.0';
   if (Array.isArray(doc.testData) && doc.testData.length) return '1.6.0';
   if (doc.units?.display?.length === 'ft-in') return '1.5.0';
   const objects = Array.isArray(doc.objects) ? doc.objects.filter((o) => o && typeof o === 'object') : [];

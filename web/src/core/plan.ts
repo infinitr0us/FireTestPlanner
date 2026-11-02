@@ -1,3 +1,5 @@
+import { hrrAt } from './hrr';
+export { hrrAt } from './hrr';
 /**
  * Plan document model and derived geometry. Mirror of python/fireplan/plan.py and
  * objects.py -- the two implementations must agree, since a plan can be authored in
@@ -163,7 +165,7 @@ export function primaryBurner(d: PlanDocument): BurnerObject | undefined {
  */
 export function fireBurners(d: PlanDocument): BurnerObject[] {
   const primary = primaryBurner(d);
-  const lit = burners(d).filter((b) => flameTipZM(b) !== null);
+  const lit = burners(d).filter((b) => (hrrKwOf(b) ?? 0) > 0 && flameTipZM(b) !== null);
   if (!primary || !lit.includes(primary)) return lit;
   return [primary, ...lit.filter((b) => b !== primary)];
 }
@@ -556,30 +558,30 @@ export const rimHeightM = (b: BurnerObject): number => b.rimHeight_m ?? 0;
 /** Absolute height of the fuel surface. Correlations measure from here. */
 export const fuelSurfaceZM = (b: BurnerObject): number => positionOf(b)[2] + rimHeightM(b);
 
-export const hrrKwOf = (b: BurnerObject): number | null => b.fire?.hrr_kw ?? null;
+export const hrrKwOf = (b: BurnerObject): number | null => hrrAt(b);
 
-export function burnerFlameHeightM(b: BurnerObject): number | null {
-  const q = hrrKwOf(b);
+export function burnerFlameHeightM(b: BurnerObject, t?: number): number | null {
+  const q = hrrAt(b, t);
   const d = burnerDiameterM(b);
-  if (q === null || q <= 0 || d <= 0) return null;
+  if (q === null || q < 0 || d <= 0) return null;
   return flameHeightM(q, d);
 }
 
-export function flameTipZM(b: BurnerObject): number | null {
-  const h = burnerFlameHeightM(b);
+export function flameTipZM(b: BurnerObject, t?: number): number | null {
+  const h = burnerFlameHeightM(b, t);
   return h === null ? null : fuelSurfaceZM(b) + h;
 }
 
-export function burnerVirtualOriginM(b: BurnerObject): number | null {
-  const q = hrrKwOf(b);
+export function burnerVirtualOriginM(b: BurnerObject, t?: number): number | null {
+  const q = hrrAt(b, t);
   const d = burnerDiameterM(b);
   if (q === null || q <= 0 || d <= 0) return null;
   return virtualOriginM(q, d);
 }
 
 /** Plume radius at an absolute height above the floor. */
-export function plumeRadiusAtZ(b: BurnerObject, zAboveFloorM: number): number | null {
-  const q = hrrKwOf(b);
+export function plumeRadiusAtZ(b: BurnerObject, zAboveFloorM: number, t?: number): number | null {
+  const q = hrrAt(b, t);
   const d = burnerDiameterM(b);
   if (q === null || q <= 0 || d <= 0) return null;
   return plumeRadiusM(zAboveFloorM - fuelSurfaceZM(b), q, d);
@@ -600,8 +602,8 @@ export const radiativeFractionOf = (b: BurnerObject): number => {
  * the mean tip -- the same shape `buildBurner` draws, so "this bead is in the
  * flame" means the same thing in the readout as it looks like on screen.
  */
-export function flameRadiusAtZ(b: BurnerObject, zAboveFloorM: number): number | null {
-  const tip = flameTipZM(b);
+export function flameRadiusAtZ(b: BurnerObject, zAboveFloorM: number, t?: number): number | null {
+  const tip = flameTipZM(b, t);
   if (tip === null) return null;
   const base = fuelSurfaceZM(b);
   if (tip <= base) return null;
@@ -610,8 +612,8 @@ export function flameRadiusAtZ(b: BurnerObject, zAboveFloorM: number): number | 
 }
 
 /** Where the point-source model puts one burner's fire: mid-flame, on its axis. */
-export function burnerPointSourceM(b: BurnerObject): Vec3 | null {
-  const tip = flameTipZM(b);
+export function burnerPointSourceM(b: BurnerObject, t?: number): Vec3 | null {
+  const tip = flameTipZM(b, t);
   if (tip === null) return null;
   const p = positionOf(b);
   return [p[0], p[1], (fuelSurfaceZM(b) + tip) / 2];
@@ -684,8 +686,9 @@ export const gaugeViewAngleDeg = (s: HeatFluxSensorObject): number => {
 export function heatFluxEstimate(
   d: PlanDocument,
   s: HeatFluxSensorObject,
+  t?: number,
 ): HeatFluxEstimate | null {
-  const fires = fireBurners(d);
+  const fires = [...fireBurners(d), ...burners(d).filter(b => hrrKwOf(b) === 0 && burnerDiameterM(b) > 0)];
   if (fires.length === 0) return null;
 
   const at = positionOf(s);
@@ -698,12 +701,12 @@ export function heatFluxEstimate(
   }
   const parts: Part[] = [];
   for (const burner of fires) {
-    const source = burnerPointSourceM(burner)!;
+    const source = burnerPointSourceM(burner, t)!;
     const delta = sub(source, at);
     const distanceM = length(delta);
-    const samples = flameCentrelineSamples(positionOf(burner), fuelSurfaceZM(burner), flameTipZM(burner)!);
+    const samples = flameCentrelineSamples(positionOf(burner), fuelSurfaceZM(burner), flameTipZM(burner, t)!);
     const visibleFraction = samples.filter(p => firstOccluder(d, at, p) === null).length / samples.length;
-    if (distanceM < 1e-9) {
+    if (distanceM < 1e-9 && hrrAt(burner, t)! > 0) {
       // Sitting in the fire. There is no direction to the source, so there is no
       // cosine either; say so rather than dividing by zero.
       return {
@@ -714,11 +717,11 @@ export function heatFluxEstimate(
         visibleFraction,
       };
     }
-    const cosTheta = dot(normal, normalize(delta));
-    const unshadowed = pointSourceFluxKwM2(hrrKwOf(burner)!, distanceM, cosTheta, radiativeFractionOf(burner));
+    const cosTheta = distanceM < 1e-9 ? 0 : dot(normal, normalize(delta));
+    const unshadowed = pointSourceFluxKwM2(hrrAt(burner, t)!, distanceM, cosTheta, radiativeFractionOf(burner));
     parts.push({
       burner, distanceM, cosTheta,
-      offAxisDeg: angleBetweenDeg(normal, delta),
+      offAxisDeg: distanceM < 1e-9 ? 0 : angleBetweenDeg(normal, delta),
       incident: unshadowed * visibleFraction, unshadowed, visibleFraction,
     });
   }
@@ -818,13 +821,13 @@ export interface BeadState {
  * other vertex list in this format (CONVENTIONS.md section 5a) -- a rake leaned
  * against a wall leans in the readout too.
  */
-export function thermocoupleBeads(d: PlanDocument, t: ThermocoupleObject): BeadState[] {
+export function thermocoupleBeads(d: PlanDocument, rake: ThermocoupleObject, t?: number): BeadState[] {
   const fires = fireBurners(d);
   const ambient = d.environment?.ambientTemperature_C ?? 20;
   const primary = primaryBurner(d);
 
-  const offsets = beadOffsetsOf(t);
-  return beadPositions(t).map((world, index) => {
+  const offsets = beadOffsetsOf(rake);
+  return beadPositions(rake).map((world, index) => {
     const offsetM = offsets[index];
     const radialTo = (b: BurnerObject): number => {
       const bp = positionOf(b);
@@ -841,11 +844,12 @@ export function thermocoupleBeads(d: PlanDocument, t: ThermocoupleObject): BeadS
     // plumes reads the hotter centreline -- an upper bound either way, which is
     // what the figure is documented as.
     for (const burner of fires) {
+      if (hrrAt(burner, t)! <= 0) continue;
       const surface = fuelSurfaceZM(burner);
-      const tipZ = flameTipZM(burner)!;
+      const tipZ = flameTipZM(burner, t)!;
       const radial = radialTo(burner);
-      const flameR = flameRadiusAtZ(burner, world[2]);
-      const plumeR = plumeRadiusAtZ(burner, world[2]);
+      const flameR = flameRadiusAtZ(burner, world[2], t);
+      const plumeR = plumeRadiusAtZ(burner, world[2], t);
       // Both bounds are load-bearing. `flameRadiusAtZ` reports 0 outside the cone's
       // own height band rather than null, so without the lower bound a bead exactly
       // on the burner axis -- the default placement of a rake with no transform --
@@ -864,7 +868,7 @@ export function thermocoupleBeads(d: PlanDocument, t: ThermocoupleObject): BeadS
         let here: number | null = null;
         if (world[2] > tipZ) {
           const rise = plumeCentrelineRiseK(
-            world[2] - surface, hrrKwOf(burner)!, burnerDiameterM(burner),
+            world[2] - surface, hrrAt(burner, t)!, burnerDiameterM(burner),
             radiativeFractionOf(burner),
           );
           if (rise !== null) here = ambient + rise;
@@ -1429,6 +1433,10 @@ export function checkPlan(d: PlanDocument): Issue[] {
         'camera standoff will be misleading.'));
     }
     for (const b of allBurners) {
+      if (b.fire?.hrrCurve && b.fire.hrr_kw !== hrrKwOf(b)) {
+        out.push(issue('warning', 'hrr-curve-peak',
+          `Stored hrr_kw ${b.fire.hrr_kw ?? 'null'} kW differs from curve peak ${hrrKwOf(b)} kW; the curve peak is used.`, b.id));
+      }
       if (hrrKwOf(b) === null) {
         out.push(issue('info', 'no-hrr', 'No hrr_kw, so flame and plume geometry cannot be drawn.', b.id));
       }

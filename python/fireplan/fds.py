@@ -571,6 +571,42 @@ class _FireFace:
     face: str
     horizontal: bool
     from_vent: bool
+    controlled: bool
+
+
+def _face_curve(face, surfs, records, peaks, issues):
+    from .hrr import curve_problem
+    surf = surfs.get(face.surf)
+    if surf is None or face.hrr_kw is None:
+        return None
+    ramp_id, tau = surf.string("RAMP_Q"), surf.number("TAU_Q")
+    if ramp_id is None and tau is None:
+        return None
+    rows = [] if ramp_id is None else [r for r in records if r.group == "RAMP" and r.string("ID") == ramp_id]
+    unsupported = (any(any("CTRL" in k or "DEVC" in k or "EXTERNAL" in k or k in ("TMP", "TEMPERATURE") for k in r.params) for r in [surf] + rows)
+                   or any(any(k in r.params for k in ("X", "Y", "Z")) for r in rows))
+    def skipped():
+        issues.append(Issue("info", "fds-hrr-curve-skipped",
+            f"Surface '{face.surf}': RAMP_Q/TAU_Q is not a supported finite time history; the existing peak HRR is retained."))
+        return None
+    if unsupported or face.controlled:
+        return skipped()
+    if ramp_id is not None:
+        if any(r.number("T") is None or r.number("F") is None for r in rows) or not peaks.get(ramp_id):
+            return skipped()
+        steady = face.hrr_kw / peaks[ramp_id]
+        curve = {"points": sorted([[r.number("T"), r.number("F") * steady] for r in rows]), "source": f"fds-ramp:{ramp_id}"}
+    else:
+        if tau == 0:
+            return skipped()
+        points = []
+        for i in range(20):
+            u = i / 19 if tau < 0 else i / 4
+            points.append([abs(tau) * u, face.hrr_kw * (u * u if tau < 0 else math.tanh(u))])
+        if tau > 0:
+            points.append([20 * abs(tau), face.hrr_kw])
+        curve = {"points": points, "source": "fds-tau_q"}
+    return skipped() if curve_problem(curve) else curve
 
 
 def _peak_ramp(records: List[Record]) -> Dict[str, float]:
@@ -786,7 +822,8 @@ def _fire_faces(boxes: List[_Box], vents: List[_Box], surfs: Dict[str, Record],
             out.append(_FireFace(
                 surf=str(surf_id), xb=box.xb, area_m2=area,
                 hrr_kw=rel[0] * area if rel[0] is not None and area > 0 else None,
-                face=face, horizontal=face in ("-z", "+z"), from_vent=from_vent))
+                face=face, horizontal=face in ("-z", "+z"), from_vent=from_vent,
+                controlled=any("CTRL" in k or "DEVC" in k for k in box.rec.params)))
     if unknown:
         issues.append(Issue(
             "warning", "fds-hrr-unknown",
@@ -1382,7 +1419,23 @@ def to_plan(text: str, filename: Optional[str] = None,
         sides_kw += extra
         whole = (dataclasses.replace(face, hrr_kw=face.hrr_kw + extra)
                  if extra > 0 and face.hrr_kw is not None else face)
-        objects.append(_burner_object(ids, whole, origin, floor_z, reac, surfs))
+        obj = _burner_object(ids, whole, origin, floor_z, reac, surfs)
+        from .hrr import curve_at, curve_peak, curve_problem
+        components = [(f, _face_curve(f, surfs, records, peaks, issues)) for f in [face] + sides]
+        curves = [c for _, c in components if c is not None]
+        if curves and face.hrr_kw is not None:
+            times = sorted({p[0] for c in curves for p in c["points"]})
+            curve = {"points": [[t, sum(curve_at(c, t) if c is not None else (f.hrr_kw or 0) for f, c in components)] for t in times], "source": curves[0]["source"]}
+            if not curve_problem(curve):
+                obj["fire"]["hrrCurve"] = curve
+                obj["fire"]["hrr_kw"] = curve_peak(curve)
+                peak = curve_peak(curve)
+                time = next(p[0] for p in curve["points"] if p[1] == peak)
+                issues.append(Issue("info", "fds-hrr-curve",
+                    f"{obj['name']}: Curve: {len(curve['points'])} points, peak {peak:g} kW at {time:g} s, source {curve['source']}", obj["id"]))
+            else:
+                issues.append(Issue("info", "fds-hrr-curve-skipped", f"Surface '{face.surf}': combined curve exceeds the point limit; the existing peak HRR is retained."))
+        objects.append(obj)
     if sides_kw > 0:
         issues.append(Issue(
             "info", "fds-burner-sides",

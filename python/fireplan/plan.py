@@ -37,7 +37,7 @@ FORMAT = "fire-test-plan"
 VERSION = "1.0.0"
 
 #: Highest format version this build can write.
-VERSION_LATEST = "1.6.0"
+VERSION_LATEST = "1.7.0"
 
 #: One schema per format version, so a 1.0 file is judged by the 1.0 rules. A 1.0
 #: plan holding a camera with a zoomFactor really is invalid, and validating it
@@ -50,6 +50,7 @@ _SCHEMA_FILES = {
     "1.4.0": "fire-test-plan-1.4.0.schema.json",
     "1.5.0": "fire-test-plan-1.5.0.schema.json",
     "1.6.0": "fire-test-plan-1.6.0.schema.json",
+    "1.7.0": "fire-test-plan-1.7.0.schema.json",
 }
 
 #: Where the schemas live INSIDE the package: `fireplan/schemas/`, shipped as
@@ -236,7 +237,13 @@ class Plan:
         if text.startswith("﻿"):
             text = text[1:]
         try:
-            return cls(json.loads(text, parse_constant=_refuse_constant))
+            plan = cls(json.loads(text, parse_constant=_refuse_constant))
+            from .hrr import curve_problem
+            for burner in plan.burners:
+                problem = curve_problem(burner.fire.get("hrrCurve"))
+                if problem:
+                    raise PlanError(f"Burner {burner.id}: {problem}")
+            return plan
         except json.JSONDecodeError as exc:
             raise PlanError("invalid JSON: {}".format(exc)) from exc
 
@@ -515,6 +522,8 @@ class Plan:
         """
         lit = []
         for b in self.burners:
+            if b.hrr_kw == 0:
+                continue
             try:
                 b.flame_tip_z_m()
             except ValueError:
@@ -552,8 +561,8 @@ class Plan:
         """The version this plan will declare once written.
 
         The declared version is derived, not authored: the writer emits the lowest
-        version that describes the contents, never lower than what the file already
-        said. A plan built in memory therefore still says "1.0.0" the moment after
+        version that describes the contents, retaining an earlier declaration except
+        that 1.7 is removed with the last curve. A plan still says "1.0.0" the moment after
         a thermocouple is appended to it, and validating that against the 1.0 schema
         would report a violation that saving is about to fix. This is the version to
         judge it by; `check()` reports the disagreement separately, because a file
@@ -589,6 +598,11 @@ class Plan:
             if len(errors) > 10:
                 lines.append("  ... and {} more".format(len(errors) - 10))
             raise PlanError("plan failed schema validation:\n" + "\n".join(lines))
+        from .hrr import curve_problem
+        for burner in self.burners:
+            problem = curve_problem(burner.fire.get("hrrCurve"))
+            if problem:
+                raise PlanError(f"Burner {burner.id}: {problem}")
         link_errors = list(linked_files.problems(self.data))
         if link_errors:
             raise PlanError("plan failed linked file validation:\n" + "\n".join(link_errors[:10]))
@@ -609,7 +623,7 @@ class Plan:
         # writer produces one -- this writer derives the version -- but it matters:
         # the label is what a consumer checks before deciding it can read the file.
         declared, effective = self.format_version, self.effective_version
-        if declared != effective:
+        if serialize._version_tuple(declared) < serialize._version_tuple(effective):
             issues.append(Issue(
                 "warning", "version-understated",
                 "the file declares format {} but uses {} features; saving will correct it"
@@ -677,6 +691,9 @@ class Plan:
                           "as burner-centred; camera standoff will be misleading")
                 )
             for b in burners:
+                if b.fire.get("hrrCurve") is not None and b.fire.get("hrr_kw") != b.hrr_kw:
+                    issues.append(Issue("warning", "hrr-curve-peak",
+                        "Stored hrr_kw {} kW differs from curve peak {} kW; the curve peak is used.".format(b.fire.get("hrr_kw"), b.hrr_kw), b.id))
                 if b.hrr_kw is None:
                     issues.append(Issue("info", "no-hrr", "no hrr_kw, so flame and plume geometry cannot be drawn", b.id))
             # The hood, ceiling and instrument checks below take every fire into
@@ -755,10 +772,10 @@ class Plan:
 
     # -- fire geometry ---------------------------------------------------
 
-    def flame_tip_z_m(self) -> Optional[float]:
+    def flame_tip_z_m(self, t=None) -> Optional[float]:
         """Absolute height of the mean flame tip, or None if HRR is unknown."""
         try:
-            return self.burner.flame_tip_z_m()
+            return self.burner.flame_tip_z_m(t)
         except (PlanError, ValueError):
             return None
 
@@ -934,7 +951,7 @@ class Plan:
         except (PlanError, ValueError):
             return None
 
-    def heat_flux_estimate(self, sensor: HeatFluxSensor) -> Optional[Dict[str, Any]]:
+    def heat_flux_estimate(self, sensor: HeatFluxSensor, t=None) -> Optional[Dict[str, Any]]:
         """What a gauge will read, by the point-source model.
 
         None when there is no fire to radiate -- no burner, or no HRR -- rather
@@ -942,7 +959,7 @@ class Plan:
         answers and only one of them is a placement problem. Mirror of
         `heatFluxEstimate` in web/src/core/plan.ts.
         """
-        fires = self.fire_burners
+        fires = self.fire_burners + [b for b in self.burners if b.hrr_kw == 0 and b.diameter_m > 0]
         if not fires:
             return None
 
@@ -956,12 +973,12 @@ class Plan:
         parts = []
         for burner in fires:
             bp = burner.position
-            source = np.array([bp[0], bp[1], burner.point_source_z_m()])
+            source = np.array([bp[0], bp[1], burner.point_source_z_m(t)])
             delta = source - at
             distance = float(np.linalg.norm(delta))
-            samples = flame_centreline_samples(burner)
+            samples = flame_centreline_samples(burner, t)
             visible_fraction = sum(first_occluder(self.objects, at, p) is None for p in samples) / len(samples)
-            if distance < 1e-9:
+            if distance < 1e-9 and burner._require_hrr(t) > 0:
                 # Sitting in the fire. There is no direction to the source, so there
                 # is no cosine either; say so rather than dividing by zero.
                 return {
@@ -976,10 +993,10 @@ class Plan:
                     "source_id": burner.id,
                     "visible_fraction": visible_fraction,
                 }
-            cos_theta = float(np.dot(normal, delta / distance))
-            off_axis = math.degrees(math.acos(float(np.clip(cos_theta, -1.0, 1.0))))
+            cos_theta = float(np.dot(normal, delta / distance)) if distance >= 1e-9 else 0.0
+            off_axis = math.degrees(math.acos(float(np.clip(cos_theta, -1.0, 1.0)))) if distance >= 1e-9 else 0.0
             incident = correlations.point_source_flux_kw_m2(
-                burner.hrr_kw, distance, cos_theta, burner.radiative_fraction
+                burner._require_hrr(t), distance, cos_theta, burner.radiative_fraction
             )
             parts.append((burner, distance, cos_theta, off_axis, incident * visible_fraction,
                           visible_fraction, incident))
@@ -1018,7 +1035,7 @@ class Plan:
             "source_id": burner.id,
         }
 
-    def thermocouple_beads(self, rake: Thermocouple) -> List[Dict[str, Any]]:
+    def thermocouple_beads(self, rake: Thermocouple, t=None) -> List[Dict[str, Any]]:
         """Each bead in world coordinates, and what the fire is doing there.
 
         `region` is one of "flame", "plume" or "outside". `gas_temperature_c` is
@@ -1059,10 +1076,12 @@ class Plan:
             # in two plumes reads the hotter centreline -- an upper bound either way,
             # which is what the figure is documented as.
             for burner in fires:
-                tip = burner.flame_tip_z_m()
+                if burner._require_hrr(t) <= 0:
+                    continue
+                tip = burner.flame_tip_z_m(t)
                 surface = burner.fuel_surface_z_m
                 r = radial_to(burner, world)
-                flame_r = burner.flame_radius_m(float(world[2]))
+                flame_r = burner.flame_radius_m(float(world[2]), t)
                 # Both bounds are load-bearing. `flame_radius_m` reports 0.0 outside
                 # the cone's own height band, so without the lower bound a bead
                 # exactly on the burner axis -- the default placement of a rake with
@@ -1072,14 +1091,14 @@ class Plan:
                     region, gas_c, radial = "flame", None, r
                     flame_zone = False
                     break
-                if world[2] > surface and r <= burner.plume_radius_m(float(world[2])):
+                if world[2] > surface and r <= burner.plume_radius_m(float(world[2]), t=t):
                     if world[2] <= tip:
                         flame_zone = True
                     here = None
                     if world[2] > tip:
                         rise = correlations.plume_centreline_rise_k(
                             float(world[2]) - surface,
-                            burner.hrr_kw,
+                            burner._require_hrr(t),
                             burner.diameter_m,
                             burner.radiative_fraction,
                         )
