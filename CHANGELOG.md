@@ -52,12 +52,26 @@ Plan formats 1.5.0, 1.6.0 and 1.7.0.
   FLIR K65, the FLIR ONE Pro, a Canon VIXIA HF R50 at its optical wide end and the
   iPhone X's rear wide camera in 1080p. `docs/datasheets/README.md` maps each to its source,
   including where a printed focal length and a printed field of view disagree.
+- **As built and the next test** (format 1.7.0). **Record as built** stores where an
+  object was actually set up beside its planned position and reports the offset; the
+  **As built** toggle shows surveyed positions as ghosts; the drawing adds a
+  planned-against-measured table for sign-off. **Next test…** saves a copy for the
+  next test of a series with the same rig and none of the previous test's data. In
+  Python, `cam.extrinsics(pose="best")` uses the surveyed pose and `cam.pose_used()`
+  says which one it took.
+- **A French interface** (draft Canadian French): **EN | FR** in the toolbar switches
+  the editor, check messages and the printed drawing, with decimal commas in French.
+  The choice is a per-user setting, never part of a plan, and every file the tool
+  writes is unchanged. `docs/french-review.md` lists the terms for a francophone
+  engineer to confirm.
 
 ### Changed
 - The editor's left rail keeps **Checks** on screen on a laptop (1280 × 720): the
   palette, the object list and the checks share the height and each scrolls its own
   contents. **From FDS** and the help for adding a camera preset fold away until
   needed.
+- Hints, check codes and other faint text are lighter, and now meet the WCAG AA
+  contrast ratio on every panel background.
 - The FLIR A700 24° preset stores the 18 mm focal length FLIR prints for that lens
   instead of 18.07 mm back-solved from the angle, so it now frames 24.1° × 18.2°.
   Cameras already in a plan keep their own stored focal length.

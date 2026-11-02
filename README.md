@@ -50,6 +50,9 @@ editor; a data scientist reads the same file as a camera rig description with th
   start the next test of a series from the same rig.
 - **Reconstructed flame playback.** Play a visual-hull reconstruction (one voxel file
   per timestep) inside the layout, against the predicted flame.
+- **English and French.** The editor, its checks and the printed drawing switch
+  between English and (draft) Canadian French; plans and exported files are the same
+  in either.
 - **`fireplan` for Python.** Intrinsics and extrinsics in the OpenCV frame (planned or
   as built), the same checks, instrument series, nerfstudio export, FDS conversion and
   flame sequences.
@@ -229,6 +232,16 @@ shows the surveyed positions as ghosts, and the drawing adds a planned-against-m
 table for sign-off. In Python, `cam.extrinsics(pose="best")` uses the surveyed pose.
 **Next test…** saves a copy for the next test of a series (the next test ID, the same
 rig) without the previous test's data.
+
+### In French
+
+**EN | FR** at the end of the toolbar switches the editor, its check messages and the
+printed drawing to French, with decimal commas; number fields accept either a comma
+or a point. The choice is remembered for you (in the desktop app's settings, or the
+browser), not stored in the plan, so a plan opens the same for a colleague working
+in English. Names and notes you type, file names, FDS keywords and check codes stay
+as they are. The French is a draft awaiting review by a francophone fire safety
+engineer; [docs/french-review.md](docs/french-review.md) lists the terms to confirm.
 
 ### Playing back a reconstructed flame
 
