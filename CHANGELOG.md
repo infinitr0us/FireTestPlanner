@@ -2,12 +2,12 @@
 
 All notable changes to FireTestPlanner. Versions follow [Semantic Versioning](https://semver.org/);
 while the version is 0.x, a minor release may change behaviour. The plan file format
-has its own version (`fire-test-plan` 1.0.0 to 1.6.0, one JSON Schema each in `schema/`),
+has its own version (`fire-test-plan` 1.0.0 to 1.7.0, one JSON Schema each in `schema/`),
 and a plan written by any release opens in every later one.
 
 ## [Unreleased]
 
-Plan formats 1.5.0 and 1.6.0.
+Plan formats 1.5.0, 1.6.0 and 1.7.0.
 
 ### Added
 - **Drawings a crew can build from.** The elevations cut doors and windows out of
@@ -21,11 +21,19 @@ Plan formats 1.5.0 and 1.6.0.
   in the source FDS file's frame and under its device IDs when the plan came from an
   import: wall-mounted gauges and surface thermocouples with their `IOR`. Checked
   against FDS 6.9.1.
-- Measured test data, first parts: readers for logger workbooks (`.xlsx`), CSV and FDS
-  output with no new dependency, and plan format 1.6.0, in which a plan records which
-  column of which file is which gauge, thermocouple bead or burner. In Python,
-  `Plan.series(obj)` returns an instrument's series in seconds from ignition. The
-  editor's plots follow.
+- **Measured and simulated test data on the instruments.** **Test data…** links a
+  logger workbook (`.xlsx`), a CSV or an FDS `_devc.csv` / `_hrr.csv`, shows how it was
+  read, and maps its columns to gauges, thermocouple beads and burners, with a gauge's
+  calibration constant taken from a channel name and the ignition time offered from
+  the sheets. Selecting an instrument plots its measured and simulated series against
+  the plan's prediction and the gauge's range. The plan records the mapping, never the
+  samples (format 1.6.0); **Share…** embeds them; **Download schedule (CSV)** in the
+  drawing lists every instrument with its channel. In Python, `Plan.series(obj)`
+  returns an instrument's series in seconds from ignition.
+- **A heat release rate curve on the burner** (format 1.7.0): time and kW points, kept
+  from an FDS `RAMP_Q` or `TAU_Q` on import, with t² growth and measured-series helpers.
+  Checks still judge the peak; predictions can be evaluated at any time, in the editor
+  and in Python (`burner.hrr_at(t)`, `heat_flux_estimate(g, t=...)`).
 - **Line of sight.** Walls (with their doors and windows), ceilings, obstructions and
   hood skirts now block a view. A heat flux gauge's predicted flux is scaled by how
   much of the flame it can see, with a check when it sees none or only part; a

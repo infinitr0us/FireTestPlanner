@@ -606,6 +606,8 @@ about walls. The engineers' answers and their data settled the rest.
 | **D** (M18) | More camera presets from datasheets (handheld, consumer and phone cameras the lab uses), a French interface and an accessibility pass | none |
 
 Progress (2026-11-02): **Phase A is done** (format 1.5), with the camera presets of
-phase D. **Phase B** has its readers and its format (1.6) in both engines, checked on
-the engineers' own workbooks; the editor's loading, plots and mapping are next. Of
-**phase C**, the `&DEVC` export is under way; the rest follows phase B.
+phase D. **Phase B is done** (format 1.6): readers, the model, the editor's sources,
+mapping and plots, sharing and the instrument schedule, checked on the engineers' own
+workbooks. Of **phase C** (format 1.7), the `&DEVC` export and the heat release rate
+curve's model and import are in; the curve editor and a fire clock, the new
+instrument types, as-built positions and test series are next.
