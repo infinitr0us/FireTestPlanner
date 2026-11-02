@@ -10,6 +10,7 @@ import pytest
 
 from fireplan import Plan, fds, namelist
 from fireplan._math import look_at_quat
+from fireplan.occlusion import mounting_ior
 from fireplan.objects import HeatFluxSensor, Thermocouple
 
 FIXTURES = Path(__file__).resolve().parents[2] / 'fixtures'
@@ -102,7 +103,7 @@ def test_shared_bytes_and_round_trip(source):
         assert sum(r.string('QUANTITY') == 'WALL TEMPERATURE' for r in exported) == 12
         assert len(rakes) == 4
     else:
-        assert [(r.string('ID'), r.number('IOR')) for r in gauges] == [('East wall gauge', None), ('North wall gauge', -2)]
+        assert [(r.string('ID'), r.number('IOR')) for r in gauges] == [('East wall gauge', -1), ('North wall gauge', -2)]
         assert len(gauges[1].numbers('ORIENTATION')) == 3
 
 
@@ -114,9 +115,15 @@ def test_mounting_classification(case):
     at = np.array(case['at'])
     plan.add({'id': 'g', 'type': 'heatFluxSensor', 'transform': {
         'position_m': at.tolist(), 'rotation_quat': look_at_quat(at, at + case['normal']).tolist()}})
-    record, = devices(plan.to_fds_devices())
-    assert record.number('IOR') == case['ior']
-    assert record.string('QUANTITY') == ('RADIATIVE HEAT FLUX GAS' if case['ior'] is None else 'GAUGE HEAT FLUX')
+    text = plan.to_fds_devices()
+    assert text == case['exportText']
+    record, = devices(text)
+    expected = case.get('exportIor', case['ior'])
+    assert record.number('IOR') == expected
+    assert record.string('QUANTITY') == ('RADIATIVE HEAT FLUX GAS' if expected is None else 'GAUGE HEAT FLUX')
+    assert mounting_ior(plan.objects, at, case['normal']) == case['ior']
+    comment = expected is not None and abs(case['normal'][abs(expected)-1]) < math.cos(math.radians(5))-1e-10
+    assert ('factor cos(tilt)' in text) == comment
 
 
 @pytest.mark.parametrize('case', SHARED['surfaceCases'], ids=lambda c: c['name'])

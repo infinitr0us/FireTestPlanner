@@ -91,7 +91,7 @@ export class FdsResultsDialog {
   private previous = transportButton('previous', () => this.seek(this.currentIndex - 1));
   private next = transportButton('next', () => this.seek(this.currentIndex + 1));
   private last = transportButton('last', () => this.seek((this.readers[0]?.count ?? 1) - 1));
-  private stamp = h('output');
+  private stamp = h('output', { 'aria-live': 'off' });
   private rangeLow = h('input', {
     type: 'number',
     value: 0,

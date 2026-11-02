@@ -23,6 +23,31 @@ const fixture = (): PlanDocument => parsePlan(readFileSync(FIXTURE_PATH, 'utf8')
 const FLAME_PATH = fileURLToPath(new URL('../../../fixtures/flame/flame-test.ftp.json', import.meta.url));
 const flameFixture = (): PlanDocument => parsePlan(readFileSync(FLAME_PATH, 'utf8'));
 
+it('reserves an orientation band above an extreme top-right marker and its label', () => {
+  for (const north of [null, 0, Math.PI / 2, Math.PI, 3 * Math.PI / 2]) {
+    const doc = newPlan();
+    doc.coordinateSystem.northAzimuth_rad = north;
+    doc.objects = [{ id: 'edge', type: 'thermocouple', name: 'Extreme top right',
+      transform: { position_m: [100, 100, 1] } }];
+    const svg = buildViewSvg(doc, 'plan', 'm');
+    const content = /<svg class="drawing__content" y="([\d.]+)"[^>]+>([\s\S]*?)<\/svg>/.exec(svg)!;
+    const offset = +content[1];
+    const marker = /<circle cx="([\d.]+)" cy="([\d.]+)" r="([\d.]+)"/.exec(content[2])!;
+    const markerBox = { left: +marker[1] - +marker[3], right: +marker[1] + +marker[3],
+      top: offset + +marker[2] - +marker[3], bottom: offset + +marker[2] + +marker[3] };
+    // Includes the 15 px arrow, 9 px label offset and text ascenders at every bearing.
+    const markBox = { left: 837, right: 900, top: 0, bottom: 63 };
+    const overlaps = markerBox.left < markBox.right && markerBox.right > markBox.left
+      && markerBox.top < markBox.bottom && markerBox.bottom > markBox.top;
+    expect(overlaps).toBe(false);
+    expect(offset).toBeGreaterThan(markBox.bottom);
+    // All plan content, including arbitrarily stacked labels, is clipped to its
+    // own viewport below that band. Its scale and world coordinates are retained.
+    expect(content[0]).toContain('overflow="hidden"');
+    expect(content[2]).toContain('Extreme top right');
+  }
+});
+
 /** The exposure table's row for one instrument. Scoped to that table: the same
  *  name also appears in the drawing labels and in the equipment list above it. */
 const rowFor = (body: string, name: string): string =>

@@ -52,6 +52,7 @@ export class PlotPanel {
   get element(): HTMLElement { return this.root; }
 
   render(): void {
+    const focused = this.root.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.plotControl : undefined;
     const obj = this.store.soleSelected;
     const key = obj ? `${this.store.documentId}/${obj.id}` : '';
     const available = obj ? this.views.flatMap((view) => {
@@ -72,15 +73,16 @@ export class PlotPanel {
     const view = picked.view;
     this.root.hidden = false;
     this.root.setAttribute('aria-label', view.title(obj));
-    const collapse = h('button', { type: 'button', 'aria-expanded': String(!this.collapsed), title: i18n.t("Collapse or expand the plot"),
+    const collapse = h('button', { type: 'button', dataset: { plotControl: 'collapse' }, 'aria-expanded': String(!this.collapsed), title: i18n.t("Collapse or expand the plot"),
       onclick: () => { this.collapsed = !this.collapsed; this.render(); } }, [this.collapsed ? i18n.t("Expand") : i18n.t("Collapse")]);
     this.root.replaceChildren(h('div', { class: 'plot-panel__header' }, [h('strong', {}, [view.title(obj)]), collapse]));
     if (available.length > 1) {
       this.root.append(h('div', { class: 'seg plot-panel__views', role: 'group', 'aria-label': i18n.t("Plot") }, available.map((a) =>
-        h('button', { type: 'button', class: `seg__btn${a.view === view ? ' seg__btn--active' : ''}`, 'aria-pressed': String(a.view === view),
+        h('button', { type: 'button', dataset: { plotControl: a.view.id }, class: `seg__btn${a.view === view ? ' seg__btn--active' : ''}`, 'aria-pressed': String(a.view === view),
           onclick: () => { this.chosen.set(key, a.view.id); this.render(); } }, [a.view.label]))));
     }
     this.current = this.collapsed ? null : view;
     if (!this.collapsed) view.render(obj, this.root, () => { this.signature = ''; this.render(); });
+    if (focused) [...this.root.querySelectorAll<HTMLElement>('[data-plot-control]')].find(e => e.dataset.plotControl === focused)?.focus({ preventScroll: true });
   }
 }

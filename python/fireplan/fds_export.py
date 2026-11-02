@@ -94,7 +94,7 @@ def devices_to_fds(plan) -> str:
             name, = unique(base, 1)
             normal = obj.normal
             normal = normal / sum(float(v) ** 2 for v in normal) ** 0.5
-            ior = mounting_ior(objects, obj.position, normal)
+            ior = _export_gauge_ior(objects, obj.position, normal)
             quantity = "RADIATIVE HEAT FLUX GAS" if ior is None else "GAUGE HEAT FLUX"
             direction = ",".join(_orientation(v) for v in normal)
             tilted = ior is not None and any(_orientation(v) != _orientation(
@@ -102,6 +102,8 @@ def devices_to_fds(plan) -> str:
             facing = "ORIENTATION=" + direction if ior is None else "IOR={}".format(ior)
             if tilted:
                 facing += ", ORIENTATION=" + direction
+            if ior is not None and abs(normal[abs(ior) - 1]) < math.cos(math.radians(5)) - 1e-10:
+                devices.append('! {}: tilt exceeds 5 degrees; FDS reports the flux normal to the face, a factor cos(tilt) on the direct component.'.format(name))
             devices.append("&DEVC ID='{}', XYZ={}, QUANTITY='{}', {} /".format(name, xyz(obj.position), quantity, facing))
         else:
             beads = obj.bead_positions
@@ -128,3 +130,16 @@ def devices_to_fds(plan) -> str:
         lines.append("")
     lines.extend(devices or ["! No instruments: nothing to export."])
     return "\n".join(lines) + "\n"
+
+
+def _export_gauge_ior(objects, position, normal):
+    """Probe face-normal distance for export; occlusion retains its 5 degree rule."""
+    for axis in sorted(range(3), key=lambda i: -abs(normal[i])):
+        if abs(normal[axis]) < math.cos(math.pi / 4) - 1e-10:
+            continue
+        face = [0., 0., 0.]
+        face[axis] = 1. if normal[axis] > 0 else -1.
+        ior = mounting_ior(objects, position, face)
+        if ior is not None:
+            return ior
+    return None

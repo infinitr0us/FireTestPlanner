@@ -53,9 +53,10 @@ regression test; native WebView2 interaction and OS dialogs require a desktop ch
 
 ## Layout and interaction
 
-The toolbar groups wrap without changing the existing control tokens. In French,
-the palette uses two columns so words such as « combustible » and « thermocouple »
-are not split across lines. Panel section headings can wrap beside their actions;
+The toolbar fits in two rows at 1280 × 720 in both languages: the three FDS
+commands share an **FDS** menu. The palette uses two columns of tiles with the icon
+beside the label, in both languages, so words such as « combustible » and
+« thermocouple » are never split across lines. Panel section headings can wrap beside their actions;
 long filenames and user text can wrap within their panels. The rail retains its
 existing independent scroll areas and Checks allocation.
 

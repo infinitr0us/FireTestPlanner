@@ -88,7 +88,7 @@ export function devicesToFds(doc: PlanDocument): string {
     } else if (isHeatFluxSensor(obj)) {
       const [id] = idsOf.get(obj.id)!;
       const normal = normalize(gaugeNormal(obj));
-      const ior = mountingIor(doc, positionOf(obj), normal);
+      const ior = exportGaugeIor(doc, positionOf(obj), normal);
       const quantity = ior === null ? 'RADIATIVE HEAT FLUX GAS' : 'GAUGE HEAT FLUX';
       const direction = normal.map(orientation).join(',');
       // IOR chooses the mounting face. Keep a tilted gauge's recorded normal too:
@@ -97,6 +97,9 @@ export function devicesToFds(doc: PlanDocument): string {
         orientation(v) !== orientation(i === Math.abs(ior) - 1 ? Math.sign(ior) : 0));
       const facing = ior === null ? `ORIENTATION=${direction}`
         : `IOR=${ior}${tilted ? `, ORIENTATION=${direction}` : ''}`;
+      if (ior !== null && Math.abs(normal[Math.abs(ior) - 1]) < Math.cos(5 * Math.PI / 180) - 1e-10) {
+        devices.push(`! ${id}: tilt exceeds 5 degrees; FDS reports the flux normal to the face, a factor cos(tilt) on the direct component.`);
+      }
       devices.push(`&DEVC ID='${id}', XYZ=${xyz(positionOf(obj))}, QUANTITY='${quantity}', ${facing} /`);
     } else {
       const beads = beadPositions(obj);
@@ -126,4 +129,18 @@ export function devicesToFds(doc: PlanDocument): string {
   if (devices.length) for (const device of devices) lines.push(device);
   else lines.push('! No instruments: nothing to export.');
   return lines.join('\n') + '\n';
+}
+
+/** Export probes along candidate face normals, so the 50 mm distance is normal
+ * to the face, independent of the gauge tilt. Occlusion keeps its 5 degree rule. */
+function exportGaugeIor(doc: PlanDocument, position: Vec3, normal: Vec3): number | null {
+  const axes = [0, 1, 2].sort((a, b) => Math.abs(normal[b]) - Math.abs(normal[a]));
+  for (const axis of axes) {
+    if (Math.abs(normal[axis]) < Math.cos(Math.PI / 4) - 1e-10) continue;
+    const face: Vec3 = [0, 0, 0];
+    face[axis] = Math.sign(normal[axis]);
+    const ior = mountingIor(doc, position, face);
+    if (ior !== null) return ior;
+  }
+  return null;
 }

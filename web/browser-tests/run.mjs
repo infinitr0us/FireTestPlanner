@@ -3,10 +3,10 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
+import { accessibility } from './accessibility.mjs';
 
 const web = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // Slow machines (CI runners render WebGL in software) can raise the limit for
@@ -33,7 +33,9 @@ for (const candidate of candidates) {
   try { await access(candidate); executable = candidate; break; } catch {}
 }
 if (!executable) throw new Error('Set BROWSER_BIN to a Chromium, Chrome or Edge executable.');
-const profile = await mkdtemp(join(tmpdir(), 'fireplan-browser-'));
+const profileBase = resolve(web, '../review');
+await mkdir(profileBase, { recursive: true });
+const profile = await mkdtemp(join(profileBase, 'fireplan-browser-'));
 const server = await createServer({ root: web, server: { host: '127.0.0.1', port: 0, open: false } });
 let browser, socket, send;
 const checks = [], errors = [];
@@ -62,7 +64,7 @@ try {
   }, 'Chromium DevTools endpoint');
   const [port, path] = portFile.trim().split(/\r?\n/);
   socket = new WebSocket('ws://127.0.0.1:' + port + path);
-  await once(socket, 'open');
+  await waitFor(() => socket.readyState === WebSocket.OPEN, 'Chromium DevTools WebSocket connection');
   let id = 0, sessionId;
   const pending = new Map();
   // Protocol events other than exceptions, for waits such as a file chooser opening.
@@ -116,7 +118,7 @@ try {
   };
   const key = async (key, code, keyCode) => {
     await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode,
-      ...(key === ' ' ? { text: ' ' } : {}) });
+      ...(key === ' ' ? { text: ' ' } : key === 'Enter' ? { text: '\r' } : {}) });
     await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: keyCode });
   };
   const click = async expression => {
@@ -124,6 +126,7 @@ try {
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
   };
+  if (process.env.BROWSER_TEST_PHASE !== 'a11y') {
   phase('opening alignment and gas units');
   await send('Page.navigate', { url: origin + '/browser-tests/instruments17.html' });
   const align = "[...document.querySelectorAll('#inspector button')].find(b=>b.textContent==='Align with opening')";
@@ -218,19 +221,20 @@ try {
   const editorFirst = 'document.querySelector(".playback-bar button[aria-label=\\"First frame (Home)\\"]")';
   phase('Example FDS device export');
   const exportButton = '[...document.querySelectorAll("button")].find(b=>b.textContent==="Export to FDS…")';
+  await click('document.querySelector("#fds-menu-button")');
   await click(exportButton);
   await waitFor(() => evaluate('!!document.querySelector("dialog.fds-export[open]")'), 'FDS export dialog');
   check('Example export reports quantities and omissions', await evaluate(
-    'document.querySelector(".fds-export__summary").textContent === "9 devices: 1 gauge heat flux, 1 radiative heat flux gas, 3 thermocouple beads, 4 surface thermocouple beads. Cameras and geometry are not exported."'));
+    'document.querySelector(".fds-export__summary").textContent === "9 devices: 2 gauge heat flux, 3 thermocouple beads, 4 surface thermocouple beads. Cameras and geometry are not exported."'));
   const firstExportedDevice = await evaluate('document.querySelector(".fds-export__text").value.split("\\n").find(line=>line.startsWith("&DEVC"))');
   check('Example export first DEVC retains its position and normal', firstExportedDevice ===
-    "&DEVC ID='East wall gauge', XYZ=1.45,0,0.9, QUANTITY='RADIATIVE HEAT FLUX GAS', ORIENTATION=-0.9946,0.0000,-0.1043 /");
+    "&DEVC ID='East wall gauge', XYZ=1.45,0,0.9, QUANTITY='GAUGE HEAT FLUX', IOR=-1, ORIENTATION=-0.9946,0.0000,-0.1043 /");
   check('FDS preview is read only, focused and uses shared monospace', await evaluate(
     '(() => { const t=document.querySelector(".fds-export__text"); return t.readOnly && document.activeElement===t && getComputedStyle(t).fontFamily.includes("Cascadia Mono"); })()'));
   await screenshot('fds-export');
   await key('Escape', 'Escape', 27);
   check('Escape closes FDS preview and restores toolbar focus', await evaluate(
-    '!document.querySelector("dialog.fds-export") && document.activeElement.textContent === "Export to FDS…"'));
+    '!document.querySelector("dialog.fds-export") && document.activeElement.id === "fds-menu-button"'));
   await click(editorFirst);
   await key('.', 'Period', 190);
   await waitFor(() => evaluate('document.querySelector(".playback-bar input[aria-label=\\"Frame\\"]").value==="1"'), 'editor step after mouse click');
@@ -404,6 +408,14 @@ try {
   })()`));
   await evaluate('document.querySelector(".set-out-check").scrollIntoView({block:"center"})');
   await screenshot('as-built-drawing');
+  // Print / Save as PDF prints the whole drawing: the editor pins html and body to
+  // the window, which once cut the printout to its first page.
+  {
+    const { data } = await send('Page.printToPDF', { printBackground: true, preferCSSPageSize: true });
+    const pdf = Buffer.from(data, 'base64').toString('latin1');
+    const pages = Math.max(0, ...[...pdf.matchAll(/\/Count (\d+)/g)].map(m => Number(m[1])));
+    check('printing the drawing preview prints every page (' + pages + ' pages)', pages >= 3);
+  }
   await click('[...document.querySelectorAll(".report-overlay__bar button")].find(b=>b.textContent==="Close")');
   await click('[...document.querySelectorAll("#inspector .as-built button")].find(b=>b.textContent==="Clear")');
   await waitFor(() => evaluate('!!(' + recordSurvey + ')'), 'Clear survey');
@@ -1002,9 +1014,13 @@ try {
       .filter(e => e.scrollWidth > e.clientWidth + 1)
       .map(e => ({ box: e.id || e.className, scroll: e.scrollWidth, client: e.clientWidth }))`);
   check('French toolbar, rail and inspector fit their widths: ' + JSON.stringify(frenchOverflow), frenchOverflow.length === 0);
-  const splitWords = await evaluate(`(() => {
+  const SPLIT_PALETTE_WORDS = `(() => {
     const split=[];
     for (const label of document.querySelectorAll('.palette__tile > span:last-child')) {
+      const tile=label.parentElement;
+      const box=tile.getBoundingClientRect(), style=getComputedStyle(tile);
+      const right=box.right-parseFloat(style.borderRightWidth)-parseFloat(style.paddingRight);
+      if (tile.offsetParent && label.getBoundingClientRect().right > right + 0.5) split.push('overflows: ' + label.textContent);
       const text=label.firstChild;
       if (!text || text.nodeType!==Node.TEXT_NODE) continue;
       for (const match of text.textContent.matchAll(/\\S+/g)) {
@@ -1013,7 +1029,8 @@ try {
       }
     }
     return split;
-  })()`);
+  })()`;
+  const splitWords = await evaluate(SPLIT_PALETTE_WORDS);
   check('French palette words stay together: ' + JSON.stringify(splitWords), splitWords.length === 0);
   await screenshot('french-editor');
   await click('[...document.querySelectorAll("#toolbar button")].find(b=>b.textContent==="Dessin…")');
@@ -1029,8 +1046,19 @@ try {
   check('English restored by a real click', await evaluate(`document.documentElement.lang === 'en'
     && [...document.querySelectorAll('#toolbar button')].some(b=>b.textContent==='Save')
     && [...document.querySelectorAll('.palette__tile')].some(b=>b.textContent.includes('Fuel pan'))`));
+  await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+  await waitFor(() => evaluate('!!document.querySelector(".palette__tile")'), 'English palette');
+  const englishSplit = await evaluate(SPLIT_PALETTE_WORDS);
+  check('English palette words stay together at 1280 x 720: ' + JSON.stringify(englishSplit), englishSplit.length === 0);
   check('no uncaught browser exceptions', errors.length===0);
-  const result = { browser: executable, passed: checks.length, checks };
+  }
+  const a11y = await accessibility({ web, origin, send, evaluate, click, key, openTab, waitFor, phase, screenshot, eventListeners });
+  const failures = a11y.scans.flatMap(s => s.violations.filter(v => ['serious', 'critical'].includes(v.impact)).map(v => ({ scan: s.name, rule: v.id, impact: v.impact, nodes: v.nodes.map(n => ({ target: n.target, summary: n.failureSummary })) })));
+  checks.push({ name: 'no uncaught exceptions during accessibility checks', passed: errors.length === 0 });
+  const result = { browser: executable, passed: checks.length, checks, accessibility: a11y, failures, errors };
+  checks.push(...a11y.checks);
+  result.passed = checks.filter(c => c.passed).length;
+  if (failures.length || checks.some(c => !c.passed)) process.exitCode = 1;
   if (process.env.BROWSER_TEST_OUTPUT) {
     const output = resolve(process.env.BROWSER_TEST_OUTPUT);
     await mkdir(dirname(output), { recursive: true });
@@ -1048,7 +1076,7 @@ try {
   }
   await server.close();
   // Only remove the unique temporary profile created above.
-  if (dirname(profile) !== resolve(tmpdir()) || !profile.startsWith(join(resolve(tmpdir()), 'fireplan-browser-'))) {
+  if (dirname(profile) !== profileBase || !profile.startsWith(join(profileBase, 'fireplan-browser-'))) {
     throw new Error('Unexpected browser profile path: ' + profile);
   }
   await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });

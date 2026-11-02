@@ -132,6 +132,7 @@ import {
   checkboxField,
   lengthField,
   numberField,
+  optionalNumberField,
   readout,
   type ReadoutTone,
   row,
@@ -491,6 +492,7 @@ export class Inspector {
     const pick = (mode: CoordMode, label: string, title: string): HTMLElement =>
       h('button', {
         class: `seg__btn${this.coordMode === mode ? ' seg__btn--active' : ''}`,
+        'aria-pressed': String(this.coordMode === mode),
         type: 'button',
         title,
         onclick: () => { this.coordMode = mode; this.render(); },
@@ -1140,10 +1142,10 @@ export class Inspector {
           burner.fire = { ...(burner.fire ?? {}), fuel: v || null };
         }))),
       b.fire?.hrrCurve ? readout(i18n.t("Peak HRR (kW)"), i18n.numberText(Number(hrrAt(b)!.toFixed(6)))) : row(i18n.t("HRR (kW)"),
-        numberField(b.fire?.hrr_kw ?? 0, (v) =>
+        optionalNumberField(b.fire?.hrr_kw, (v) =>
           this.patch(b.id, 'Set HRR', (o) => {
             const burner = o as BurnerObject;
-            burner.fire = { ...(burner.fire ?? {}), hrr_kw: v > 0 ? v : null };
+            burner.fire = { ...(burner.fire ?? {}), hrr_kw: v !== null && v > 0 ? v : null };
           }), { step: 10, min: 0 })),
       row(i18n.t("Radiative fraction"),
         numberField(radiativeFractionOf(b), (v) =>
@@ -1439,10 +1441,10 @@ export class Inspector {
         ], (v) => patchGauge('Set gauge kind', (g) => { g.kind = v; })),
         i18n.t("Recorded for the equipment list; it does not change the predicted flux")),
       row(i18n.t("Range (kW/m²)"),
-        numberField(gaugeRangeKwM2(s) ?? 0, (v) =>
-          patchGauge('Set gauge range', (g) => { g.range_kw_m2 = v > 0 ? v : null; }),
+        optionalNumberField(gaugeRangeKwM2(s), (v) =>
+          patchGauge('Set gauge range', (g) => { g.range_kw_m2 = v !== null && v > 0 ? v : null; }),
           { step: 5, min: 0 }),
-        i18n.t("Full scale. Zero means unrecorded, and the over-range check goes quiet")),
+        i18n.t("Full scale. Leave empty if unrecorded; the over-range check goes quiet")),
       row(i18n.t("View angle (°)"),
         numberField(gaugeViewAngleDeg(s), (v) =>
           patchGauge('Set view angle', (g) => {
@@ -1533,9 +1535,9 @@ export class Inspector {
   private renderVelocityProbe(p: VelocityProbeObject, unit: LengthUnit): void {
     this.renderAim(p, unit, p.transform?.rotation_quat ? i18n.t("Axis recorded by the quaternion.") : i18n.t("Axis unstated; velocity magnitude."));
     this.root.append(sectionTitle(i18n.t("Velocity probe")),
-      row(i18n.t("Range (m/s)"), numberField(p.range_m_s ?? 0, v => this.patch(p.id, 'Set velocity range', o => {
-        (o as VelocityProbeObject).range_m_s = v > 0 ? v : null;
-      }), { min: 0, step: 1 }), i18n.t("Full scale; zero means unrecorded.")),
+      row(i18n.t("Range (m/s)"), optionalNumberField(p.range_m_s, v => this.patch(p.id, 'Set velocity range', o => {
+        (o as VelocityProbeObject).range_m_s = v !== null && v > 0 ? v : null;
+      }), { min: 0, step: 1 }), i18n.t("Full scale; leave empty if unrecorded.")),
       readout(i18n.t("Prediction"), i18n.t("No prediction model."), 'muted'));
   }
 
@@ -1557,9 +1559,9 @@ export class Inspector {
 
   private renderLoadCell(c: LoadCellObject, unit: LengthUnit): void {
     this.root.append(sectionTitle(i18n.t("Load cell")),
-      row(i18n.t("Capacity (kg)"), numberField(c.capacity_kg ?? 0, v => this.patch(c.id, 'Set load capacity', o => {
-        (o as LoadCellObject).capacity_kg = v > 0 ? v : null;
-      }), { min: 0, step: 10 }), i18n.t("Zero means unrecorded.")),
+      row(i18n.t("Capacity (kg)"), optionalNumberField(c.capacity_kg, v => this.patch(c.id, 'Set load capacity', o => {
+        (o as LoadCellObject).capacity_kg = v !== null && v > 0 ? v : null;
+      }), { min: 0, step: 10 }), i18n.t("Leave empty if unrecorded.")),
       row(i18n.t("Platform recorded"), checkboxField(c.platform_m != null, value => this.patch(c.id, 'Set load platform', o => {
         (o as LoadCellObject).platform_m = value ? [0.5, 0.5] : null;
       }))));

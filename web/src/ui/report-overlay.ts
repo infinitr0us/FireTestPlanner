@@ -33,7 +33,7 @@ function ensureStyles(): void {
 }
 
 export class ReportOverlay {
-  private root: HTMLElement | null = null;
+  private root: HTMLDialogElement | null = null;
 
   constructor(private onDownload: (html: string, suggestedName: string) => void) {}
 
@@ -45,7 +45,7 @@ export class ReportOverlay {
     this.close();
     ensureStyles();
 
-    const body = h('div', { class: 'report-overlay__body' });
+    const body = h('div', { class: 'report-overlay__body', tabIndex: 0 });
     body.innerHTML = buildReportBody(doc, unit);
 
     const bar = h('div', { class: 'report-overlay__bar no-print' }, [
@@ -69,12 +69,16 @@ export class ReportOverlay {
       h('button', { class: 'btn', type: 'button', onclick: () => this.close() }, [i18n.t("Close")]),
     ]);
 
-    this.root = h('div', { class: 'report-overlay' }, [bar, body]);
+    this.root = h('dialog', { class: 'report-overlay', 'aria-label': i18n.t('Drawing preview') }, [bar, body]);
     document.body.appendChild(this.root);
     document.body.classList.add('is-reporting');
+    this.root.addEventListener('cancel', e => { e.preventDefault(); this.close(); });
+    this.root.showModal();
+    this.root.querySelector<HTMLButtonElement>('button')?.focus();
   }
 
   close(): void {
+    this.root?.close();
     this.root?.remove();
     this.root = null;
     document.body.classList.remove('is-reporting');

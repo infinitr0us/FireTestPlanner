@@ -222,6 +222,41 @@ do not enter camera previews or planning checks, and follow object visibility.
 The next-test action lives beside Save as in the file group, and its completion
 message names the previous test's data that was left behind.
 
+## Accessibility
+
+The browser accessibility phase injects the installed axe-core and runs WCAG 2.1
+A/AA rules on the English and French Example, selected inspectors, test-data
+sources and mapping, FDS import/export and results, curve editing and the drawing.
+Every violation and incomplete check is retained in the JSON report. Serious and
+critical violations fail the run. There are no rule or canvas exclusions. Axe does
+not establish screen-reader, native dialog or WebView2 interoperability.
+
+Tab follows the toolbar, palette, object rows, Checks and inspector controls.
+Outliner Up/Down moves focus; Enter/Space selects and retains row focus. Checks
+uses native buttons. FDS is an APG menu button: Enter/Space or Down opens at the
+first item, Up at the last; Up/Down, Home/End move within it. Escape returns focus,
+Tab continues outside and closes it, and clicking outside closes it. Menu keys do
+not reach the playback clock. Dialogs use native modal focus containment, take
+focus on open and return it on Escape or Close. Drawing and import scroll regions
+are Tab stops. Playback shortcuts retain the rules below.
+
+Use the shared focus outline and translated names, including visible label text.
+Vector fields include both the row label and axis in their names. File completion
+uses the persistent `#file-status` polite region; Checks keeps a persistent count
+region. Test data keeps one message region through repaints and reading progress;
+FDS export and results use their existing status lines. Do not make a frame readout
+live. Native file errors retain the browser or desktop alert announcement.
+
+In Windows contrast themes, selected and pressed controls have an inset outline
+and underline; check severity retains distinct border styles and accessible text.
+Borders and focus use system colors. Reduced motion disables CSS animation,
+transitions and smooth scrolling, leaving user-started playback available.
+
+The FDS menu groups the three simulation commands. Toolbar gaps and horizontal
+padding are tighter so both languages fit two rows at 1280 x 720, without changing
+font sizes or removing commands. The drawing reserves a separate 66 px band for
+its orientation mark; plan content has its own viewport below the band.
+
 ## Playback
 
 `ui/transport.ts` supplies the shared five button glyphs, accessible names and
@@ -369,7 +404,6 @@ Token reuse alone is not an accessibility or scientific-validation claim.
 | Where | Difference | Reason | Decision |
 |---|---|---|---|
 | Interface language | French display numbers use a decimal comma and narrow no-break space; machine-readable exports and recorded strings retain their original form | Crew-facing text follows the selected language without changing engineering data or interchange formats | Keep; display helpers live in `ui/i18n.ts` and `ui/display-units.ts` |
-| French palette | Two tile columns instead of three | Longer French terms must remain readable without splitting words at 1280 × 720 | Keep; rail scrolling and Checks allocation are shared |
 | Results device classification | Surface and unknown probe classes; no user-color inference | Recorded quantities and planning hardware have different capabilities; original quantities remain visible | Keep; gas-temperature identity aligned |
 | Results camera | FOV 45, near/far 0.01/10000, free orbit; editor FOV 50, 0.05/500, polar limit 0.495π | Simulation coordinates may be below the planning floor; preserve inspection and existing fit | Keep |
 | Results geometry | Fill #8a9bac at 0.1 opacity, edges #8091a2 at 0.55, bounds #31475e | Subdued context behind scientific fields, rather than editor hardware materials | Keep |
@@ -400,6 +434,8 @@ the print block in `styles.css`; the page is A4 portrait with 14 mm margins.
 - Read canvas/WebGL theme values from the root, independently of host attachment.
 - Give device classes shape or text cues in addition to color.
 - Preserve native editing, disclosure, button and slider keyboard behavior.
+- Run axe and keyboard/focus, live-region, contrast-theme and reduced-motion checks;
+  verify both languages at laptop size and report native accessibility separately.
 - Use the shared transport and `SPEEDS`; retain each clock's loading/cancellation rules.
 - Verify selection, playback and export in a browser with actual input events.
 - Keep scientific ramps and print ink separate from interface status colors.

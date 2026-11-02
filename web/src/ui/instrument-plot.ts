@@ -185,7 +185,7 @@ export class TestDataView implements PlotView {
     const chart = this.chart(plot, times, axis);
     if (this.time === null || this.time < times[0] || this.time > times[times.length - 1]) this.time = times[0];
 
-    const readout = h('output', { class: 'plot-panel__values', 'aria-live': 'polite' });
+    const readout = h('output', { class: 'plot-panel__values', 'aria-live': 'off' });
     const following = this.following;
     const slider = h('input', { type: 'range', min: 0, max: times.length - 1, step: 1,
       value: Math.max(lastIndexAtOrBefore(times, this.time), 0),

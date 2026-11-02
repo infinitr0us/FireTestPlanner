@@ -100,9 +100,13 @@ point. **Export to FDS…** writes the plan's instruments as `&DEVC` lines in th
 file's frame (undoing `meta.source.originOffset_m`), named by object name so an import
 of the run's output maps them back by name (M16):
 
-- a gauge on a surface (within 0.05 m of a wall, ceiling or obstruction face, facing
-  away from it): `QUANTITY='GAUGE HEAT FLUX'` with the face's `IOR`; a free-standing
-  gauge: `QUANTITY='RADIATIVE HEAT FLUX GAS'` with `ORIENTATION`;
+- a gauge within 0.05 m in front of an axis-aligned wall, ceiling or obstruction
+  face, measured perpendicular to that face, and facing within 45 degrees of its
+  outward normal: `QUANTITY='GAUGE HEAT FLUX'` with the face's `IOR`. The plan
+  floor is also a mounting face. Tilted gauges retain their own `ORIENTATION`;
+  above 5 degrees a comment explains that FDS reports flux normal to the face,
+  a factor cos(tilt) on the direct component. Occlusion keeps its existing
+  5 degree rule. Other gauges use `RADIATIVE HEAT FLUX GAS` with `ORIENTATION`;
 - each thermocouple bead: `QUANTITY='THERMOCOUPLE'` (a rake becomes one line per bead,
   `ID='<name>_<n>'`);
 - a velocity probe: the velocity component its axis is closest to, with a comment

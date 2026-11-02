@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { devicesToFds } from './fds-export';
 import { fdsToPlan } from './fds';
 import { angleBetweenDeg, lookAtQuat } from './math';
+import { mountingIor } from './occlusion';
 import { readNamelist } from './namelist';
 import { gaugeNormal, newPlan, positionOf, thermocoupleBeads } from './plan';
 import { isHeatFluxSensor, isThermocouple, type PlanDocument, type PlanObject, type Vec3 } from './types';
@@ -106,7 +107,7 @@ describe('instrument export and existing importer', () => {
       expect(rakes).toHaveLength(4);
     } else {
       expect(gauges.map(r => [r.string('ID'), r.number('IOR')])).toEqual([
-        ['East wall gauge', null], ['North wall gauge', -2],
+        ['East wall gauge', -1], ['North wall gauge', -2],
       ]);
       expect(gauges[1].numbers('ORIENTATION')).toHaveLength(3);
     }
@@ -115,9 +116,9 @@ describe('instrument export and existing importer', () => {
 
 const shared = JSON.parse(fixture('fds/device-export-cases.json')) as {
   solids: Record<string, PlanObject>;
-  cases: Array<{ name: string; solid?: string; at: Vec3; normal: Vec3; ior: number | null }>;
+  cases: Array<{ name: string; solid?: string; at: Vec3; normal: Vec3; ior: number | null; exportIor?: number | null; exportText: string }>;
   beadNames: Array<{ name: string; count: number; ids: string[] }>;
-  surfaceCases: Array<{ name: string; solids?: string[]; mount?: 'wall' | 'ceiling'; at: Vec3; ior: number | null }>;
+  surfaceCases: Array<{ name: string; solids?: string[]; mount?: 'wall' | 'ceiling'; at: Vec3; ior: number | null; exportIor?: number | null; exportText: string }>;
 };
 
 it.each(shared.surfaceCases)('$name preserves the surface quantity or explains its fallback', c => {
@@ -169,9 +170,15 @@ it.each(shared.cases)('$name mounting classification', c => {
   const gauge = { id: 'g', type: 'heatFluxSensor', transform: { position_m: c.at,
     rotation_quat: lookAtQuat(c.at, c.at.map((v, i) => v + c.normal[i]) as Vec3) } };
   doc.objects = [...(c.solid ? [structuredClone(shared.solids[c.solid])] : []), gauge];
-  const [r] = records(devicesToFds(doc));
-  expect(r.number('IOR')).toBe(c.ior);
-  expect(r.string('QUANTITY')).toBe(c.ior === null ? 'RADIATIVE HEAT FLUX GAS' : 'GAUGE HEAT FLUX');
+  const expected = c.exportIor ?? c.ior;
+  const text = devicesToFds(doc);
+  expect(text).toBe(c.exportText);
+  const [r] = records(text);
+  expect(r.number('IOR')).toBe(expected);
+  expect(r.string('QUANTITY')).toBe(expected === null ? 'RADIATIVE HEAT FLUX GAS' : 'GAUGE HEAT FLUX');
+  expect(mountingIor(doc, c.at, c.normal)).toBe(c.ior);
+  const comment = expected !== null && Math.abs(c.normal[Math.abs(expected)-1]) < Math.cos(5*Math.PI/180)-1e-10;
+  expect(text.includes('factor cos(tilt)')).toBe(comment);
 });
 
 it.each(shared.beadNames)('$name recovers only a matching consecutive range', c => {
