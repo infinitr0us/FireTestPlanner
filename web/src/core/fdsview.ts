@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 /**
  * Reading and writing a plan object as FDS would spell it.
  *
@@ -131,7 +132,7 @@ export const hasXyzView = (o: PlanObject): boolean =>
  */
 export function xbOfObject(obj: PlanObject, offset: Vec3 = [0, 0, 0]): XbView | null {
   const rotated = !isUnrotated(obj);
-  const rotatedWhy = 'this object is rotated, so its XB is only a bounding box';
+  const rotatedWhy = i18n.t("this object is rotated, so its XB is only a bounding box");
 
   if (obj.type === 'wall') {
     const wall = obj as unknown as { polyline_m: Array<[number, number]>; height_m: number;
@@ -161,10 +162,10 @@ export function xbOfObject(obj: PlanObject, offset: Vec3 = [0, 0, 0]): XbView | 
       && (Math.abs(xs[1] - xs[0]) <= TOL_M || Math.abs(ys[1] - ys[0]) <= TOL_M);
     if (rotated) return { xb, editable: false, why: rotatedWhy };
     if (!straight) {
-      return { xb, editable: false, why: `this wall has ${pts.length} points, and an XB is one box` };
+      return { xb, editable: false, why: i18n.t("this wall has {p1} points, and an XB is one box", { p1: pts.length }) };
     }
     if (!axisAligned) {
-      return { xb, editable: false, why: 'this wall runs on a diagonal, and an XB is axis-aligned' };
+      return { xb, editable: false, why: i18n.t("this wall runs on a diagonal, and an XB is axis-aligned") };
     }
     return { xb, editable: true };
   }
@@ -188,7 +189,7 @@ export function xbOfObject(obj: PlanObject, offset: Vec3 = [0, 0, 0]): XbView | 
       && new Set(xs.map((v) => v.toFixed(4))).size === 2
       && new Set(ys.map((v) => v.toFixed(4))).size === 2;
     if (!rectangular) {
-      return { xb, editable: false, why: 'this slab is not a rectangle, and an XB is one box' };
+      return { xb, editable: false, why: i18n.t("this slab is not a rectangle, and an XB is one box") };
     }
     return { xb, editable: true };
   }
@@ -210,7 +211,7 @@ export function xbOfObject(obj: PlanObject, offset: Vec3 = [0, 0, 0]): XbView | 
       return {
         xb: worldXb(obj, [-d / 2, d / 2, -d / 2, d / 2, 0, rim], offset),
         editable: false,
-        why: 'a circular pan has no XB; this is the box around it',
+        why: i18n.t("a circular pan has no XB; this is the box around it"),
       };
     }
     const size = fp?.size_m ?? [0, 0];
@@ -244,7 +245,7 @@ const normalisedXb = (raw: Xb, offset: Vec3): Xb => [
 export function xbProblem(
   obj: PlanObject, raw: Xb, offset: Vec3 = [0, 0, 0], unit: LengthUnit = 'm',
 ): string | null {
-  if (raw.some((v) => !Number.isFinite(v))) return 'every XB coordinate has to be a number';
+  if (raw.some((v) => !Number.isFinite(v))) return i18n.t("every XB coordinate has to be a number");
   const xb = normalisedXb(raw, offset);
   const dx = xb[1] - xb[0];
   const dy = xb[3] - xb[2];
@@ -252,29 +253,28 @@ export function xbProblem(
   const floorInFile = offset[2];
 
   if (obj.type === 'wall') {
-    if (Math.max(dx, dy) <= TOL_M) return 'a wall needs some length: X1 X2 or Y1 Y2 have to differ';
-    if (dz <= TOL_M) return 'a wall needs some height: Z2 has to be above Z1';
+    if (Math.max(dx, dy) <= TOL_M) return i18n.t("a wall needs some length: X1 X2 or Y1 Y2 have to differ");
+    if (dz <= TOL_M) return i18n.t("a wall needs some height: Z2 has to be above Z1");
     return null;
   }
   if (obj.type === 'ceiling') {
-    if (dx <= TOL_M || dy <= TOL_M) return 'a slab needs a footprint: X1 X2 and Y1 Y2 have to differ';
+    if (dx <= TOL_M || dy <= TOL_M) return i18n.t("a slab needs a footprint: X1 X2 and Y1 Y2 have to differ");
     if (xb[4] <= TOL_M) {
       // In the unit the fields are typed in: a bare metre figure beside feet fields
       // read as the wrong number.
-      return `a ceiling's Z1 is its soffit, and it has to be above the floor (Z1 > `
-        + `${formatLengthWithUnit(floorInFile, unit)}): a slab at floor level is the floor, not a ceiling`;
+      return i18n.t("a ceiling's Z1 is its soffit, and it has to be above the floor (Z1 > {floor}): a slab at floor level is the floor, not a ceiling", { floor: i18n.numberText(formatLengthWithUnit(floorInFile, unit)) });
     }
     return null;
   }
   if (obj.type === 'obstruction') {
     if (dx <= TOL_M || dy <= TOL_M || dz <= TOL_M) {
-      return 'a box needs three extents: X, Y and Z pairs all have to differ';
+      return i18n.t("a box needs three extents: X, Y and Z pairs all have to differ");
     }
     return null;
   }
   if (obj.type === 'burner') {
-    if (dx <= TOL_M || dy <= TOL_M) return 'a burner needs a footprint: X1 X2 and Y1 Y2 have to differ';
-    if (dz < 0) return 'a burner needs Z2 at or above Z1';
+    if (dx <= TOL_M || dy <= TOL_M) return i18n.t("a burner needs a footprint: X1 X2 and Y1 Y2 have to differ");
+    if (dz < 0) return i18n.t("a burner needs Z2 at or above Z1");
     return null;
   }
   return null;
@@ -364,7 +364,7 @@ const IOR_AXES: Array<[number, Vec3]> = [
 
 /** FDS's label for an `IOR`, for the inspector's readout. */
 export const iorLabel = (ior: number | null): string =>
-  ior === null ? 'off-axis' : ({
+  ior === null ? i18n.t("off-axis") : ({
     1: '+X', '-1': '−X', 2: '+Y', '-2': '−Y', 3: '+Z', '-3': '−Z',
   } as Record<string, string>)[String(ior)] ?? String(ior);
 

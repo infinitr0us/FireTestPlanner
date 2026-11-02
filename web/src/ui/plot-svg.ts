@@ -1,3 +1,4 @@
+import * as i18n from './i18n';
 /**
  * Shared pieces of the viewport plots: SVG construction, number and time
  * formatting, axis ticks, and the line styles that tell sources and beads apart.
@@ -5,7 +6,7 @@
  * colour value of its own (docs/visual-language.md).
  */
 
-export const fmt = (v: number): string => Number(v.toPrecision(4)).toString();
+export const fmt = (v: number): string => i18n.numberText(Number(v.toPrecision(4)));
 
 const NS = 'http://www.w3.org/2000/svg';
 export function svgElement(tag: string, attrs: Record<string, string | number>, text?: string): SVGElement {
@@ -58,9 +59,9 @@ export function timeAxis(t0: number, t1: number, target = 4): TimeAxis {
   const scale = minutes ? 60 : 1;
   const unit = minutes ? 'min' : 's';
   return { unit, scale, ticks: niceTicks(t0 / scale, t1 / scale, target).map(v => v * scale),
-    label: `Time from ignition (${unit})` };
+    label: i18n.t("Time from ignition ({p1})", { p1: unit }) };
 }
-export const formatTime = (t: number, axis: Pick<TimeAxis, 'unit' | 'scale'>): string => `${fmt(t / axis.scale)} ${axis.unit}`;
+export const formatTime = (t: number, axis: Pick<TimeAxis, 'unit' | 'scale'>): string => `${fmt(t / axis.scale)}${i18n.unitSpace()}${axis.unit}`;
 
 /** Index of the last sorted value at or before `time`, or -1 before the first. */
 export function lastIndexAtOrBefore(sorted: ArrayLike<number>, time: number): number {

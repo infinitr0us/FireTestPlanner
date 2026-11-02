@@ -1,3 +1,5 @@
+import { domainLabel } from '../ui/domain-labels';
+import * as i18n from '../ui/i18n';
 import { isNewInstrument, isVelocityProbe, isGasSampling, isLoadCell } from '../core/types';
 import { curveSummary, hrrAt } from '../core/hrr';
 import { setOutCheck } from '../core/asbuilt';
@@ -60,7 +62,7 @@ import { facingText } from '../core/facing';
 export { facingText } from '../core/facing';
 import { printedLensOf } from '../core/lenses';
 import { fileName } from '../core/linked-files';
-import { formatLength, formatLengthWithUnit } from '../core/units';
+import { formatLength, formatLengthWithUnit } from '../ui/display-units';
 import { forwardOf } from '../core/math';
 import {
   isAimable, isBurner, isCamera, isCeiling, isHeatFluxSensor, isHood,
@@ -78,7 +80,7 @@ const head = (v: string): string => `<th>${esc(v)}</th>`;
 
 /** A heat release rate as a person writes it: an FDS import computes 300 kW as
  *  300.00000000000006, and the table printed every digit. */
-export const formatKw = (q: number): string => String(Number(q.toFixed(2)));
+export const formatKw = (q: number): string => i18n.numberText(Number(q.toFixed(2)));
 
 /** Horizontal distance from the origin -- the burner centre every standoff is
  *  measured from (CONVENTIONS.md section 1). */
@@ -96,24 +98,24 @@ function setOutTable(doc: PlanDocument, unit: LengthUnit): string {
     const p = positionOf(obj);
     let x = fmt(p[0]), y = fmt(p[1]), z = fmt(p[2]);
     let type: string = obj.type;
-    if (isBurner(obj)) z = `Fuel surface ${fmt(fuelSurfaceZM(obj))}`;
-    if (isHood(obj)) z = `Intake ${fmt(hoodIntakeHeightM(obj))}`;
-    if (isCeiling(obj)) z = `Soffit ${fmt(ceilingSoffitZM(obj))}`;
-    if (isObstruction(obj)) z = `Base ${fmt(p[2])}\nTop ${fmt(p[2] + obj.size_m[2])}`;
+    if (isBurner(obj)) z = i18n.t("Fuel surface {p1}", { p1: fmt(fuelSurfaceZM(obj)) });
+    if (isHood(obj)) z = i18n.t("Intake {p1}", { p1: fmt(hoodIntakeHeightM(obj)) });
+    if (isCeiling(obj)) z = i18n.t("Soffit {p1}", { p1: fmt(ceilingSoffitZM(obj)) });
+    if (isObstruction(obj)) z = i18n.t("Base {p1}\nTop {p2}", { p1: fmt(p[2]), p2: fmt(p[2] + obj.size_m[2]) });
     if (isWall(obj)) {
       const points = obj.polyline_m.map(v => toWorld(obj, [v[0], v[1], obj.baseHeight_m ?? 0]));
       x = points.map((v, i) => `P${i + 1}: ${fmt(v[0])}`).join('\n');
       y = points.map((v, i) => `P${i + 1}: ${fmt(v[1])}`).join('\n');
-      z = `Base ${fmt(p[2] + (obj.baseHeight_m ?? 0))}\nTop ${fmt(p[2] + (obj.baseHeight_m ?? 0) + obj.height_m)}`;
+      z = i18n.t("Base {p1}\nTop {p2}", { p1: fmt(p[2] + (obj.baseHeight_m ?? 0)), p2: fmt(p[2] + (obj.baseHeight_m ?? 0) + obj.height_m) });
     }
     if (isThermocouple(obj)) {
       const beads = beadOffsetsOf(obj).map(offset => toWorld(obj, [0, 0, offset]));
-      type = beads.length > 1 ? 'TC rake' : 'thermocouple';
-      z = `Base ${fmt(p[2])}\n` + beads.map((v, i) => `Bead ${i + 1}: ${fmt(v[2])}`).join('\n');
+      type = beads.length > 1 ? i18n.t("TC rake") : 'thermocouple';
+      z = i18n.t("Base {p1}\n{p2}", { p1: fmt(p[2]), p2: beads.map((v, i) => i18n.t("Bead {p1}: {p2}", { p1: i + 1, p2: fmt(v[2]) })).join('\n') });
       // A tilted rake also needs its bead XY positions to be set out correctly.
       if (beads.some(v => Math.hypot(v[0] - p[0], v[1] - p[1]) > 1e-9)) {
-        x = `Base ${x}\n` + beads.map((v, i) => `Bead ${i + 1}: ${fmt(v[0])}`).join('\n');
-        y = `Base ${y}\n` + beads.map((v, i) => `Bead ${i + 1}: ${fmt(v[1])}`).join('\n');
+        x = i18n.t("Base {p1}\n{p2}", { p1: x, p2: beads.map((v, i) => i18n.t("Bead {p1}: {p2}", { p1: i + 1, p2: fmt(v[0]) })).join('\n') });
+        y = i18n.t("Base {p1}\n{p2}", { p1: y, p2: beads.map((v, i) => i18n.t("Bead {p1}: {p2}", { p1: i + 1, p2: fmt(v[1]) })).join('\n') });
       }
     }
     const target = isAimable(obj) ? obj.transform?.aimTarget_m : null;
@@ -123,23 +125,24 @@ function setOutTable(doc: PlanDocument, unit: LengthUnit): string {
     if (isHeatFluxSensor(obj)) {
       type = 'heat flux';
       // Authoritative quaternion, not a direction inferred from the advisory aim.
-      facing = facingText(forwardOf(quatOf(obj)));
+      facing = facingText(forwardOf(quatOf(obj)), true);
     }
-    if (isVelocityProbe(obj)) { type = 'velocity probe'; facing = obj.transform?.rotation_quat ? facingText(forwardOf(quatOf(obj))) : 'axis unstated'; }
-    if (isGasSampling(obj)) { type = 'gas sample'; facing = `Species: ${obj.species.join(', ') || 'unstated'}${obj.inDuct ? '; in duct' : ''}`; }
-    if (isLoadCell(obj)) { type = 'load cell'; facing = `${obj.capacity_kg ?? 'Unstated'} kg; platform ${obj.platform_m ? obj.platform_m.map(fmt).join(' x ') + ' ' + unit : 'unstated (point)'}`; }
+    if (isVelocityProbe(obj)) { type = 'velocity probe'; facing = obj.transform?.rotation_quat ? facingText(forwardOf(quatOf(obj)), true) : i18n.t("axis unstated"); }
+    if (isGasSampling(obj)) { type = 'gas sample'; facing = i18n.t("Species: {p1}{p2}", { p1: obj.species.join(', ') || i18n.t("unstated"), p2: obj.inDuct ? i18n.t("; in duct") : '' }); }
+    if (isLoadCell(obj)) { type = 'load cell'; facing = i18n.t("{p1} kg; platform {p2}", { p1: obj.capacity_kg ?? i18n.t("Unstated"), p2: obj.platform_m ? obj.platform_m.map(fmt).join(' x ') + i18n.unitSpace() + unit : i18n.t("unstated (point)") }); }
     rows.push(`<tr data-object-id="${esc(obj.id)}">`
-      + [cell(displayName(obj)), cell(type), ...[x, y, z, aim, standoff, facing].map(v => cell(v, 'coord'))].join('')
+      + [cell(displayName(obj)), cell(domainLabel(type)), ...[x, y, z, aim, standoff, facing].map(v => cell(v, 'coord'))].join('')
       + '</tr>');
   }
   const axis = (view: 'front' | 'side', label: string, page: string): string => {
     const heading = elevationHeading(doc, view);
-    return heading.startsWith('looking along') ? `${label} ${page} in plan`
-      : `${label} ${heading.replace('looking ', '').replace(/ \(\+[XY]\)$/, '')} (${page} in plan)`;
+    if (i18n.language() === 'fr') return i18n.t('{axis} : {heading} ({page} in plan)', { axis: label, heading, page: page === 'right' ? i18n.t('right') : i18n.t('up') });
+    return heading.startsWith('looking along') ? i18n.t("{p1} {p2} in plan", { p1: label, p2: page })
+      : i18n.t("{p1} {p2} ({p3} in plan)", { p1: label, p2: heading.replace('looking ', '').replace(/ \(\+[XY]\)$/, ''), p3: page });
   };
-  return `<p class="note">${esc(`Origin: burner centre at floor level; ${axis('side', '+X', 'right')}; ${axis('front', '+Y', 'up')}; heights above the floor.`)}</p>
-    <p class="note">Lengths in ${esc(unit)}. P1, P2, … follow each wall polyline; base/top give its height limits. Aim is the recorded target; a gauge's facing names the plan axis its sensing face looks along, any turn off that axis, and its tilt.</p>
-    <table class="set-out"><thead><tr>${['Item', 'Type', 'X', 'Y', 'Height (Z)', 'Aim point (X, Y, Z)', 'Standoff (plan / slant)', 'Facing / setup'].map(head).join('')}</tr></thead>
+  return `<p class="note">${esc(i18n.t("Origin: burner centre at floor level; {p1}; {p2}; heights above the floor.", { p1: axis('side', '+X', 'right'), p2: axis('front', '+Y', 'up') }))}</p>
+    <p class="note">${esc(i18n.t("Lengths in {p1}. P1, P2, … follow each wall polyline; base/top give its height limits. Aim is the recorded target; a gauge's facing names the plan axis its sensing face looks along, any turn off that axis, and its tilt.", { p1: unit }))}</p>
+    <table class="set-out"><thead><tr>${[i18n.t("Item"), i18n.t("Type"), 'X', 'Y', i18n.t("Height (Z)"), i18n.t("Aim point (X, Y, Z)"), i18n.t("Standoff (plan / slant)"), i18n.t("Facing / setup")].map(head).join('')}</tr></thead>
     <tbody>${rows.join('\n')}</tbody></table>`;
 }
 
@@ -147,9 +150,9 @@ function setOutCheckTable(doc: PlanDocument, unit: LengthUnit): string {
   const rows = setOutCheck(doc);
   if (!rows.length) return '';
   const fmt = (v: number): string => formatLength(v, unit, { fixed: true });
-  return `<h2>Set-out check</h2><p class="note">Survey of object origins in ${esc(unit)}. Height difference is measured minus planned; aim difference compares facing directions. Sign-off: ____________________</p>
-    <table class="set-out set-out-check"><thead><tr>${['Item', 'Planned (X, Y, Z)', 'Measured (X, Y, Z)', 'Plan distance', 'Height difference', 'Aim difference (deg)', 'Measured date'].map(head).join('')}</tr></thead>
-    <tbody>${rows.map(r => `<tr data-object-id="${esc(r.id)}">${[r.name, r.planned.map(fmt).join(', '), r.measured.map(fmt).join(', '), fmt(r.plan_distance_m), fmt(r.height_difference_m), r.aim_difference_deg === null ? 'Unstated' : r.aim_difference_deg.toFixed(1), r.date ?? 'Unstated'].map(v => cell(v, 'coord')).join('')}</tr>`).join('\n')}</tbody></table>`;
+  return `<h2>${esc(i18n.t("Set-out check"))}</h2><p class="note">${esc(i18n.t("Survey of object origins in {p1}. Height difference is measured minus planned; aim difference compares facing directions. Sign-off: ____________________", { p1: unit }))}</p>
+    <table class="set-out set-out-check"><thead><tr>${[i18n.t("Item"), i18n.t("Planned (X, Y, Z)"), i18n.t("Measured (X, Y, Z)"), i18n.t("Plan distance"), i18n.t("Height difference"), i18n.t("Aim difference (deg)"), i18n.t("Measured date")].map(head).join('')}</tr></thead>
+    <tbody>${rows.map(r => `<tr data-object-id="${esc(r.id)}">${[r.name, r.planned.map(fmt).join(', '), r.measured.map(fmt).join(', '), fmt(r.plan_distance_m), fmt(r.height_difference_m), r.aim_difference_deg === null ? i18n.t("Unstated") : i18n.numberText(r.aim_difference_deg.toFixed(1)), r.date ?? i18n.t("Unstated")].map(v => cell(v, 'coord')).join('')}</tr>`).join('\n')}</tbody></table>`;
 }
 
 function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
@@ -160,27 +163,27 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
     const lens = printedLensOf(cam);
     rows.push('<tr>' + [
       `<td><span class="swatch" style="background:${esc(cameraColor(cam))}"></span>${esc(displayName(cam))}</td>`,
-      cell(cam.camera.modality),
+      cell(domainLabel(cam.camera.modality)),
       cell(`${cam.camera.resolution_px[0]}×${cam.camera.resolution_px[1]}`
-        + (lens ? `, ${lens.name}${lens.listed ? ' lens' : ', not a listed lens'}` : '')),
-      cell(`${hfovDegOf(cam).toFixed(1)}° × ${vfovDegOf(cam).toFixed(1)}°`
-        + (zoomOf(cam) === 1 ? '' : ` at ${zoomOf(cam)}×`)),
+        + (lens ? `, ${lens.name}${lens.listed ? i18n.t(" lens") : i18n.t(", not a listed lens")}` : '')),
+      cell(`${i18n.numberText(hfovDegOf(cam).toFixed(1))}° × ${i18n.numberText(vfovDegOf(cam).toFixed(1))}°`
+        + (zoomOf(cam) === 1 ? '' : i18n.t(" at {p1}×", { p1: zoomOf(cam) }))),
       cell(formatLength(standoffHorizontalM(cam), unit), 'num'),
       cell(formatLength(positionOf(cam)[2], unit), 'num'),
-      cell(intrinsicsSourceOf(cam)),
+      cell(domainLabel(intrinsicsSourceOf(cam))),
     ].join('') + '</tr>');
   }
 
   for (const b of burners(doc)) {
     const tip = flameTipZM(b);
     const q = hrrAt(b);
-    const fire = q !== null ? `${formatKw(q)} kW ${b.fire?.fuel ?? ''}`.trim() : null;
-    const notes = [fire, b.fire?.hrrCurve ? curveSummary(b.fire.hrrCurve) : null, tip === null ? null : `mean flame tip ${formatLengthWithUnit(tip, unit)}`]
+    const fire = q !== null ? `${formatKw(q)}${i18n.unitSpace(" ")}kW ${b.fire?.fuel ?? ''}`.trim() : null;
+    const notes = [fire, b.fire?.hrrCurve ? curveSummary(b.fire.hrrCurve) : null, tip === null ? null : i18n.t("mean flame tip {p1}", { p1: formatLengthWithUnit(tip, unit) })]
       .filter((n): n is string => n !== null).join(', ');
     rows.push('<tr>' + [
       `<td>${esc(displayName(b))}</td>`,
-      cell('burner'),
-      cell(`${b.footprint.shape}, D_eff ${formatLengthWithUnit(burnerDiameterM(b), unit)}`),
+      cell(domainLabel('burner')),
+      cell(`${domainLabel(b.footprint.shape)}, D_eff ${formatLengthWithUnit(burnerDiameterM(b), unit)}`),
       cell(notes || '—'),
       cell(formatLength(planDistance(positionOf(b)), unit), 'num'),
       // The fuel surface, like every other row's own extent. This column used to
@@ -193,9 +196,9 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
   for (const hd of hoods(doc)) {
     rows.push('<tr>' + [
       `<td>${esc(displayName(hd))}</td>`,
-      cell('hood'),
-      cell(`${formatLength(hd.opening_m[0], unit)} × ${formatLengthWithUnit(hd.opening_m[1], unit)} opening`),
-      cell(hd.duct ? `duct ⌀ ${formatLengthWithUnit(hd.duct.diameter_m, unit)}` : 'no duct'),
+      cell(domainLabel('hood')),
+      cell(i18n.t("{p1} × {p2} opening", { p1: formatLength(hd.opening_m[0], unit), p2: formatLengthWithUnit(hd.opening_m[1], unit) })),
+      cell(hd.duct ? i18n.t("duct ⌀ {p1}", { p1: formatLengthWithUnit(hd.duct.diameter_m, unit) }) : i18n.t("no duct")),
       cell(formatLength(planDistance(positionOf(hd)), unit), 'num'),
       cell(formatLength(hoodIntakeHeightM(hd), unit), 'num'),
       cell('—'),
@@ -210,9 +213,9 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
     const top = positionOf(wl)[2] + (wl.baseHeight_m ?? 0) + wl.height_m;
     rows.push('<tr>' + [
       `<td>${esc(displayName(wl))}</td>`,
-      cell('wall'),
-      cell(`${formatLengthWithUnit(length, unit)} long, ${formatLengthWithUnit(wl.height_m, unit)} high`),
-      cell(`${(wl.openings ?? []).length} opening(s)`),
+      cell(domainLabel('wall')),
+      cell(i18n.t("{p1} long, {p2} high", { p1: formatLengthWithUnit(length, unit), p2: formatLengthWithUnit(wl.height_m, unit) })),
+      cell(i18n.t("{p1} opening(s)", { p1: (wl.openings ?? []).length })),
       cell('—'),
       cell(formatLength(top, unit), 'num'),
       cell('—'),
@@ -222,9 +225,9 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
   for (const cl of ceilings(doc)) {
     rows.push('<tr>' + [
       `<td>${esc(displayName(cl))}</td>`,
-      cell('ceiling'),
-      cell(`${ceilingAreaM2(cl).toFixed(2)} m² slab`),
-      cell(`${cl.polygon_m.length}-sided`),
+      cell(domainLabel('ceiling')),
+      cell(i18n.t("{p1} m² slab", { p1: i18n.numberText(ceilingAreaM2(cl).toFixed(2)) })),
+      cell(i18n.t("{p1}-sided", { p1: cl.polygon_m.length })),
       cell('—'),
       cell(formatLength(ceilingSoffitZM(cl), unit), 'num'),
       cell('—'),
@@ -235,10 +238,10 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
     const [dx, dy, dz] = ob.size_m;
     rows.push('<tr>' + [
       `<td>${esc(displayName(ob))}</td>`,
-      cell('obstruction'),
+      cell(domainLabel('obstruction')),
       cell(`${formatLength(dx, unit)} × ${formatLength(dy, unit)} × `
         + `${formatLengthWithUnit(dz, unit)}`),
-      cell(`${(dx * dy).toFixed(2)} m² footprint`),
+      cell(i18n.t("{p1} m² footprint", { p1: i18n.numberText((dx * dy).toFixed(2)) })),
       cell('—'),
       cell(formatLength(positionOf(ob)[2] + dz, unit), 'num'),
       cell('—'),
@@ -251,11 +254,11 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
     const view = gaugeViewAngleDeg(s);
     rows.push('<tr>' + [
       `<td><span class="swatch" style="background:${esc(objectColor(s))}"></span>${esc(displayName(s))}</td>`,
-      cell('heat flux'),
-      cell(`${s.gauge?.kind ?? 'schmidt-boelter'}${range === null ? '' : `, 0–${range} kW/m²`}`),
-      cell(e === null ? `${view.toFixed(0)}° view`
-        : Number.isFinite(e.incidentKwM2) ? `predicted ${e.incidentKwM2.toFixed(2)} kW/m²`
-          : 'in the fire'),
+      cell(domainLabel('heat flux')),
+      cell(`${domainLabel(s.gauge?.kind ?? 'schmidt-boelter')}${range === null ? '' : `, 0–${range}${i18n.unitSpace(" ")}kW/m²`}`),
+      cell(e === null ? i18n.t("{p1}° view", { p1: i18n.numberText(view.toFixed(0)) })
+        : Number.isFinite(e.incidentKwM2) ? i18n.t("predicted {p1} kW/m²", { p1: i18n.numberText(e.incidentKwM2.toFixed(2)) })
+          : i18n.t("in the fire")),
       cell(formatLength(standoffHorizontalM(s as never), unit), 'num'),
       cell(formatLength(positionOf(s)[2], unit), 'num'),
       cell('—'),
@@ -267,11 +270,11 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
     const heights = beads.map((b) => b.world[2]);
     rows.push('<tr>' + [
       `<td><span class="swatch" style="background:${esc(objectColor(tc))}"></span>${esc(displayName(tc))}</td>`,
-      cell('thermocouple'),
-      cell(`type ${tcTypeOf(tc)}, ${beads.length} bead${beads.length > 1 ? 's' : ''}`),
+      cell(domainLabel('thermocouple')),
+      cell(i18n.plural("type {p1}, {p2} bead", "type {p1}, {p2} beads", beads.length, { p1: tcTypeOf(tc), p2: beads.length })),
       cell(beads.length > 1
         ? `${formatLength(Math.min(...heights), unit)}–${formatLengthWithUnit(Math.max(...heights), unit)}`
-        : `to ${tcMaxTemperatureC(tc)} °C`),
+        : i18n.t("to {p1} °C", { p1: tcMaxTemperatureC(tc) })),
       cell(formatLength(planDistance(positionOf(tc)), unit), 'num'),
       cell(formatLength(Math.max(...heights), unit), 'num'),
       cell('—'),
@@ -279,13 +282,13 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
   }
 
   for (const obj of doc.objects.filter(isNewInstrument)) {
-    const detail = isVelocityProbe(obj) ? `Range: ${obj.range_m_s ?? 'unstated'} m/s; ${obj.transform?.rotation_quat ? facingText(forwardOf(quatOf(obj))) : 'axis unstated'}`
-      : isGasSampling(obj) ? `${obj.species.join(', ') || 'Species unstated'}${obj.inDuct ? '; in duct' : ''}`
-        : `Capacity: ${obj.capacity_kg ?? 'unstated'} kg; platform ${obj.platform_m ? obj.platform_m.map(v => formatLength(v, unit)).join(' x ') + ' ' + unit : 'unstated (point)'}`;
+    const detail = isVelocityProbe(obj) ? i18n.t("Range: {p1} m/s; {p2}", { p1: obj.range_m_s ?? i18n.t("unstated"), p2: obj.transform?.rotation_quat ? facingText(forwardOf(quatOf(obj)), true) : i18n.t("axis unstated") })
+      : isGasSampling(obj) ? `${obj.species.join(', ') || i18n.t("Species unstated")}${obj.inDuct ? i18n.t("; in duct") : ''}`
+        : i18n.t("Capacity: {p1} kg; platform {p2}", { p1: obj.capacity_kg ?? i18n.t("unstated"), p2: obj.platform_m ? obj.platform_m.map(v => formatLength(v, unit)).join(' x ') + i18n.unitSpace() + unit : i18n.t("unstated (point)") });
     rows.push('<tr>' + [
       `<td><span class="swatch" style="background:${esc(objectColor(obj))}"></span>${esc(displayName(obj))}</td>`,
-      cell(isVelocityProbe(obj) ? 'velocity probe' : isGasSampling(obj) ? 'gas sample' : 'load cell'),
-      cell(detail), cell('No prediction model.'), cell(formatLength(planDistance(positionOf(obj)), unit)),
+      cell(domainLabel(isVelocityProbe(obj) ? 'velocity probe' : isGasSampling(obj) ? 'gas sample' : 'load cell')),
+      cell(detail), cell(i18n.t("No prediction model.")), cell(formatLength(planDistance(positionOf(obj)), unit)),
       cell(formatLength(positionOf(obj)[2], unit)), cell('')].join('') + '</tr>');
   }
 
@@ -300,12 +303,11 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
     const corners = flameBoundsCorners(f);
     const frames = manifest?.frames ?? [];
     const detail = manifest
-      ? `${frames.length} frames, ${frames[0][0]}–${frames[frames.length - 1][0]} s, `
-        + `${(manifest.grid.pitch_m * 1000).toFixed(1)} mm voxels`
-      : 'no voxel folder linked';
+      ? i18n.plural("{p1} frame, {p2}–{p3} s, {p4} mm voxels", "{p1} frames, {p2}–{p3} s, {p4} mm voxels", frames.length, { p1: frames.length, p2: frames[0][0], p3: frames[frames.length - 1][0], p4: i18n.numberText((manifest.grid.pitch_m * 1000).toFixed(1)) })
+      : i18n.t("no voxel folder linked");
     const notes = [
-      link ? `run ${link.label || fileName(link.path)}` : null,
-      burner ? `on ${displayName(burner)}` : null,
+      link ? i18n.t("run {p1}", { p1: link.label || fileName(link.path) }) : null,
+      burner ? i18n.t("on {p1}", { p1: displayName(burner) }) : null,
     ].filter((s): s is string => s !== null).join(', ');
     let offset = '—';
     if (burner && corners.length) {
@@ -316,7 +318,7 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
     }
     rows.push('<tr>' + [
       `<td>${esc(displayName(f))}</td>`,
-      cell('reconstructed flame'),
+      cell(domainLabel('reconstructed flame')),
       cell(detail),
       cell(notes || '—'),
       cell(offset, 'num'),
@@ -325,53 +327,46 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
     ].join('') + '</tr>');
   }
 
-  if (rows.length === 0) return '<p class="empty">No objects in this plan.</p>';
+  if (rows.length === 0) return `<p class="empty">${esc(i18n.t("No objects in this plan."))}</p>`;
 
   return `<table>
     <thead><tr>${[
-      'Item', 'Type', 'Detail', 'Notes', `Standoff (${unit})`, `Height (${unit})`, 'Intrinsics',
+      i18n.t("Item"), i18n.t("Type"), i18n.t("Detail"), i18n.t("Notes"), i18n.t("Standoff ({p1})", { p1: unit }), i18n.t("Height ({p1})", { p1: unit }), i18n.t("Intrinsics"),
     ].map(head).join('')}</tr></thead>
     <tbody>${rows.join('')}</tbody>
   </table>
-  <p class="note">Standoff is the plan distance from the burner centre (for a reconstructed
-  flame, from its burner). Height is above the floor: the lens or sensing face of an
-  instrument, the top bead of a rake, the fuel surface of a burner, the intake of a hood,
-  the soffit of a ceiling, and the top of a wall, box or flame envelope.</p>`;
+  <p class="note">${esc(i18n.t("Standoff is the plan distance from the burner centre (for a reconstructed\n  flame, from its burner). Height is above the floor: the lens or sensing face of an\n  instrument, the top bead of a rake, the fuel surface of a burner, the intake of a hood,\n  the soffit of a ceiling, and the top of a wall, box or flame envelope."))}</p>`;
 }
 
 function coverageTable(doc: PlanDocument, unit: LengthUnit): string {
   const list = cameras(doc);
-  if (list.length === 0) return '<p class="empty">No cameras in this plan.</p>';
+  if (list.length === 0) return `<p class="empty">${esc(i18n.t("No cameras in this plan."))}</p>`;
 
   const rows = list.map((cam) => {
     const c = framingOf(doc, cam);
-    const yesNo = (v: boolean): string => `<td class="${v ? 'ok' : 'bad'}">${v ? 'yes' : 'no'}</td>`;
+    const yesNo = (v: boolean): string => `<td class="${v ? 'ok' : 'bad'}">${esc(domainLabel(v ? 'yes' : 'no'))}</td>`;
     const zoom = zoomOf(cam);
     return '<tr>' + [
       `<td><span class="swatch" style="background:${esc(cameraColor(cam))}"></span>${esc(displayName(cam))}</td>`,
       cell(formatLength(standoffM(cam), unit), 'num'),
-      cell(`${(groundSampleDistanceM(cam) * 1000).toFixed(2)}${zoom === 1 ? '' : ` at ${zoom}×`}`, 'num'),
+      cell(`${i18n.numberText((groundSampleDistanceM(cam) * 1000).toFixed(2))}${zoom === 1 ? '' : i18n.t(" at {p1}×", { p1: zoom })}`, 'num'),
     ].join('')
       + (c ? yesNo(c.base) + yesNo(c.tip)
-        + `<td class="num ${c.fraction > 0.999 ? 'ok' : 'bad'}">${(c.fraction * 100).toFixed(0)}%</td>`
+        + `<td class="num ${c.fraction > 0.999 ? 'ok' : 'bad'}">${i18n.numberText((c.fraction * 100).toFixed(0))}${i18n.unitSpace("")}%</td>`
         + (c.unobstructed === null ? '<td>—</td>'
-          : `<td class="num ${c.unobstructed > 0.999 ? 'ok' : 'bad'}">${(c.unobstructed * 100).toFixed(0)}%</td>`)
+          : `<td class="num ${c.unobstructed > 0.999 ? 'ok' : 'bad'}">${i18n.numberText((c.unobstructed * 100).toFixed(0))}${i18n.unitSpace("")}%</td>`)
         : '<td>—</td><td>—</td><td>—</td><td>—</td>')
       + '</tr>';
   });
 
   return `<table>
     <thead><tr>${[
-      'Camera', `Slant range (${unit})`, 'mm/px at fire', 'Flame base', 'Flame tip', 'Plume', 'Unobstructed',
+      i18n.t("Camera"), i18n.t("Slant range ({p1})", { p1: unit }), i18n.t("mm/px at fire"), i18n.t("Flame base"), i18n.t("Flame tip"), i18n.t("Plume"), i18n.t("Unobstructed"),
     ].map(head).join('')}</tr></thead>
     <tbody>${rows.join('')}</tbody>
   </table>
-  <p class="note">Coverage is computed against the Heskestad mean flame height and a 15° plume
-  envelope. Unobstructed is the clear share of centreline samples inside the frame.
-  The intermittent flame tip reaches higher than the mean.</p>${
-  list.some((cam) => zoomOf(cam) !== 1) ? `
-  <p class="note">mm/px for a zoomed camera is what its output pixels imply. A digital zoom
-  crops and interpolates: it does not resolve finer detail than the unzoomed detector.</p>` : ''}`;
+  <p class="note">${esc(i18n.t("Coverage is computed against the Heskestad mean flame height and a 15° plume\n  envelope. Unobstructed is the clear share of centreline samples inside the frame.\n  The intermittent flame tip reaches higher than the mean."))}</p>${list.some((cam) => zoomOf(cam) !== 1) ? `
+  <p class="note">${esc(i18n.t("mm/px for a zoomed camera is what its output pixels imply. A digital zoom\n  crops and interpolates: it does not resolve finer detail than the unzoomed detector."))}</p>` : ''}`;
 }
 
 /**
@@ -393,7 +388,7 @@ function instrumentTable(doc: PlanDocument, unit: LengthUnit): string {
     const swatch = `<td><span class="swatch" style="background:${esc(objectColor(s))}"></span>${esc(displayName(s))}</td>`;
 
     if (!e) {
-      rows.push(`<tr>${swatch}${cell('heat flux')}${cell('—')}${cell('—')}${cell('—')}<td>needs an HRR</td></tr>`);
+      rows.push(`<tr>${swatch}${cell(domainLabel('heat flux'))}${cell('—')}${cell('—')}${cell('—')}<td>${esc(i18n.t("needs an HRR"))}</td></tr>`);
       continue;
     }
     const frac = e.fractionOfRange;
@@ -403,11 +398,10 @@ function instrumentTable(doc: PlanDocument, unit: LengthUnit): string {
     // says must not size a gauge -- came to be printed in green.
     const verdict = gaugeVerdict(doc, s)!;
     rows.push('<tr>' + swatch + [
-      cell('heat flux'),
-      cell(`${formatLength(e.distanceM, unit)} to ${displayName(findObject(doc, e.sourceId)!)}`, 'num'),
-      cell((finite ? `${e.incidentKwM2.toFixed(2)} kW/m²` : 'unbounded')
-        + ` (${(e.visibleFraction * 100).toFixed(0)}% line of sight)`, 'num'),
-      cell(frac === null || !Number.isFinite(frac) ? '—' : `${(frac * 100).toFixed(0)}%`, 'num'),
+      cell(domainLabel('heat flux')),
+      cell(i18n.t("{p1} to {p2}", { p1: formatLength(e.distanceM, unit), p2: displayName(findObject(doc, e.sourceId)!) }), 'num'),
+      cell(i18n.t("{p1} ({p2}% line of sight)", { p1: i18n.numberText((finite ? `${e.incidentKwM2.toFixed(2)}${i18n.unitSpace(" ")}kW/m²` : i18n.t("unbounded"))), p2: i18n.numberText((e.visibleFraction * 100).toFixed(0)) }), 'num'),
+      cell(frac === null || !Number.isFinite(frac) ? '—' : `${i18n.numberText((frac * 100).toFixed(0))}${i18n.unitSpace("")}%`, 'num'),
     ].join('')
       + `<td class="${verdict.status}">${esc(verdict.label)}</td></tr>`);
   }
@@ -428,36 +422,30 @@ function instrumentTable(doc: PlanDocument, unit: LengthUnit): string {
     const verdict = thermocoupleVerdict(doc, tc);
 
     rows.push('<tr>' + swatch + [
-      cell(`thermocouple, type ${tcTypeOf(tc)}`),
+      cell(i18n.t("thermocouple, type {p1}", { p1: tcTypeOf(tc) })),
       cell(formatLength(planDistance(positionOf(tc)), unit), 'num'),
-      cell(hottest === null ? '—' : `${hottest.toFixed(0)} °C`, 'num'),
+      cell(hottest === null ? '—' : `${i18n.numberText(hottest.toFixed(0))}${i18n.unitSpace(" ")}°C`, 'num'),
       cell(`${inFire}/${beads.length}`, 'num'),
     ].join('')
       + `<td class="${verdict.status}">${esc(verdict.label)}</td></tr>`);
   }
 
-  return `<h2>Instrument exposure</h2>
+  return `<h2>${esc(i18n.t("Instrument exposure"))}</h2>
   <table>
     <thead><tr>${[
-      'Instrument', 'Type', `Distance / standoff (${unit})`, 'Predicted', 'Range / beads used', 'Verdict',
+      i18n.t("Instrument"), i18n.t("Type"), i18n.t("Distance / standoff ({p1})", { p1: unit }), i18n.t("Predicted"), i18n.t("Range / beads used"), i18n.t("Verdict"),
     ].map(head).join('')}</tr></thead>
     <tbody>${rows.join('')}</tbody>
   </table>
-  <p class="note">Heat flux is a point-source estimate at mid-flame height,
-  q″ = χ_r·Q̇·cos θ / (4πr²), summed over all fires. Gauge distances refer to the dominant source.
-  Each fire's flux is scaled by its visible share of nine flame centreline samples;
-  the total line of sight is weighted by the unshadowed flux. Indirect radiation is not estimated.
-  Thermocouple temperatures are the Heskestad plume centreline, quoted only
-  for beads above the mean flame tip and inside the plume envelope; a bead off the axis reads
-  lower. Both are for sizing and placement, not for calibration.</p>`;
+  <p class="note">${esc(i18n.t("Heat flux is a point-source estimate at mid-flame height,\n  q″ = χ_r·Q̇·cos θ / (4πr²), summed over all fires. Gauge distances refer to the dominant source.\n  Each fire's flux is scaled by its visible share of nine flame centreline samples;\n  the total line of sight is weighted by the unshadowed flux. Indirect radiation is not estimated.\n  Thermocouple temperatures are the Heskestad plume centreline, quoted only\n  for beads above the mean flame tip and inside the plume envelope; a bead off the axis reads\n  lower. Both are for sizing and placement, not for calibration."))}</p>`;
 }
 
 function checksList(issues: Issue[]): string {
-  if (issues.length === 0) return '<p class="empty">No issues found.</p>';
+  if (issues.length === 0) return `<p class="empty">${esc(i18n.t("No issues found."))}</p>`;
   const order: Record<Issue['severity'], number> = { error: 0, warning: 1, info: 2 };
   return `<ul class="checks">${[...issues]
     .sort((a, b) => order[a.severity] - order[b.severity])
-    .map((i) => `<li class="sev-${i.severity}"><strong>${esc(i.severity)}</strong> ${esc(i.message)}</li>`)
+    .map((i) => `<li class="sev-${i.severity}"><strong>${esc(domainLabel(i.severity))}</strong> ${esc(i.message)}</li>`)
     .join('')}</ul>`;
 }
 
@@ -536,15 +524,15 @@ function titleBlock(doc: PlanDocument, unit: LengthUnit): string {
     `<div><div class="k">${esc(k)}</div><div class="v">${esc(v || '—')}</div></div>`;
 
   return `<div class="titleblock">
-    ${field('Title', m.title ?? 'Untitled fire test')}
-    ${field('Test ID', m.testId ?? '')}
-    ${field('Site', m.siteName ?? '')}
-    ${field('Revision', m.revision ?? '')}
-    ${field('Author', m.author ?? '')}
-    ${field('Modified', m.modified ?? '')}
-    ${field('Display units', unit)}
-    ${field('Origin', 'burner centre, floor level')}
-    ${m.notes ? `<div class="wide"><div class="k">Notes</div><div>${esc(m.notes)}</div></div>` : ''}
+    ${field(i18n.t("Title"), m.title ?? 'Untitled fire test')}
+    ${field(i18n.t("Test ID"), m.testId ?? '')}
+    ${field(i18n.t("Site"), m.siteName ?? '')}
+    ${field(i18n.t("Revision"), m.revision ?? '')}
+    ${field(i18n.t("Author"), m.author ?? '')}
+    ${field(i18n.t("Modified"), m.modified ?? '')}
+    ${field(i18n.t("Display units"), unit)}
+    ${field(i18n.t("Origin"), i18n.t("burner centre, floor level"))}
+    ${m.notes ? `<div class="wide"><div class="k">${esc(i18n.t("Notes"))}</div><div>${esc(m.notes)}</div></div>` : ''}
   </div>`;
 }
 
@@ -555,50 +543,46 @@ export function buildReportBody(doc: PlanDocument, unit: LengthUnit): string {
   return `<div class="report">
     ${titleBlock(doc, unit)}
 
-    <h2>Plan view</h2>
+    <h2>${esc(i18n.t("Plan view"))}</h2>
     ${buildViewSvg(doc, 'plan', unit)}
 
     ${hasElevationContent ? `
-      <h2>Front elevation — ${esc(elevationHeading(doc, 'front'))}</h2>
+      <h2>${esc(i18n.t("Front elevation — {p1}", { p1: elevationHeading(doc, 'front') }))}</h2>
       ${buildViewSvg(doc, 'front', unit)}
 
-      <h2>Side elevation — ${esc(elevationHeading(doc, 'side'))}</h2>
+      <h2>${esc(i18n.t("Side elevation — {p1}", { p1: elevationHeading(doc, 'side') }))}</h2>
       ${buildViewSvg(doc, 'side', unit)}
     ` : ''}
 
     <div class="page-break"></div>
-    <h2>Equipment</h2>
+    <h2>${esc(i18n.t("Equipment"))}</h2>
     ${equipmentTable(doc, unit)}
 
-    <h2>Set-out</h2>
+    <h2>${esc(i18n.t("Set-out"))}</h2>
     ${setOutTable(doc, unit)}
     ${setOutCheckTable(doc, unit)}
 
-    <h2>Camera coverage</h2>
+    <h2>${esc(i18n.t("Camera coverage"))}</h2>
     ${coverageTable(doc, unit)}
 
     ${instrumentTable(doc, unit)}
 
-    <h2>Checks</h2>
+    <h2>${esc(i18n.t("Checks"))}</h2>
     ${checksList(checkPlan(doc))}
 
-    <footer>
-      World frame is Z-up, right-handed, with the origin at the burner centre at floor
-      level; stored values are metric regardless of the display units above. Flame and
-      plume geometry are Heskestad correlations, not measurements.
-    </footer>
+    <footer>${esc(i18n.t("\n      World frame is Z-up, right-handed, with the origin at the burner centre at floor\n      level; stored values are metric regardless of the display units above. Flame and\n      plume geometry are Heskestad correlations, not measurements.\n    "))}</footer>
   </div>`;
 }
 
 /** A standalone printable document, for saving or emailing. */
 export function buildReportHtml(doc: PlanDocument, unit: LengthUnit): string {
-  const title = doc.meta?.title ?? 'Fire test plan';
+  const title = doc.meta?.title ?? i18n.t("Fire test plan");
   return `<!doctype html>
-<html lang="en">
+<html lang="${i18n.language()}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} — drawing</title>
+<title>${esc(i18n.t("{p1} — drawing", { p1: title }))}</title>
 <style>
   body { margin: 0; background: #f1f5f9; }
   .report { max-width: 940px; margin: 0 auto; padding: 28px 24px 48px; }

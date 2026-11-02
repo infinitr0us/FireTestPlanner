@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 /** Compact, bounded shared-page data, lifted out before plan validation or Save. */
 import { decimateMinMax, type Series } from '../core/test-data';
 import type { PlanDocument } from '../core/types';
@@ -17,7 +18,7 @@ export interface TestDataShareSummary {
 const encodedSize = (payload: TestDataPayload): number =>
   new TextEncoder().encode(JSON.stringify(payload).replace(/</g, '\\u003c')).length;
 export const shareWarning = (count: number): string =>
-  `Test data: ${count} source(s) omitted because the shared-page data exceeds the 5 MB limit.`;
+  i18n.t("Test data: {p1} source(s) omitted because the shared-page data exceeds the 5 MB limit.", { p1: count });
 
 /** Whole sources in document order. A later smaller source can use remaining space. */
 export function embedTestData(doc: PlanDocument, get: (sourceId: string) => TestDataEntry | undefined,
@@ -44,7 +45,7 @@ export function embedTestData(doc: PlanDocument, get: (sourceId: string) => Test
 
 /** Validate untrusted JSON before constructing typed arrays or adopting any source. */
 export function decodeTestData(value: unknown): Map<string, Series[]> {
-  const bad = (): never => { throw new Error('Invalid embedded test data.'); };
+  const bad = (): never => { throw new Error(i18n.t("Invalid embedded test data.")); };
   if (!value || typeof value !== 'object') return bad();
   const p = value as TestDataPayload;
   if (p.version !== 1 || !Array.isArray(p.sources) || !Number.isInteger(p.omitted) || p.omitted < 0

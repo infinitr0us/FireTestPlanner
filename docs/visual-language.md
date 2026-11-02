@@ -368,6 +368,8 @@ Token reuse alone is not an accessibility or scientific-validation claim.
 
 | Where | Difference | Reason | Decision |
 |---|---|---|---|
+| Interface language | French display numbers use a decimal comma and narrow no-break space; machine-readable exports and recorded strings retain their original form | Crew-facing text follows the selected language without changing engineering data or interchange formats | Keep; display helpers live in `ui/i18n.ts` and `ui/display-units.ts` |
+| French palette | Two tile columns instead of three | Longer French terms must remain readable without splitting words at 1280 × 720 | Keep; rail scrolling and Checks allocation are shared |
 | Results device classification | Surface and unknown probe classes; no user-color inference | Recorded quantities and planning hardware have different capabilities; original quantities remain visible | Keep; gas-temperature identity aligned |
 | Results camera | FOV 45, near/far 0.01/10000, free orbit; editor FOV 50, 0.05/500, polar limit 0.495π | Simulation coordinates may be below the planning floor; preserve inspection and existing fit | Keep |
 | Results geometry | Fill #8a9bac at 0.1 opacity, edges #8091a2 at 0.55, bounds #31475e | Subdued context behind scientific fields, rather than editor hardware materials | Keep |
@@ -402,6 +404,12 @@ the print block in `styles.css`; the page is A4 portrait with 14 mm margins.
 - Verify selection, playback and export in a browser with actual input events.
 - Keep scientific ramps and print ink separate from interface status colors.
 - Record deliberate differences above and update executable regressions.
+- Wrap visible prose, titles and accessible labels in `ui/i18n.ts` literal keys;
+  add Canadian French entries in `ui/i18n-fr.ts`, using `plural()` for count forms.
+- Preserve user text, names, FDS quantities, codes and unit symbols. Format display
+  numbers with the shared helpers; keep machine-readable exports locale independent.
+- Verify EN and FR at 1280 × 720, including word wrapping, focus, language repaint
+  and print headings. Domain terminology awaiting review is in `french-review.md`.
 
 ## Regression checks and color-literal guard
 

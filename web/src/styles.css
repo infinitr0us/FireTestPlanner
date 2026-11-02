@@ -73,7 +73,19 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
   gap: 4px;
   padding-right: 14px;
   border-right: 1px solid var(--border);
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
 }
+
+.language-switch { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
+.language-switch .toolbar__btn { padding-inline: 5px; }
+.language-switch [aria-pressed=true] { color: var(--accent); border-color: var(--accent); }
+.toolbar__title, .toolbar__file { max-width: 100%; overflow-wrap: anywhere; }
+.panel--right, .panel__block { overflow-wrap: anywhere; min-width: 0; }
+.panel__section { flex-wrap: wrap; gap: 4px; }
+html[lang="fr"] .palette__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+html[lang="fr"] .palette__tile { overflow-wrap: normal; }
 .toolbar__group:last-child { border-right: 0; padding-right: 0; }
 
 .toolbar__group--title { flex-direction: column; align-items: flex-start; gap: 0; min-width: 150px; }

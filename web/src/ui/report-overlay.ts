@@ -1,3 +1,4 @@
+import * as i18n from './i18n';
 /**
  * Full-screen preview of the drawing, with Print and Download.
  *
@@ -48,24 +49,24 @@ export class ReportOverlay {
     body.innerHTML = buildReportBody(doc, unit);
 
     const bar = h('div', { class: 'report-overlay__bar no-print' }, [
-      h('span', { class: 'report-overlay__title' }, ['Drawing preview']),
+      h('span', { class: 'report-overlay__title' }, [i18n.t("Drawing preview")]),
       h('span', { class: 'report-overlay__hint' }, [
-        'Print, then choose "Save as PDF" as the destination.',
+        i18n.t("Print, then choose \"Save as PDF\" as the destination."),
       ]),
       h('button', {
         class: 'btn', type: 'button',
         onclick: () => window.print(),
-      }, ['Print / Save as PDF']),
+      }, [i18n.t("Print / Save as PDF")]),
       h('button', {
         class: 'btn', type: 'button',
         onclick: () => this.onDownload(buildReportHtml(doc, unit), suggestedName),
-      }, ['Download HTML']),
+      }, [i18n.t("Download HTML")]),
       h('button', {
         class: 'btn', type: 'button',
         onclick: () => { void saveScheduleCsv(instrumentScheduleCsv(doc, unit), suggestedName.replace(/-drawing\.html$/, '-schedule.csv').replace(/\.html$/, '.csv'))
-          .catch(error => window.alert(`Schedule could not be saved: ${(error as Error).message}`)); },
-      }, ['Download schedule (CSV)']),
-      h('button', { class: 'btn', type: 'button', onclick: () => this.close() }, ['Close']),
+          .catch(error => window.alert(i18n.t("Schedule could not be saved: {p1}", { p1: (error as Error).message }))); },
+      }, [i18n.t("Download schedule (CSV)")]),
+      h('button', { class: 'btn', type: 'button', onclick: () => this.close() }, [i18n.t("Close")]),
     ]);
 
     this.root = h('div', { class: 'report-overlay' }, [bar, body]);

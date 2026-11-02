@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 import { curveAt, curvePeak, curveProblem, curveSummary } from './hrr';
 import type { HrrCurve } from './types';
 /**
@@ -490,7 +491,7 @@ function faceCurve(face: FireFace, surfs: Map<string, NamelistRecord>, records: 
     || rows.some(r => ['X', 'Y', 'Z'].some(k => r.has(k)));
   const skipped = () => {
     issues.push(issue('info', 'fds-hrr-curve-skipped',
-      `Surface '${face.surf}': RAMP_Q/TAU_Q is not a supported finite time history; the existing peak HRR is retained.`));
+      i18n.t("Surface '{p1}': RAMP_Q/TAU_Q is not a supported finite time history; the existing peak HRR is retained.", { p1: face.surf })));
     return null;
   };
   if (unsupported || face.controlled) return skipped();
@@ -706,16 +707,11 @@ function fireFaces(
   }
   if (unknown.length > 0) {
     issues.push(issue('warning', 'fds-hrr-unknown',
-      `${unknown.map((x) => `'${x}'`).join(', ')} state${unknown.length === 1 ? 's' : ''} MLRPUA `
-      + 'but no HEAT_OF_COMBUSTION, on the &SURF or the &REAC, so the heat release rate is '
-      + 'not in the file. It was imported as a fire with no HRR; set one before relying on '
-      + 'the flame and instrument predictions.'));
+      i18n.plural("{p1} states MLRPUA but no HEAT_OF_COMBUSTION, on the &SURF or the &REAC, so the heat release rate is not in the file. It was imported as a fire with no HRR; set one before relying on the flame and instrument predictions.", "{p1} state MLRPUA but no HEAT_OF_COMBUSTION, on the &SURF or the &REAC, so the heat release rate is not in the file. It was imported as a fire with no HRR; set one before relying on the flame and instrument predictions.", unknown.length, { p1: unknown.map((x) => `'${x}'`).join(', ') })));
   }
   if (off.length > 0) {
     issues.push(issue('warning', 'fds-surface-off',
-      `${off.map((x) => `'${x}'`).join(', ')} release${off.length === 1 ? 's' : ''} no heat `
-      + 'in this input: the &RAMP on RAMP_Q never leaves zero, so the surface is switched '
-      + 'off. It was not imported as a fire.'));
+      i18n.plural("{p1} releases no heat in this input: the &RAMP on RAMP_Q never leaves zero, so the surface is switched off. It was not imported as a fire.", "{p1} release no heat in this input: the &RAMP on RAMP_Q never leaves zero, so the surface is switched off. It was not imported as a fire.", off.length, { p1: off.map((x) => `'${x}'`).join(', ') })));
   }
   return out;
 }
@@ -863,6 +859,18 @@ function burnerPans(faces: FireFace[], obsts: Box[]): Box[] {
 
 /** The rule `detectFloor` reports when it took the burner's own base as the floor. */
 const FLOOR_FROM_BURNER = 'the base of the burner';
+
+/** Display only: the English floor rule remains in imported provenance. */
+function floorRuleLabel(rule: string): string {
+  switch (rule) {
+    case 'the top of the lowest horizontal slab': return i18n.t('the top of the lowest horizontal slab');
+    case 'the base of the burner': return i18n.t('the base of the burner');
+    case 'the bottom of the mesh': return i18n.t('the bottom of the mesh');
+    case 'the level you gave': return i18n.t('the level you gave');
+    default: return rule;
+  }
+}
+
 
 // -- single-record conversion, shared with the paste box ------------------
 
@@ -1216,12 +1224,11 @@ function applyHoles(
     }
     if (!cut) {
       issues.push(issue('info', 'fds-hole-unmatched',
-        `&HOLE at line ${hole.rec.line} cuts nothing this plan holds — it opens a slab `
-        + 'or a solid block, and only walls carry openings here.'));
+        i18n.t("&HOLE at line {p1} cuts nothing this plan holds — it opens a slab or a solid block, and only walls carry openings here.", { p1: hole.rec.line })));
     }
   }
   if (placed > 0) {
-    issues.push(issue('info', 'fds-holes', `${placed} wall opening(s) came from &HOLE.`));
+    issues.push(issue('info', 'fds-holes', i18n.t("{p1} wall opening(s) came from &HOLE.", { p1: placed })));
   }
 }
 
@@ -1308,14 +1315,13 @@ function importDevices(
     };
     groups.push(group);
     if (kind === null) {
-      group.note = 'no counterpart in a test plan';
+      group.note = i18n.t("no counterpart in a test plan");
       continue;
     }
 
     const positioned = members.filter(([r]) => r.numbers('XYZ').length === 3);
     if (positioned.length < members.length) {
-      group.note = `${members.length - positioned.length} of them have no XYZ `
-        + '(a region or a global quantity)';
+      group.note = i18n.t("{p1} of them have no XYZ (a region or a global quantity)", { p1: members.length - positioned.length });
     }
 
     let made: PlanObject[];
@@ -1336,8 +1342,8 @@ function importDevices(
         }
         made.push(obj);
       }
-      group.note = [group.note, skipped ? `${skipped} with unsupported or missing SPEC_ID` : '',
-        merged ? `${merged} merged at an existing gas sampling point` : '',
+      group.note = [group.note, skipped ? i18n.t("{p1} with unsupported or missing SPEC_ID", { p1: skipped }) : '',
+        merged ? i18n.t("{p1} merged at an existing gas sampling point", { p1: merged }) : '',
         key === 'VELOCITY' ? 'Velocity magnitude; no axis recorded.' : ''].filter(Boolean).join('; ');
     } else if (kind === 'thermocouple' && groupRakes) {
       made = groupedRakes(positioned, origin, ids, key);
@@ -1358,8 +1364,7 @@ function importDevices(
 
     if (kind === 'thermocouple' && groupRakes && made.length < positioned.length) {
       issues.push(issue('info', 'fds-rake-grouped',
-        `${positioned.length} '${key}' devices became ${made.length} rake(s): a vertical `
-        + 'run at one XY is one instrument with several beads here, not several instruments.'));
+        i18n.t("{p1} '{p2}' devices became {p3} rake(s): a vertical run at one XY is one instrument with several beads here, not several instruments.", { p1: positioned.length, p2: key, p3: made.length })));
     }
   }
 
@@ -1368,9 +1373,7 @@ function importDevices(
     .reduce((n, g) => n + g.objects, 0);
   if (gauges > 0) {
     issues.push(issue('warning', 'fds-gauge-range',
-      `${gauges} heat flux gauge(s) arrived without a full-scale range — FDS reports a `
-      + 'flux at a point and has no gauge to over-range. Set a range on each to get an '
-      + 'over-range or low-signal verdict.'));
+      i18n.t("{p1} heat flux gauge(s) arrived without a full-scale range — FDS reports a flux at a point and has no gauge to over-range. Set a range on each to get an over-range or low-signal verdict.", { p1: gauges })));
   }
   return objects;
 }
@@ -1378,22 +1381,22 @@ function importDevices(
 /** Records this format has no counterpart for, named individually so the report says
  *  what was in the file rather than "some things were skipped". */
 const SKIPPED: Record<string, string> = {
-  MESH: 'the computational grid',
-  MATL: 'material thermal properties',
-  SPEC: 'gas species',
-  SLCF: 'slice file output',
-  BNDF: 'boundary file output',
-  ISOF: 'isosurface output',
-  PART: 'Lagrangian particles',
-  DUMP: 'output control',
-  TRNX: 'mesh stretching', TRNY: 'mesh stretching', TRNZ: 'mesh stretching',
-  PRES: 'pressure solver settings',
-  RADI: 'radiation solver settings',
-  CTRL: 'control logic',
-  ZONE: 'pressure zones',
-  INIT: 'initial conditions',
-  PROF: 'profile output',
-  SM3D: 'smoke3d output',
+  get MESH() { return i18n.t("the computational grid"); },
+  get MATL() { return i18n.t("material thermal properties"); },
+  get SPEC() { return i18n.t("gas species"); },
+  get SLCF() { return i18n.t("slice file output"); },
+  get BNDF() { return i18n.t("boundary file output"); },
+  get ISOF() { return i18n.t("isosurface output"); },
+  get PART() { return i18n.t("Lagrangian particles"); },
+  get DUMP() { return i18n.t("output control"); },
+  get TRNX() { return i18n.t("mesh stretching"); }, get TRNY() { return i18n.t("mesh stretching"); }, get TRNZ() { return i18n.t("mesh stretching"); },
+  get PRES() { return i18n.t("pressure solver settings"); },
+  get RADI() { return i18n.t("radiation solver settings"); },
+  get CTRL() { return i18n.t("control logic"); },
+  get ZONE() { return i18n.t("pressure zones"); },
+  get INIT() { return i18n.t("initial conditions"); },
+  get PROF() { return i18n.t("profile output"); },
+  get SM3D() { return i18n.t("smoke3d output"); },
   OBST: '', VENT: '', HOLE: '', DEVC: '', PROP: '', SURF: '',
   RAMP: '', REAC: '', HEAD: '', TIME: '', TAIL: '', MULT: '', MISC: '', CATF: '',
 };
@@ -1408,7 +1411,7 @@ function reportSkipped(byGroup: Map<string, NamelistRecord[]>, issues: Issue[]):
   }
   if (parts.length > 0) {
     issues.push(issue('info', 'fds-not-imported',
-      `Simulation-only records, left behind: ${parts.join(', ')}.`));
+      i18n.t("Simulation-only records, left behind: {p1}.", { p1: parts.join(', ') })));
   }
 }
 
@@ -1427,10 +1430,7 @@ function reportUnresolvedIncludes(
   if (catf.length > 0 && !opts.includesResolved) {
     const named = catf.flatMap((rec) => rec.strings('OTHER_FILES')).filter(Boolean);
     issues.push(issue('warning', 'fds-catf-unresolved',
-      `&CATF pulls ${named.length > 0 ? `${named.length} other file(s)` : 'other files'} into `
-      + `this input (${named.length > 0 ? named.join(', ') : 'unnamed'}), and only the file `
-      + 'itself was read. Everything those files define — geometry, devices, surfaces — is '
-      + 'missing from this plan. Open it in the desktop app, from the folder that holds them.'));
+      i18n.t("&CATF pulls {p1} into this input ({p2}), and only the file itself was read. Everything those files define — geometry, devices, surfaces — is missing from this plan. Open it in the desktop app, from the folder that holds them.", { p1: named.length > 0 ? i18n.t("{p1} other file(s)", { p1: named.length }) : i18n.t("other files"), p2: named.length > 0 ? named.join(', ') : 'unnamed' })));
   }
 }
 
@@ -1446,7 +1446,7 @@ function reportUnresolvedIncludes(
 function reportInvalid(doc: PlanDocument, issues: Issue[]): void {
   for (const bad of validateStructure(doc)) {
     issues.push(issue('error', 'fds-invalid',
-      `The conversion produced something this format does not accept: ${bad.message}`));
+      i18n.t("The conversion produced something this format does not accept: {p1}", { p1: bad.message })));
   }
 }
 
@@ -1484,7 +1484,7 @@ export function fdsToPlan(
 ): FdsImportResult {
   const records = readNamelist(text);
   if (records.length === 0) {
-    throw new FdsError('No FDS namelist records found — is this an .fds input file?');
+    throw new FdsError(i18n.t("No FDS namelist records found — is this an .fds input file?"));
   }
 
   const byGroup = new Map<string, NamelistRecord[]>();
@@ -1539,44 +1539,30 @@ export function fdsToPlan(
 
   if (burner === null && faces.length === 0) {
     issues.push(issue('warning', 'fds-no-fire',
-      'No surface in this input releases heat, so the plan has no burner and its origin '
-      + 'is the centre of the mesh. Add a burner, then move the geometry onto it — every '
-      + 'standoff and flame-height figure is measured from the burner centre.'));
+      i18n.t("No surface in this input releases heat, so the plan has no burner and its origin is the centre of the mesh. Add a burner, then move the geometry onto it — every standoff and flame-height figure is measured from the burner centre.")));
   } else if (burner === null) {
     const surfaces = [...new Set(faces.map((f) => f.surf))].sort();
     issues.push(issue('warning', 'fds-fire-not-a-burner',
-      `${surfaces.length} surface(s) release heat (${surfaces.join(', ')}) but none of them `
-      + 'is an upward-facing horizontal face — a wall lining burns on a plane with no plan '
-      + 'footprint, and a ceiling soffit burns downwards. Neither is the floor-standing '
-      + "source this format's burner describes, so the plan has no burner and its origin "
-      + 'is the centre of the mesh.'));
+      i18n.t("{p1} surface(s) release heat ({p2}) but none of them is an upward-facing horizontal face — a wall lining burns on a plane with no plan footprint, and a ceiling soffit burns downwards. Neither is the floor-standing source this format's burner describes, so the plan has no burner and its origin is the centre of the mesh.", { p1: surfaces.length, p2: surfaces.join(', ') })));
   } else {
     if (opts.burnerSurf && burner.surf !== opts.burnerSurf) {
       // The chooser falls back to the default pick rather than refusing, which is the
       // useful behaviour -- but a caller who named a surface and got a different one
       // has to be told, or the plan silently describes a fire somewhere else.
       issues.push(issue('warning', 'fds-burner-unavailable',
-        `'${opts.burnerSurf}' was asked for as the burner surface, but no face of it is `
-        + `one this format can hold as a burner; '${burner.surf}' was used instead.`));
+        i18n.t("'{p1}' was asked for as the burner surface, but no face of it is one this format can hold as a burner; '{p2}' was used instead.", { p1: opts.burnerSurf, p2: burner.surf })));
     }
     if (candidates.length > 1) {
       issues.push(issue('info', 'fds-fire-choice',
-        `${candidates.length} surfaces release heat (${candidates.join(', ')}); `
-        + `'${burner.surf}' was taken as the burner because it is the most compact `
-        + 'horizontal one. The rest are burning surfaces the plan cannot represent.'));
+        i18n.t("{p1} surfaces release heat ({p2}); '{p3}' was taken as the burner because it is the most compact horizontal one. The rest are burning surfaces the plan cannot represent.", { p1: candidates.length, p2: candidates.join(', '), p3: burner.surf })));
     }
     if (unusable.length > 0) {
       issues.push(issue('info', 'fds-fire-not-a-burner',
-        `${unusable.map((x) => `'${x}'`).join(', ')} release${unusable.length === 1 ? 's' : ''} `
-        + 'heat on faces this format cannot hold as a burner — a wall lining has no plan '
-        + `footprint and a ceiling soffit burns downwards. ${
-          unusable.length === 1 ? 'It is not' : 'They are not'} in the plan as a burner; `
-        + 'the notes on the geometry say which surfaces burn.'));
+        i18n.plural("{p1} releases heat on faces this format cannot hold as a burner — a wall lining has no plan footprint and a ceiling soffit burns downwards. {p3} in the plan as a burner; the notes on the geometry say which surfaces burn.", "{p1} release heat on faces this format cannot hold as a burner — a wall lining has no plan footprint and a ceiling soffit burns downwards. {p3} in the plan as a burner; the notes on the geometry say which surfaces burn.", unusable.length, { p1: unusable.map((x) => `'${x}'`).join(', '), p3: unusable.length === 1 ? i18n.t("It is not") : i18n.t("They are not") })));
     }
     if (burners.length > 1) {
       issues.push(issue('info', 'fds-burner-instances',
-        `'${burner.surf}' burns on ${burners.length} separate faces; each became a burner, `
-        + 'and the one at the origin is the primary.'));
+        i18n.t("'{p1}' burns on {p2} separate faces; each became a burner, and the one at the origin is the primary.", { p1: burner.surf, p2: burners.length })));
     }
   }
 
@@ -1611,9 +1597,7 @@ export function fdsToPlan(
 
   if (burnerBase !== null && burnerBase > floorZ + BURNER_PLATFORM_TOL_M) {
     issues.push(issue('warning', 'fds-burner-raised',
-      `The burner's base is ${(burnerBase - floorZ).toFixed(2)} m above the floor, taken `
-      + `from ${floorRule}. If it stands on a platform this is right; if the floor was `
-      + 'detected wrongly every height in the plan is off by the same amount.'));
+      i18n.t("The burner's base is {p1} m above the floor, taken from {p2}. If it stands on a platform this is right; if the floor was detected wrongly every height in the plan is off by the same amount.", { p1: i18n.numberText((burnerBase - floorZ).toFixed(2)), p2: floorRuleLabel(floorRule) })));
   }
   if (floorRule === FLOOR_FROM_BURNER && slabs.length > 0) {
     // The model has slabs, but every one of them is above the fire. That is the
@@ -1621,9 +1605,7 @@ export function fdsToPlan(
     // also the shape of a floor slab this reader failed to recognise, so it is
     // worth a line rather than a silent choice.
     issues.push(issue('info', 'fds-floor-inferred',
-      `No horizontal slab lies below the burner, so the floor was taken as the burner's `
-      + `base (z = ${String(floorZ)} in the file). The ${slabs.length} slab(s) above it `
-      + `${slabs.length === 1 ? 'was' : 'were'} kept as ceilings.`));
+      i18n.t("No horizontal slab lies below the burner, so the floor was taken as the burner's base (z = {p1} in the file). The {p2} slab(s) above it {p3} kept as ceilings.", { p1: floorZ, p2: slabs.length, p3: slabs.length === 1 ? i18n.t('was') : i18n.t('were') })));
   }
 
   // -- build the plan ----------------------------------------------------
@@ -1655,9 +1637,7 @@ export function fdsToPlan(
 
     if (stats.thin > 0) {
       issues.push(issue('info', 'fds-thin-geometry',
-        `${stats.thin} zero-thickness &OBST extent(s) were drawn ${THIN_M * 1000} mm thick: `
-        + 'this format has no planar object, and a box with no thickness is one the '
-        + 'editor cannot open.'));
+        i18n.t("{p1} zero-thickness &OBST extent(s) were drawn {p2} mm thick: this format has no planar object, and a box with no thickness is one the editor cannot open.", { p1: stats.thin, p2: THIN_M * 1000 })));
     }
   }
 
@@ -1682,14 +1662,13 @@ export function fdsToPlan(
         object.fire!.hrrCurve = curve;
         object.fire!.hrr_kw = curvePeak(curve);
         issues.push(issue('info', 'fds-hrr-curve', `${object.name}: ${curveSummary(curve)}`));
-      } else issues.push(issue('info', 'fds-hrr-curve-skipped', `Surface '${face.surf}': combined curve exceeds the point limit; the existing peak HRR is retained.`));
+      } else issues.push(issue('info', 'fds-hrr-curve-skipped', i18n.t("Surface '{p1}': combined curve exceeds the point limit; the existing peak HRR is retained.", { p1: face.surf })));
     }
     objects.push(object);
   }
   if (sidesKw > 0) {
     issues.push(issue('info', 'fds-burner-sides',
-      `The burner box also burns on its sides; their ${sidesKw.toFixed(1)} kW is included in `
-      + 'the burner\'s heat release rate, as FDS releases heat over every exposed face.'));
+      i18n.t("The burner box also burns on its sides; their {p1} kW is included in the burner's heat release rate, as FDS releases heat over every exposed face.", { p1: i18n.numberText(sidesKw.toFixed(1)) })));
   }
 
   const devices: DeviceGroup[] = [];

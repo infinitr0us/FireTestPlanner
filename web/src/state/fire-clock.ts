@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 /**
  * The fire clock: playback over the plan's heat release rate curves.
  *
@@ -12,7 +13,7 @@
 import { hrrAt } from '../core/hrr';
 import { burnerFlameHeightM, burners } from '../core/plan';
 import type { LengthUnit, PlanDocument } from '../core/types';
-import { formatLengthWithUnit } from '../core/units';
+import { formatLengthWithUnit } from '../ui/display-units';
 
 /** Marks the fire clock aims for over its span: stepping is about 1 % of the test. */
 export const FIRE_CLOCK_STEPS = 120;
@@ -59,8 +60,8 @@ export function coneTime(clock: { hasRange: boolean; atRest: boolean; time_s: nu
   return clock.hasRange && !clock.atRest ? clock.time_s : undefined;
 }
 
-export const formatKw = (q: number): string => `${Number(q.toFixed(1))} kW`;
-export const formatClockTime = (t: number): string => `${t.toFixed(1)} s`;
+export const formatKw = (q: number): string => i18n.formatQuantity(Number(q.toFixed(1)), 'kW');
+export const formatClockTime = (t: number): string => i18n.formatQuantity(t, 's', 1);
 
 /** Whether any burner's heat release rate changes with time. */
 export const hasHrrCurve = (doc: PlanDocument): boolean => burners(doc).some((b) => b.fire?.hrrCurve);
@@ -82,9 +83,9 @@ export function fireAt(doc: PlanDocument, t?: number): { q: number; burners: num
 }
 
 type Fire = ReturnType<typeof fireAt>;
-const qText = (fire: Fire): string => `Q = ${formatKw(fire.q)}${fire.burners > 1 ? ` over ${fire.burners} burners` : ''}`;
+const qText = (fire: Fire): string => `Q = ${formatKw(fire.q)}${fire.burners > 1 ? i18n.t(" over {p1} burners", { p1: fire.burners }) : ''}`;
 const flameText = (fire: Fire, unit: LengthUnit): string => fire.flame === null ? ''
-  : ` · ${fire.burners > 1 ? 'flames up to' : 'flame'} ${formatLengthWithUnit(fire.flame, unit)}`;
+  : ` · ${fire.burners > 1 ? i18n.t("flames up to") : 'flame'} ${formatLengthWithUnit(fire.flame, unit)}`;
 
 /**
  * The cone's part of a playback readout: `Q = 168.8 kW · flame 1.23 m` while the
@@ -92,7 +93,7 @@ const flameText = (fire: Fire, unit: LengthUnit): string => fire.flame === null 
  */
 export function conePart(doc: PlanDocument, t: number | undefined, unit: LengthUnit): string {
   const fire = fireAt(doc, t);
-  return `${t === undefined ? 'cone at peak, ' : ''}${qText(fire)}${flameText(fire, unit)}`;
+  return `${t === undefined ? i18n.t("cone at peak, ") : ''}${qText(fire)}${flameText(fire, unit)}`;
 }
 
 /**
@@ -102,6 +103,6 @@ export function conePart(doc: PlanDocument, t: number | undefined, unit: LengthU
 export function fireReadout(doc: PlanDocument, clockTime: number, cone: number | undefined, unit: LengthUnit): string {
   const fire = fireAt(doc, cone);
   return cone === undefined
-    ? `Cone at peak, ${qText(fire)}${flameText(fire, unit)} · t = ${formatClockTime(clockTime)}`
-    : `${qText(fire)} at t = ${formatClockTime(clockTime)}${flameText(fire, unit)}`;
+    ? i18n.t("Cone at peak, {p1}{p2} · t = {p3}", { p1: qText(fire), p2: flameText(fire, unit), p3: formatClockTime(clockTime) })
+    : i18n.t("{p1} at t = {p2}{p3}", { p1: qText(fire), p2: formatClockTime(clockTime), p3: flameText(fire, unit) });
 }

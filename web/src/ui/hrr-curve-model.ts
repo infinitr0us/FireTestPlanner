@@ -1,3 +1,4 @@
+import * as i18n from './i18n';
 /**
  * The burner inspector's ways to make a heat release rate curve, without the DOM:
  * reading a pasted table, the t² form and its readout, and thinning a mapped test
@@ -12,11 +13,11 @@ export type CurveMode = 'steady' | 't2' | 'table' | 'measured' | 'imported';
 export type GrowthRate = keyof typeof GROWTH_RATES | 'custom';
 
 export const GROWTH_LABELS: Record<GrowthRate, string> = {
-  slow: 'Slow', medium: 'Medium', fast: 'Fast', 'ultra-fast': 'Ultra-fast', custom: 'Custom α',
+  get slow() { return i18n.t("Slow"); }, get medium() { return i18n.t("Medium"); }, get fast() { return i18n.t("Fast"); }, get 'ultra-fast'() { return i18n.t("Ultra-fast"); }, get custom() { return i18n.t("Custom α"); },
 };
 
-const number = (v: number): string => String(Number(v.toFixed(6)));
-const seconds = (v: number): string => `${Number(v.toFixed(1))} s`;
+const number = (v: number): string => i18n.numberText(Number(v.toFixed(6)));
+const seconds = (v: number): string => i18n.formatQuantity(Number(v.toFixed(1)), 's');
 
 /** Which way made a curve, from its free-text source. */
 export function curveMode(curve: HrrCurve | null | undefined): CurveMode {
@@ -30,9 +31,9 @@ export function curveMode(curve: HrrCurve | null | undefined): CurveMode {
 
 /** The Curve select's word for a curve made elsewhere. */
 export function importedLabel(source: string | undefined): string {
-  if (source?.startsWith('fds-ramp:')) return `From FDS: ${source.slice(9)}`;
-  if (source === 'fds-tau_q') return 'From FDS: TAU_Q';
-  return source ? `Imported: ${source}` : 'Imported';
+  if (source?.startsWith('fds-ramp:')) return i18n.t("From FDS: {p1}", { p1: source.slice(9) });
+  if (source === 'fds-tau_q') return i18n.t("From FDS: TAU_Q");
+  return source ? i18n.t("Imported: {p1}", { p1: source }) : i18n.t("Imported");
 }
 
 // -- t² growth -------------------------------------------------------------
@@ -77,10 +78,10 @@ export function t2FromDraft(d: T2Draft): T2Result {
   const peak = parseNumber(d.peak), hold = parseNumber(d.hold), decay = parseNumber(d.decay);
   const invalid: (keyof T2Draft)[] = [];
   const problems: string[] = [];
-  if (!(alpha > 0) || !Number.isFinite(alpha)) { invalid.push('alpha'); problems.push('α must be a positive number of kW/s²'); }
-  if (!(peak > 0) || !Number.isFinite(peak)) { invalid.push('peak'); problems.push('the peak must be above 0 kW'); }
-  if (!(hold >= 0) || !Number.isFinite(hold)) { invalid.push('hold'); problems.push('the hold must be 0 s or longer'); }
-  if (!(decay > 0) || !Number.isFinite(decay)) { invalid.push('decay'); problems.push('the decay must be longer than 0 s'); }
+  if (!(alpha > 0) || !Number.isFinite(alpha)) { invalid.push('alpha'); problems.push(i18n.t("α must be a positive number of kW/s²")); }
+  if (!(peak > 0) || !Number.isFinite(peak)) { invalid.push('peak'); problems.push(i18n.t("the peak must be above 0 kW")); }
+  if (!(hold >= 0) || !Number.isFinite(hold)) { invalid.push('hold'); problems.push(i18n.t("the hold must be 0 s or longer")); }
+  if (!(decay > 0) || !Number.isFinite(decay)) { invalid.push('decay'); problems.push(i18n.t("the decay must be longer than 0 s")); }
   if (problems.length) {
     const text = problems.join('; ');
     // Sentence case, but α stays a lower-case alpha.
@@ -91,10 +92,10 @@ export function t2FromDraft(d: T2Draft): T2Result {
     const curve = t2Curve({ alpha_kW_s2: alpha, peak_kW: peak, hold_s: hold, decay_s: decay });
     curve.source = d.rate === 'custom' ? 't2' : `t2-${d.rate}`;
     return { curve, error: false, invalid, readout:
-      `Time to peak ${seconds(growth)} · holds to ${seconds(growth + hold)} · ends at ${seconds(growth + hold + decay)}` };
+      i18n.t("Time to peak {p1} · holds to {p2} · ends at {p3}", { p1: seconds(growth), p2: seconds(growth + hold), p3: seconds(growth + hold + decay) }) };
   } catch {
     return { curve: null, error: true, invalid: ['peak', 'hold', 'decay'],
-      readout: `Time to peak ${seconds(growth)}, but the curve would need more than 10,000 points. Shorten it.` };
+      readout: i18n.t("Time to peak {p1}, but the curve would need more than 10,000 points. Shorten it.", { p1: seconds(growth) }) };
   }
 }
 
@@ -111,7 +112,7 @@ export type TableResult = { curve: HrrCurve; summary: string; error?: undefined 
  */
 export function parseCurveTable(text: string): TableResult {
   const lines = text.split(/\r\n|\r|\n/).map((line, i) => ({ line, row: i + 1 })).filter(l => l.line.trim() !== '');
-  if (!lines.length) return { error: 'Paste two columns: time (s) and HRR (kW), one point per row.' };
+  if (!lines.length) return { error: i18n.t("Paste two columns: time (s) and HRR (kW), one point per row.") };
   const separator = /\t/.test(text) ? '\t' : /;/.test(text) ? ';' : /,/.test(text) ? ',' : null;
   // Beside a tab or semicolon a comma is part of the number: a decimal comma, or a
   // thousands separator in a table whose decimals are points.
@@ -137,26 +138,26 @@ export function parseCurveTable(text: string): TableResult {
     // A header is a first row with no number in it: "Time (s)	HRR (kW)".
     if (i === 0 && numbers.every(Number.isNaN)) continue;
     if (cells.length !== 2) {
-      return { error: `Row ${row} has ${cells.length} value${cells.length === 1 ? '' : 's'}; paste two columns, time (s) and HRR (kW).` };
+      return { error: i18n.plural("Row {p1} has {p2} value; paste two columns, time (s) and HRR (kW).", "Row {p1} has {p2} values; paste two columns, time (s) and HRR (kW).", cells.length, { p1: row, p2: cells.length }) };
     }
     const bad = numbers.findIndex(n => !Number.isFinite(n));
-    if (bad >= 0) return { error: `Row ${row}: "${cells[bad]}" is not a number.` };
+    if (bad >= 0) return { error: i18n.t("Row {p1}: \"{p2}\" is not a number.", { p1: row, p2: cells[bad] }) };
     const [t, q] = numbers;
-    if (t < 0) return { error: `Row ${row}: time ${number(t)} s is before ignition; times start at 0 s or later.` };
-    if (q < 0) return { error: `Row ${row}: ${number(q)} kW is negative; a heat release rate is 0 kW or more.` };
+    if (t < 0) return { error: i18n.t("Row {p1}: time {p2} s is before ignition; times start at 0 s or later.", { p1: row, p2: number(t) }) };
+    if (q < 0) return { error: i18n.t("Row {p1}: {p2} kW is negative; a heat release rate is 0 kW or more.", { p1: row, p2: number(q) }) };
     const previous = points[points.length - 1];
     if (previous && t <= previous[0]) {
-      return { error: `Row ${row}: time ${number(t)} s does not follow ${number(previous[0])} s; times must increase strictly.` };
+      return { error: i18n.t("Row {p1}: time {p2} s does not follow {p3} s; times must increase strictly.", { p1: row, p2: number(t), p3: number(previous[0]) }) };
     }
     points.push([t, q]);
   }
-  if (points.length < 2) return { error: `A curve needs at least two points; the table has ${points.length}.` };
-  if (points.length > 10000) return { error: `A curve holds at most 10,000 points; the table has ${points.length.toLocaleString()}.` };
+  if (points.length < 2) return { error: i18n.t("A curve needs at least two points; the table has {p1}.", { p1: points.length }) };
+  if (points.length > 10000) return { error: i18n.t("A curve holds at most 10,000 points; the table has {p1}.", { p1: points.length.toLocaleString(i18n.language() === 'fr' ? 'fr-CA' : undefined) }) };
   const curve: HrrCurve = { points, source: 'table' };
   const problem = curveProblem(curve);
   if (problem) return { error: problem };
   const peak = curvePeak(curve), at = points.find(p => p[1] === peak)![0];
-  return { curve, summary: `${points.length} points from ${number(points[0][0])} s to ${number(points[points.length - 1][0])} s, peak ${number(peak)} kW at ${number(at)} s` };
+  return { curve, summary: i18n.t("{p1} points from {p2} s to {p3} s, peak {p4} kW at {p5} s", { p1: points.length, p2: number(points[0][0]), p3: number(points[points.length - 1][0]), p4: number(peak), p5: number(at) }) };
 }
 
 /** A curve as table text, one `time<TAB>kW` row per point, for editing as a table. */
@@ -176,12 +177,12 @@ export function curveFromTestSeries(series: Series, maxPoints = 200): MeasuredRe
   let first = 0;
   while (first < series.t.length && series.t[first] < 0) first++;
   const t = series.t.subarray(first), values = series.values.subarray(first);
-  if (t.length < 2) throw new Error(`${series.sourceName} has ${t.length} sample${t.length === 1 ? '' : 's'} at or after ignition; a curve needs two.`);
+  if (t.length < 2) throw new Error(i18n.plural("{p1} has {p2} sample at or after ignition; a curve needs two.", "{p1} has {p2} samples at or after ignition; a curve needs two.", t.length, { p1: series.sourceName, p2: t.length }));
   const { curve, notes } = curveFromSeries(t, values, maxPoints);
   curve.source = `${series.role}:${series.sourceId}`;
   const problem = curveProblem(curve);
   if (problem) throw new Error(`${series.sourceName}: ${problem}`);
-  const kept = `Kept ${curve.points.length} of ${t.length.toLocaleString()} samples, with the extremes.`;
-  const dropped = first ? ` Dropped ${first.toLocaleString()} sample${first === 1 ? '' : 's'} before ignition.` : '';
+  const kept = i18n.t("Kept {p1} of {p2} samples, with the extremes.", { p1: curve.points.length, p2: t.length.toLocaleString(i18n.language() === 'fr' ? 'fr-CA' : undefined) });
+  const dropped = first ? i18n.plural(" Dropped {p1} sample before ignition.", " Dropped {p1} samples before ignition.", first, { p1: first.toLocaleString(i18n.language() === 'fr' ? 'fr-CA' : undefined) }) : '';
   return { curve, message: [kept + dropped, ...notes].join(' ') };
 }

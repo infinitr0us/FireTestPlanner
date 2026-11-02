@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 /** Survey poses and series copies. All planning consumers keep using transform. */
 import { dot, forwardOf, sub } from './math';
 import { displayName, positionOf, quatOf } from './plan';
@@ -14,17 +15,17 @@ export function asBuiltProblem(obj: PlanObject): string | null {
   if (!('asBuilt' in obj)) return null;
   const a = obj.asBuilt;
   const vector = (v: unknown, n: number): boolean => Array.isArray(v) && v.length === n && v.every(x => typeof x === 'number' && Number.isFinite(x));
-  if (!obj.transform || !a || typeof a !== 'object' || Array.isArray(a)) return 'As built requires a planned transform and a survey record.';
-  if (Object.keys(a).some(k => !['transform', 'measured', 'note'].includes(k))) return 'Unknown as-built field.';
+  if (!obj.transform || !a || typeof a !== 'object' || Array.isArray(a)) return i18n.t("As built requires a planned transform and a survey record.");
+  if (Object.keys(a).some(k => !['transform', 'measured', 'note'].includes(k))) return i18n.t("Unknown as-built field.");
   const t = a.transform;
   if (!t || !vector(t.position_m, 3) || (t.rotation_quat !== undefined && !vector(t.rotation_quat, 4))
     || (t.aimTarget_m != null && !vector(t.aimTarget_m, 3))
-    || Object.keys(t).some(k => !['position_m', 'rotation_quat', 'aimTarget_m'].includes(k))) return 'Invalid as-built transform.';
-  if (a.note !== null && typeof a.note !== 'string') return 'As-built note must be text or null.';
+    || Object.keys(t).some(k => !['position_m', 'rotation_quat', 'aimTarget_m'].includes(k))) return i18n.t("Invalid as-built transform.");
+  if (a.note !== null && typeof a.note !== 'string') return i18n.t("As-built note must be text or null.");
   if (a.measured !== null) {
-    if (typeof a.measured !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(a.measured)) return 'Measured date must be YYYY-MM-DD or null.';
+    if (typeof a.measured !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(a.measured)) return i18n.t("Measured date must be YYYY-MM-DD or null.");
     const d = new Date(a.measured + 'T00:00:00Z');
-    if (a.measured.startsWith('0000') || !Number.isFinite(d.getTime()) || d.toISOString().slice(0, 10) !== a.measured) return 'Measured date is not a calendar date.';
+    if (a.measured.startsWith('0000') || !Number.isFinite(d.getTime()) || d.toISOString().slice(0, 10) !== a.measured) return i18n.t("Measured date is not a calendar date.");
   }
   return null;
 }

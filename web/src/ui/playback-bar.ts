@@ -1,3 +1,4 @@
+import * as i18n from './i18n';
 /**
  * The playback bar: transport, scrubber and readout for the reconstructed flames,
  * docked along the bottom of the viewport whenever the plan holds one, and for the
@@ -32,10 +33,10 @@ export interface PlaybackBarHost {
   loadFrames: ((flame: ReconstructedFlameObject) => void) | null;
 }
 
-const formatTime = (t: number): string => `${t.toFixed(1)} s`;
+const formatTime = (t: number): string => i18n.formatQuantity(t, 's', 1);
 
 export class PlaybackBar {
-  private root = h('section', { class: 'playback-bar', hidden: true, 'aria-label': 'Flame playback' });
+  private root = h('section', { class: 'playback-bar', hidden: true, get 'aria-label'() { return i18n.t("Flame playback"); } });
   private signature = '';
   private slider: HTMLInputElement | null = null;
   private readout: HTMLElement | null = null;
@@ -57,6 +58,7 @@ export class PlaybackBar {
       this.root.addEventListener(event, (e) => e.stopPropagation());
     }
     store.subscribe(() => this.render());
+    i18n.subscribeLanguage(() => { this.signature = ""; this.render(); });
     flames.subscribe(() => this.render());
     playhead.subscribe((event) => (event === 'time' ? this.update() : this.render()));
     this.render();
@@ -74,7 +76,7 @@ export class PlaybackBar {
     const curves = hasHrrCurve(doc);
     this.root.hidden = flames.length === 0 && !curves;
     if (this.root.hidden) { this.signature = ''; return; }
-    this.root.setAttribute('aria-label', flames.length ? 'Flame playback' : 'Fire clock');
+    this.root.setAttribute('aria-label', flames.length ? i18n.t("Flame playback") : i18n.t("Fire clock"));
 
     const marks = this.playhead.marks;
     const status = flames.map((f) => this.statusOf(f));
@@ -103,7 +105,7 @@ export class PlaybackBar {
     this.slider = h('input', {
       type: 'range', class: 'playback-bar__slider', min: 0, max: Math.max(marks.length - 1, 0), step: 1,
       value: Math.max(this.playhead.markIndexAt(this.playhead.time_s), 0),
-      'aria-label': this.playhead.kind === 'fire' ? 'Fire clock time' : 'Frame',
+      'aria-label': this.playhead.kind === 'fire' ? i18n.t("Fire clock time") : i18n.t("Frame"),
       oninput: (e: Event) => {
         const index = Number((e.target as HTMLInputElement).value);
         if (marks[index] !== undefined) this.playhead.seek(marks[index]);
@@ -122,21 +124,20 @@ export class PlaybackBar {
     }) as HTMLInputElement;
     this.slider.disabled = !ready;
     this.readout = h('output', { class: 'playback-bar__readout', 'aria-live': 'off',
-      title: curves ? 'The predicted cone shows the peak heat release rate, the worst case the checks and the drawing use, '
-        + "while the clock is paused at its start. Played or moved, it follows each burner's curve; Home returns it to the peak." : '' });
+      title: curves ? i18n.t("The predicted cone shows the peak heat release rate, the worst case the checks and the drawing use, while the clock is paused at its start. Played or moved, it follows each burner's curve; Home returns it to the peak.") : '' });
 
-    const speed = h('select', { class: 'playback-bar__select', title: 'Playback speed, times real time', 'aria-label': 'Playback speed',
+    const speed = h('select', { class: 'playback-bar__select', title: i18n.t("Playback speed, times real time"), 'aria-label': i18n.t("Playback speed"),
       onchange: (e: Event) => this.playhead.setSpeed(Number((e.target as HTMLSelectElement).value)) },
     SPEEDS.map((s) => h('option', { value: s, selected: s === this.playhead.speed }, [`×${s}`])));
-    const loop = h('label', { class: 'playback-bar__loop', title: 'Start over at the end' }, [
+    const loop = h('label', { class: 'playback-bar__loop', title: i18n.t("Start over at the end") }, [
       h('input', { type: 'checkbox', checked: this.playhead.loop, onchange: (e: Event) => this.playhead.setLoop((e.target as HTMLInputElement).checked) }),
-      'Loop',
+      i18n.t("Loop"),
     ]);
     // The height ramp describes reconstructed voxels; the fire clock alone has none.
-    const legend = flames.length ? h('span', { class: 'playback-bar__legend', title: 'Height ramp: blue at the base, red at the tip, on a fixed scale over the whole sequence' }, [
-      h('span', { class: 'playback-bar__ramp' }), 'base → tip',
+    const legend = flames.length ? h('span', { class: 'playback-bar__legend', title: i18n.t("Height ramp: blue at the base, red at the tip, on a fixed scale over the whole sequence") }, [
+      h('span', { class: 'playback-bar__ramp' }), i18n.t("base → tip"),
     ]) : null;
-    const snapshot = button('PNG', 'Save the viewport at 3× resolution, for a figure', () => this.host.snapshot(), false);
+    const snapshot = button('PNG', i18n.t("Save the viewport at 3× resolution, for a figure"), () => this.host.snapshot(), false);
 
     const controls = h('div', { class: 'playback-bar__controls' }, [
       transport('first', () => this.playhead.seek(this.playhead.start)),
@@ -171,9 +172,8 @@ export class PlaybackBar {
       const cubes = this.host.cubeCount();
       // With a curve the cone follows this clock too, and the readout says what it shows.
       this.readout.textContent = marks.length
-        ? `t = ${formatTime(this.playhead.time_s)} · frame ${Math.max(index, 0) + 1}/${marks.length} · ${cubes.toLocaleString()} cubes`
-          + (hasHrrCurve(doc) ? ` · ${conePart(doc, cone, unit)}` : '')
-        : 'no frames loaded';
+        ? i18n.plural("t = {p1} · frame {p2}/{p3} · {p4} cube{p5}", "t = {p1} · frame {p2}/{p3} · {p4} cubes{p5}", cubes, { p1: formatTime(this.playhead.time_s), p2: Math.max(index, 0) + 1, p3: marks.length, p4: cubes.toLocaleString(i18n.language() === 'fr' ? 'fr-CA' : undefined), p5: (hasHrrCurve(doc) ? ` · ${conePart(doc, cone, unit)}` : '') })
+        : i18n.t("no frames loaded");
     }
     if (this.playButton) setTransportPlaying(this.playButton, this.playhead.playing);
   }
@@ -195,18 +195,18 @@ export class PlaybackBar {
       h('div', { class: `playback-bar__status playback-bar__status--${kind}`, role: kind === 'info' ? undefined : 'status' }, [text, action ?? null]);
     // Unlinked first: nothing below has a link to ask the cache about, and this
     // runs inside the document event that removes the link.
-    if (!link) return line(`${name}: no voxel folder linked. Link one in the inspector.`, 'warn');
+    if (!link) return line(i18n.t("{p1}: no voxel folder linked. Link one in the inspector.", { p1: name }), 'warn');
     const load = this.host.loadFrames
       ? h('button', { type: 'button', class: 'playback-bar__btn', onclick: () => this.host.loadFrames!(flame) },
-        [status.startsWith('error') ? 'Try again' : 'Load frames…'])
+        [status.startsWith('error') ? i18n.t("Try again") : i18n.t("Load frames…")])
       : null;
     if (status === 'absent') {
-      return line(`${name}: ${link.sequence?.frames.length ?? 0} frames in ${fileName(link.path)} are not loaded.`, 'info', load ?? undefined);
+      return line(i18n.plural("{p1}: {p2} frame in {p3} is not loaded.", "{p1}: {p2} frames in {p3} are not loaded.", link.sequence?.frames.length ?? 0, { p1: name, p2: link.sequence?.frames.length ?? 0, p3: fileName(link.path) }), 'info', load ?? undefined);
     }
-    if (status.startsWith('loading')) return line(`${name}: reading frame ${status.slice(8)} from ${fileName(link.path)}…`, 'info');
+    if (status.startsWith('loading')) return line(i18n.t("{p1}: reading frame {p2} from {p3}…", { p1: name, p2: status.slice(8), p3: fileName(link.path) }), 'info');
     if (status.startsWith('error')) return line(`${name}: ${status.slice(6)}`, 'error', load ?? undefined);
     if (status.startsWith('changed')) {
-      return line(`${name}: ${status.slice(8)}. ${shell() ? 'Refresh' : 'Relink'} the link in the inspector to adopt the folder as it is now.`, 'warn');
+      return line(i18n.t("{p1}: {p2}. {p3} the link in the inspector to adopt the folder as it is now.", { p1: name, p2: status.slice(8), p3: shell() ? i18n.t("Refresh") : i18n.t('Relink') }), 'warn');
     }
     return null;
   }

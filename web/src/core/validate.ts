@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 import { curveProblem } from './hrr';
 import { asBuiltProblem } from './asbuilt';
 /**
@@ -57,8 +58,7 @@ const checkOptionalLength = (
   const ok = positive ? isPositive(v) : isFiniteNumber(v) && (signed || v >= 0);
   if (!ok) {
     err(`bad-${key.replace(/_m$/, '').replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`,
-      `${label} "${id}" has ${key} ${JSON.stringify(v)}; expected a `
-      + `${positive ? 'positive' : signed ? 'finite' : 'non-negative'} number, or null.`, id);
+      i18n.t("{p1} \"{p2}\" has {p3} {p4}; expected a {p5} number, or null.", { p1: label, p2: id, p3: key, p4: JSON.stringify(v), p5: positive ? i18n.t("positive") : signed ? i18n.t("finite") : i18n.t("non-negative") }), id);
   }
 };
 
@@ -71,43 +71,41 @@ export function validateStructure(doc: PlanDocument): Issue[] {
   };
 
   if (doc.format !== FORMAT) {
-    err('bad-format', `Expected format "${FORMAT}", found "${String(doc.format)}".`);
+    err('bad-format', i18n.t("Expected format \"{p1}\", found \"{p2}\".", { p1: FORMAT, p2: String(doc.format) }));
   }
   if (typeof doc.version !== 'string' || !/^\d+\.\d+\.\d+$/.test(doc.version)) {
-    err('bad-version', `Version should look like "1.0.0", found "${String(doc.version)}".`);
+    err('bad-version', i18n.t("Version should look like \"1.0.0\", found \"{p1}\".", { p1: String(doc.version) }));
   }
   if (doc.units?.length !== 'm') {
     err('bad-units',
-      `Stored lengths must be metres; this file declares "${String(doc.units?.length)}". ` +
-      'Display units live under units.display and never change stored values.');
+      i18n.t("Stored lengths must be metres; this file declares \"{p1}\". Display units live under units.display and never change stored values.", { p1: String(doc.units?.length) }));
   }
   if (doc.coordinateSystem?.convention !== 'Z-up-right-handed') {
     err('bad-convention',
-      `Unsupported coordinate convention "${String(doc.coordinateSystem?.convention)}".`);
+      i18n.t("Unsupported coordinate convention \"{p1}\".", { p1: String(doc.coordinateSystem?.convention) }));
   }
   validateTopLevel(doc, err);
   const dataProblem = testDataProblem(doc.testData);
   if (dataProblem) err('bad-test-data', dataProblem);
   if (!Array.isArray(doc.objects)) {
     err('bad-objects',
-      'The "objects" field is missing or is not a list. Nothing in it can be read, '
-      + 'and opening the file anyway would drop it on the next save.');
+      i18n.t("The \"objects\" field is missing or is not a list. Nothing in it can be read, and opening the file anyway would drop it on the next save."));
     return out; // nothing further is checkable
   }
 
   const seen = new Set<string>();
   doc.objects.forEach((obj, index) => {
-    const where = `Object ${index + 1}`;
+    const where = i18n.t("Object {p1}", { p1: index + 1 });
 
     if (typeof obj?.id !== 'string' || obj.id.length === 0) {
-      err('bad-id', `${where} has no usable id.`);
+      err('bad-id', i18n.t("{p1} has no usable id.", { p1: where }));
       return;
     }
-    if (seen.has(obj.id)) err('duplicate-id', `Object id "${obj.id}" is used more than once.`, obj.id);
+    if (seen.has(obj.id)) err('duplicate-id', i18n.t("Object id \"{p1}\" is used more than once.", { p1: obj.id }), obj.id);
     seen.add(obj.id);
 
     if (typeof obj.type !== 'string' || obj.type.length === 0) {
-      err('bad-type', `Object "${obj.id}" has no type.`, obj.id);
+      err('bad-type', i18n.t("Object \"{p1}\" has no type.", { p1: obj.id }), obj.id);
       return;
     }
 
@@ -117,38 +115,38 @@ export function validateStructure(doc: PlanDocument): Issue[] {
     const color = obj.display?.color;
     if (color !== undefined && color !== null && !(typeof color === 'string' && HEX_COLOR.test(color))) {
       err('bad-color',
-        `Object "${obj.id}" has display.color ${JSON.stringify(color)}; expected "#rrggbb".`, obj.id);
+        i18n.t("Object \"{p1}\" has display.color {p2}; expected \"#rrggbb\".", { p1: obj.id, p2: JSON.stringify(color) }), obj.id);
     }
     // Format 1.4 adds these to `display` for every object, not only flames; the
     // schema checks them wherever they appear, so this does too.
     const display = obj.display as Record<string, unknown> | undefined | null;
     if (isStated(display?.opacity) && !(isFiniteNumber(display!.opacity) && display!.opacity >= 0 && display!.opacity <= 1)) {
-      err('bad-opacity', `Object "${obj.id}" has display.opacity outside 0–1.`, obj.id);
+      err('bad-opacity', i18n.t("Object \"{p1}\" has display.opacity outside 0–1.", { p1: obj.id }), obj.id);
     }
     if (isStated(display?.colorMode) && !['height', 'solid'].includes(String(display!.colorMode))) {
-      err('bad-color-mode', `Object "${obj.id}" has display.colorMode ${JSON.stringify(display!.colorMode)}; expected "height" or "solid".`, obj.id);
+      err('bad-color-mode', i18n.t("Object \"{p1}\" has display.colorMode {p2}; expected \"height\" or \"solid\".", { p1: obj.id, p2: JSON.stringify(display!.colorMode) }), obj.id);
     }
 
     const t = obj.transform;
     if (t !== undefined && !isPlainObject(t)) {
       // `transform: null` used to escape as a raw TypeError reading position_m.
-      err('bad-transform', `Object "${obj.id}" has a transform that is not an object.`, obj.id);
+      err('bad-transform', i18n.t("Object \"{p1}\" has a transform that is not an object.", { p1: obj.id }), obj.id);
     } else if (t !== undefined) {
       if (!isNumberArray(t.position_m, 3)) {
-        err('bad-position', `Object "${obj.id}" has an invalid position_m; expected three numbers.`, obj.id);
+        err('bad-position', i18n.t("Object \"{p1}\" has an invalid position_m; expected three numbers.", { p1: obj.id }), obj.id);
       }
       if (t.rotation_quat !== undefined && !isNumberArray(t.rotation_quat, 4)) {
-        err('bad-rotation', `Object "${obj.id}" has an invalid rotation_quat; expected four numbers.`, obj.id);
+        err('bad-rotation', i18n.t("Object \"{p1}\" has an invalid rotation_quat; expected four numbers.", { p1: obj.id }), obj.id);
       }
       if (t.aimTarget_m !== undefined && t.aimTarget_m !== null && !isNumberArray(t.aimTarget_m, 3)) {
-        err('bad-aim', `Object "${obj.id}" has an invalid aimTarget_m.`, obj.id);
+        err('bad-aim', i18n.t("Object \"{p1}\" has an invalid aimTarget_m.", { p1: obj.id }), obj.id);
       }
     }
 
     const surveyProblem = asBuiltProblem(obj);
-    if (surveyProblem) err('bad-as-built', `Object "${obj.id}": ${surveyProblem}`, obj.id);
+    if (surveyProblem) err('bad-as-built', i18n.t("Object \"{p1}\": {p2}", { p1: obj.id, p2: surveyProblem }), obj.id);
     const linkProblem = linkedFilesProblem(obj);
-    if (linkProblem) err('bad-linked-files', `Object "${obj.id}": ${linkProblem}`, obj.id);
+    if (linkProblem) err('bad-linked-files', i18n.t("Object \"{p1}\": {p2}", { p1: obj.id, p2: linkProblem }), obj.id);
     validateByType(obj, err);
   });
 
@@ -178,52 +176,52 @@ function validateTopLevel(doc: PlanDocument, err: Reporter): void {
   const display = (raw.units as Record<string, unknown> | undefined)?.display;
   if (isStated(display)) {
     if (!isPlainObject(display)) {
-      err('bad-display-units', 'units.display should be an object with optional length and angle.');
+      err('bad-display-units', i18n.t("units.display should be an object with optional length and angle."));
     } else {
       if (isStated(display.length) && !LENGTH_UNITS.includes(String(display.length))) {
         err('bad-display-units',
-          `Display length unit "${String(display.length)}" is not one of ${LENGTH_UNITS.join(', ')}.`);
+          i18n.t("Display length unit \"{p1}\" is not one of {p2}.", { p1: String(display.length), p2: LENGTH_UNITS.join(', ') }));
       }
       if (isStated(display.angle) && !ANGLE_UNITS.includes(String(display.angle))) {
         err('bad-display-units',
-          `Display angle unit "${String(display.angle)}" is not one of ${ANGLE_UNITS.join(', ')}.`);
+          i18n.t("Display angle unit \"{p1}\" is not one of {p2}.", { p1: String(display.angle), p2: ANGLE_UNITS.join(', ') }));
       }
     }
   }
 
   const azimuth = (raw.coordinateSystem as Record<string, unknown> | undefined)?.northAzimuth_rad;
   if (isStated(azimuth) && !isFiniteNumber(azimuth)) {
-    err('bad-north-azimuth', `coordinateSystem.northAzimuth_rad should be a number or null, found ${JSON.stringify(azimuth)}.`);
+    err('bad-north-azimuth', i18n.t("coordinateSystem.northAzimuth_rad should be a number or null, found {p1}.", { p1: JSON.stringify(azimuth) }));
   }
 
   const meta = raw.meta;
   if (isStated(meta)) {
     if (!isPlainObject(meta)) {
-      err('bad-meta', 'The "meta" block should be an object.');
+      err('bad-meta', i18n.t("The \"meta\" block should be an object."));
     } else if (isStated(meta.title) && typeof meta.title !== 'string') {
-      err('bad-meta', `meta.title should be text, found ${JSON.stringify(meta.title)}.`);
+      err('bad-meta', i18n.t("meta.title should be text, found {p1}.", { p1: JSON.stringify(meta.title) }));
     }
   }
 
   const env = raw.environment;
   if (!isStated(env)) return;
   if (!isPlainObject(env)) {
-    err('bad-environment', 'The "environment" block should be an object.');
+    err('bad-environment', i18n.t("The \"environment\" block should be an object."));
     return;
   }
   // Two numbers, as the schema's vec2 says; a zero floor draws nothing and hurts
   // nothing, while NaN or text becomes a NaN plane geometry.
   if (isStated(env.floorSize_m) && !isNumberArray(env.floorSize_m, 2)) {
-    err('bad-environment', 'environment.floorSize_m should be two numbers.');
+    err('bad-environment', i18n.t("environment.floorSize_m should be two numbers."));
   }
   if (isStated(env.ceilingHeight_m) && !isPositive(env.ceilingHeight_m)) {
-    err('bad-environment', `environment.ceilingHeight_m should be a positive number or null, found ${JSON.stringify(env.ceilingHeight_m)}.`);
+    err('bad-environment', i18n.t("environment.ceilingHeight_m should be a positive number or null, found {p1}.", { p1: JSON.stringify(env.ceilingHeight_m) }));
   }
   if (isStated(env.ambientTemperature_C) && !isFiniteNumber(env.ambientTemperature_C)) {
-    err('bad-environment', `environment.ambientTemperature_C should be a number or null, found ${JSON.stringify(env.ambientTemperature_C)}.`);
+    err('bad-environment', i18n.t("environment.ambientTemperature_C should be a number or null, found {p1}.", { p1: JSON.stringify(env.ambientTemperature_C) }));
   }
   if (isStated(env.notes) && typeof env.notes !== 'string') {
-    err('bad-environment', 'environment.notes should be text or null.');
+    err('bad-environment', i18n.t("environment.notes should be text or null."));
   }
 }
 
@@ -236,7 +234,7 @@ function checkMount(
   const mount = raw.mount as Record<string, unknown> | undefined;
   if (mount && isStated(mount.type) && !allowed.includes(String(mount.type))) {
     err('bad-mount-type',
-      `Object "${id}" has mount.type "${String(mount.type)}"; expected one of ${allowed.join(', ')}.`, id);
+      i18n.t("Object \"{p1}\" has mount.type \"{p2}\"; expected one of {p3}.", { p1: id, p2: String(mount.type), p3: allowed.join(', ') }), id);
   }
 }
 
@@ -248,38 +246,38 @@ function validateByType(obj: PlanObject, err: Reporter): void {
     case 'camera': {
       const cam = raw.camera as Record<string, unknown> | undefined;
       if (!cam) {
-        err('bad-camera', `Camera "${id}" has no camera block.`, id);
+        err('bad-camera', i18n.t("Camera \"{p1}\" has no camera block.", { p1: id }), id);
         return;
       }
       if (!MODALITIES.includes(String(cam.modality))) {
         err('bad-modality',
-          `Camera "${id}" has modality "${String(cam.modality)}"; expected one of ${MODALITIES.join(', ')}.`, id);
+          i18n.t("Camera \"{p1}\" has modality \"{p2}\"; expected one of {p3}.", { p1: id, p2: String(cam.modality), p3: MODALITIES.join(', ') }), id);
       }
       // Whole pixels, as the schema says: a fractional count loaded here and was
       // truncated by fireplan, so the two engines computed different fx and cx.
       if (!isNumberArray(cam.resolution_px, 2)
           || (cam.resolution_px as number[]).some((v) => v <= 0 || !Number.isInteger(v))) {
-        err('bad-resolution', `Camera "${id}" has an invalid resolution_px; expected two positive whole numbers.`, id);
+        err('bad-resolution', i18n.t("Camera \"{p1}\" has an invalid resolution_px; expected two positive whole numbers.", { p1: id }), id);
       }
       if (!isNumberArray(cam.sensor_mm, 2) || (cam.sensor_mm as number[]).some((v) => v <= 0)) {
-        err('bad-sensor', `Camera "${id}" has an invalid sensor_mm; expected two positive numbers.`, id);
+        err('bad-sensor', i18n.t("Camera \"{p1}\" has an invalid sensor_mm; expected two positive numbers.", { p1: id }), id);
       }
       if (!isPositive(cam.focalLength_mm)) {
         // Without this, every derived quantity is NaN and the frustum vanishes.
-        err('bad-focal-length', `Camera "${id}" has no positive focalLength_mm.`, id);
+        err('bad-focal-length', i18n.t("Camera \"{p1}\" has no positive focalLength_mm.", { p1: id }), id);
       }
       if (isStated(cam.principalPoint_px) && !isNumberArray(cam.principalPoint_px, 2)) {
         err('bad-principal-point',
-          `Camera "${id}" has an invalid principalPoint_px; expected two numbers, or null.`, id);
+          i18n.t("Camera \"{p1}\" has an invalid principalPoint_px; expected two numbers, or null.", { p1: id }), id);
       }
       // Zero or negative would take the effective focal length to zero and every
       // derived quantity with it, exactly as a bad focal length would.
       if (cam.zoomFactor !== undefined && cam.zoomFactor !== null && !isPositive(cam.zoomFactor)) {
-        err('bad-zoom', `Camera "${id}" has a non-positive zoomFactor; omit it to mean 1×.`, id);
+        err('bad-zoom', i18n.t("Camera \"{p1}\" has a non-positive zoomFactor; omit it to mean 1×.", { p1: id }), id);
       }
       if (raw.recording !== undefined && raw.recording !== null) {
         err('reserved-recording',
-          `Camera "${id}" populates "recording", which format 1.x reserves and requires to be null.`, id);
+          i18n.t("Camera \"{p1}\" populates \"recording\", which format 1.x reserves and requires to be null.", { p1: id }), id);
       }
       checkMount(raw, MOUNT_TYPES, id, err);
       break;
@@ -288,22 +286,22 @@ function validateByType(obj: PlanObject, err: Reporter): void {
     case 'burner': {
       const fp = raw.footprint as Record<string, unknown> | undefined;
       if (!fp) {
-        err('bad-footprint', `Burner "${id}" has no footprint.`, id);
+        err('bad-footprint', i18n.t("Burner \"{p1}\" has no footprint.", { p1: id }), id);
         return;
       }
       if (!SHAPES.includes(String(fp.shape))) {
-        err('bad-shape', `Burner "${id}" has shape "${String(fp.shape)}"; expected one of ${SHAPES.join(', ')}.`, id);
+        err('bad-shape', i18n.t("Burner \"{p1}\" has shape \"{p2}\"; expected one of {p3}.", { p1: id, p2: String(fp.shape), p3: SHAPES.join(', ') }), id);
       } else if (fp.shape === 'circle') {
-        if (!isPositive(fp.diameter_m)) err('bad-diameter', `Circular burner "${id}" needs a positive diameter_m.`, id);
+        if (!isPositive(fp.diameter_m)) err('bad-diameter', i18n.t("Circular burner \"{p1}\" needs a positive diameter_m.", { p1: id }), id);
       } else if (!isNumberArray(fp.size_m, 2) || (fp.size_m as number[]).some((v) => v <= 0)) {
-        err('bad-size', `Burner "${id}" needs a size_m of two positive numbers.`, id);
+        err('bad-size', i18n.t("Burner \"{p1}\" needs a size_m of two positive numbers.", { p1: id }), id);
       }
-      checkOptionalLength(raw, 'rimHeight_m', id, err, { label: 'Burner' });
+      checkOptionalLength(raw, 'rimHeight_m', id, err, { label: i18n.t("Burner") });
       const fire = raw.fire as Record<string, unknown> | undefined;
       const problem = curveProblem(fire?.hrrCurve);
-      if (problem) err('bad-hrr-curve', `Burner "${id}": ${problem}`, id);
+      if (problem) err('bad-hrr-curve', i18n.t("Burner \"{p1}\": {p2}", { p1: id, p2: problem }), id);
       if (isStated(fire?.hrr_kw) && !(isPositive(fire!.hrr_kw) || (fire?.hrrCurve != null && fire.hrr_kw === 0))) {
-        err('bad-hrr', `Burner "${id}" has a non-positive hrr_kw.`, id);
+        err('bad-hrr', i18n.t("Burner \"{p1}\" has a non-positive hrr_kw.", { p1: id }), id);
       }
       // Not merely a schema range. `radiativeFractionOf` substitutes the 0.3
       // default for anything outside it, so an out-of-range value that loads is a
@@ -312,24 +310,23 @@ function validateByType(obj: PlanObject, err: Reporter): void {
       const rf = fire?.radiativeFraction;
       if (isStated(rf) && !(isFiniteNumber(rf) && rf > 0 && rf <= 1)) {
         err('bad-radiative-fraction',
-          `Burner "${id}" has radiativeFraction ${JSON.stringify(rf)}; expected a number ` +
-          'greater than 0 and at most 1.', id);
+          i18n.t("Burner \"{p1}\" has radiativeFraction {p2}; expected a number greater than 0 and at most 1.", { p1: id, p2: JSON.stringify(rf) }), id);
       }
       break;
     }
 
     case 'hood': {
       if (!isNumberArray(raw.opening_m, 2) || (raw.opening_m as number[]).some((v) => v <= 0)) {
-        err('bad-opening', `Hood "${id}" needs an opening_m of two positive numbers.`, id);
+        err('bad-opening', i18n.t("Hood \"{p1}\" needs an opening_m of two positive numbers.", { p1: id }), id);
       }
-      if (!isPositive(raw.height_m)) err('bad-height', `Hood "${id}" needs a positive height_m.`, id);
-      checkOptionalLength(raw, 'skirtDepth_m', id, err, { label: 'Hood' });
+      if (!isPositive(raw.height_m)) err('bad-height', i18n.t("Hood \"{p1}\" needs a positive height_m.", { p1: id }), id);
+      checkOptionalLength(raw, 'skirtDepth_m', id, err, { label: i18n.t("Hood") });
       const duct = raw.duct as Record<string, unknown> | undefined | null;
       if (isStated(duct)) {
         if (typeof duct !== 'object' || !isPositive(duct!.diameter_m)) {
-          err('bad-duct', `Hood "${id}" has a duct without a positive diameter_m.`, id);
+          err('bad-duct', i18n.t("Hood \"{p1}\" has a duct without a positive diameter_m.", { p1: id }), id);
         } else if (isStated(duct!.length_m) && !isPositive(duct!.length_m)) {
-          err('bad-duct', `Hood "${id}" has a duct with a non-positive length_m.`, id);
+          err('bad-duct', i18n.t("Hood \"{p1}\" has a duct with a non-positive length_m.", { p1: id }), id);
         }
       }
       break;
@@ -337,12 +334,12 @@ function validateByType(obj: PlanObject, err: Reporter): void {
 
     case 'wall': {
       if (!isPairList(raw.polyline_m, 2)) {
-        err('bad-polyline', `Wall "${id}" needs a polyline_m of at least two [x, y] points.`, id);
+        err('bad-polyline', i18n.t("Wall \"{p1}\" needs a polyline_m of at least two [x, y] points.", { p1: id }), id);
       }
-      if (!isPositive(raw.height_m)) err('bad-height', `Wall "${id}" needs a positive height_m.`, id);
-      checkOptionalLength(raw, 'thickness_m', id, err, { positive: true, label: 'Wall' });
+      if (!isPositive(raw.height_m)) err('bad-height', i18n.t("Wall \"{p1}\" needs a positive height_m.", { p1: id }), id);
+      checkOptionalLength(raw, 'thickness_m', id, err, { positive: true, label: i18n.t("Wall") });
       // All supported schemas allow walls to start below the floor.
-      checkOptionalLength(raw, 'baseHeight_m', id, err, { signed: true, label: 'Wall' });
+      checkOptionalLength(raw, 'baseHeight_m', id, err, { signed: true, label: i18n.t("Wall") });
       // The builder slices, sorts and subtracts these. A wall whose `openings` is
       // an object rather than a list passed structural validation, was installed,
       // and then threw out of the builder -- leaving a broken document on screen
@@ -350,7 +347,7 @@ function validateByType(obj: PlanObject, err: Reporter): void {
       const openings = raw.openings;
       if (isStated(openings)) {
         if (!Array.isArray(openings)) {
-          err('bad-openings', `Wall "${id}" has openings that are not a list.`, id);
+          err('bad-openings', i18n.t("Wall \"{p1}\" has openings that are not a list.", { p1: id }), id);
         } else {
           openings.forEach((o, i) => {
             const op = o as Record<string, unknown> | null;
@@ -360,8 +357,7 @@ function validateByType(obj: PlanObject, err: Reporter): void {
               && (!isStated(op.sillHeight_m) || (isFiniteNumber(op.sillHeight_m) && op.sillHeight_m >= 0));
             if (!okShape) {
               err('bad-openings',
-                `Wall "${id}" opening ${i + 1} needs offset_m ≥ 0, positive width_m and height_m, `
-                + 'and a non-negative sillHeight_m if any.', id);
+                i18n.t("Wall \"{p1}\" opening {p2} needs offset_m ≥ 0, positive width_m and height_m, and a non-negative sillHeight_m if any.", { p1: id, p2: i + 1 }), id);
             }
           });
         }
@@ -371,40 +367,40 @@ function validateByType(obj: PlanObject, err: Reporter): void {
 
     case 'ceiling': {
       if (!isPairList(raw.polygon_m, 3)) {
-        err('bad-polygon', `Ceiling "${id}" needs a polygon_m of at least three [x, y] points.`, id);
+        err('bad-polygon', i18n.t("Ceiling \"{p1}\" needs a polygon_m of at least three [x, y] points.", { p1: id }), id);
       }
-      if (!isPositive(raw.height_m)) err('bad-height', `Ceiling "${id}" needs a positive height_m.`, id);
-      checkOptionalLength(raw, 'thickness_m', id, err, { positive: true, label: 'Ceiling' });
+      if (!isPositive(raw.height_m)) err('bad-height', i18n.t("Ceiling \"{p1}\" needs a positive height_m.", { p1: id }), id);
+      checkOptionalLength(raw, 'thickness_m', id, err, { positive: true, label: i18n.t("Ceiling") });
       break;
     }
 
     case 'velocityProbe':
-      checkOptionalLength(raw, 'range_m_s', id, err, { positive: true, label: 'Velocity probe' });
+      checkOptionalLength(raw, 'range_m_s', id, err, { positive: true, label: i18n.t("Velocity probe") });
       break;
     case 'gasSampling':
       if (!Array.isArray(raw.species) || !raw.species.every(s => GAS_SPECIES.includes(s))
-          || new Set(raw.species).size !== raw.species.length) err('bad-species', `Gas sample "${id}" needs distinct supported species.`, id);
-      if (typeof raw.inDuct !== 'boolean') err('bad-in-duct', `Gas sample "${id}" needs a boolean inDuct.`, id);
+          || new Set(raw.species).size !== raw.species.length) err('bad-species', i18n.t("Gas sample \"{p1}\" needs distinct supported species.", { p1: id }), id);
+      if (typeof raw.inDuct !== 'boolean') err('bad-in-duct', i18n.t("Gas sample \"{p1}\" needs a boolean inDuct.", { p1: id }), id);
       break;
     case 'loadCell':
-      checkOptionalLength(raw, 'capacity_kg', id, err, { positive: true, label: 'Load cell' });
+      checkOptionalLength(raw, 'capacity_kg', id, err, { positive: true, label: i18n.t("Load cell") });
       if (isStated(raw.platform_m) && (!isNumberArray(raw.platform_m, 2) || (raw.platform_m as number[]).some(v => v <= 0)))
-        err('bad-platform', `Load cell "${id}" needs two positive platform dimensions or null.`, id);
+        err('bad-platform', i18n.t("Load cell \"{p1}\" needs two positive platform dimensions or null.", { p1: id }), id);
       break;
     case 'heatFluxSensor': {
       const g = raw.gauge as Record<string, unknown> | undefined;
       if (g) {
         if (isStated(g.range_kw_m2) && !isPositive(g.range_kw_m2)) {
-          err('bad-range', `Heat flux gauge "${id}" has a non-positive range_kw_m2.`, id);
+          err('bad-range', i18n.t("Heat flux gauge \"{p1}\" has a non-positive range_kw_m2.", { p1: id }), id);
         }
         const view = g.viewAngle_deg;
         if (isStated(view) && (!isPositive(view) || (view as number) > 180)) {
           err('bad-view-angle',
-            `Heat flux gauge "${id}" has viewAngle_deg ${String(view)}; expected 0 to 180.`, id);
+            i18n.t("Heat flux gauge \"{p1}\" has viewAngle_deg {p2}; expected 0 to 180.", { p1: id, p2: String(view) }), id);
         }
         if (isStated(g.kind) && !GAUGE_KINDS.includes(String(g.kind))) {
           err('bad-gauge-kind',
-            `Heat flux gauge "${id}" has kind "${String(g.kind)}"; expected one of ${GAUGE_KINDS.join(', ')}.`, id);
+            i18n.t("Heat flux gauge \"{p1}\" has kind \"{p2}\"; expected one of {p3}.", { p1: id, p2: String(g.kind), p3: GAUGE_KINDS.join(', ') }), id);
         }
       }
       checkMount(raw, INSTRUMENT_MOUNT_TYPES, id, err);
@@ -416,17 +412,17 @@ function validateByType(obj: PlanObject, err: Reporter): void {
       if (offsets !== undefined
           && (!Array.isArray(offsets) || offsets.length === 0 || !offsets.every(isFiniteNumber))) {
         err('bad-beads',
-          `Thermocouple "${id}" needs beadOffsets_m to be a non-empty list of numbers.`, id);
+          i18n.t("Thermocouple \"{p1}\" needs beadOffsets_m to be a non-empty list of numbers.", { p1: id }), id);
       }
       const tc = raw.thermocouple as Record<string, unknown> | undefined;
       if (isStated(tc?.tcType) && !TC_TYPES.includes(String(tc!.tcType))) {
         err('bad-tc-type',
-          `Thermocouple "${id}" has tcType "${String(tc!.tcType)}"; expected one of ${TC_TYPES.join(', ')}.`,
+          i18n.t("Thermocouple \"{p1}\" has tcType \"{p2}\"; expected one of {p3}.", { p1: id, p2: String(tc!.tcType), p3: TC_TYPES.join(', ') }),
           id);
       }
       if (isStated(tc?.beadDiameter_mm) && !isPositive(tc!.beadDiameter_mm)) {
         err('bad-bead-diameter',
-          `Thermocouple "${id}" has a non-positive beadDiameter_mm.`, id);
+          i18n.t("Thermocouple \"{p1}\" has a non-positive beadDiameter_mm.", { p1: id }), id);
       }
       checkMount(raw, INSTRUMENT_MOUNT_TYPES, id, err);
       break;
@@ -436,7 +432,7 @@ function validateByType(obj: PlanObject, err: Reporter): void {
       // Three positive numbers or the box is a degenerate mesh, and the builders
       // would put a zero-volume ghost into the scene.
       if (!isNumberArray(raw.size_m, 3) || (raw.size_m as number[]).some((v) => v <= 0)) {
-        err('bad-size', `Obstruction "${id}" needs a size_m of three positive numbers.`, id);
+        err('bad-size', i18n.t("Obstruction \"{p1}\" needs a size_m of three positive numbers.", { p1: id }), id);
       }
       break;
     }
@@ -445,11 +441,11 @@ function validateByType(obj: PlanObject, err: Reporter): void {
       // The manifest itself is checked with the link (linkedFilesProblem); what is
       // left is the two fields that name things.
       if (isStated(raw.burnerId) && (typeof raw.burnerId !== 'string' || !raw.burnerId)) {
-        err('bad-burner-id', `Reconstructed flame "${id}" has a burnerId that is not a name.`, id);
+        err('bad-burner-id', i18n.t("Reconstructed flame \"{p1}\" has a burnerId that is not a name.", { p1: id }), id);
       }
       if (isStated(raw.representation) && raw.representation !== 'voxels') {
         err('bad-representation',
-          `Reconstructed flame "${id}" has representation ${JSON.stringify(raw.representation)}; this build knows only "voxels".`, id);
+          i18n.t("Reconstructed flame \"{p1}\" has representation {p2}; this build knows only \"voxels\".", { p1: id, p2: JSON.stringify(raw.representation) }), id);
       }
       break;
     }
@@ -463,7 +459,7 @@ function validateByType(obj: PlanObject, err: Reporter): void {
 /** One-paragraph summary suitable for an alert when a file cannot be opened. */
 export function describeErrors(issues: Issue[], limit = 8): string {
   const lines = issues.slice(0, limit).map((i) => `  • ${i.message}`);
-  if (issues.length > limit) lines.push(`  • …and ${issues.length - limit} more.`);
+  if (issues.length > limit) lines.push(i18n.t("  • …and {p1} more.", { p1: issues.length - limit }));
   return lines.join('\n');
 }
 

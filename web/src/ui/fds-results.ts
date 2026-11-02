@@ -1,3 +1,4 @@
+import * as i18n from './i18n';
 import {
   parseSmv,
   parseResultCsv,
@@ -28,7 +29,7 @@ const button = (text: string, action: () => void) => h('button', { type: 'button
 /** A time in seconds: up to three decimals, so nearby output frames stay distinct
  *  (docs/visual-language.md, Playback). */
 const numeric = (n: number): string =>
-  Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 3 }) : '—';
+  Number.isFinite(n) ? n.toLocaleString(i18n.language() === 'fr' ? 'fr-CA' : undefined, { maximumFractionDigits: 3 }) : '—';
 /**
  * A measured value: four significant figures, and exponent notation below 0.01 or
  * from a million. Three fixed decimals printed a soot density of 3.1e-5 kg/m3 and a
@@ -39,17 +40,17 @@ export const measured = (n: number): string => {
   if (!Number.isFinite(n)) return '—';
   const abs = Math.abs(n);
   if (abs === 0) return '0';
-  if (abs < 0.01 || abs >= 1e6) return n.toExponential(2).replace('e+', 'e');
-  return n.toLocaleString(undefined, { maximumSignificantDigits: 4 });
+  if (abs < 0.01 || abs >= 1e6) return i18n.numberText(n.toExponential(2).replace('e+', 'e'));
+  return n.toLocaleString(i18n.language() === 'fr' ? 'fr-CA' : undefined, { maximumSignificantDigits: 4 });
 };
 const pathOf = (f: File) => f.webkitRelativePath || f.name;
 
 /** A modal results workspace owns its own scene, clock and file session. It never
  * touches the plan store or the planning correlation / reconstruction clocks. */
 export class FdsResultsDialog {
-  private dialog = h('dialog', { class: 'fds-results', 'aria-label': 'FDS simulation results' });
+  private dialog = h('dialog', { class: 'fds-results', get 'aria-label'() { return i18n.t("FDS simulation results"); } });
   private body = h('div', { class: 'fds-results__body' });
-  private title = h('strong', {}, ['FDS simulation results']);
+  private title = h('strong', {}, [i18n.t("FDS simulation results")]);
   private status = h('div', { class: 'fds-results__status', role: 'status' });
   private scene?: FdsResultScene;
   private source?: ResultSource;
@@ -75,15 +76,15 @@ export class FdsResultsDialog {
   private low = 0;
   private high = 100;
   private opacity = 0.9;
-  private selection = h('select', { 'aria-label': 'Result dataset' });
-  private meshSelection = h('select', { 'aria-label': 'Result mesh' });
+  private selection = h('select', { get 'aria-label'() { return i18n.t("Result dataset"); } });
+  private meshSelection = h('select', { get 'aria-label'() { return i18n.t("Result mesh"); } });
   private slider = h('input', {
     type: 'range',
     min: 0,
     max: 0,
     step: 1,
     value: 0,
-    'aria-label': 'Simulation frame',
+    get 'aria-label'() { return i18n.t("Simulation frame"); },
   });
   private play = transportButton('play', () => this.togglePlay());
   private first = transportButton('first', () => this.seek(0));
@@ -95,15 +96,15 @@ export class FdsResultsDialog {
     type: 'number',
     value: 0,
     step: 'any',
-    'aria-label': 'Color scale minimum',
+    get 'aria-label'() { return i18n.t("Color scale minimum"); },
   });
   private rangeHigh = h('input', {
     type: 'number',
     value: 100,
     step: 'any',
-    'aria-label': 'Color scale maximum',
+    get 'aria-label'() { return i18n.t("Color scale maximum"); },
   });
-  private autoScaleButton = button('Scale to this frame', () => {
+  private autoScaleButton = button(i18n.t("Scale to this frame"), () => {
     void this.autoScale();
   });
   private legend = h('div', { class: 'fds-results__legend' });
@@ -111,10 +112,10 @@ export class FdsResultsDialog {
     width: 600,
     height: 240,
     class: 'fds-results__graph',
-    'aria-label': 'Selected result history',
+    get 'aria-label'() { return i18n.t("Selected result history"); },
   });
   private readout = h('div', { class: 'fds-results__reading' });
-  private historySelect = h('select', { 'aria-label': 'Device or heat release history' });
+  private historySelect = h('select', { get 'aria-label'() { return i18n.t("Device or heat release history"); } });
   private info = h('div', { class: 'fds-results__info' });
   private fieldNote = h('div', { class: 'fds-results__note' });
   private boundaryCoverage = h('p', { class: 'fds-results__warning' });
@@ -123,7 +124,7 @@ export class FdsResultsDialog {
   private theme = visualTheme();
 
   constructor(private onOpenChange: (open: boolean) => void = () => {}) {
-    this.dialog.append(h('header', {}, [this.title, button('Back to plan', () => this.close())]), this.body);
+    this.dialog.append(h('header', {}, [this.title, button(i18n.t("Back to plan"), () => this.close())]), this.body);
     this.dialog.addEventListener('cancel', (e) => {
       e.preventDefault();
       this.close();
@@ -168,7 +169,7 @@ export class FdsResultsDialog {
       if (!Number.isFinite(low) || !Number.isFinite(high) || low >= high) {
         this.rangeLow.setAttribute('aria-invalid', 'true');
         this.rangeHigh.setAttribute('aria-invalid', 'true');
-        this.setStatus('Color scale needs finite minimum < maximum.', 'error');
+        this.setStatus(i18n.t('Color scale needs finite minimum < maximum.'), 'error');
         return;
       }
       this.rangeLow.removeAttribute('aria-invalid');
@@ -192,21 +193,21 @@ export class FdsResultsDialog {
     this.welcome();
   }
   private welcome(message = ''): void {
-    this.title.textContent = 'FDS simulation results';
+    this.title.textContent = i18n.t("FDS simulation results");
     this.body.replaceChildren(
       h('div', { class: 'fds-results__welcome' }, [
-        h('h2', {}, ['Replay an FDS simulation']),
+        h('h2', {}, [i18n.t("Replay an FDS simulation")]),
         h('p', {}, [
-          'Open the simulation output folder containing its .smv metadata and associated result files. Files are read locally as you move through time.',
+          i18n.t("Open the simulation output folder containing its .smv metadata and associated result files. Files are read locally as you move through time."),
         ]),
-        button(shell() ? 'Open .smv file…' : 'Choose results folder…', () => {
+        button(shell() ? i18n.t("Open .smv file…") : i18n.t("Choose results folder…"), () => {
           void this.choose();
         }),
         h('p', { class: 'fds-results__note' }, [
-          'Recorded slices · wall fields · smoke/fire preview · sensor and heat-release histories',
+          i18n.t("Recorded slices · wall fields · smoke/fire preview · sensor and heat-release histories"),
         ]),
         h('p', { class: 'fds-results__note' }, [
-          'Your test plan stays open. Results are a separate session and are not saved in the plan or its shared HTML.',
+          i18n.t("Your test plan stays open. Results are a separate session and are not saved in the plan or its shared HTML."),
         ]),
         this.status,
       ])
@@ -247,19 +248,19 @@ export class FdsResultsDialog {
       });
       if (!this.isOpen || epoch !== this.epoch || !files.length) return;
       const smvs = files.filter((f) => f.name.toLowerCase().endsWith('.smv'));
-      if (!smvs.length) throw new Error('No .smv metadata file found in the selected folder.');
+      if (!smvs.length) throw new Error(i18n.t("No .smv metadata file found in the selected folder."));
       if (smvs.length === 1) await this.load(browserResultsSource(files, pathOf(smvs[0])), smvs[0].name);
       else {
         const select = h(
           'select',
-          { 'aria-label': 'Simulation metadata file' },
+          { 'aria-label': i18n.t("Simulation metadata file") },
           smvs.map((f) => h('option', { value: pathOf(f) }, [pathOf(f)]))
         );
         this.body.replaceChildren(
           h('div', { class: 'fds-results__welcome' }, [
-            h('p', {}, ['Select the simulation to open.']),
+            h('p', {}, [i18n.t("Select the simulation to open.")]),
             select,
-            button('Open simulation', () => {
+            button(i18n.t("Open simulation"), () => {
               const path = select.value;
               void this.load(browserResultsSource(files, path), path.split('/').pop()!);
             }),
@@ -298,19 +299,19 @@ export class FdsResultsDialog {
     this.stamp.textContent = '';
     this.legend.replaceChildren();
     this.fieldNote.textContent = '';
-    this.setStatus('Reading simulation metadata…');
+    this.setStatus(i18n.t("Reading simulation metadata…"));
     this.body.replaceChildren(h('div', { class: 'fds-results__welcome' }, [this.status]));
     try {
       const data = parseSmv(await resultText(source, smvName));
       if (!this.isOpen || epoch !== this.epoch) return;
       this.data = data;
-      this.title.textContent = `FDS results · ${data.chid || smvName}`;
+      this.title.textContent = i18n.t("FDS results · {p1}", { p1: data.chid || smvName });
       const missing = data.fields.filter((f) => !source.files.has(f.file));
-      for (const f of missing) data.warnings.push(`Missing: ${f.file}`);
+      for (const f of missing) data.warnings.push(i18n.t("Missing: {p1}", { p1: f.file }));
       const groups = new Map<string, Dataset>();
       for (const field of data.fields.filter((f) => source.files.has(f.file))) {
-        const plane = field.kind === 'slice' ? ` · request ${field.plane ?? 'all'}` : '';
-        const label = `${field.kind === 'slice' ? 'Slice' : field.kind === 'boundary' ? 'Wall' : '3D preview'} · ${field.quantity}${plane}`;
+        const plane = field.kind === 'slice' ? i18n.t(" · request {p1}", { p1: field.plane ?? 'all' }) : '';
+        const label = `${field.kind === 'slice' ? i18n.t("Slice") : field.kind === 'boundary' ? i18n.t("Wall") : i18n.t("3D preview")} · ${field.quantity}${plane}`;
         const key = `${label}/${field.unit}`;
         if (!groups.has(key)) groups.set(key, { label, fields: [] });
         groups.get(key)!.fields.push(field);
@@ -322,14 +323,14 @@ export class FdsResultsDialog {
       );
       this.selection.replaceChildren(...this.datasets.map((d, i) => h('option', { value: i }, [d.label])));
       this.meshSelection.replaceChildren(
-        h('option', { value: 'all' }, ['All recorded meshes']),
+        h('option', { value: 'all' }, [i18n.t("All recorded meshes")]),
         ...data.meshes.map((m, i) => h('option', { value: i }, [`${i + 1} · ${m.id}`]))
       );
       const view = h('div', { class: 'fds-results__view' });
       const speed = h(
         'select',
         {
-          'aria-label': 'Playback speed',
+          'aria-label': i18n.t("Playback speed"),
           onchange: (e: Event) => {
             this.speed = Number((e.target as HTMLSelectElement).value);
             if (this.playing && !this.busy) void this.scheduleNext(this.epoch, this.frameRequest);
@@ -337,7 +338,7 @@ export class FdsResultsDialog {
         },
         SPEEDS.map((n) => h('option', { value: n, selected: n === this.speed }, ['×' + n]))
       );
-      const loop = h('label', { class: 'playback-bar__loop', title: 'Start over at the end' }, [
+      const loop = h('label', { class: 'playback-bar__loop', title: i18n.t("Start over at the end") }, [
         h('input', {
           type: 'checkbox',
           checked: this.loop,
@@ -346,7 +347,7 @@ export class FdsResultsDialog {
             if (this.playing && !this.busy) void this.scheduleNext(this.epoch, this.frameRequest);
           },
         }),
-        'Loop',
+        i18n.t("Loop"),
       ]);
       const opacity = h('input', {
         type: 'range',
@@ -354,7 +355,7 @@ export class FdsResultsDialog {
         max: 1,
         step: 0.05,
         value: this.opacity,
-        'aria-label': 'Field opacity',
+        'aria-label': i18n.t("Field opacity"),
         oninput: (e: Event) => {
           this.opacity = Number((e.target as HTMLInputElement).value);
           this.requestFrame(this.currentIndex);
@@ -364,9 +365,9 @@ export class FdsResultsDialog {
         type: 'number',
         step: 0.1,
         value: 2,
-        'aria-label': 'Cutaway height in metres',
+        'aria-label': i18n.t("Cutaway height in metres"),
       });
-      const cut = h('input', { type: 'checkbox', 'aria-label': 'Cut away above height' });
+      const cut = h('input', { type: 'checkbox', 'aria-label': i18n.t("Cut away above height") });
       const applyCut = () => {
         if (!cut.checked) this.scene?.setCutaway();
         else if (Number.isFinite(cutHeight.valueAsNumber)) this.scene?.setCutaway(cutHeight.valueAsNumber);
@@ -375,23 +376,23 @@ export class FdsResultsDialog {
       cutHeight.oninput = applyCut;
       const warnings = h('details', { class: 'fds-results__warnings' }, [
         h('summary', { class: data.warnings.length ? 'fds-results__warning' : '' }, [
-          'Coverage and limitations',
+          i18n.t("Coverage and limitations"),
         ]),
         h('p', {}, [
-          'Structured 2D slices and obstruction boundary fields; original FDS coordinates in metres. 3D smoke/fire is a quantized preview. Particle, isosurface, Plot3D, unstructured and Smokezip output are not displayed.',
+          i18n.t("Structured 2D slices and obstruction boundary fields; original FDS coordinates in metres. 3D smoke/fire is a quantized preview. Particle, isosurface, Plot3D, unstructured and Smokezip output are not displayed."),
         ]),
         h('p', {}, [
-          'Results are external to the plan. Reopen the folder for a new session. Use Smokeview for unsupported output and reference comparisons.',
+          i18n.t("Results are external to the plan. Reopen the folder for a new session. Use Smokeview for unsupported output and reference comparisons."),
         ]),
         h('p', {}, [
-          'Mesh-boundary patches (obstruction index 0) are not displayed. These may contain recorded floor or wall results. Select a boundary field for omitted-patch counts.',
+          i18n.t("Mesh-boundary patches (obstruction index 0) are not displayed. These may contain recorded floor or wall results. Select a boundary field for omitted-patch counts."),
         ]),
         this.boundaryCoverage,
         ...data.warnings.map((w) => h('p', { class: 'fds-results__warning' }, [w])),
       ]);
       this.coverage = warnings;
       if (data.warnings.length) warnings.open = true;
-      this.info.textContent = `${data.version} · ${data.meshes.length} meshes · ${data.fields.length - missing.length}/${data.fields.length} field files available`;
+      this.info.textContent = i18n.t("{p1} · {p2} meshes · {p3}/{p4} field files available", { p1: data.version, p2: data.meshes.length, p3: data.fields.length - missing.length, p4: data.fields.length });
       this.devicePanel = new FdsDevicePanel(
         data.devices,
         (device) => this.selectDevice(device),
@@ -401,25 +402,25 @@ export class FdsResultsDialog {
         h('aside', { class: 'fds-results__sidebar' }, [
           h('div', { class: 'fds-results__title' }, [data.title]),
           this.info,
-          h('label', {}, ['Recorded field', this.selection]),
-          h('label', {}, ['Mesh coverage', this.meshSelection]),
+          h('label', {}, [i18n.t("Recorded field"), this.selection]),
+          h('label', {}, [i18n.t("Mesh coverage"), this.meshSelection]),
           this.fieldNote,
           this.legend,
           h('div', { class: 'fds-results__scale' }, [
-            h('label', {}, ['Min', this.rangeLow]),
-            h('label', {}, ['Max', this.rangeHigh]),
+            h('label', {}, [i18n.t("Min"), this.rangeLow]),
+            h('label', {}, [i18n.t("Max"), this.rangeHigh]),
           ]),
           this.autoScaleButton,
-          h('label', {}, ['Opacity / smoke density', opacity]),
-          h('label', {}, [cut, 'Cut away above Z (m)', cutHeight]),
+          h('label', {}, [i18n.t("Opacity / smoke density"), opacity]),
+          h('label', {}, [cut, i18n.t("Cut away above Z (m)"), cutHeight]),
           h('hr'),
           this.devicePanel.root,
           h('hr'),
-          h('label', {}, ['Sensor / heat-release history', this.historySelect]),
+          h('label', {}, [i18n.t("Sensor / heat-release history"), this.historySelect]),
           this.readout,
           this.graph,
           warnings,
-          button('Open another simulation…', () => {
+          button(i18n.t("Open another simulation…"), () => {
             void this.choose();
           }),
         ]),
@@ -435,7 +436,7 @@ export class FdsResultsDialog {
             this.stamp,
             speed,
             loop,
-            button('Fit', () => this.scene?.fit()),
+            button(i18n.t("Fit"), () => this.scene?.fit()),
             button('PNG', () => this.snapshot()),
           ]),
           this.status,
@@ -463,7 +464,7 @@ export class FdsResultsDialog {
       }
       if (epoch !== this.epoch) return;
       this.historySelect.replaceChildren(
-        h('option', { value: '' }, ['Choose a history…']),
+        h('option', { value: '' }, [i18n.t("Choose a history…")]),
         ...this.series.map((s, i) => h('option', { value: i }, [`${s.name} (${s.unit})`]))
       );
       this.historySelect.disabled = !this.series.length;
@@ -492,7 +493,7 @@ export class FdsResultsDialog {
         this.selectedDevice = undefined;
         this.devicePanel = undefined;
         this.coverage = undefined;
-        this.welcome(`Could not open results: ${(error as Error).message}`);
+        this.welcome(i18n.t("Could not open results: {p1}", { p1: (error as Error).message }));
       }
     }
   }
@@ -517,10 +518,10 @@ export class FdsResultsDialog {
     this.setTransportEnabled(false);
     this.autoScaleButton.disabled = this.rangeLow.disabled = this.rangeHigh.disabled = true;
     if (!fields.length || !this.source || !this.data) {
-      this.setStatus('No recorded field for this selection. Choose another mesh or dataset.', 'warn');
+      this.setStatus(i18n.t("No recorded field for this selection. Choose another mesh or dataset."), 'warn');
       return;
     }
-    this.setStatus(`Opening ${fields.length} field file(s)…`);
+    this.setStatus(i18n.t("Opening {p1} field file(s)…", { p1: fields.length }));
     try {
       const readers: ResultReader[] = [];
       // Four concurrent file reads keep both browser memory and local HTTP queues bounded.
@@ -538,34 +539,34 @@ export class FdsResultsDialog {
         samples * (fields[0].kind === 'smoke' ? 1 : 4) > 128 * 1024 * 1024 ||
         (fields[0].kind !== 'smoke' && samples * 6 > 6000000)
       ) {
-        throw new Error('This selection exceeds the display memory limit. Choose one mesh.');
+        throw new Error(i18n.t("This selection exceeds the display memory limit. Choose one mesh."));
       }
       this.readers = readers;
       const field = fields[0];
       const partial = readers.filter((r) => r.incomplete).length;
       this.fieldNote.textContent =
         field.kind === 'smoke'
-          ? 'Quantized 3D preview. Appearance controls do not change physical values. Use slices and wall fields for quantitative readings.'
-          : `${field.unit} · ${field.cellCentered ? 'Cell-centered' : 'Node-centered'} · ${readers.length} mesh file(s). Separate mesh planes retain their recorded positions.`;
+          ? i18n.t("Quantized 3D preview. Appearance controls do not change physical values. Use slices and wall fields for quantitative readings.")
+          : i18n.t("{p1} · {p2} · {p3} mesh file(s). Separate mesh planes retain their recorded positions.", { p1: field.unit, p2: field.cellCentered ? i18n.t("Cell-centered") : i18n.t("Node-centered"), p3: readers.length });
       if (partial) {
-        this.fieldNote.textContent += ` ${partial} file(s) end part-way through a frame (a run stopped mid-write); their complete frames are shown.`;
+        this.fieldNote.textContent += i18n.t(" {p1} file(s) end part-way through a frame (a run stopped mid-write); their complete frames are shown.", { p1: partial });
       }
       if (field.kind === 'boundary') {
         const skipped = readers.reduce(
           (n, reader) => n + reader.patches.filter((p) => p.obstruction === 0).length,
           0
         );
-        this.boundaryCoverage.textContent = `Selected boundary field: ${skipped} mesh-boundary patch(es) omitted across ${readers.length} file(s).`;
+        this.boundaryCoverage.textContent = i18n.t("Selected boundary field: {p1} mesh-boundary patch(es) omitted across {p2} file(s).", { p1: skipped, p2: readers.length });
         if (skipped) {
-          this.fieldNote.textContent += ` ${skipped} mesh-boundary patch(es) omitted; see Coverage and limitations.`;
+          this.fieldNote.textContent += i18n.t(" {p1} mesh-boundary patch(es) omitted; see Coverage and limitations.", { p1: skipped });
           if (this.coverage) this.coverage.open = true;
         }
       }
       if (field.kind === 'smoke' && field.quantity.trim().toUpperCase() === 'HRRPUV') {
         this.fieldNote.textContent +=
           field.fireCutoff === undefined
-            ? ' No fire cutoff recorded.'
-            : ` Fire cutoff: ${measured(field.fireCutoff)} kW/m³ (FDS 6.9.1 encoding).`;
+            ? i18n.t(" No fire cutoff recorded.")
+            : i18n.t(" Fire cutoff: {p1} kW/m³ (FDS 6.9.1 encoding).", { p1: measured(field.fireCutoff) });
       }
       this.autoScaleButton.disabled =
         this.rangeLow.disabled =
@@ -608,7 +609,7 @@ export class FdsResultsDialog {
     } catch (error) {
       if (epoch === this.epoch && request === this.frameRequest) {
         this.readers = [];
-        this.setStatus(`Dataset unavailable: ${(error as Error).message}`, 'error');
+        this.setStatus(i18n.t("Dataset unavailable: {p1}", { p1: (error as Error).message }), 'error');
       }
     }
   }
@@ -626,7 +627,7 @@ export class FdsResultsDialog {
       while (this.pending !== null && epoch === this.epoch && request === this.frameRequest) {
         const index = this.pending;
         this.pending = null;
-        this.setStatus(`Loading frame ${index + 1}… (displaying ${numeric(this.time)} s)`);
+        this.setStatus(i18n.t("Loading frame {p1}… (displaying {p2} s)", { p1: index + 1, p2: numeric(this.time) }));
         const primary = await readers[0].frame(index);
         const entries = [{ field: readers[0].field, mesh: readers[0].mesh, frame: primary }];
         let missing = 0;
@@ -650,10 +651,10 @@ export class FdsResultsDialog {
         this.time = primary.time;
         this.currentIndex = index;
         this.slider.value = String(index);
-        this.stamp.textContent = `t = ${numeric(this.time)} s · frame ${index + 1}/${readers[0].count}`;
+        this.stamp.textContent = i18n.t("t = {p1} s · frame {p2}/{p3}", { p1: numeric(this.time), p2: index + 1, p3: readers[0].count });
         const [min, max] = rangeOf(entries.map((e) => e.frame.time));
         this.setStatus(
-          `${entries.length} mesh file(s) shown${missing ? ` · ${missing} outside time coverage` : ''}${max - min > 0.001 ? ` · sampled times ${numeric(min)}–${numeric(max)} s` : ''}`,
+          i18n.t("{p1} mesh file(s) shown{p2}{p3}", { p1: entries.length, p2: missing ? i18n.t(" · {p1} outside time coverage", { p1: missing }) : '', p3: max - min > 0.001 ? i18n.t(" · sampled times {p1}–{p2} s", { p1: numeric(min), p2: numeric(max) }) : '' }),
           missing || max - min > 0.001 ? 'warn' : 'info'
         );
         this.updateLegend();
@@ -663,7 +664,7 @@ export class FdsResultsDialog {
       if (epoch === this.epoch && request === this.frameRequest) {
         this.pause();
         this.scene?.hideFields();
-        this.setStatus(`Frame unavailable: ${(error as Error).message}`, 'error');
+        this.setStatus(i18n.t("Frame unavailable: {p1}", { p1: (error as Error).message }), 'error');
       }
     } finally {
       if (epoch === this.epoch && request === this.frameRequest) {
@@ -676,10 +677,10 @@ export class FdsResultsDialog {
     const field = this.readers[0]?.field;
     this.legend.replaceChildren(
       field?.kind === 'smoke'
-        ? h('span', {}, ['3D appearance preview · 8-bit encoded output'])
+        ? h('span', {}, [i18n.t("3D appearance preview · 8-bit encoded output")])
         : h('div', {}, [
             h('div', { class: 'fds-results__ramp' }),
-            h('div', {}, [`${measured(this.low)} — ${measured(this.high)} ${field?.unit ?? ''}`]),
+            h('div', {}, [`${measured(this.low)} — ${measured(this.high)}${i18n.unitSpace()}${field?.unit ?? ''}`]),
           ])
     );
   }
@@ -687,7 +688,7 @@ export class FdsResultsDialog {
     if (!this.readers.length || this.readers[0].field.kind === 'smoke') return;
     if (this.busy) {
       // Said, not swallowed: the button looked broken while a frame was loading.
-      this.setStatus('A frame is still loading; choose Scale to this frame once it shows.', 'warn');
+      this.setStatus(i18n.t("A frame is still loading; choose Scale to this frame once it shows."), 'warn');
       return;
     }
     const epoch = this.epoch,
@@ -812,9 +813,9 @@ export class FdsResultsDialog {
     ctx.clearRect(0, 0, w, height);
     if (!s || !s.times.length) {
       this.readout.textContent = this.selectedDevice
-        ? `${this.selectedDevice.id}: no matching device history available.`
-        : 'No device or heat-release history selected.';
-      this.graph.setAttribute('aria-label', 'No history selected');
+        ? i18n.t("{p1}: no matching device history available.", { p1: this.selectedDevice.id })
+        : i18n.t("No device or heat-release history selected.");
+      this.graph.setAttribute('aria-label', i18n.t("No history selected"));
       return;
     }
     const start = s.times[0],
@@ -823,7 +824,7 @@ export class FdsResultsDialog {
       min = values.reduce((a, b) => Math.min(a, b), Infinity),
       max = values.reduce((a, b) => Math.max(a, b), -Infinity);
     if (!values.length) {
-      this.readout.textContent = `${s.name}: no finite samples`;
+      this.readout.textContent = i18n.t("{p1}: no finite samples", { p1: s.name });
       return;
     }
     let at = 0;
@@ -834,11 +835,11 @@ export class FdsResultsDialog {
       at++;
     this.readout.textContent =
       this.time < start || this.time > end
-        ? `${s.name}: outside recorded time coverage`
-        : `${s.name}: ${measured(s.values[at])} ${s.unit} · sample at ${numeric(s.times[at])} s`;
+        ? i18n.t("{p1}: outside recorded time coverage", { p1: s.name })
+        : i18n.t("{p1}: {p2} {p3} · sample at {p4} s", { p1: s.name, p2: measured(s.values[at]), p3: s.unit, p4: numeric(s.times[at]) });
     this.graph.setAttribute(
       'aria-label',
-      `${s.name} history, ${s.unit}, ${numeric(start)} to ${numeric(end)} seconds`
+      i18n.t("{p1} history, {p2}, {p3} to {p4} seconds", { p1: s.name, p2: s.unit, p3: numeric(start), p4: numeric(end) })
     );
     const x = (t: number) => 62 + ((w - 82) * (t - start)) / (end - start || 1);
     const y = (v: number) => height - 35 - ((height - 64) * (v - min)) / (max - min || 1);
@@ -847,9 +848,9 @@ export class FdsResultsDialog {
     ctx.fillStyle = theme.textDim;
     ctx.fillText(measured(max), 3, 22);
     ctx.fillText(measured(min), 3, height - 34);
-    ctx.fillText(`${numeric(start)} s`, 62, height - 6);
+    ctx.fillText(`${numeric(start)}${i18n.unitSpace()}s`, 62, height - 6);
     ctx.textAlign = 'right';
-    ctx.fillText(`${numeric(end)} s`, w - 12, height - 6);
+    ctx.fillText(`${numeric(end)}${i18n.unitSpace()}s`, w - 12, height - 6);
     ctx.textAlign = 'left';
     ctx.strokeStyle = theme.plotPrimary;
     ctx.setLineDash([]);
@@ -875,7 +876,7 @@ export class FdsResultsDialog {
   }
   private async snapshot(): Promise<void> {
     if (!this.scene || this.busy) {
-      this.setStatus('Wait for the displayed frame to finish loading before exporting.', 'warn');
+      this.setStatus(i18n.t("Wait for the displayed frame to finish loading before exporting."), 'warn');
       return;
     }
     this.pause();
@@ -884,7 +885,7 @@ export class FdsResultsDialog {
     const canvas = document.createElement('canvas'),
       view = this.scene.renderer.domElement;
     canvas.width = view.width;
-    const staticGeometry = this.data?.warnings.some((w) => w.includes('geometry events are not animated'));
+    const staticGeometry = (this.data?.geometryEvents ?? 0) > 0;
     canvas.height = view.height + (staticGeometry ? 90 : 65);
     const ctx = canvas.getContext('2d')!;
     const theme = this.theme;
@@ -899,19 +900,19 @@ export class FdsResultsDialog {
     const dataset = this.datasets[Number(this.selection.value)]?.label;
     const meshes = this.meshSelection.selectedOptions[0]?.textContent ?? '';
     ctx.fillText(
-      [this.data?.chid, dataset ?? field?.quantity ?? '', meshes, `${numeric(this.time)} s`]
+      [this.data?.chid, dataset ?? field?.quantity ?? '', meshes, `${numeric(this.time)}${i18n.unitSpace()}s`]
         .filter(Boolean).join(' · '),
       16,
       view.height + 25
     );
     if (field?.kind === 'smoke') {
-      ctx.fillText('Quantized 3D appearance preview', 16, view.height + 51);
+      ctx.fillText(i18n.t("Quantized 3D appearance preview"), 16, view.height + 51);
     } else {
       // The colour scale itself, not only its end values: a scientific field keeps
       // its quantity, unit and legend (docs/visual-language.md). Stops from the
       // shader's own ramp, which the on-screen bar (.fds-results__ramp) also shows.
       const low = measured(this.low);
-      const high = `${measured(this.high)} ${field?.unit ?? ''}`.trim();
+      const high = `${measured(this.high)}${i18n.unitSpace()}${field?.unit ?? ''}`.trim();
       const barX = 16 + ctx.measureText(low).width + 10;
       const barWidth = Math.min(260, Math.max(80, canvas.width - barX - ctx.measureText(high).width - 40));
       const ramp = ctx.createLinearGradient(barX, 0, barX + barWidth, 0);
@@ -923,15 +924,15 @@ export class FdsResultsDialog {
       ctx.fillText(high, barX + barWidth + 10, view.height + 51);
     }
     if (staticGeometry)
-      ctx.fillText('Static geometry only; geometry events are not animated', 16, view.height + 77);
+      ctx.fillText(i18n.t("Static geometry only; geometry events are not animated"), 16, view.height + 77);
     try {
       if (shell()) {
         const path = await saveResultPng(canvas.toDataURL('image/png'));
         if (epoch === this.epoch)
-          this.setStatus(path ? `Snapshot saved: ${path}` : 'Snapshot save cancelled.');
+          this.setStatus(path ? i18n.t("Snapshot saved: {p1}", { p1: path }) : i18n.t("Snapshot save cancelled."));
       } else {
         const blob = await new Promise<Blob>((resolve, reject) =>
-          canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('PNG encoding failed.'))), 'image/png')
+          canvas.toBlob((b) => (b ? resolve(b) : reject(new Error(i18n.t("PNG encoding failed.")))), 'image/png')
         );
         if (epoch !== this.epoch) return;
         const url = URL.createObjectURL(blob),
@@ -940,11 +941,11 @@ export class FdsResultsDialog {
         link.click();
         link.remove();
         setTimeout(() => URL.revokeObjectURL(url), 60000);
-        this.setStatus('PNG download requested: fds-results.png');
+        this.setStatus(i18n.t("PNG download requested: fds-results.png"));
       }
     } catch (error) {
       if (epoch === this.epoch)
-        this.setStatus(`Snapshot was not saved: ${(error as Error).message}`, 'error');
+        this.setStatus(i18n.t("Snapshot was not saved: {p1}", { p1: (error as Error).message }), 'error');
     }
   }
   close(): void {

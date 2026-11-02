@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 /** Pure measured-table interpretation. Mirror of python/fireplan/tables.py.
  * Recorded numbers are never converted, interpolated, rounded or calibrated here.
  */
@@ -190,8 +191,8 @@ export function timeShiftHint(grid: Grid): TimeShiftHint | null {
 
 export function extractSeries(grid: Grid, layout: Layout, units: ReadonlyMap<string, string> = new Map()): Extraction {
   const { headerRow, unitsRow, dataRow } = layout;
-  if (![headerRow, dataRow].every(v => Number.isInteger(v) && v >= 1) || (unitsRow !== null && (!Number.isInteger(unitsRow) || unitsRow < 1)) || (layout.shape !== 'paired-time' && (layout.timeColumn === null || !Number.isInteger(layout.timeColumn) || layout.timeColumn < 0))) throw new Error('Invalid table layout.');
-  const warnings = [...(grid.errors ?? [])].sort((a, b) => a.row - b.row || a.column - b.column).map(e => `Cell ${columnName(e.column)}${e.row}: ${e.code} treated as missing.`);
+  if (![headerRow, dataRow].every(v => Number.isInteger(v) && v >= 1) || (unitsRow !== null && (!Number.isInteger(unitsRow) || unitsRow < 1)) || (layout.shape !== 'paired-time' && (layout.timeColumn === null || !Number.isInteger(layout.timeColumn) || layout.timeColumn < 0))) throw new Error(i18n.t("Invalid table layout."));
+  const warnings = [...(grid.errors ?? [])].sort((a, b) => a.row - b.row || a.column - b.column).map(e => i18n.t("Cell {p1}{p2}: {p3} treated as missing.", { p1: columnName(e.column), p2: e.row, p3: e.code }));
   const header = grid[headerRow - 1] ?? [];
   const headers = columnHeaders(grid, layout);
   const selected: [number, number][] = layout.shape === 'paired-time' ? pairs(header) : headers.map((_, c): [number, number] => [layout.timeColumn!, c]).filter(([, c]) => c !== layout.timeColumn && (headers[c].name || grid.slice(dataRow - 1).some(row => row[c] !== undefined && row[c] !== null)));
@@ -202,7 +203,7 @@ export function extractSeries(grid: Grid, layout: Layout, units: ReadonlyMap<str
     for (let r = dataRow - 1; r < grid.length; r++) {
       const t = grid[r][time];
       if (!isNumber(t)) continue;
-      if (t <= previous) { end = r; warnings.push(`Time column ${columnName(time)} stops increasing at sheet row ${r + 1}; series ended.`); break; }
+      if (t <= previous) { end = r; warnings.push(i18n.t("Time column {p1} stops increasing at sheet row {p2}; series ended.", { p1: columnName(time), p2: r + 1 })); break; }
       previous = t;
     }
     ends.set(time, end);
@@ -222,7 +223,7 @@ export function extractSeries(grid: Grid, layout: Layout, units: ReadonlyMap<str
     if (used.has(name) || (stem !== base && original.has(stem))) {
       do { name = `${stem}#${suffix++}`; } while (used.has(name) || reserved.has(name));
     }
-    if (name !== base) warnings.push(`Duplicate channel name "${base}" renamed to "${name}".`);
+    if (name !== base) warnings.push(i18n.t("Duplicate channel name \"{p1}\" renamed to \"{p2}\".", { p1: base, p2: name }));
     used.add(name);
     const channel: Channel = { name, ...channelHeaders[index], column: c, t: [], values: [], missing: 0 };
     for (let r = dataRow - 1; r < ends.get(time)!; r++) {
@@ -231,9 +232,9 @@ export function extractSeries(grid: Grid, layout: Layout, units: ReadonlyMap<str
       channel.t.push(t); channel.values.push(value);
     }
     if (channel.t.length) channels.push(channel);
-    else warnings.push(`Channel "${name}" has no numeric samples and was dropped.`);
+    else warnings.push(i18n.t("Channel \"{p1}\" has no numeric samples and was dropped.", { p1: name }));
   });
-  return { channels, warnings: channels.length ? warnings : ['No time series on this sheet.'] };
+  return { channels, warnings: channels.length ? warnings : [i18n.t("No time series on this sheet.")] };
 }
 
 /** Hint only: unknown input units assume V; known non-voltage units refuse. */

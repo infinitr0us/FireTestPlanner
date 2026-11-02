@@ -1,7 +1,8 @@
+import * as i18n from './i18n';
 /** Form controls for the inspector. Every length control is unit-aware: it displays
  *  in the user's chosen unit and accepts an explicit suffix regardless. */
 
-import { formatLength, parseLength } from '../core/units';
+import { formatLength, parseLength } from './display-units';
 import type { LengthUnit } from '../core/types';
 import { h } from './dom';
 
@@ -34,13 +35,15 @@ export function numberField(
 ): HTMLInputElement {
   return h('input', {
     class: 'field__input',
-    type: 'number',
-    value: String(Number(value.toFixed(4))),
+    type: 'text',
+    inputMode: 'decimal',
+    value: i18n.numberText(Number(value.toFixed(4))),
     step: opts.step ?? 0.1,
     min: opts.min,
     max: opts.max,
     onchange: (e: Event) => {
-      const v = parseFloat((e.target as HTMLInputElement).value);
+      const text = (e.target as HTMLInputElement).value.trim();
+      const v = text === '' ? NaN : Number(text.replace(',', '.'));
       if (Number.isFinite(v)) onChange(v);
     },
   });
@@ -62,7 +65,7 @@ export function lengthField(
     type: 'text',
     inputMode: unit === 'ft-in' ? 'text' : 'decimal',
     value: formatLength(metres, unit),
-    title: `In ${unit === 'ft-in' ? 'feet and inches (bare numbers are feet)' : unit}. An explicit suffix wins: 9ft, 250mm, 5' 6 1/2"`,
+    title: i18n.t("In {p1}. An explicit suffix wins: 9ft, 250mm, 5' 6 1/2\"", { p1: unit === 'ft-in' ? i18n.t("feet and inches (bare numbers are feet)") : unit }),
   });
   input.addEventListener('change', () => {
     const parsed = parseLength(input.value, unit);

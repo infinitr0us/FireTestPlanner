@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 /** Structured FDS output. Coordinates and labels come from SMV, never filename guesses.
  * Binary layouts follow FDS 6.9.1 dump.f90 / smvv.f90 (NIST public domain).
  * A reader owns at most one decoded frame; input files remain external. */
@@ -40,6 +41,8 @@ export interface ResultCase {
   devices: ResultDevice[];
   csv: { kind: string; file: string }[];
   warnings: string[];
+  /** Recorded event count, independent of the language of warnings. */
+  geometryEvents?: number;
 }
 export interface ResultSource {
   files: Map<string, number>;
@@ -62,14 +65,14 @@ export function safeResultPath(name: string): string {
     /[:\x00]/.test(path) ||
     path.split('/').some((p) => !p || p === '.' || p === '..')
   ) {
-    throw new Error(`Unsafe result filename: ${name}`);
+    throw new Error(i18n.t("Unsafe result filename: {p1}", { p1: name }));
   }
   return path;
 }
 export async function resultText(source: ResultSource, name: string): Promise<string> {
   const size = source.files.get(name);
-  if (size === undefined) throw new Error(`Missing file: ${name}`);
-  if (size > MAX_READ) throw new Error(`Text file exceeds 64 MiB: ${name}`);
+  if (size === undefined) throw new Error(i18n.t("Missing file: {p1}", { p1: name }));
+  if (size > MAX_READ) throw new Error(i18n.t("Text file exceeds 64 MiB: {p1}", { p1: name }));
   return decoder.decode(await source.read(name, 0, size));
 }
 export function parseSmv(text: string): ResultCase {
@@ -100,7 +103,7 @@ export function parseSmv(text: string): ResultCase {
     try {
       return safeResultPath(name ?? '');
     } catch {
-      warning(`Skipped an output whose path cannot be read safely: ${(name ?? '').trim()}`);
+      warning(i18n.t("Skipped an output whose path cannot be read safely: {p1}", { p1: (name ?? '').trim() }));
       return null;
     }
   };
@@ -112,14 +115,14 @@ export function parseSmv(text: string): ResultCase {
     else if (tag === 'FDSVERSION') result.version = lines[++i];
     else if (tag === 'HRRPUVCUT') {
       const count = Number(lines[++i]);
-      if (count !== 1) fail('Unsupported HRRPUVCUT table.');
+      if (count !== 1) fail(i18n.t("Unsupported HRRPUVCUT table."));
       fireCutoff = Number(lines[++i]);
-      if (!Number.isFinite(fireCutoff) || fireCutoff < 0) fail('Invalid HRRPUVCUT threshold.');
+      if (!Number.isFinite(fireCutoff) || fireCutoff < 0) fail(i18n.t("Invalid HRRPUVCUT threshold."));
     } else if (tag === 'OFFSET') offset = numbers(lines[++i]).slice(0, 3) as XYZ;
     else if (tag === 'GRID') {
       const cells = numbers(lines[++i]).slice(0, 3) as XYZ;
       if (cells.length !== 3 || cells.some((n) => !Number.isInteger(n) || n < 1 || n > 100000))
-        fail('Invalid mesh dimensions.');
+        fail(i18n.t("Invalid mesh dimensions."));
       mesh = {
         id: line.substring(4).trim() || `Mesh ${result.meshes.length + 1}`,
         cells,
@@ -128,23 +131,23 @@ export function parseSmv(text: string): ResultCase {
         obstructions: [],
       };
       result.meshes.push(mesh);
-      if (offset.some((n) => n !== 0)) fail('Nonzero SMV mesh OFFSET is not supported yet.');
+      if (offset.some((n) => n !== 0)) fail(i18n.t("Nonzero SMV mesh OFFSET is not supported yet."));
     } else if (tag === 'PDIM' && mesh) {
       mesh.bounds = numbers(lines[++i]).slice(0, 6) as Bounds;
     } else if (/^TRN[XYZ]$/.test(tag) && mesh) {
       const axis = 'XYZ'.indexOf(tag[3]);
       const transforms = Number(lines[++i]);
       if (!Number.isInteger(transforms) || transforms < 0 || transforms > 100000)
-        fail('Invalid mesh transform.');
+        fail(i18n.t("Invalid mesh transform."));
       i += transforms;
       for (let n = 0; n <= mesh.cells[axis]; n++) {
         const row = numbers(lines[++i] ?? '');
-        if (row[0] !== n || !Number.isFinite(row[1])) fail('Invalid mesh coordinate table.');
+        if (row[0] !== n || !Number.isFinite(row[1])) fail(i18n.t("Invalid mesh coordinate table."));
         mesh.coordinates[axis].push(row[1]);
       }
     } else if (tag === 'OBST' && mesh) {
       const count = Number(lines[++i]);
-      if (!Number.isInteger(count) || count < 0 || count > 100000) fail('Invalid obstruction count.');
+      if (!Number.isInteger(count) || count < 0 || count > 100000) fail(i18n.t("Invalid obstruction count."));
       // SMV gives both original boxes and the actual grid-snapped boxes. Use the latter.
       i += count;
       for (let n = 0; n < count; n++) {
@@ -182,7 +185,7 @@ export function parseSmv(text: string): ResultCase {
       if (file === null) continue;
       const kind = tag.startsWith('SL') ? 'slice' : tag.startsWith('BN') ? 'boundary' : 'smoke';
       if (kind === 'boundary' && header[1] !== 1) {
-        warning('Only version 1 boundary files are supported.');
+        warning(i18n.t("Only version 1 boundary files are supported."));
         continue;
       }
       if (
@@ -190,7 +193,7 @@ export function parseSmv(text: string): ResultCase {
         (kind === 'boundary' && !file.endsWith('.bf')) ||
         (kind === 'smoke' && !file.endsWith('.s3d'))
       ) {
-        warning(`Unsupported compressed or alternate output: ${file}`);
+        warning(i18n.t("Unsupported compressed or alternate output: {p1}", { p1: file }));
         continue;
       }
       const match = line.match(/&\s*([\d\s-]+)(?:!|$)/);
@@ -208,34 +211,36 @@ export function parseSmv(text: string): ResultCase {
         plane: line.match(/!\s*(\d+)/)?.[1],
       });
     } else if (/^(ISOF|ISOG|TISOF|TISOG|PRT5|PL3D|GEOM|CGEOM|BNDE|BNDS|SLCFGEOM|SLCT|SMOKG3D|SMOKF3D16)$/.test(tag)) {
-      warning(`Unsupported output family: ${tag}`);
+      warning(i18n.t("Unsupported output family: {p1}", { p1: tag }));
     } else if (/^(SHOW_OBST|HIDE_OBST|OPEN_VENT|CLOSE_VENT)$/.test(tag)) {
       geometryEvents++;
     }
   }
-  if (geometryEvents)
+  if (geometryEvents) {
+    result.geometryEvents = geometryEvents;
     warning(
-      `${geometryEvents} geometry events are not animated. Static SMV obstructions and masks are shown at every time; vent state and changing visibility are not reproduced. Use Smokeview for animated geometry.`
+      i18n.t("{p1} geometry events are not animated. Static SMV obstructions and masks are shown at every time; vent state and changing visibility are not reproduced. Use Smokeview for animated geometry.", { p1: geometryEvents })
     );
+  }
   for (const field of result.fields) {
     if (field.kind === 'smoke' && field.quantity.trim().toUpperCase() === 'HRRPUV') {
       field.fireCutoff = fireCutoff;
       if (fireCutoff === undefined)
-        warning('No HRRPUVCUT threshold recorded; HRRPUV preview shows all nonzero encoded values.');
+        warning(i18n.t("No HRRPUVCUT threshold recorded; HRRPUV preview shows all nonzero encoded values."));
     }
   }
-  if (!result.meshes.length) fail('This file contains no structured FDS meshes.');
+  if (!result.meshes.length) fail(i18n.t("This file contains no structured FDS meshes."));
   for (const m of result.meshes) {
-    if (m.bounds.length !== 6 || m.bounds.some((v) => !Number.isFinite(v))) fail('Invalid mesh bounds.');
+    if (m.bounds.length !== 6 || m.bounds.some((v) => !Number.isFinite(v))) fail(i18n.t("Invalid mesh bounds."));
     for (let a = 0; a < 3; a++) {
       const c = m.coordinates[a];
       if (c.length !== m.cells[a] + 1 || c.some((v, n) => n > 0 && v <= c[n - 1]))
-        fail('Missing or non-increasing mesh coordinates.');
+        fail(i18n.t("Missing or non-increasing mesh coordinates."));
     }
     if (m.obstructions.some((b) => b.length !== 6 || b.some((v) => !Number.isFinite(v))))
-      fail('Invalid obstruction coordinates.');
+      fail(i18n.t("Invalid obstruction coordinates."));
   }
-  if (result.fields.some((f) => !result.meshes[f.mesh])) fail('Output references an unknown mesh.');
+  if (result.fields.some((f) => !result.meshes[f.mesh])) fail(i18n.t("Output references an unknown mesh."));
   return result;
 }
 
@@ -247,7 +252,7 @@ export class Records {
     readonly bytes: Uint8Array,
     little?: boolean
   ) {
-    if (bytes.byteLength < 4) fail('Truncated Fortran record.');
+    if (bytes.byteLength < 4) fail(i18n.t("Truncated Fortran record."));
     const n = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getInt32(0, true);
     this.little = little ?? (n === 30 || n === 32);
   }
@@ -255,11 +260,11 @@ export class Records {
     const b = this.bytes,
       d = new DataView(b.buffer, b.byteOffset, b.byteLength),
       start = this.offset;
-    if (start + 8 > b.length) fail('Truncated Fortran record.');
+    if (start + 8 > b.length) fail(i18n.t("Truncated Fortran record."));
     const n = d.getInt32(start, this.little);
     if (n < 0 || n > MAX_READ || (expected !== undefined && n !== expected) || start + n + 8 > b.length)
-      fail('Invalid or truncated Fortran record length.');
-    if (d.getInt32(start + 4 + n, this.little) !== n) fail('Fortran record markers disagree.');
+      fail(i18n.t("Invalid or truncated Fortran record length."));
+    if (d.getInt32(start + 4 + n, this.little) !== n) fail(i18n.t("Fortran record markers disagree."));
     this.offset += n + 8;
     return new DataView(b.buffer, b.byteOffset + start + 4, n);
   }
@@ -280,14 +285,14 @@ export interface ResultFrame {
   patches: ResultPatch[];
 }
 function patch(bounds: Bounds, orientation = 0, obstruction = -1): ResultPatch {
-  if (bounds.length !== 6 || bounds.some((n) => !Number.isInteger(n) || n < 0)) fail('Invalid grid indices.');
+  if (bounds.length !== 6 || bounds.some((n) => !Number.isInteger(n) || n < 0)) fail(i18n.t("Invalid grid indices."));
   let count = 1;
   for (let a = 0; a < 3; a++) {
     const length = bounds[a * 2 + 1] - bounds[a * 2] + 1;
-    if (length < 1) fail('Reversed grid indices.');
+    if (length < 1) fail(i18n.t("Reversed grid indices."));
     count *= length;
   }
-  if (!Number.isSafeInteger(count) || count > MAX_READ / 4) fail('Frame exceeds the 64 MiB decoding limit.');
+  if (!Number.isSafeInteger(count) || count > MAX_READ / 4) fail(i18n.t("Frame exceeds the 64 MiB decoding limit."));
   return { bounds, orientation, obstruction, count };
 }
 export function decodeRle(bytes: Uint8Array, count: number): Uint8Array {
@@ -297,16 +302,16 @@ export function decodeRle(bytes: Uint8Array, count: number): Uint8Array {
     let value = bytes[i++],
       repeats = 1;
     if (value === 255) {
-      if (i + 2 > bytes.length) fail('Truncated smoke RLE run.');
+      if (i + 2 > bytes.length) fail(i18n.t("Truncated smoke RLE run."));
       value = bytes[i++];
       repeats = bytes[i++];
-      if (!repeats || value === 255) fail('Invalid smoke RLE run.');
+      if (!repeats || value === 255) fail(i18n.t("Invalid smoke RLE run."));
     }
-    if (p + repeats > count) fail('Smoke RLE exceeds the mesh.');
+    if (p + repeats > count) fail(i18n.t("Smoke RLE exceeds the mesh."));
     out.fill(value, p, p + repeats);
     p += repeats;
   }
-  if (p !== count) fail('Smoke RLE does not fill the mesh.');
+  if (p !== count) fail(i18n.t("Smoke RLE does not fill the mesh."));
   return out;
 }
 
@@ -330,17 +335,17 @@ export class ResultReader {
   ) {}
   async init(): Promise<this> {
     const size = this.source.files.get(this.field.file);
-    if (size === undefined) fail(`Missing file: ${this.field.file}`);
+    if (size === undefined) fail(i18n.t("Missing file: {p1}", { p1: this.field.file }));
     const header = new Records(await this.source.read(this.field.file, 0, Math.min(size, 126)));
     this.little = header.little;
     if (this.field.kind === 'smoke') {
       const h = header.ints(8);
-      if (h[0] !== 1 || h[1] !== 0) fail('Unsupported Smoke3D encoding.');
+      if (h[0] !== 1 || h[1] !== 0) fail(i18n.t("Unsupported Smoke3D encoding."));
       this.patches = [patch(h.slice(2) as Bounds)];
       const szName = this.field.file + '.sz';
-      if (!this.source.files.has(szName)) fail(`Missing smoke frame index: ${szName}`);
+      if (!this.source.files.has(szName)) fail(i18n.t("Missing smoke frame index: {p1}", { p1: szName }));
       const rows = (await resultText(this.source, szName)).trim().split(/\r?\n/);
-      if (Number(rows.shift()) !== 0) fail('Unsupported smoke frame index format.');
+      if (Number(rows.shift()) !== 0) fail(i18n.t("Unsupported smoke frame index format."));
       let pos = 40;
       rows.forEach((line, index) => {
         const row = numbers(line);
@@ -351,7 +356,7 @@ export class ResultReader {
           row[2] <= 0 ||
           row[2] > MAX_READ
         )
-          fail('Invalid smoke frame index.');
+          fail(i18n.t("Invalid smoke frame index."));
         this.checkTime(index, row[0]);
         this.smokeOffsets.push(pos);
         this.smokeSizes.push(row[2]);
@@ -366,38 +371,38 @@ export class ResultReader {
         this.smokeOffsets.length = complete;
         this.smokeSizes.length = complete;
         for (let t = complete; t < rows.length; t += 1) this.times.delete(t);
-      } else if (pos !== size) fail('Smoke file and .sz index disagree; incomplete or changed run.');
+      } else if (pos !== size) fail(i18n.t("Smoke file and .sz index disagree; incomplete or changed run."));
       this.count = complete;
     } else {
       for (const expected of [this.field.quantity, this.field.shortName, this.field.unit]) {
         const r = header.next(30);
         const label = decoder.decode(new Uint8Array(r.buffer, r.byteOffset, r.byteLength)).trim();
         if (label !== expected.slice(0, 30).trim())
-          fail(`SMV and binary labels disagree in ${this.field.file}.`);
+          fail(i18n.t("SMV and binary labels disagree in {p1}.", { p1: this.field.file }));
       }
       if (this.field.kind === 'slice') {
         const bytes = await this.source.read(this.field.file, 114, 32);
         this.patches = [patch(new Records(bytes, this.little).ints(6) as Bounds)];
         this.start = 146;
         if (this.patches[0].bounds.filter((v, i, b) => i % 2 === 0 && v === b[i + 1]).length !== 1)
-          fail('Only two-dimensional slice files are supported.');
+          fail(i18n.t("Only two-dimensional slice files are supported."));
       } else {
         const n = header.ints(1)[0];
-        if (n < 1 || n > 100000) fail('Invalid boundary patch count.');
+        if (n < 1 || n > 100000) fail(i18n.t("Invalid boundary patch count."));
         const records = new Records(await this.source.read(this.field.file, 126, n * 44), this.little);
         for (let i = 0; i < n; i++) {
           const h = records.ints(9);
           if (Math.abs(h[6]) < 1 || Math.abs(h[6]) > 3 || h[8] !== this.field.mesh + 1)
-            fail('Invalid boundary face header.');
+            fail(i18n.t("Invalid boundary face header."));
           const p = patch(h.slice(0, 6) as Bounds, h[6], h[7]);
           const a = Math.abs(h[6]) - 1;
-          if (p.bounds[2 * a] !== p.bounds[2 * a + 1]) fail('Boundary face is not planar.');
+          if (p.bounds[2 * a] !== p.bounds[2 * a + 1]) fail(i18n.t("Boundary face is not planar."));
           this.patches.push(p);
         }
         this.start = 126 + n * 44;
       }
       this.stride = 12 + this.patches.reduce((n, p) => n + p.count * 4 + 8, 0);
-      if (this.stride > MAX_READ) fail('Frame exceeds the 64 MiB decoding limit.');
+      if (this.stride > MAX_READ) fail(i18n.t("Frame exceeds the 64 MiB decoding limit."));
       // A partial last record is a run stopped mid-write, not a corrupt file: the
       // frames before it are whole, and hiding all of them hid the run.
       this.count = Math.floor((size - this.start) / this.stride);
@@ -405,24 +410,24 @@ export class ResultReader {
     }
     for (const p of this.patches)
       for (let a = 0; a < 3; a++) {
-        if (p.bounds[2 * a + 1] > this.mesh.cells[a]) fail('Output indices exceed the associated mesh.');
+        if (p.bounds[2 * a + 1] > this.mesh.cells[a]) fail(i18n.t("Output indices exceed the associated mesh."));
       }
-    if (this.count < 1) fail(`No recorded frames: ${this.field.file}`);
+    if (this.count < 1) fail(i18n.t("No recorded frames: {p1}", { p1: this.field.file }));
     await this.time(0);
     await this.time(this.count - 1);
     return this;
   }
   private checkTime(index: number, time: number): number {
-    if (!Number.isFinite(time)) fail('Nonfinite output time.');
+    if (!Number.isFinite(time)) fail(i18n.t("Nonfinite output time."));
     const before = this.times.get(index - 1),
       after = this.times.get(index + 1);
     if ((before !== undefined && time <= before) || (after !== undefined && time >= after))
-      fail('Restarted or non-increasing output times are not supported.');
+      fail(i18n.t("Restarted or non-increasing output times are not supported."));
     this.times.set(index, time);
     return time;
   }
   async time(index: number): Promise<number> {
-    if (!Number.isInteger(index) || index < 0 || index >= this.count) fail('Frame index out of range.');
+    if (!Number.isInteger(index) || index < 0 || index >= this.count) fail(i18n.t("Frame index out of range."));
     const known = this.times.get(index);
     if (known !== undefined) return known;
     const r = new Records(
@@ -433,7 +438,7 @@ export class ResultReader {
   }
   /** Nearest recorded frame; no extrapolation past a dataset's temporal coverage. */
   async nearest(time: number, hint = 0): Promise<number | null> {
-    if (!Number.isFinite(time)) fail('Invalid requested time.');
+    if (!Number.isFinite(time)) fail(i18n.t("Invalid requested time."));
     if (time < (await this.time(0)) - 1e-4 || time > (await this.time(this.count - 1)) + 1e-4) return null;
     if (hint >= 0 && hint < this.count && Math.abs((await this.time(hint)) - time) < 1e-4) return hint;
     let lo = 0,
@@ -461,13 +466,13 @@ export class ResultReader {
     // The .sz index writes seven significant digits, so from 10,000 s its rounding
     // alone exceeds a fixed millisecond; the tolerance scales with the time.
     const indexed = await this.time(index);
-    if (Math.abs(time - indexed) > Math.max(1e-3, 1e-6 * Math.abs(indexed))) fail('Frame time disagrees with the index.');
+    if (Math.abs(time - indexed) > Math.max(1e-3, 1e-6 * Math.abs(indexed))) fail(i18n.t("Frame time disagrees with the index."));
     this.checkTime(index, time);
     let values: Float32Array | Uint8Array;
     if (smoke) {
       const [count, size] = r.ints(2);
       if (count !== this.patches[0].count || size !== this.smokeSizes[index])
-        fail('Smoke frame size disagrees with its index.');
+        fail(i18n.t("Smoke frame size disagrees with its index."));
       const data = r.next(size);
       values = decodeRle(new Uint8Array(data.buffer, data.byteOffset, data.byteLength), count);
     } else {
@@ -513,14 +518,14 @@ export function parseResultCsv(text: string, warn: (message: string) => void = (
           cell = '';
         } else cell += line[i];
       }
-      if (quoted) fail('Unclosed CSV quote.');
+      if (quoted) fail(i18n.t("Unclosed CSV quote."));
       cells.push(cell.trim());
       return cells;
     });
   const units = rows.shift(),
     names = rows.shift();
   if (!units || !names || units.length !== names.length || !/^time$/i.test(names[0]) || units[0] !== 's')
-    fail('Expected an FDS CSV with units, column names and Time in seconds.');
+    fail(i18n.t("Expected an FDS CSV with units, column names and Time in seconds."));
   const series = names
     .slice(1)
     .map((name, i) => ({ name, unit: units[i + 1], times: [] as number[], values: [] as number[] }));
@@ -529,13 +534,13 @@ export function parseResultCsv(text: string, warn: (message: string) => void = (
   if (last && rows.length > 0 && (last.length !== names.length || !last[0] || !Number.isFinite(Number(last[0])))) {
     // A run stopped mid-write leaves a half row; every earlier row is whole.
     rows.pop();
-    warn('The last row is incomplete (the run stopped mid-write); it was left out.');
+    warn(i18n.t("The last row is incomplete (the run stopped mid-write); it was left out."));
   }
   for (const row of rows) {
-    if (row.length !== names.length) fail('CSV row width disagrees with its header.');
+    if (row.length !== names.length) fail(i18n.t("CSV row width disagrees with its header."));
     const time = Number(row[0]);
     if (!row[0] || !Number.isFinite(time) || time <= previous)
-      fail('CSV times must be finite and strictly increasing.');
+      fail(i18n.t("CSV times must be finite and strictly increasing."));
     previous = time;
     series.forEach((s, i) => {
       s.times.push(time);

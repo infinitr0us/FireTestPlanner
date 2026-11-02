@@ -1,3 +1,4 @@
+import * as i18n from './i18n';
 /**
  * The import preview: what an FDS input would become, before it becomes it.
  *
@@ -15,7 +16,7 @@
 
 import { fdsToPlan, type FdsImportOptions, type FdsImportResult } from '../core/fds';
 import type { Issue, LengthUnit, PlanDocument } from '../core/types';
-import { formatLengthWithUnit } from '../core/units';
+import { formatLengthWithUnit } from './display-units';
 import { clear, h } from './dom';
 import { button } from './fields';
 
@@ -32,6 +33,21 @@ const TYPE_LABEL: Record<string, string> = {
 };
 
 const plural = (type: string, n: number): string => {
+  if (i18n.language() === 'fr') {
+    switch (type) {
+      case 'wall': return i18n.plural('Wall', 'Walls', n);
+      case 'ceiling': return i18n.plural('Ceiling', 'Ceilings', n);
+      case 'obstruction': return i18n.plural('Obstruction', 'Obstructions', n);
+      case 'burner': return i18n.plural('Burner', 'Burners', n);
+      case 'heatFluxSensor': return i18n.plural('Heat flux gauge', 'Heat flux gauges', n);
+      case 'thermocouple': return i18n.plural('Thermocouple', 'Thermocouples', n);
+      case 'velocityProbe': return i18n.plural('Velocity probe', 'Velocity probes', n);
+      case 'gasSampling': return i18n.plural('Gas sampling point', 'Gas sampling points', n);
+      case 'loadCell': return i18n.plural('Load cell', 'Load cells', n);
+      case 'camera': return i18n.plural('Camera', 'Cameras', n);
+      case 'hood': return i18n.plural('Hood', 'Hoods', n);
+    }
+  }
   const label = TYPE_LABEL[type] ?? `${type}s`;
   return n === 1 && label.endsWith('s') ? label.slice(0, -1) : label;
 };
@@ -107,14 +123,12 @@ export class FdsImportDialog {
     const broken = result.issues.filter((i) => i.severity === 'error');
 
     panel.append(
-      h('h2', { class: 'modal__title' }, [`Import ${this.fileName}`]),
+      h('h2', { class: 'modal__title' }, [i18n.t("Import {p1}", { p1: this.fileName })]),
       h('p', { class: 'import__intro' }, [
         total === 0
-          ? 'Nothing in this file maps onto a test plan.'
-          : `${total} objects, re-origined onto the burner centre at floor level. `
-            + `The plan origin sits at (${result.originM
-              .map((v) => formatLengthWithUnit(v, this.unit)).join(', ')}) `
-            + 'in this file’s coordinates.',
+          ? i18n.t("Nothing in this file maps onto a test plan.")
+          : i18n.t("{p1} objects, re-origined onto the burner centre at floor level. The plan origin sits at ({p2}) in this file’s coordinates.", { p1: total, p2: result.originM
+              .map((v) => formatLengthWithUnit(v, this.unit)).join(', ') }),
       ]),
     );
 
@@ -125,14 +139,14 @@ export class FdsImportDialog {
       this.issueList(result.issues),
     ].filter(Boolean) as HTMLElement[]);
 
-    const importButton = button('Import', () => this.adopt(), 'btn--primary');
+    const importButton = button(i18n.t("Import"), () => this.adopt(), 'btn--primary');
     if (broken.length > 0) {
       importButton.disabled = true;
-      importButton.title = 'This conversion produced a plan the editor could not open again.';
+      importButton.title = i18n.t("This conversion produced a plan the editor could not open again.");
     }
 
     panel.append(body, h('div', { class: 'import__actions' }, [
-      button('Cancel', () => this.close()),
+      button(i18n.t("Cancel"), () => this.close()),
       importButton,
     ]));
   }
@@ -158,14 +172,14 @@ export class FdsImportDialog {
     if (result.burnerCandidates.length < 2) return null;
 
     return h('div', { class: 'field' }, [
-      h('span', { class: 'field__label' }, ['Burner surface']),
+      h('span', { class: 'field__label' }, [i18n.t("Burner surface")]),
       h('select', {
         class: 'field__input',
         onchange: (e: Event) =>
           this.reconvert({ burnerSurf: (e.target as HTMLSelectElement).value }),
       }, result.burnerCandidates.map((surf) =>
         h('option', { value: surf, selected: surf === result.burnerSurf }, [
-          `${surf}${surf === result.burnerSurf ? ' — most compact horizontal' : ''}`,
+          `${surf}${surf === result.burnerSurf ? i18n.t(" — most compact horizontal") : ''}`,
         ]))),
     ]);
   }
@@ -175,11 +189,11 @@ export class FdsImportDialog {
     if (devices.length === 0) return null;
 
     const rows = devices.map((g) => h('tr', {}, [
-      h('td', {}, [g.quantity ?? '(no quantity)']),
+      h('td', {}, [g.quantity ?? i18n.t("(no quantity)")]),
       h('td', { class: 'import__num' }, [String(g.count)]),
       g.mappedTo
         ? h('td', {}, [`${g.objects} ${plural(g.mappedTo, g.objects)}${g.note ? `; ${g.note}` : ''}`])
-        : h('td', { class: 'import__skip' }, [g.note || 'not imported']),
+        : h('td', { class: 'import__skip' }, [g.note || i18n.t("not imported")]),
     ]));
 
     const grouped = devices.some((g) => g.mappedTo === 'thermocouple' && g.objects < g.count);
@@ -188,15 +202,15 @@ export class FdsImportDialog {
       h('div', { class: 'import__scroll' }, [
         h('table', { class: 'import__table' }, [
           h('thead', {}, [h('tr', {}, [
-            h('th', {}, ['&DEVC quantity']),
-            h('th', { class: 'import__num' }, ['Found']),
-            h('th', {}, ['Becomes']),
+            h('th', {}, [i18n.t("&DEVC quantity")]),
+            h('th', { class: 'import__num' }, [i18n.t("Found")]),
+            h('th', {}, [i18n.t("Becomes")]),
           ])]),
           h('tbody', {}, rows),
         ]),
       ]),
       h('label', { class: 'field' }, [
-        h('span', { class: 'field__label' }, ['Group rakes']),
+        h('span', { class: 'field__label' }, [i18n.t("Group rakes")]),
         h('input', {
           class: 'field__checkbox',
           type: 'checkbox',
@@ -207,9 +221,8 @@ export class FdsImportDialog {
       ]),
       h('p', { class: 'import__intro' }, [
         grouped || this.options.groupRakes === false
-          ? 'A vertical run of same-quantity devices at one XY is one rake with several '
-            + 'beads, not several instruments. Turn this off to keep one object per &DEVC.'
-          : 'No vertical runs to group in this file.',
+          ? i18n.t("A vertical run of same-quantity devices at one XY is one rake with several beads, not several instruments. Turn this off to keep one object per &DEVC.")
+          : i18n.t("No vertical runs to group in this file."),
       ]),
     ]);
   }

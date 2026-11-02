@@ -1,3 +1,4 @@
+import * as i18n from './i18n';
 import {
   DEVICE_KINDS,
   deviceKind,
@@ -10,7 +11,7 @@ import { h } from './dom';
 
 /** Device controls depend only on the simulation, not on an open planning document. */
 export class FdsDevicePanel {
-  readonly root = h('section', { class: 'fds-results__devices', 'aria-label': 'Simulation devices' });
+  readonly root = h('section', { class: 'fds-results__devices', get 'aria-label'() { return i18n.t("Simulation devices"); } });
   private display: DeviceDisplay = {
     visible: true,
     kinds: new Set(deviceKinds),
@@ -18,8 +19,8 @@ export class FdsDevicePanel {
     direction: true,
   };
   private selected?: ResultDevice;
-  private show = h('input', { type: 'checkbox', checked: true, 'aria-label': 'Show simulation devices' });
-  private select = h('select', { 'aria-label': 'Simulation device' });
+  private show = h('input', { type: 'checkbox', checked: true, get 'aria-label'() { return i18n.t("Show simulation devices"); } });
+  private select = h('select', { get 'aria-label'() { return i18n.t("Simulation device"); } });
   private filters = new Map<DeviceKind, HTMLInputElement>();
   private count = h('div', { class: 'fds-results__note' });
   private choices = h('div', { class: 'fds-results__device-choices' });
@@ -35,7 +36,7 @@ export class FdsDevicePanel {
       this.refresh();
     };
     const kinds = h('div', { class: 'fds-results__device-filters' });
-    this.select.append(h('option', { value: '' }, ['Choose a device…']));
+    this.select.append(h('option', { value: '' }, [i18n.t("Choose a device…")]));
     for (const kind of deviceKinds) {
       const members = devices.filter((d) => deviceKind(d) === kind);
       if (!members.length) continue;
@@ -43,7 +44,7 @@ export class FdsDevicePanel {
       const check = h('input', {
         type: 'checkbox',
         checked: true,
-        'aria-label': `Show ${spec.label.toLowerCase()}`,
+        'aria-label': i18n.t("Show {p1}", { p1: spec.label.toLowerCase() }),
       });
       check.onchange = () => {
         if (check.checked) this.display.kinds.add(kind);
@@ -69,7 +70,7 @@ export class FdsDevicePanel {
     this.select.disabled = !devices.length;
     this.select.onchange = () =>
       this.choose(this.select.value === '' ? undefined : devices[Number(this.select.value)]);
-    const labels = h('input', { type: 'checkbox', 'aria-label': 'Device labels' });
+    const labels = h('input', { type: 'checkbox', 'aria-label': i18n.t("Device labels") });
     labels.onchange = () => {
       this.display.labels = labels.checked;
       this.refresh();
@@ -77,26 +78,26 @@ export class FdsDevicePanel {
     const direction = h('input', {
       type: 'checkbox',
       checked: true,
-      'aria-label': 'Selected device direction',
+      'aria-label': i18n.t("Selected device direction"),
     });
     direction.onchange = () => {
       this.display.direction = direction.checked;
       this.refresh();
     };
     this.root.append(
-      h('strong', {}, ['Simulation devices']),
-      h('label', { class: 'fds-results__check' }, [this.show, 'Show devices']),
+      h('strong', {}, [i18n.t("Simulation devices")]),
+      h('label', { class: 'fds-results__check' }, [this.show, i18n.t("Show devices")]),
       kinds,
       this.count,
       h('div', { class: 'fds-results__device-filters' }, [
-        h('label', { class: 'fds-results__check' }, [labels, 'Labels']),
-        h('label', { class: 'fds-results__check' }, [direction, 'Selected direction']),
+        h('label', { class: 'fds-results__check' }, [labels, i18n.t("Labels")]),
+        h('label', { class: 'fds-results__check' }, [direction, i18n.t("Selected direction")]),
       ]),
-      h('label', {}, ['Find / select a device', this.select]),
+      h('label', {}, [i18n.t("Find / select a device"), this.select]),
       this.choices,
       this.detail,
       h('p', { class: 'fds-results__note' }, [
-        'Symbolic probes at recorded positions, visible through fields. Count badges group coincident probes. Click a marker to select. Cutaway hides probes above its height.',
+        i18n.t("Symbolic probes at recorded positions, visible through fields. Count badges group coincident probes. Click a marker to select. Cutaway hides probes above its height."),
       ])
     );
     this.refresh();
@@ -121,7 +122,7 @@ export class FdsDevicePanel {
       return;
     }
     this.choices.replaceChildren(
-      h('p', {}, [`${devices.length} probes overlap here. Choose a device:`]),
+      h('p', {}, [i18n.t("{p1} probes overlap here. Choose a device:", { p1: devices.length })]),
       ...devices.map((d) =>
         h('button', { type: 'button', onclick: () => this.choose(d) }, [`${d.id} · ${d.quantity}`])
       )
@@ -138,25 +139,25 @@ export class FdsDevicePanel {
       ? this.devices.filter((d) => this.display.kinds.has(deviceKind(d))).length
       : 0;
     this.count.textContent = this.devices.length
-      ? `${enabled} of ${this.devices.length} probes enabled`
-      : 'No device positions recorded in this metadata.';
+      ? i18n.t("{p1} of {p2} probes enabled", { p1: enabled, p2: this.devices.length })
+      : i18n.t("No device positions recorded in this metadata.");
     const d = this.selected;
     const format = (values: number[]) => values.map((v) => Number(v.toFixed(5))).join(', ');
     this.detail.replaceChildren(
       ...(d
         ? [
             h('strong', {}, [d.id]),
-            h('div', {}, [d.quantity || 'Quantity not recorded']),
-            h('div', {}, [`FDS XYZ: (${format(d.position)}) m`]),
+            h('div', {}, [d.quantity || i18n.t("Quantity not recorded")]),
+            h('div', {}, [i18n.t("FDS XYZ: ({p1}) m", { p1: format(d.position) })]),
             h('div', {}, [
               d.orientation
-                ? `Recorded direction: (${format(d.orientation)}) · arrow length is symbolic`
+                ? i18n.t("Recorded direction: ({p1}) · arrow length is symbolic", { p1: format(d.orientation) })
                 : deviceKind(d) === 'surface' || deviceKind(d) === 'flux'
-                  ? 'Direction not recorded'
-                  : 'No facing for this point probe',
+                  ? i18n.t("Direction not recorded")
+                  : i18n.t("No facing for this point probe"),
             ]),
             !this.display.visible || !this.display.kinds.has(deviceKind(d))
-              ? h('div', {}, ['Selected probe hidden by device filters.'])
+              ? h('div', {}, [i18n.t("Selected probe hidden by device filters.")])
               : null,
           ].filter((node): node is HTMLElement => node !== null)
         : [])

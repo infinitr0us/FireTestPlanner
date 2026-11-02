@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 /**
  * Frame math. Mirror of python/fireplan/_math.py -- keep the two in step.
  *
@@ -53,14 +54,14 @@ export const cross = (a: Vec3, b: Vec3): Vec3 => [
 
 export function normalize(v: Vec3): Vec3 {
   const n = length(v);
-  if (n === 0) throw new Error('cannot normalize a zero-length vector');
+  if (n === 0) throw new Error(i18n.t("cannot normalize a zero-length vector"));
   return [v[0] / n, v[1] / n, v[2] / n];
 }
 
 /** Columns are the world directions of the local x, y, z axes. */
 export function quatToColumns(q: Quat): Mat3 {
   const n = Math.hypot(q[0], q[1], q[2], q[3]);
-  if (n === 0) throw new Error('zero-length quaternion');
+  if (n === 0) throw new Error(i18n.t("zero-length quaternion"));
   const [x, y, z, w] = [q[0] / n, q[1] / n, q[2] / n, q[3] / n];
   return [
     [1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (x * z - y * w)],
@@ -103,7 +104,7 @@ export function columnsToQuat(m: Mat3): Quat {
  */
 export function lookAtQuat(eye: Vec3, target: Vec3, upHint: Vec3 = WORLD_UP): Quat {
   const delta = sub(target, eye);
-  if (length(delta) === 0) throw new Error('position and aim target coincide');
+  if (length(delta) === 0) throw new Error(i18n.t("position and aim target coincide"));
 
   const back = normalize([-delta[0], -delta[1], -delta[2]]);
   let hint = normalize(upHint);

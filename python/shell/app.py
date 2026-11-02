@@ -309,6 +309,17 @@ class Shell:
     def queue_plan(self, path: str) -> None:
         self._queued_plan = path
 
+    def interface_language(self) -> Dict[str, str]:
+        """Editor preference stored beside camera presets, independent of plans."""
+        return {"language": "fr" if self._settings.get("language") == "fr" else "en"}
+
+    def save_interface_language(self, language: Any) -> Dict[str, Any]:
+        if language not in ("en", "fr"):
+            return {"saved": False, "error": "language must be en or fr"}
+        self._settings["language"] = language
+        failure = self._save_settings()
+        return {"saved": False, "error": failure} if failure else {"saved": True}
+
     # -- files ---------------------------------------------------------
 
     def pick_linked_files(self, kind: str) -> Dict[str, Any]:
@@ -828,6 +839,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json(self.shell.save_csv(body.get("text", ""), body.get("name", "schedule.csv")))
             elif route == "/api/presets":
                 self._send_json(self.shell.save_camera_presets(body.get("presets")))
+            elif route == "/api/language":
+                self._send_json(self.shell.save_interface_language(body.get("language")))
             else:
                 self._send_json({"error": "unknown route"}, 404)
         except Exception as exc:  # noqa: BLE001 - never take the server down
@@ -843,6 +856,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json(self.shell.recent_files())
             elif route == "/api/presets":
                 self._send_json(self.shell.camera_presets())
+            elif route == "/api/language":
+                self._send_json(self.shell.interface_language())
             elif route == "/api/flame/frame":
                 self._send_flame_frame()
             elif route == "/api/test-data/file":

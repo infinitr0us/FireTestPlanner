@@ -1,3 +1,4 @@
+import * as i18n from './i18n';
 /**
  * Test data… : the plan's measured and simulated sources, and the mapping of
  * their channels onto instruments.
@@ -24,10 +25,10 @@ import {
 } from './test-data-model';
 
 const SHAPES: Record<TestDataTable['shape'], string> = {
-  'paired-time': 'Logger export, a time column per channel',
-  processed: 'Processed sheet, several header rows',
-  fds: 'FDS device or HRR output',
-  plain: 'Plain table, one header row',
+  get 'paired-time'() { return i18n.t("Logger export, a time column per channel"); },
+  get processed() { return i18n.t("Processed sheet, several header rows"); },
+  get fds() { return i18n.t("FDS device or HRR output"); },
+  get plain() { return i18n.t("Plain table, one header row"); },
 };
 const SHAPE_SHORT: Record<TestDataTable['shape'], string> = { 'paired-time': 'logger', processed: 'processed', fds: 'FDS', plain: 'plain' };
 const ACCEPT = '.xlsx,.xlsm,.csv,.tsv,.txt';
@@ -51,8 +52,8 @@ function parseNumber(text: string): number | null {
   const v = Number(t);
   return Number.isFinite(v) ? v : Number.NaN;
 }
-const precise = (v: number): string => String(Number(v.toPrecision(15)));
-const cellText = (v: Grid[number][number]): string => v === null ? '' : typeof v === 'number' ? String(Number(v.toPrecision(6))) : v;
+const precise = (v: number): string => i18n.numberText(Number(v.toPrecision(15)));
+const cellText = (v: Grid[number][number]): string => v === null ? '' : typeof v === 'number' ? i18n.numberText(Number(v.toPrecision(6))) : v;
 const extractionCache = new WeakMap<Grid, Map<string, ReturnType<typeof extractSeries>>>();
 /** Extraction is pure in grid, layout and units; repaints reuse it. */
 function extract(grid: Grid, table: TestDataTable, units: ReadonlyMap<string, string>): ReturnType<typeof extractSeries> {
@@ -190,7 +191,7 @@ export class TestDataDialog {
     this.render();
     try { await action(); }
     catch (err) {
-      if ((err as DOMException).name === 'AbortError') this.status = { text: 'Reading the file was cancelled.', tone: 'dim' };
+      if ((err as DOMException).name === 'AbortError') this.status = { text: i18n.t("Reading the file was cancelled."), tone: 'dim' };
       else this.status = { text: (err as Error).message, tone: 'bad' };
     } finally { this.busy = false; this.render(); }
   }
@@ -230,8 +231,8 @@ export class TestDataDialog {
     const shown = view.kind === 'edit' ? `edit:${view.sourceId}` : view.kind;
     const sameView = shown === this.shown;
     this.shown = shown;
-    const title = view.kind === 'edit' ? `Test data · ${this.source(view.sourceId)!.name}`
-      : view.kind === 'new' ? `New source · ${fileName(view.pending.source.file.path)}` : 'Test data';
+    const title = view.kind === 'edit' ? i18n.t("Test data · {p1}", { p1: this.source(view.sourceId)!.name })
+      : view.kind === 'new' ? i18n.t("New source · {p1}", { p1: fileName(view.pending.source.file.path) }) : i18n.t("Test data");
     const content = view.kind === 'list' ? this.renderList()
       : view.kind === 'reading' ? this.renderReading(view)
         : view.kind === 'new' ? this.renderEditor(view.pending.source, view.pending)
@@ -241,9 +242,9 @@ export class TestDataDialog {
     dialog.replaceChildren(
       h('h2', { class: 'modal__title', id: 'test-data-title' }, [title]),
       h('p', { class: 'import__intro' }, [view.kind === 'list'
-        ? 'Measured and simulated channels on the plan\'s instruments. The plan keeps the file reference, the mapping and a manifest of what was read, never the samples.'
-        : view.kind === 'new' ? 'Nothing changes in the plan until Add source, which adds the source and its mappings as one undoable edit.'
-          : 'Each change here is one undoable edit. Reading the file is not an edit.']),
+        ? i18n.t("Measured and simulated channels on the plan's instruments. The plan keeps the file reference, the mapping and a manifest of what was read, never the samples.")
+        : view.kind === 'new' ? i18n.t("Nothing changes in the plan until Add source, which adds the source and its mappings as one undoable edit.")
+          : i18n.t("Each change here is one undoable edit. Reading the file is not an edit.")]),
       h('div', { class: 'test-data__body' }, [content.body]),
       status,
       h('div', { class: 'import__actions' }, content.actions),
@@ -316,30 +317,29 @@ export class TestDataDialog {
     const body = h('div', { class: 'test-data__list' });
     if (!sources.length) {
       body.append(h('p', { class: 'panel__hint' }, [
-        'No sources yet. Add a logger workbook, a processed sheet, an FDS _devc.csv or _hrr.csv, or a plain table, '
-        + 'then map its channels to the gauges, thermocouple beads and burners.']));
+        i18n.t("No sources yet. Add a logger workbook, a processed sheet, an FDS _devc.csv or _hrr.csv, or a plain table, then map its channels to the gauges, thermocouple beads and burners.")]));
     }
     body.append(h('ul', { class: 'test-data__sources' }, sources.map((source) => {
       const entry = this.data.get(source.id);
       const status = statusText(entry?.status ?? 'unloaded', entry?.error);
       const mapped = source.channels.length;
       const loadedText = entry?.status === 'loaded' || entry?.status === 'embedded'
-        ? ` · ${entry.series.length} of ${mapped} mapping${mapped === 1 ? '' : 's'} plotting` : ` · ${mapped} mapping${mapped === 1 ? '' : 's'}`;
+        ? i18n.plural(" · {p1} of {p2} mapping plotting", " · {p1} of {p2} mappings plotting", mapped, { p1: entry.series.length, p2: mapped }) : i18n.plural(" · {p1} mapping", " · {p1} mappings", mapped, { p1: mapped });
       const card = h('li', { class: 'test-data__source', dataset: { sourceId: source.id } }, [
         h('div', { class: 'test-data__source-head' }, [
           h('strong', {}, [source.name || source.id]),
-          h('span', { class: `import__chip test-data__role test-data__role--${source.role}` }, [source.role === 'measured' ? 'Measured' : 'Simulated']),
+          h('span', { class: `import__chip test-data__role test-data__role--${source.role}` }, [source.role === 'measured' ? i18n.t("Measured") : i18n.t("Simulated")]),
           h('span', { class: 'test-data__file', title: source.file.path }, [
             `${fileName(source.file.path)}${source.table.sheet ? ` · ${source.table.sheet}` : ''}`
-            + `${source.timeOffset_s ? ` · ignition at ${precise(source.timeOffset_s)} s` : ''}`]),
+            + `${source.timeOffset_s ? i18n.t(" · ignition at {p1} s", { p1: precise(source.timeOffset_s) }) : ''}`]),
         ]),
         h('p', { class: `test-data__status test-data__status--${status.tone}` }, [status.text, entry?.status === 'error' ? '' : loadedText]),
       ]);
       if (entry?.mismatches.length) {
         card.append(h('div', { class: 'test-data__mismatch', role: 'note' }, [
-          h('p', {}, [`The file differs from the one the plan recorded: ${entry.mismatches.join(' ')}`]),
-          this.btn('Accept the file as read', `accept:${source.id}`, () => this.accept(source.id), '',
-            'Record this file\'s size, modification time and channels in the plan. One undoable edit.'),
+          h('p', {}, [i18n.t("The file differs from the one the plan recorded: {p1}", { p1: entry.mismatches.join(' ') })]),
+          this.btn(i18n.t("Accept the file as read"), `accept:${source.id}`, () => this.accept(source.id), '',
+            i18n.t("Record this file's size, modification time and channels in the plan. One undoable edit.")),
         ]));
       }
       for (const issue of issues.filter((i) => i.sourceId === source.id)) {
@@ -348,15 +348,15 @@ export class TestDataDialog {
       const actions = h('div', { class: 'linked-file__actions' });
       actions.append(...this.loadActions(source, entry));
       actions.append(
-        this.btn('Edit…', `edit:${source.id}`, () => { this.view = { kind: 'edit', sourceId: source.id }; this.status = null; this.filter = ''; this.render(); this.focusFirst(); }),
-        this.btn('Remove', `remove:${source.id}`, () => this.remove(source.id), 'btn--danger', 'Remove this source and its mappings; the file stays on disk'),
+        this.btn(i18n.t("Edit…"), `edit:${source.id}`, () => { this.view = { kind: 'edit', sourceId: source.id }; this.status = null; this.filter = ''; this.render(); this.focusFirst(); }),
+        this.btn(i18n.t("Remove"), `remove:${source.id}`, () => this.remove(source.id), 'btn--danger', i18n.t("Remove this source and its mappings; the file stays on disk")),
       );
       card.append(actions);
       return card;
     })));
-    const add = this.btn('Add a source…', 'add', () => { void this.add(); }, 'btn--primary');
-    const inputs = shell() ? [] : [this.fileInput('add-file', 'Test data file to add', (file) => { void this.addFile(file); })];
-    return { body, actions: [...inputs, this.btn('Close', 'close', () => this.close()), add] };
+    const add = this.btn(i18n.t("Add a source…"), 'add', () => { void this.add(); }, 'btn--primary');
+    const inputs = shell() ? [] : [this.fileInput('add-file', i18n.t("Test data file to add"), (file) => { void this.addFile(file); })];
+    return { body, actions: [...inputs, this.btn(i18n.t("Close"), 'close', () => this.close()), add] };
   }
 
   /** The hidden file input a browser tab needs; its button clicks it. */
@@ -375,22 +375,22 @@ export class TestDataDialog {
     const bridge = shell();
     const status = entry?.status ?? 'unloaded';
     if (!bridge) {
-      const input = this.fileInput(`file:${source.id}`, `File for ${source.name}`, (file) => this.attach(source.id, file));
+      const input = this.fileInput(`file:${source.id}`, i18n.t("File for {p1}", { p1: source.name }), (file) => this.attach(source.id, file));
       input.dataset.sourceId = source.id;
       const known = this.files.get(source.id);
       return [input,
-        this.btn(status === 'loaded' ? 'Choose another file…' : 'Choose file…', `choose:${source.id}`, () => input.click(),
+        this.btn(status === 'loaded' ? i18n.t("Choose another file…") : i18n.t("Choose file…"), `choose:${source.id}`, () => input.click(),
           status === 'needs-file' || status === 'embedded' ? 'btn--primary' : '',
-          `Pick ${fileName(source.file.path)} in this browser tab. Reading it is not an edit.`),
-        ...(known && status !== 'loading' ? [this.btn('Reload', `reload:${source.id}`, () => this.attach(source.id, known),
-          '', 'Read the chosen file again')] : [])];
+          i18n.t("Pick {p1} in this browser tab. Reading it is not an edit.", { p1: fileName(source.file.path) })),
+        ...(known && status !== 'loading' ? [this.btn(i18n.t("Reload"), `reload:${source.id}`, () => this.attach(source.id, known),
+          '', i18n.t("Read the chosen file again"))] : [])];
     }
     if (status === 'needs-load') {
-      return [this.btn('Load data', `load:${source.id}`, () => { void this.act(async () => { await this.data.load(source.id); }); }, 'btn--primary',
-        'Read this file from the network share now')];
+      return [this.btn(i18n.t("Load data"), `load:${source.id}`, () => { void this.act(async () => { await this.data.load(source.id); }); }, 'btn--primary',
+        i18n.t("Read this file from the network share now"))];
     }
-    return [this.btn('Reload', `reload:${source.id}`, () => { void this.reload(source.id); }, '',
-      isNetworkPath(source.file.path) ? 'Read the file from the network share again' : 'Read the file from disk again')];
+    return [this.btn(i18n.t("Reload"), `reload:${source.id}`, () => { void this.reload(source.id); }, '',
+      isNetworkPath(source.file.path) ? i18n.t("Read the file from the network share again") : i18n.t("Read the file from disk again"))];
   }
 
   private attach(sourceId: string, file: File): void {
@@ -400,7 +400,7 @@ export class TestDataDialog {
       const source = this.source(sourceId);
       await this.data.attachFile(sourceId, file);
       if (source && file.name !== fileName(source.file.path)) {
-        this.status = { text: `Read ${file.name} for ${fileName(source.file.path)}. The plan keeps its own file name.`, tone: 'warn' };
+        this.status = { text: i18n.t("Read {p1} for {p2}. The plan keeps its own file name.", { p1: file.name, p2: fileName(source.file.path) }), tone: 'warn' };
         this.render();
       }
     });
@@ -433,7 +433,7 @@ export class TestDataDialog {
     this.store.commit();
     this.drafts.delete(sourceId);
     this.view = { kind: 'list' };
-    this.setStatus('Source removed. Undo puts it back.');
+    this.setStatus(i18n.t("Source removed. Undo puts it back."));
   }
 
   /** The manifest re-recorded from the file as read now, dropping mappings it no longer has. */
@@ -445,8 +445,8 @@ export class TestDataDialog {
     const manifest = manifestFor({ ...source, channels: kept }, context.grid, context.fileInfo);
     this.edit(sourceId, 'Accept test data file', (s) => { s.channels = kept; s.manifest = manifest; });
     const dropped = source.channels.length - kept.length;
-    this.setStatus(dropped ? `Recorded the file as read; ${dropped} mapping${dropped > 1 ? 's' : ''} removed, their channels are gone.`
-      : 'Recorded the file as read.', dropped ? 'warn' : 'good');
+    this.setStatus(dropped ? i18n.plural("Recorded the file as read; {p1} mapping removed, their channels are gone.", "Recorded the file as read; {p1} mappings removed, their channels are gone.", dropped, { p1: dropped })
+      : i18n.t("Recorded the file as read."), dropped ? 'warn' : 'good');
   }
 
   // -- adding a source --------------------------------------------------------
@@ -463,13 +463,13 @@ export class TestDataDialog {
       const path = picked[0].path;
       const read = await bridge.readTestDataFile(path);
       await this.draft({ path, bytes: read.bytes, modified: read.modified });
-      if (picked.length > 1) this.status = { text: 'Added one source at a time: the first file chosen is shown.', tone: 'warn' };
+      if (picked.length > 1) this.status = { text: i18n.t("Added one source at a time: the first file chosen is shown."), tone: 'warn' };
     });
   }
 
   private async addFile(file: File): Promise<void> {
     await this.run(async () => {
-      if (file.size > TEST_DATA_FILE_CAP) throw new Error('Test data exceeds the 64 MiB limit.');
+      if (file.size > TEST_DATA_FILE_CAP) throw new Error(i18n.t("Test data exceeds the 64 MiB limit."));
       const bytes = new Uint8Array(await file.arrayBuffer());
       await this.draft({ path: file.name, bytes, modified: new Date(file.lastModified).toISOString(), file });
     });
@@ -479,7 +479,7 @@ export class TestDataDialog {
   private async readDraft(name: string, bytes: Uint8Array): Promise<Draft> {
     const abort = new AbortController();
     const previous = this.view;
-    const reading: View & { kind: 'reading' } = { kind: 'reading', name, abort, text: `Reading ${name}…`, step: 0, steps: 1 };
+    const reading: View & { kind: 'reading' } = { kind: 'reading', name, abort, text: i18n.t("Reading {p1}…", { p1: name }), step: 0, steps: 1 };
     this.view = reading;
     this.render();
     this.root?.querySelector<HTMLElement>('[data-key="cancel-reading"]')?.focus();
@@ -487,8 +487,8 @@ export class TestDataDialog {
       return await this.data.draftFromFile(name, bytes, { signal: abort.signal, onProgress: ({ step, steps, sheet }) => {
         reading.step = step;
         reading.steps = steps;
-        reading.text = sheet === null ? `Reading ${name}: workbook metadata (step ${step} of ${steps})`
-          : `Reading ${name}: step ${step} of ${steps}, sheet ${sheet}`;
+        reading.text = sheet === null ? i18n.t("Reading {p1}: workbook metadata (step {p2} of {p3})", { p1: name, p2: step, p3: steps })
+          : i18n.t("Reading {p1}: step {p2} of {p3}, sheet {p4}", { p1: name, p2: step, p3: steps, p4: sheet });
         const bar = this.progress?.querySelector('progress');
         const text = this.progress?.querySelector('p');
         if (bar) { bar.max = steps; bar.value = step; }
@@ -504,7 +504,7 @@ export class TestDataDialog {
     const draft = await this.readDraft(name, file.bytes);
     const cached: Cached = { path: file.path, draft, size: file.bytes.length, modified: file.modified, bytes: file.bytes, file: file.file };
     const index = draft.defaultSheetIndex;
-    if (index === null) throw new Error(`${name} has no time series on any sheet.`);
+    if (index === null) throw new Error(i18n.t("{p1} has no time series on any sheet.", { p1: name }));
     const sheet = draft.sheets[index];
     const source: TestDataSource = {
       id: nextSourceId(this.store.document), name, role: defaultRole(sheet.table),
@@ -516,7 +516,7 @@ export class TestDataDialog {
     this.view = { kind: 'new', pending };
     this.filter = '';
     this.status = pending.suggested.size
-      ? { text: `${pending.suggested.size} channel${pending.suggested.size > 1 ? 's' : ''} pre-selected from matching FDS names. Check them before adding.`, tone: 'dim' }
+      ? { text: i18n.plural("{p1} channel pre-selected from matching FDS names. Check them before adding.", "{p1} channels pre-selected from matching FDS names. Check them before adding.", pending.suggested.size, { p1: pending.suggested.size }), tone: 'dim' }
       : null;
   }
 
@@ -550,16 +550,16 @@ export class TestDataDialog {
     if (cached.file) { this.files.set(source.id, cached.file); void this.data.attachFile(source.id, cached.file).catch(() => {}); }
     else void this.data.attachBytes(source.id, fileName(cached.path), { bytes: cached.bytes, modified: cached.modified }).catch(() => {});
     this.view = { kind: 'edit', sourceId: source.id };
-    this.setStatus(`Added ${source.name} with ${source.channels.length} mapping${source.channels.length === 1 ? '' : 's'}. Undo removes it.`, 'good');
+    this.setStatus(i18n.plural("Added {p1} with {p2} mapping. Undo removes it.", "Added {p1} with {p2} mappings. Undo removes it.", source.channels.length, { p1: source.name, p2: source.channels.length }), 'good');
   }
 
   private renderReading(view: View & { kind: 'reading' }): { body: HTMLElement; actions: HTMLElement[] } {
     const body = h('div', { class: 'test-data__reading', role: 'status', 'aria-live': 'polite' }, [
       h('p', {}, [view.text]),
-      h('progress', { max: view.steps, value: view.step, 'aria-label': 'Reading progress' }),
-      h('p', { class: 'panel__hint' }, ['Every sheet is read so the sheet can be changed without reading the file again. A large workbook takes a few seconds.']),
+      h('progress', { max: view.steps, value: view.step, 'aria-label': i18n.t("Reading progress") }),
+      h('p', { class: 'panel__hint' }, [i18n.t("Every sheet is read so the sheet can be changed without reading the file again. A large workbook takes a few seconds.")]),
     ]);
-    const cancel = button('Cancel', () => { if (this.view.kind === 'reading') this.view.abort.abort(); });
+    const cancel = button(i18n.t("Cancel"), () => { if (this.view.kind === 'reading') this.view.abort.abort(); });
     cancel.dataset.key = 'cancel-reading';
     cancel.dataset.autofocus = '';
     return { body, actions: [cancel] };
@@ -599,47 +599,47 @@ export class TestDataDialog {
       this.channelSection(source, pending, context, apply),
     ]);
     const actions = pending
-      ? [this.btn('Cancel', 'cancel-new', () => { this.view = { kind: 'list' }; this.status = null; this.render(); this.focusFirst(); }),
-        this.btn('Add source', 'commit-new', () => this.commitNew(pending), 'btn--primary',
-          'Add this source and its mappings to the plan, as one undoable edit')]
-      : [this.btn('Remove source', `remove:${source.id}`, () => this.remove(source.id), 'btn--danger'),
-        this.btn('Back to sources', 'back', () => { this.view = { kind: 'list' }; this.status = null; this.render(); this.focusFirst(); }),
-        this.btn('Close', 'close', () => this.close())];
+      ? [this.btn(i18n.t("Cancel"), 'cancel-new', () => { this.view = { kind: 'list' }; this.status = null; this.render(); this.focusFirst(); }),
+        this.btn(i18n.t("Add source"), 'commit-new', () => this.commitNew(pending), 'btn--primary',
+          i18n.t("Add this source and its mappings to the plan, as one undoable edit"))]
+      : [this.btn(i18n.t("Remove source"), `remove:${source.id}`, () => this.remove(source.id), 'btn--danger'),
+        this.btn(i18n.t("Back to sources"), 'back', () => { this.view = { kind: 'list' }; this.status = null; this.render(); this.focusFirst(); }),
+        this.btn(i18n.t("Close"), 'close', () => this.close())];
     return { body, actions };
   }
 
   private sourceFields(source: TestDataSource, pending: Pending | null, cached: Cached | undefined,
     apply: (label: string, mutate: (s: TestDataSource) => void) => void): HTMLElement {
-    const name = this.input('name', source.name, 'Source name', (text) => {
-      if (!text.trim()) return 'A source needs a name: it labels the plots.';
+    const name = this.input('name', source.name, i18n.t("Source name"), (text) => {
+      if (!text.trim()) return i18n.t("A source needs a name: it labels the plots.");
       apply('Rename test data source', (s) => { s.name = text.trim(); });
       return null;
     }, { size: 22 });
     name.dataset.autofocus = '';
-    const role = h('select', { class: 'field__input', 'aria-label': 'Role', dataset: { key: 'role' }, disabled: this.busy,
+    const role = h('select', { class: 'field__input', 'aria-label': i18n.t("Role"), dataset: { key: 'role' }, disabled: this.busy,
       onchange: (e: Event) => {
         if (pending) pending.roleTouched = true;
         apply('Set test data role', (s) => { s.role = (e.target as HTMLSelectElement).value as TestDataSource['role']; });
-      } }, (['measured', 'simulated'] as const).map((r) => h('option', { value: r, selected: source.role === r }, [r === 'measured' ? 'Measured' : 'Simulated'])));
-    const offset = this.input('offset', source.timeOffset_s === undefined ? '' : precise(source.timeOffset_s), 'Ignition at (s)', (text) => {
+      } }, (['measured', 'simulated'] as const).map((r) => h('option', { value: r, selected: source.role === r }, [r === 'measured' ? i18n.t("Measured") : i18n.t("Simulated")])));
+    const offset = this.input('offset', source.timeOffset_s === undefined ? '' : precise(source.timeOffset_s), i18n.t("Ignition at (s)"), (text) => {
       const v = parseNumber(text);
-      if (Number.isNaN(v)) return 'The time offset is a number of seconds.';
+      if (Number.isNaN(v)) return i18n.t("The time offset is a number of seconds.");
       apply('Set test data time offset', (s) => { if (v === null || v === 0) delete s.timeOffset_s; else s.timeOffset_s = v; });
       return null;
     }, { decimal: true, placeholder: '0', size: 8 });
     const hint = cached?.draft.shiftHint;
     const offsetHelp = h('div', { class: 'test-data__offset-help' }, [
-      h('p', { class: 'panel__hint' }, ['Plan time is seconds from ignition. Enter this file\'s own time at ignition; it is subtracted from every sample. A sheet already shifted to ignition has 0.']),
+      h('p', { class: 'panel__hint' }, [i18n.t("Plan time is seconds from ignition. Enter this file's own time at ignition; it is subtracted from every sample. A sheet already shifted to ignition has 0.")]),
       hint && hint.seconds !== (source.timeOffset_s ?? 0)
         ? this.btn(shiftHintLabel(hint), 'shift-hint', () => apply('Set test data time offset', (s) => { s.timeOffset_s = hint.seconds; }), '',
-          `The workbook's processed sheets record a ${fmt(hint.seconds)} s shift to ignition. Use it when this sheet is not already shifted.`)
+          i18n.t("The workbook's processed sheets record a {p1} s shift to ignition. Use it when this sheet is not already shifted.", { p1: fmt(hint.seconds) }))
         : null,
     ]);
-    return h('section', { class: 'test-data__section', 'aria-label': 'Source' }, [
+    return h('section', { class: 'test-data__section', 'aria-label': i18n.t("Source") }, [
       h('div', { class: 'test-data__row' }, [
-        this.field('Name', name),
-        this.field('Role', role, 'Measured: a data-acquisition channel. Simulated: an FDS device or other model output.'),
-        this.field('Ignition at (s)', offset, 'The file\'s own time at ignition'),
+        this.field(i18n.t("Name"), name),
+        this.field(i18n.t("Role"), role, i18n.t("Measured: a data-acquisition channel. Simulated: an FDS device or other model output.")),
+        this.field(i18n.t("Ignition at (s)"), offset, i18n.t("The file's own time at ignition")),
       ]),
       offsetHelp,
     ]);
@@ -649,13 +649,13 @@ export class TestDataDialog {
     apply: (label: string, mutate: (s: TestDataSource) => void) => void): HTMLElement {
     const table = source.table;
     const section = h('section', { class: 'test-data__section', 'aria-labelledby': 'test-data-table' }, [
-      h('h3', { class: 'panel__section', id: 'test-data-table' }, ['File and layout']),
+      h('h3', { class: 'panel__section', id: 'test-data-table' }, [i18n.t("File and layout")]),
       h('p', { class: 'test-data__path', title: source.file.path }, [source.file.path]),
     ]);
     /** A layout change: drop mappings whose channels the new layout lacks, and re-record the manifest. */
     const setTable = (next: TestDataTable, label = 'Change test data layout'): void => {
       const ctx = this.context(source, pending, next);
-      if (!ctx) { this.setStatus('Read the file before changing its layout.', 'warn'); return; }
+      if (!ctx) { this.setStatus(i18n.t("Read the file before changing its layout."), 'warn'); return; }
       let channels: Channel[];
       try { channels = extract(ctx.grid, next, ctx.units).channels; }
       catch (err) { this.setStatus((err as Error).message, 'bad'); return; }
@@ -677,32 +677,32 @@ export class TestDataDialog {
       const manifest = manifestFor({ ...source, table: next, channels: kept }, ctx.grid, ctx.fileInfo);
       const dropped = source.channels.length - kept.length;
       apply(label, (s) => { s.table = next; s.channels = kept; s.manifest = manifest; });
-      this.setStatus(dropped ? `${dropped} mapping${dropped > 1 ? 's' : ''} removed: their channels are not in this layout. Undo restores them.` : 'Layout changed.',
+      this.setStatus(dropped ? i18n.plural("{p1} mapping removed: their channels are not in this layout. Undo restores them.", "{p1} mappings removed: their channels are not in this layout. Undo restores them.", dropped, { p1: dropped }) : i18n.t("Layout changed."),
         dropped ? 'warn' : 'dim');
     };
 
     // Sheet: every sheet of the draft, or the current one with a way to read the rest.
     const sheets = cached?.draft.sheets.filter((s) => s.name !== null) ?? [];
     let sheetControl: HTMLElement;
-    if (table.sheet === null) sheetControl = h('span', { class: 'field__static' }, ['Delimited text, one table']);
+    if (table.sheet === null) sheetControl = h('span', { class: 'field__static' }, [i18n.t("Delimited text, one table")]);
     else if (sheets.length) {
-      sheetControl = h('select', { class: 'field__input', 'aria-label': 'Sheet', dataset: { key: 'sheet' }, disabled: this.busy,
+      sheetControl = h('select', { class: 'field__input', 'aria-label': i18n.t("Sheet"), dataset: { key: 'sheet' }, disabled: this.busy,
         onchange: (e: Event) => {
           const sheet = sheets.find((s) => s.name === (e.target as HTMLSelectElement).value)!;
           setTable({ ...sheet.table, ...(table.unitsSheet !== undefined ? { unitsSheet: table.unitsSheet } : {}) }, 'Change test data sheet');
         } }, sheets.map((s) => h('option', { value: s.name!, selected: s.name === table.sheet },
-        [`${s.name} · ${s.channelCount ? `${SHAPE_SHORT[s.table.shape]}, ${s.channelCount} channel${s.channelCount === 1 ? '' : 's'}` : 'no time series'}`])));
+        [`${s.name} · ${s.channelCount ? i18n.plural("{p1}, {p2} channel", "{p1}, {p2} channels", s.channelCount, { p1: SHAPE_SHORT[s.table.shape], p2: s.channelCount }) : i18n.t("no time series")}`])));
     } else {
       const canRead = Boolean(shell()) || this.files.has(source.id);
       sheetControl = h('div', { class: 'test-data__inline' }, [
         h('span', { class: 'field__static' }, [table.sheet]),
-        canRead ? this.btn('Read all sheets…', 'read-sheets', () => { void this.redraft(source.id); }, '',
-          'Read every sheet of the file so another can be chosen') : null,
+        canRead ? this.btn(i18n.t("Read all sheets…"), 'read-sheets', () => { void this.redraft(source.id); }, '',
+          i18n.t("Read every sheet of the file so another can be chosen")) : null,
       ]);
     }
     const detected = context ? (cached?.draft.sheets.find((s) => s.name === table.sheet)?.table ?? { sheet: table.sheet, ...detectShape(context.grid) }) : null;
     const disabled = this.busy || !context;
-    const shape = h('select', { class: 'field__input', 'aria-label': 'Shape', dataset: { key: 'shape' }, disabled,
+    const shape = h('select', { class: 'field__input', 'aria-label': i18n.t("Shape"), dataset: { key: 'shape' }, disabled,
       onchange: (e: Event) => {
         const next = (e.target as HTMLSelectElement).value as TestDataTable['shape'];
         setTable({ ...table, shape: next, timeColumn: next === 'paired-time' ? null : table.timeColumn ?? 0 });
@@ -712,7 +712,7 @@ export class TestDataDialog {
       const input = this.input(key, table[key] === null ? '' : String(table[key]), label, (text) => {
         const v = parseNumber(text);
         if (v === null && key === 'unitsRow') { setTable({ ...table, unitsRow: null }); return null; }
-        if (v === null || !Number.isInteger(v) || v < 1 || v > rows) return `${label} is a sheet row from 1 to ${rows}.`;
+        if (v === null || !Number.isInteger(v) || v < 1 || v > rows) return i18n.t("{p1} is a sheet row from 1 to {p2}.", { p1: label, p2: rows });
         setTable({ ...table, [key]: v });
         return null;
       }, { decimal: true, size: 4, placeholder: key === 'unitsRow' ? 'none' : '' });
@@ -721,28 +721,26 @@ export class TestDataDialog {
     };
     const width = context ? Math.max(0, ...context.grid.map((r) => r.length)) : 0;
     const header = context?.grid[table.headerRow - 1] ?? [];
-    const time = h('select', { class: 'field__input', 'aria-label': 'Time column', dataset: { key: 'timeColumn' },
+    const time = h('select', { class: 'field__input', 'aria-label': i18n.t("Time column"), dataset: { key: 'timeColumn' },
       disabled: disabled || table.shape === 'paired-time',
       onchange: (e: Event) => setTable({ ...table, timeColumn: Number((e.target as HTMLSelectElement).value) }) },
-    table.shape === 'paired-time' ? [h('option', { value: '' }, ['Each channel\'s own _Time column'])]
+    table.shape === 'paired-time' ? [h('option', { value: '' }, [i18n.t("Each channel's own _Time column")])]
       : Array.from({ length: Math.max(width, (table.timeColumn ?? 0) + 1) }, (_, c) => h('option', { value: c, selected: c === table.timeColumn },
         [`${columnName(c)}${typeof header[c] === 'string' && header[c] ? `: ${String(header[c]).slice(0, 24)}` : ''}`])));
     section.append(h('div', { class: 'test-data__row test-data__row--layout' }, [
-      this.field('Sheet', sheetControl),
-      this.field('Shape', shape),
-      this.field('Names row', rowInput('headerRow', 'Names row'), 'The row with the channel names. A processed sheet composes names from every row above the data.'),
-      this.field('Units row', rowInput('unitsRow', 'Units row'), 'Empty when the sheet has none; metadata tables can still supply units'),
-      this.field('First data row', rowInput('dataRow', 'First data row')),
-      this.field('Time column', time),
+      this.field(i18n.t("Sheet"), sheetControl),
+      this.field(i18n.t("Shape"), shape),
+      this.field(i18n.t("Names row"), rowInput('headerRow', i18n.t("Names row")), i18n.t("The row with the channel names. A processed sheet composes names from every row above the data.")),
+      this.field(i18n.t("Units row"), rowInput('unitsRow', i18n.t("Units row")), i18n.t("Empty when the sheet has none; metadata tables can still supply units")),
+      this.field(i18n.t("First data row"), rowInput('dataRow', i18n.t("First data row"))),
+      this.field(i18n.t("Time column"), time),
     ]));
     if (detected) {
       const same = detected.shape === table.shape && detected.headerRow === table.headerRow && detected.unitsRow === table.unitsRow
         && detected.dataRow === table.dataRow && detected.timeColumn === table.timeColumn;
       section.append(h('div', { class: 'test-data__inline' }, [
-        h('p', { class: 'panel__hint' }, [`${same ? 'Detected' : 'Changed from the detected'} layout: ${SHAPES[detected.shape]}, `
-          + `names in row ${detected.headerRow}${detected.unitsRow ? `, units in row ${detected.unitsRow}` : ''}, data from row ${detected.dataRow}`
-          + `${detected.timeColumn === null ? '' : `, time in column ${columnName(detected.timeColumn)}`}.`]),
-        same ? null : this.btn('Use detected', 'use-detected', () => setTable({ ...table, shape: detected.shape, headerRow: detected.headerRow,
+        h('p', { class: 'panel__hint' }, [i18n.t("{p1} layout: {p2}, names in row {p3}{p4}, data from row {p5}{p6}.", { p1: same ? i18n.t("Detected") : i18n.t("Changed from the detected"), p2: SHAPES[detected.shape], p3: detected.headerRow, p4: detected.unitsRow ? i18n.t(", units in row {p1}", { p1: detected.unitsRow }) : '', p5: detected.dataRow, p6: detected.timeColumn === null ? '' : i18n.t(", time in column {p1}", { p1: columnName(detected.timeColumn) }) })]),
+        same ? null : this.btn(i18n.t("Use detected"), 'use-detected', () => setTable({ ...table, shape: detected.shape, headerRow: detected.headerRow,
           unitsRow: detected.unitsRow, dataRow: detected.dataRow, timeColumn: detected.timeColumn })),
       ]));
     }
@@ -751,8 +749,8 @@ export class TestDataDialog {
       const entry = this.data.get(source.id);
       section.append(h('div', { class: 'test-data__inline' }, [
         h('p', { class: 'panel__hint' }, [entry?.status === 'embedded'
-          ? 'This shared page carries the mapped series, not the file. Choose the original file to change the sheet or layout, or to map other channels.'
-          : 'The file is not loaded, so the preview and the layout are unavailable. The mappings below come from the plan\'s manifest.']),
+          ? i18n.t("This shared page carries the mapped series, not the file. Choose the original file to change the sheet or layout, or to map other channels.")
+          : i18n.t("The file is not loaded, so the preview and the layout are unavailable. The mappings below come from the plan's manifest.")]),
         ...this.loadActions(source, entry),
       ]));
     }
@@ -769,7 +767,7 @@ export class TestDataDialog {
       if (bridge) ({ bytes, modified } = await bridge.readTestDataFile(source.file.path));
       else {
         file = this.files.get(sourceId);
-        if (!file) throw new Error('Choose the file in this browser tab first.');
+        if (!file) throw new Error(i18n.t("Choose the file in this browser tab first."));
         bytes = new Uint8Array(await file.arrayBuffer());
         modified = new Date(file.lastModified).toISOString();
       }
@@ -788,13 +786,13 @@ export class TestDataDialog {
       ? header.flatMap((v, c) => (typeof v === 'string' && /_Time\*?$/i.test(v.trim()) ? [c] : []))
       : table.timeColumn === null ? [] : [table.timeColumn]);
     const mark = (r: number): string | null => r === table.headerRow ? 'names' : r === table.unitsRow ? 'units' : r === table.dataRow ? 'data' : null;
-    const head = h('tr', {}, [h('th', { scope: 'col' }, ['Row']), ...Array.from({ length: width }, (_, c) =>
-      h('th', { scope: 'col', class: timeColumns.has(c) ? 'test-data__time' : '' }, [columnName(c), timeColumns.has(c) ? h('span', { class: 'test-data__tag' }, ['time']) : null]))]);
+    const head = h('tr', {}, [h('th', { scope: 'col' }, [i18n.t("Row")]), ...Array.from({ length: width }, (_, c) =>
+      h('th', { scope: 'col', class: timeColumns.has(c) ? 'test-data__time' : '' }, [columnName(c), timeColumns.has(c) ? h('span', { class: 'test-data__tag' }, [i18n.t('time')]) : null]))]);
     const body = rows.map((r) => {
       if (r === null) return h('tr', { class: 'test-data__gap' }, [h('td', { colSpan: width + 1 }, ['⋮'])]);
       const tag = mark(r);
       return h('tr', { class: `${tag ? `test-data__mark test-data__mark--${tag}` : ''}${r > table.dataRow ? ' test-data__datarow' : ''}` }, [
-        h('th', { scope: 'row' }, [String(r), tag ? h('span', { class: 'test-data__tag' }, [tag]) : null]),
+        h('th', { scope: 'row' }, [String(r), tag ? h('span', { class: 'test-data__tag' }, [tag === 'names' ? i18n.t('names') : tag === 'units' ? i18n.t('units') : i18n.t('data')]) : null]),
         ...Array.from({ length: width }, (_, c) => {
           const code = errors.get(`${r},${c}`);
           const text = code ?? cellText(grid[r - 1]?.[c] ?? null);
@@ -803,7 +801,7 @@ export class TestDataDialog {
         }),
       ]);
     });
-    return h('div', { class: 'test-data__preview', role: 'region', 'aria-label': `Sheet preview, ${grid.length} rows`, tabIndex: 0 }, [
+    return h('div', { class: 'test-data__preview', role: 'region', 'aria-label': i18n.t("Sheet preview, {p1} rows", { p1: grid.length }), tabIndex: 0 }, [
       h('table', { class: 'import__table test-data__grid' }, [h('thead', {}, [head]), h('tbody', {}, body)]),
     ]);
   }
@@ -846,7 +844,7 @@ export class TestDataDialog {
     };
     const setNumber = (row: Row, field: 'scale' | 'offset', text: string): string | null => {
       const v = parseNumber(text);
-      if (Number.isNaN(v) || (field === 'scale' && v === 0)) return field === 'scale' ? 'The scale is a non-zero number; negative calibration is allowed.' : 'The offset is a number.';
+      if (Number.isNaN(v) || (field === 'scale' && v === 0)) return field === 'scale' ? i18n.t("The scale is a non-zero number; negative calibration is allowed.") : i18n.t("The offset is a number.");
       apply(field === 'scale' ? 'Set test data scale' : 'Set test data offset', (s) => {
         const m = s.channels[row.index!];
         if (!m) return;
@@ -855,8 +853,8 @@ export class TestDataDialog {
       return null;
     };
 
-    const filter = h('input', { class: 'field__input test-data__filter', type: 'search', placeholder: 'Filter channels',
-      'aria-label': 'Filter channels', value: this.filter, dataset: { key: 'filter' } });
+    const filter = h('input', { class: 'field__input test-data__filter', type: 'search', placeholder: i18n.t("Filter channels"),
+      'aria-label': i18n.t("Filter channels"), value: this.filter, dataset: { key: 'filter' } });
     const body = h('tbody');
     const visible = (row: Row): boolean => !this.filter || row.channel.name.toLowerCase().includes(this.filter.toLowerCase());
     filter.addEventListener('input', () => {
@@ -869,10 +867,10 @@ export class TestDataDialog {
       const mapping = row.index === null ? null : source.channels[row.index];
       const key = mapping ? targetKey(mapping) : '';
       const target = mapping ? byKey.get(key) : undefined;
-      const select = h('select', { class: 'field__input', 'aria-label': `Instrument for ${row.channel.name}`, dataset: { key: `target:${i}:${row.channel.name}` },
+      const select = h('select', { class: 'field__input', 'aria-label': i18n.t("Instrument for {p1}", { p1: row.channel.name }), dataset: { key: `target:${i}:${row.channel.name}` },
         disabled: this.busy, onchange: (e: Event) => setMapping(row, (e.target as HTMLSelectElement).value) }, [
-        h('option', { value: '', selected: !mapping }, ['Not mapped']),
-        mapping && !target ? h('option', { value: key, selected: true }, [`Missing: ${mapping.object}${mapping.bead === undefined ? '' : ` bead ${mapping.bead + 1}`}`]) : null,
+        h('option', { value: '', selected: !mapping }, [i18n.t("Not mapped")]),
+        mapping && !target ? h('option', { value: key, selected: true }, [i18n.t("Missing: {p1}{p2}", { p1: mapping.object, p2: mapping.bead === undefined ? '' : i18n.t(" bead {p1}", { p1: mapping.bead + 1 }) })]) : null,
         ...(Object.entries(TARGET_GROUPS) as Array<[Target['group'], string]>).map(([group, label]) => {
           const list = targets.filter((t) => t.group === group);
           return list.length ? h('optgroup', { label },
@@ -880,27 +878,27 @@ export class TestDataDialog {
         }),
       ]);
       const notes: HTMLElement[] = [];
-      if (!row.known) notes.push(h('span', { class: 'test-data__note test-data__note--warn' }, ['Not in the file as read: unmap it or fix the layout.']));
-      if (mapping && !target) notes.push(h('span', { class: 'test-data__note test-data__note--warn' }, ['The instrument is gone or cannot take this mapping.']));
-      if (mapping && (counts.get(key) ?? 0) > 1) notes.push(h('span', { class: 'test-data__note test-data__note--warn' }, ['Another channel of this source maps the same instrument; neither plots until one is changed.']));
-      if (pending && mapping && pending.suggested.has(`${row.channel.name}\0${key}`)) notes.push(h('span', { class: 'test-data__badge', title: 'The channel name equals this instrument\'s name or its exported FDS device ID' }, ['suggested']));
+      if (!row.known) notes.push(h('span', { class: 'test-data__note test-data__note--warn' }, [i18n.t("Not in the file as read: unmap it or fix the layout.")]));
+      if (mapping && !target) notes.push(h('span', { class: 'test-data__note test-data__note--warn' }, [i18n.t("The instrument is gone or cannot take this mapping.")]));
+      if (mapping && (counts.get(key) ?? 0) > 1) notes.push(h('span', { class: 'test-data__note test-data__note--warn' }, [i18n.t("Another channel of this source maps the same instrument; neither plots until one is changed.")]));
+      if (pending && mapping && pending.suggested.has(`${row.channel.name}\0${key}`)) notes.push(h('span', { class: 'test-data__badge', title: i18n.t("The channel name equals this instrument's name or its exported FDS device ID") }, [i18n.t("suggested")]));
       const note = mapping ? mappingNote(row.channel, target, mapping) : null;
       if (note) notes.push(h('span', { class: `test-data__note test-data__note--${note.tone}` }, [note.text]));
       if (!mapping && extraction && row.channel.unit !== null) {
         const hint = calibrationHint(row.channel.name, row.channel.unit);
-        if (hint) notes.push(h('span', { class: 'test-data__note' }, [`Gauge constant in the name: ${fmt(hint.inputUnit === 'V' ? hint.scale / 1000 : hint.scale)} kW/m² per mV`]));
+        if (hint) notes.push(h('span', { class: 'test-data__note' }, [i18n.t("Gauge constant in the name: {p1} kW/m² per mV", { p1: fmt(hint.inputUnit === 'V' ? hint.scale / 1000 : hint.scale) })]));
       }
-      const scale = this.input(`scale:${i}:${row.channel.name}`, mapping?.scale === undefined ? '' : precise(mapping.scale), `Scale for ${row.channel.name}`,
+      const scale = this.input(`scale:${i}:${row.channel.name}`, mapping?.scale === undefined ? '' : precise(mapping.scale), i18n.t("Scale for {p1}", { p1: row.channel.name }),
         (text) => setNumber(row, 'scale', text), { decimal: true, placeholder: '1', size: 7 });
-      const offset = this.input(`offset:${i}:${row.channel.name}`, mapping?.offset === undefined ? '' : precise(mapping.offset), `Offset for ${row.channel.name}`,
+      const offset = this.input(`offset:${i}:${row.channel.name}`, mapping?.offset === undefined ? '' : precise(mapping.offset), i18n.t("Offset for {p1}", { p1: row.channel.name }),
         (text) => setNumber(row, 'offset', text), { decimal: true, placeholder: '0', size: 6 });
       scale.disabled ||= !mapping;
       offset.disabled ||= !mapping;
-      const span = row.channel.t0 === null ? '–' : `${fmt(row.channel.t0)} to ${fmt(row.channel.t1!)}`;
+      const span = row.channel.t0 === null ? '–' : i18n.t("{p1} to {p2}", { p1: fmt(row.channel.t0), p2: fmt(row.channel.t1!) });
       const tr = h('tr', { dataset: { channel: row.channel.name }, class: mapping ? 'test-data__mapped' : '' }, [
         h('th', { scope: 'row' }, [h('span', { class: 'test-data__channel' }, [row.channel.name]), notes.length ? h('span', { class: 'test-data__notes' }, notes) : null]),
         h('td', {}, [row.channel.unit === null ? '–' : unitLabel(row.channel.unit)]),
-        h('td', { class: 'import__num' }, [`${row.channel.samples.toLocaleString()}${row.channel.missing ? ` (${row.channel.missing} missing)` : ''}`]),
+        h('td', { class: 'import__num' }, [`${row.channel.samples.toLocaleString(i18n.language() === 'fr' ? 'fr-CA' : undefined)}${row.channel.missing ? i18n.t(" ({p1} missing)", { p1: row.channel.missing }) : ''}`]),
         h('td', { class: 'import__num' }, [span]),
         h('td', {}, [select]),
         h('td', {}, [scale]),
@@ -912,20 +910,19 @@ export class TestDataDialog {
     const mapped = source.channels.length;
     const section = h('section', { class: 'test-data__section', 'aria-labelledby': 'test-data-channels' }, [
       h('div', { class: 'test-data__inline test-data__inline--spread' }, [
-        h('h3', { class: 'panel__section', id: 'test-data-channels' }, [`Channels`, h('span', { class: 'panel__count' },
-          [`${channels.length} in ${extraction ? 'the file' : 'the manifest'} · ${mapped} mapped`])]),
+        h('h3', { class: 'panel__section', id: 'test-data-channels' }, [i18n.t("Channels"), h('span', { class: 'panel__count' },
+          [i18n.t("{p1} in {p2} · {p3} mapped", { p1: channels.length, p2: extraction ? i18n.t("the file") : i18n.t("the manifest"), p3: mapped })])]),
         filter,
       ]),
       h('div', { class: 'test-data__channels' }, [h('table', { class: 'import__table test-data__map' }, [
-        h('thead', {}, [h('tr', {}, ['Channel', 'Unit', 'Samples', 'File time (s)', 'Instrument', 'Scale', 'Offset'].map((t) => h('th', { scope: 'col' }, [t])))]),
+        h('thead', {}, [h('tr', {}, [i18n.t("Channel"), i18n.t("Unit"), i18n.t("Samples"), i18n.t("File time (s)"), i18n.t("Instrument"), i18n.t("Scale"), i18n.t("Offset")].map((t) => h('th', { scope: 'col' }, [t])))]),
         body,
       ])]),
-      h('p', { class: 'panel__hint' }, ['value = raw × scale + offset, in the instrument\'s quantity: kW/m² for a gauge, °C for a bead, kW for a burner. '
-        + 'Matching FDS names are suggested; nothing else is guessed.']),
+      h('p', { class: 'panel__hint' }, [i18n.t("value = raw × scale + offset, in the instrument's quantity: kW/m² for a gauge, °C for a bead, kW for a burner. Matching FDS names are suggested; nothing else is guessed.")]),
     ]);
     if (extraction?.warnings.length) {
       section.append(h('details', { class: 'test-data__warnings' }, [
-        h('summary', {}, [`Reader notes (${extraction.warnings.length})`]),
+        h('summary', {}, [i18n.t("Reader notes ({p1})", { p1: extraction.warnings.length })]),
         h('ul', {}, extraction.warnings.slice(0, 200).map((w) => h('li', {}, [w]))),
       ]));
     }

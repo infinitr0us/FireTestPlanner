@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 import { heatFluxEstimate, hrrAt, thermocoupleBeads } from './plan';
 import { decimateMinMax } from './test-data';
 import type { TargetUnit } from './test-data';
@@ -10,21 +11,21 @@ export function plannedValue(doc: PlanDocument, objectId: string, bead?: number,
   if (o && isHeatFluxSensor(o) && bead === undefined) {
     const value = heatFluxEstimate(doc, o, t)?.incidentKwM2;
     return { value: value !== undefined && Number.isFinite(value) ? value : null, unit: 'kW/m2',
-      note: value !== undefined && Number.isFinite(value) ? 'Predicted incident flux, including line of sight.' : 'No incident flux estimate applies.' };
+      note: value !== undefined && Number.isFinite(value) ? i18n.t("Predicted incident flux, including line of sight.") : i18n.t("No incident flux estimate applies.") };
   }
   if (o && isBurner(o) && bead === undefined) {
     const value = hrrAt(o, t);
-    return { value, unit: 'kW', note: value === null ? 'No planned heat release rate is set.' : 'Planned heat release rate.' };
+    return { value, unit: 'kW', note: value === null ? i18n.t("No planned heat release rate is set.") : i18n.t("Planned heat release rate.") };
   }
   if (o && isThermocouple(o) && bead !== undefined) {
     const b = thermocoupleBeads(doc, o, t)[bead];
     if (!b) return null;
     return { value: b.gasTemperatureC, unit: '°C', note: b.gasTemperatureC !== null
-      ? 'Plume centreline temperature, an upper bound for an off-axis bead.'
-      : b.region === 'flame' || b.flameZone ? 'No gas temperature correlation applies in the flame zone.'
-        : 'No gas temperature correlation applies outside a predicted plume.' };
+      ? i18n.t("Plume centreline temperature, an upper bound for an off-axis bead.")
+      : b.region === 'flame' || b.flameZone ? i18n.t("No gas temperature correlation applies in the flame zone.")
+        : i18n.t("No gas temperature correlation applies outside a predicted plume.") };
   }
-  if (o && isNewInstrument(o) && bead === undefined) return { value: null, unit: isVelocityProbe(o) ? 'm/s' : isLoadCell(o) ? 'kg' : null, note: 'No prediction model.' };
+  if (o && isNewInstrument(o) && bead === undefined) return { value: null, unit: isVelocityProbe(o) ? 'm/s' : isLoadCell(o) ? 'kg' : null, note: i18n.t("No prediction model.") };
   return null;
 }
 
