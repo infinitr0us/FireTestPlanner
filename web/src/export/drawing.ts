@@ -20,6 +20,7 @@ import {
   footprintXY,
   fuelSurfaceZM,
   gaugeViewAngleDeg,
+  hasObjectColor,
   heatFluxSensors,
   hoodCanopyRiseM,
   hoodIntakeHeightM,
@@ -42,7 +43,7 @@ import {
 import { printedLensOf } from '../core/lenses';
 import { forwardOf, rangeOf } from '../core/math';
 import { formatLengthWithUnit } from '../core/units';
-import type { CameraObject, LengthUnit, PlanDocument, Vec3, WallObject } from '../core/types';
+import type { CameraObject, LengthUnit, PlanDocument, Vec3, WallObject, WallOpening } from '../core/types';
 
 export type DrawingView = 'plan' | 'front' | 'side';
 
@@ -288,9 +289,9 @@ function dimension(
   const tick = 4;
   const tx = Math.cos(angle + Math.PI / 2) * tick;
   const ty = Math.sin(angle + Math.PI / 2) * tick;
-  const mx = (x1 + x2) / 2;
   const my = (y1 + y2) / 2;
   const width = label.length * 5.4 + 8;
+  const mx = Math.max(width / 2 + 4, Math.min(PAGE_WIDTH_PX - width / 2 - 4, (x1 + x2) / 2));
 
   return [
     line(x1, y1, x2, y2, COLORS.dim, 'stroke-width="0.8"'),
@@ -369,10 +370,9 @@ function orientationMark(doc: PlanDocument): string {
 }
 
 /**
- * A wall's plan runs: the polyline with every doorway -- an opening from the
- * wall's base up -- cut out, in the wall's local XY. A plan is read as a cut
- * through the room, and a door is a gap in it; a window stands on wall that
- * continues below it, so it is not cut.
+ * A wall's solid plan runs. Doors leave a gap; windows replace the heavy wall
+ * stroke with thin parallel glazing lines. Both use cumulative polyline distance,
+ * including openings that cross a corner, just as buildWall does in the scene.
  */
 function wallPlanRuns(wl: WallObject): Array<Array<[number, number]>> {
   const pts = wl.polyline_m;
@@ -389,7 +389,7 @@ function wallPlanRuns(wl: WallObject): Array<Array<[number, number]>> {
     return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t];
   };
   const gaps = (wl.openings ?? [])
-    .filter((o) => (o.sillHeight_m ?? 0) <= 1e-9)
+    .filter((o) => (o.sillHeight_m ?? 0) < wl.height_m && o.height_m > 0)
     .map((o) => [Math.max(0, o.offset_m), Math.min(total, o.offset_m + o.width_m)] as [number, number])
     .filter(([a, b]) => b > a)
     .sort((a, b) => a[0] - b[0]);
@@ -409,6 +409,40 @@ function wallPlanRuns(wl: WallObject): Array<Array<[number, number]>> {
     ]);
 }
 
+/** Segment-local placement, matching scene/builders.ts buildWall. Degenerate
+ * segments contribute no distance. Height bands are clipped to the wall. */
+function wallSegments(wall: WallObject) {
+  let travelled = 0;
+  return wall.polyline_m.slice(1).flatMap((end, i) => {
+    const start = wall.polyline_m[i];
+    const dx = end[0] - start[0], dy = end[1] - start[1];
+    const length = Math.hypot(dx, dy);
+    if (length < 1e-9) return [];
+    const openings = (wall.openings ?? []).map((opening, index) => ({
+      opening, index,
+      from: Math.max(0, opening.offset_m - travelled),
+      to: Math.min(length, opening.offset_m + opening.width_m - travelled),
+      sill: Math.max(0, opening.sillHeight_m ?? 0),
+      head: Math.min(wall.height_m, (opening.sillHeight_m ?? 0) + opening.height_m),
+    })).filter(o => o.to > o.from && o.head > o.sill);
+    travelled += length;
+    const xy = (s: number, across = 0): [number, number] =>
+      [start[0] + dx * s / length - dy * across / length,
+        start[1] + dy * s / length + dx * across / length];
+    // Like the rest of the exported wall, upright with its transformed footprint.
+    // Pitch/roll for structural objects remain unsupported (CONVENTIONS 5a).
+    const world = (s: number, z: number): Vec3 =>
+      [...footprintXY(wall, xy(s)), positionOf(wall)[2] + (wall.baseHeight_m ?? 0) + z];
+    return [{ length, openings, xy, world }];
+  });
+}
+
+function openingWidth(opening: WallOpening, span: number, unit: LengthUnit): string {
+  const width = formatLengthWithUnit(span, unit, { fixed: true });
+  return Math.abs(span - opening.width_m) < 1e-9 ? `width ${width}`
+    : `part ${width} / total ${formatLengthWithUnit(opening.width_m, unit, { fixed: true })}`;
+}
+
 // -- views ----------------------------------------------------------------
 
 function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
@@ -425,11 +459,30 @@ function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
   }
 
   for (const wl of walls(doc)) {
+    const color = escapeXml(hasObjectColor(wl) ? objectColor(wl) : COLORS.wall);
     const widthPx = Math.max((wl.thickness_m ?? 0.1) * p.pxPerMetre, 2);
     for (const run of wallPlanRuns(wl)) {
       const pts = run.map((v) => p.project([...footprintXY(wl, v), 0]));
       const d = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
-      out.push(`<path d="${d}" fill="none" stroke="${COLORS.wall}" stroke-width="${widthPx.toFixed(2)}" stroke-linecap="butt"/>`);
+      out.push(`<path d="${d}" fill="none" stroke="${color}" stroke-width="${widthPx.toFixed(2)}" stroke-linecap="butt"/>`);
+    }
+    for (const segment of wallSegments(wl)) for (const o of segment.openings) {
+      if (o.sill <= 1e-9) continue;
+      const at = (s: number, across = 0): [number, number] =>
+        p.project([...footprintXY(wl, segment.xy(s, across)), 0]);
+      out.push('<g class="wall-window">');
+      for (const side of [-1, 1]) {
+        const a = at(o.from, side * (wl.thickness_m ?? 0.1) / 6);
+        const b = at(o.to, side * (wl.thickness_m ?? 0.1) / 6);
+        out.push(line(...a, ...b, color, 'stroke-width="0.8"'));
+      }
+      out.push('</g>');
+      const a = at(o.from), b = at(o.to);
+      const angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
+      const gap = widthPx / 2 + 14;
+      const dx = -Math.sin(angle) * gap, dy = Math.cos(angle) * gap;
+      out.push(dimension(a[0] + dx, a[1] + dy, b[0] + dx, b[1] + dy,
+        openingWidth(o.opening, o.to - o.from, unit)));
     }
   }
 
@@ -484,7 +537,7 @@ function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
     const origin = positionOf(cam);
     const [cx, cy] = p.project(origin);
     const [ox, oy] = p.project([0, 0, 0]);
-    out.push(dimension(ox, oy, cx, cy, formatLengthWithUnit(standoffHorizontalM(cam), unit)));
+    out.push(dimension(ox, oy, cx, cy, formatLengthWithUnit(standoffHorizontalM(cam), unit, { fixed: true })));
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${escapeXml(cameraColor(cam))}" stroke="#ffffff" stroke-width="1"/>`);
     out.push(labels.label(cx, cy, 9, cameraLabel(cam)).svg);
   }
@@ -595,21 +648,49 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
     // The label sits past whichever end is on the right of the PAGE, which in the
     // side view is the low-Y end.
     const rightX = Math.max(a[0], b[0]);
-    out.push(text(rightX + 6, b[1] + 3, formatLengthWithUnit(soffit, unit), 'class="obj-label"'));
+    out.push(text(rightX + 6, b[1] + 3, formatLengthWithUnit(soffit, unit, { fixed: true }), 'class="obj-label"'));
   }
 
-  for (const wl of walls(doc)) {
-    const origin = positionOf(wl);
-    const coords = wl.polyline_m.map((v) => lateral([...footprintXY(wl, v), 0]));
-    const lo = Math.min(...coords);
-    const hi = Math.max(...coords);
-    const base = origin[2] + (wl.baseHeight_m ?? 0);
-    const corner = (u: number, z: number): [number, number] =>
-      p.project(view === 'side' ? [0, u, z] : [u, 0, z]);
-    out.push(polygon([
-      corner(lo, base), corner(hi, base), corner(hi, base + wl.height_m), corner(lo, base + wl.height_m),
-    ], `fill="${COLORS.wall}" fill-opacity="0.18" stroke="${COLORS.wall}" stroke-width="1"`));
-  }
+  const openingLabels: string[] = [];
+  walls(doc).forEach((wl, wallIndex) => {
+    const color = escapeXml(hasObjectColor(wl) ? objectColor(wl) : COLORS.wall);
+    wallSegments(wl).forEach((segment, segmentIndex) => {
+      const at = (s: number, z: number): [number, number] => p.project(segment.world(s, z));
+      const rect = (from: number, to: number, bottom: number, top: number): Array<[number, number]> =>
+        [at(from, bottom), at(to, bottom), at(to, top), at(from, top)];
+      const face = rect(0, segment.length, 0, wl.height_m);
+      const holes = segment.openings.map(o => rect(o.from, o.to, o.sill, o.head));
+      // A mask subtracts the UNION of openings, so overlapping windows cannot
+      // fill one another back in (as an even-odd compound path would).
+      const maskId = `wall-cut-${view}-${wallIndex}-${segmentIndex}`;
+      if (holes.length) {
+        const ys = face.map(pt => pt[1]);
+        out.push(`<defs><mask id="${maskId}" maskUnits="userSpaceOnUse" x="0" y="${Math.min(...ys) - 2}" width="${PAGE_WIDTH_PX}" height="${Math.max(...ys) - Math.min(...ys) + 4}">`
+          + `<rect x="0" y="${Math.min(...ys) - 2}" width="${PAGE_WIDTH_PX}" height="${Math.max(...ys) - Math.min(...ys) + 4}" fill="#ffffff"/>`
+          + holes.map(hole => polygon(hole, 'fill="#000000"')).join('') + '</mask></defs>');
+      }
+      out.push(polygon(face, `fill="${color}" fill-opacity="0.18" stroke="${color}" stroke-width="1"${holes.length ? ` mask="url(#${maskId})"` : ''}`));
+      segment.openings.forEach((o, index) => {
+        out.push(polygon(holes[index], `class="wall-opening" fill="none" stroke="${color}" stroke-width="1"`));
+        const a = at(o.from, o.head), b = at(o.to, o.head);
+        const width = openingWidth(o.opening, o.to - o.from, unit);
+        // An edge-on opening has zero projected width. Keep its true projected
+        // outline; give its real width as text without inventing a visible span.
+        const edgeLabel = `${width} (edge-on)`;
+        const edgeAnchor = labelSpan(a[0], edgeLabel);
+        openingLabels.push(Math.abs(b[0] - a[0]) < 1
+          ? text(a[0] + edgeAnchor.dx, a[1] - 12, edgeLabel, `class="dim-text" text-anchor="${edgeAnchor.anchor}"`)
+          : dimension(a[0], a[1] - 14, b[0], b[1] - 14, width));
+        if (o.sill > 1e-9) {
+          const base = at(o.to, 0), sill = at(o.to, o.sill);
+          const x = Math.max(a[0], b[0]) + 14;
+          openingLabels.push(dimension(x, base[1], x, sill[1],
+            `sill ${formatLengthWithUnit(o.sill, unit, { fixed: true })}`));
+        }
+      });
+    });
+  });
+  out.push(...openingLabels);
 
   for (const ob of obstructions(doc)) {
     const coords = obstructionCornersXY(ob).map(([x, y]) => lateral([x, y, 0]));
@@ -650,7 +731,7 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
     const edgeX = Math.max(at(centre - span / 2, intake)[0], at(centre + span / 2, intake)[0]);
     const edgeY = at(centre, intake)[1];
     out.push(dimension(edgeX + 26, at(0, 0)[1], edgeX + 26, edgeY,
-      formatLengthWithUnit(intake, unit)));
+      formatLengthWithUnit(intake, unit, { fixed: true })));
   }
 
   for (const b of burners(doc)) {
@@ -698,7 +779,7 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
 
       const tipPt = at(centre, tip);
       out.push(dimension(tipPt[0] - 30, at(0, 0)[1], tipPt[0] - 30, tipPt[1],
-        formatLengthWithUnit(tip, unit)));
+        formatLengthWithUnit(tip, unit, { fixed: true })));
     }
   }
 
@@ -720,7 +801,7 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${escapeXml(cameraColor(cam))}" stroke="#ffffff" stroke-width="1"/>`);
     out.push(label.svg);
     if (label.first) {
-      out.push(text(cx + 7, cy + 4, formatLengthWithUnit(origin[2], unit), 'class="dim-text"'));
+      out.push(text(cx + 7, cy + 4, formatLengthWithUnit(origin[2], unit, { fixed: true }), 'class="dim-text"'));
     }
   }
 
@@ -740,7 +821,7 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${color}" stroke="#ffffff" stroke-width="1"/>`);
     out.push(label.svg);
     if (label.first) {
-      out.push(text(cx + 7, cy + 4, formatLengthWithUnit(origin[2], unit), 'class="dim-text"'));
+      out.push(text(cx + 7, cy + 4, formatLengthWithUnit(origin[2], unit, { fixed: true }), 'class="dim-text"'));
     }
   }
 
@@ -773,7 +854,7 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
 
 function scaleBar(p: Projector, unit: LengthUnit, y: number): string {
   // 1, 2, 5, 10, 20, 50 in the active unit -- the increments a drawing is read in.
-  const candidates = unit === 'ft' || unit === 'in'
+  const candidates = unit === 'ft' || unit === 'ft-in' || unit === 'in'
     ? [0.3048, 0.6096, 1.524, 3.048, 6.096, 15.24]
     : [0.5, 1, 2, 5, 10, 20];
   // Largest round length that still fits, not the smallest that qualifies: a longer
@@ -786,7 +867,7 @@ function scaleBar(p: Projector, unit: LengthUnit, y: number): string {
     line(MARGIN_PX, y, MARGIN_PX + width, y, COLORS.ink, 'stroke-width="2"'),
     line(MARGIN_PX, y - 4, MARGIN_PX, y + 4, COLORS.ink, 'stroke-width="2"'),
     line(MARGIN_PX + width, y - 4, MARGIN_PX + width, y + 4, COLORS.ink, 'stroke-width="2"'),
-    text(MARGIN_PX + width + 8, y + 4, formatLengthWithUnit(chosen, unit), 'class="dim-text"'),
+    text(MARGIN_PX + width + 8, y + 4, formatLengthWithUnit(chosen, unit, { fixed: true }), 'class="dim-text"'),
   ].join('');
 }
 

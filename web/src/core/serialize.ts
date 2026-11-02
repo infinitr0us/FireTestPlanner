@@ -3,8 +3,8 @@
  *
  * The two must produce byte-identical output: a plan saved from the editor and the
  * same plan saved from Python have to be the same file, or every handoff shows up
- * as a spurious diff. `web/src/core/__tests__/serialize.test.ts` asserts this
- * against the committed fixture.
+ * as a spurious diff. `core.test.ts` and `ft-in-format.test.ts` assert this against
+ * shared fixtures, including the display-only format 1.5 preference.
  */
 
 import { roundMicro } from './math';

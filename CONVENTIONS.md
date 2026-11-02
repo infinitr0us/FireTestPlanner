@@ -1,6 +1,6 @@
 # Conventions
 
-Normative reference for `fire-test-plan` formats 1.0.0 through 1.4.0. If code and
+Normative reference for `fire-test-plan` formats 1.0.0 through 1.5.0. If code and
 this document disagree, this document is wrong and should be fixed — but check the
 tests first, because they encode these rules directly.
 
@@ -24,6 +24,9 @@ visual hull the pipeline reconstructs from the test's cameras, played back in th
 layout — and the `voxelSequence` link kind that carries its manifest. `display`
 gains the advisory `opacity` and `colorMode`; `timeOffset_s` is reserved on links.
 Section 11.
+
+**What 1.5 added**: the `ft-in` display length preference, feet and fractional
+inches. Stored quantities and geometry remain SI. Section 2.
 
 Which version a file declares is *derived*, not authored — see section 8.
 
@@ -68,6 +71,22 @@ read this document.
 
 `units.display` is a UI preference. It never affects a stored number. A user working
 in feet sees feet and types feet; the file stays metric.
+
+Display lengths are `m`, `cm`, `mm`, `ft`, `ft-in`, or `in`. `ft-in` (format 1.5)
+prints feet and inches to the nearest **1/16 inch**, with reduced fractions:
+`9' 0 7/16"`, `0' 7 1/4"`, `12' 0"`, `-2' 5 1/2"`. Round the absolute length
+once to sixteenths, ties away from zero, then split feet and inches; rounding
+carries through 12 inches to the next foot. A value rounding to zero has no
+minus sign. This is display rounding only, independent of the writer's 1 µm
+rounding in section 7.
+
+In `ft-in`, a bare input number means feet. Explicit suffixes override the display
+unit, and fractional inches are accepted both with feet (`5' 6 1/2"`,
+`5ft 6 1/2in`) and alone (`6 1/2"`, `1/2"`). Every formatted string parses back
+to its displayed length. Inspector fields may trim decimal zeros. Dimensions
+(viewport, measure tool, drawing) and set-out coordinates use fixed decimals:
+3 for `m` and `ft`, 1 for `cm`, 0 for `mm`, 2 for `in`; `ft-in` always uses the
+fractional form above.
 
 ## 3. Camera frames — the part that bites
 
@@ -504,14 +523,21 @@ than the file already said:
 version = max(declared, required(contents))
 ```
 
-`required` is 1.4.0 if the plan holds a `reconstructedFlame`, or any object carries
-1.4's keys -- `display.opacity` or `display.colorMode`, or a link with a non-zero
-`timeOffset_s` (the 1.3 schema closes `linkedFile` and every earlier one closes
-`display`); failing that, 1.3.0 if
-an object carries `linkedFiles`; failing that, 1.2.0 if the
-plan holds an `obstruction`; failing that, 1.1.0 if it
-holds a `heatFluxSensor`, a `thermocouple`, a camera with a `zoomFactor` other than
-1 or a burner with a `radiativeFraction`; otherwise 1.0.0. A `zoomFactor` of 1 (after
+`required` is the highest applicable row:
+
+| Version | Contents requiring it |
+|---|---|
+| 1.0.0 | Baseline, when none of the following features is present |
+| 1.1.0 | `heatFluxSensor`, `thermocouple`, a camera's non-default `zoomFactor`, or a burner's `radiativeFraction` |
+| 1.2.0 | `obstruction` |
+| 1.3.0 | Any object's `linkedFiles` |
+| 1.4.0 | `reconstructedFlame`, any object's `display.opacity` or `display.colorMode`, or a link's non-zero `timeOffset_s` |
+| 1.5.0 | `units.display.length` is `ft-in` |
+
+The 1.3 schema closes `linkedFile` and earlier schemas close `display`, which is
+why the 1.4 keys count even on an older object type. Only the `ft-in` preference
+adds a 1.5 requirement; every other unit retains its previous required version.
+A `zoomFactor` of 1 (after
 rounding) is the absence of a zoom: writers omit it, and it raises nothing. It is
 `requiredFormatVersion` in `web/src/core/types.ts`, mirrored by `required_version` in
 `python/fireplan/serialize.py`.

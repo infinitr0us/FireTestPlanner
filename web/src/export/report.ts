@@ -8,6 +8,7 @@
  */
 
 import {
+  beadOffsetsOf,
   burnerDiameterM,
   burners,
   cameraColor,
@@ -38,6 +39,7 @@ import {
   objectColor,
   obstructions,
   positionOf,
+  quatOf,
   reconstructedFlames,
   standoffHorizontalM,
   standoffM,
@@ -46,6 +48,7 @@ import {
   thermocoupleBeads,
   thermocouples,
   thermocoupleVerdict,
+  toWorld,
   vfovDegOf,
   walls,
   zoomOf,
@@ -53,7 +56,12 @@ import {
 import { printedLensOf } from '../core/lenses';
 import { fileName } from '../core/linked-files';
 import { formatLength, formatLengthWithUnit } from '../core/units';
-import type { Issue, LengthUnit, PlanDocument } from '../core/types';
+import { forwardOf } from '../core/math';
+import {
+  isAimable, isBurner, isCamera, isCeiling, isHeatFluxSensor, isHood,
+  isObstruction, isThermocouple, isWall,
+  type Issue, type LengthUnit, type PlanDocument,
+} from '../core/types';
 import { buildViewSvg, elevationHeading, escapeXml } from './drawing';
 
 const esc = escapeXml;
@@ -70,6 +78,63 @@ export const formatKw = (q: number): string => String(Number(q.toFixed(2)));
 /** Horizontal distance from the origin -- the burner centre every standoff is
  *  measured from (CONVENTIONS.md section 1). */
 const planDistance = (p: readonly number[]): number => Math.hypot(p[0], p[1]);
+
+/** One row per physical object. Coordinates stay in the plan frame; only the
+ * printed strings use display units. Multiple wall vertices and rake beads stay
+ * within their object's row, numbered in recorded order. */
+function setOutTable(doc: PlanDocument, unit: LengthUnit): string {
+  const fmt = (m: number): string => formatLength(m, unit, { fixed: true });
+  const rows: string[] = [];
+  for (const obj of doc.objects) {
+    if (!(isCamera(obj) || isBurner(obj) || isHood(obj) || isHeatFluxSensor(obj)
+      || isThermocouple(obj) || isObstruction(obj) || isWall(obj) || isCeiling(obj))) continue;
+    const p = positionOf(obj);
+    let x = fmt(p[0]), y = fmt(p[1]), z = fmt(p[2]);
+    let type: string = obj.type;
+    if (isBurner(obj)) z = `Fuel surface ${fmt(fuelSurfaceZM(obj))}`;
+    if (isHood(obj)) z = `Intake ${fmt(hoodIntakeHeightM(obj))}`;
+    if (isCeiling(obj)) z = `Soffit ${fmt(ceilingSoffitZM(obj))}`;
+    if (isObstruction(obj)) z = `Base ${fmt(p[2])}\nTop ${fmt(p[2] + obj.size_m[2])}`;
+    if (isWall(obj)) {
+      const points = obj.polyline_m.map(v => toWorld(obj, [v[0], v[1], obj.baseHeight_m ?? 0]));
+      x = points.map((v, i) => `P${i + 1}: ${fmt(v[0])}`).join('\n');
+      y = points.map((v, i) => `P${i + 1}: ${fmt(v[1])}`).join('\n');
+      z = `Base ${fmt(p[2] + (obj.baseHeight_m ?? 0))}\nTop ${fmt(p[2] + (obj.baseHeight_m ?? 0) + obj.height_m)}`;
+    }
+    if (isThermocouple(obj)) {
+      const beads = beadOffsetsOf(obj).map(offset => toWorld(obj, [0, 0, offset]));
+      type = beads.length > 1 ? 'TC rake' : 'thermocouple';
+      z = `Base ${fmt(p[2])}\n` + beads.map((v, i) => `Bead ${i + 1}: ${fmt(v[2])}`).join('\n');
+      // A tilted rake also needs its bead XY positions to be set out correctly.
+      if (beads.some(v => Math.hypot(v[0] - p[0], v[1] - p[1]) > 1e-9)) {
+        x = `Base ${x}\n` + beads.map((v, i) => `Bead ${i + 1}: ${fmt(v[0])}`).join('\n');
+        y = `Base ${y}\n` + beads.map((v, i) => `Bead ${i + 1}: ${fmt(v[1])}`).join('\n');
+      }
+    }
+    const target = isAimable(obj) ? obj.transform?.aimTarget_m : null;
+    const aim = target ? target.map((v, i) => `${['X', 'Y', 'Z'][i]} ${fmt(v)}`).join('\n') : '—';
+    const standoff = isCamera(obj) ? `${fmt(standoffHorizontalM(obj))} / ${fmt(standoffM(obj))}` : '—';
+    let facing = '—';
+    if (isHeatFluxSensor(obj)) {
+      type = 'heat flux';
+      // Authoritative quaternion, not a direction inferred from the advisory aim.
+      facing = 'unit normal\n' + forwardOf(quatOf(obj)).map((v, i) =>
+        `${['X', 'Y', 'Z'][i]} ${Number(v.toFixed(3)).toFixed(3)}`).join('\n');
+    }
+    rows.push(`<tr data-object-id="${esc(obj.id)}">`
+      + [cell(displayName(obj)), cell(type), ...[x, y, z, aim, standoff, facing].map(v => cell(v, 'coord'))].join('')
+      + '</tr>');
+  }
+  const axis = (view: 'front' | 'side', label: string, page: string): string => {
+    const heading = elevationHeading(doc, view);
+    return heading.startsWith('looking along') ? `${label} ${page} in plan`
+      : `${label} ${heading.replace('looking ', '').replace(/ \(\+[XY]\)$/, '')} (${page} in plan)`;
+  };
+  return `<p class="note">${esc(`Origin: burner centre at floor level; ${axis('side', '+X', 'right')}; ${axis('front', '+Y', 'up')}; heights above the floor.`)}</p>
+    <p class="note">Lengths in ${esc(unit)}. P1, P2, … follow each wall polyline; base/top give its height limits. Aim is the recorded target; gauge facing is the dimensionless (X, Y, Z) unit normal.</p>
+    <table class="set-out"><thead><tr>${['Item', 'Type', 'X', 'Y', 'Height (Z)', 'Aim point (X, Y, Z)', 'Standoff (plan / slant)', 'Facing'].map(head).join('')}</tr></thead>
+    <tbody>${rows.join('\n')}</tbody></table>`;
+}
 
 function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
   const rows: string[] = [];
@@ -394,6 +459,13 @@ const REPORT_CSS = `
                font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #475569; }
   .report td { padding: 5px 7px; border-bottom: 1px solid #eef2f7; }
   .report td.num { text-align: right; font-family: "Cascadia Mono", Consolas, monospace; }
+  .report .set-out { table-layout: fixed; margin-top: 8px; font-size: 10px; }
+  .report .set-out th, .report .set-out td { padding: 4px; vertical-align: top; overflow-wrap: anywhere; }
+  .report .set-out .coord { white-space: pre-line; font-variant-numeric: tabular-nums; }
+  .report .set-out th:first-child { width: 15%; }
+  .report .set-out th:nth-child(2) { width: 9%; }
+  .report .set-out tr { break-inside: avoid; page-break-inside: avoid; }
+  .report .set-out thead { display: table-header-group; }
   .report td.ok { color: #047857; font-weight: 600; }
   .report td.warn { color: #b45309; font-weight: 600; }
   .report td.bad { color: #b91c1c; font-weight: 600; }
@@ -464,6 +536,9 @@ export function buildReportBody(doc: PlanDocument, unit: LengthUnit): string {
     <div class="page-break"></div>
     <h2>Equipment</h2>
     ${equipmentTable(doc, unit)}
+
+    <h2>Set-out</h2>
+    ${setOutTable(doc, unit)}
 
     <h2>Camera coverage</h2>
     ${coverageTable(doc, unit)}

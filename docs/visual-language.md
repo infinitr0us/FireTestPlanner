@@ -197,6 +197,26 @@ resolution or adding editor DOM labels to PNGs would be separate work.
 Print retains dark ink on paper, with its own text, rule and verdict colors.
 Instrument defaults still come from the shared identity map.
 
+The drawing uses heavy wall strokes in plan. Doors leave gaps; windows replace
+the heavy span with two thin (0.8 px) parallel lines inside the recorded wall
+thickness. Both use cumulative distance along the wall polyline. Elevations cut
+opening outlines out of the wall fill, with 1 px outlines; angled and edge-on
+openings retain their projected corners (no invented minimum width). An edge-on
+opening has a width text callout. Widths are true lengths, not foreshortened
+distances; a corner-crossing opening dimensions each part and states its total.
+Window sill dimensions are above the wall base, including on raised walls.
+Structural pitch/roll remain unsupported as described in CONVENTIONS section 5a.
+
+Dimension and set-out decimal labels retain the unit's fixed precision; inspector
+fields may trim. `ft-in` uses reduced sixteenths and its own foot/inch marks,
+without a redundant suffix. The Set-out table follows Equipment, with one row per
+physical object, world coordinates, and repeated column headings on print pages.
+Rows stay together; wall vertices and rake beads stay in their object's row.
+Camera standoffs are the same origin-based plan/slant distances as Coverage.
+Gauge facing is the quaternion's dimensionless world unit normal; an absent
+advisory aim target is shown as unstated. These are setup values, not exposure
+predictions or reconstructed-flame positions.
+
 For future changes, reuse existing identity and interface tokens, preserve the
 meaning of data colors, and document a difference when it helps the task. Verify
 real focus, selection, playback and export behavior when touching those paths.
@@ -215,6 +235,7 @@ Token reuse alone is not an accessibility or scientific-validation claim.
 | PNG export | Results use current pixel ratio capped at 2 with labels/caption; editor uses 3× without DOM labels | Preserve current export semantics; resolution parity is separate work | Keep |
 | Scientific ramps | Slice, smoke/fire and reconstructed-height palettes retain their own meanings | A data scale is not an interaction accent | Keep |
 | Print | Paper background and dark ink; instrument defaults still shared | Screen surfaces are unsuitable for paper | Keep |
+| Length precision | Fixed decimals on dimensions and set-out coordinates; trimmed decimals in inspector fields | Adjacent construction labels need consistent precision; fields stay compact and editable | Keep; fractional ft-in uses the same reduced sixteenths everywhere |
 
 The editor's scene materials and furniture remain in `scene/builders.ts` and
 `scene/viewport.ts`; object defaults and camera modality colors are in

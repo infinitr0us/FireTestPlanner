@@ -544,7 +544,7 @@ describe('drawings and report (review 2026-09-22)', () => {
     expect(body).toMatch(/[0-9.]+ at 2×<\/td>/);
   });
 
-  it('breaks a wall at a doorway in plan, and not at a window (EXP-15)', () => {
+  it('breaks the heavy wall at doors and replaces windows with thin glazing (EXP-15)', () => {
     const doc = newPlan('door');
     doc.objects.push({
       id: 'w', type: 'wall', transform: { position_m: [0, 0, 0] },
@@ -556,8 +556,9 @@ describe('drawings and report (review 2026-09-22)', () => {
     } as never);
     const svg = buildViewSvg(doc, 'plan', 'm');
     const walls = svg.split('\n').filter((l) => l.startsWith('<path') && l.includes('stroke="#64748b"'));
-    expect(walls).toHaveLength(2);
-    // The second run turns the corner with the wall; the window does not cut it.
+    expect(walls).toHaveLength(3);
+    // The middle run turns the corner; thin glazing replaces the window span.
     expect((walls[1].match(/L/g) ?? []).length).toBe(2);
+    expect(svg).toContain('class="wall-window"');
   });
 });

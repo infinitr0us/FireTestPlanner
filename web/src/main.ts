@@ -397,7 +397,7 @@ function renderToolbar(): void {
         title: 'Display units. Stored values are always metric.',
         // setDisplayUnit emits 'document', which rebuilds the viewport already.
         onchange: (e: Event) => store.setDisplayUnit((e.target as HTMLSelectElement).value as LengthUnit),
-      }, (['m', 'cm', 'mm', 'ft', 'in'] as LengthUnit[]).map((u) =>
+      }, (['m', 'cm', 'mm', 'ft', 'ft-in', 'in'] as LengthUnit[]).map((u) =>
         h('option', { value: u, selected: u === store.displayUnit }, [u]))),
       btn('Fit', () => viewport.frameAll(), 'F'),
     ]),

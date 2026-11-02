@@ -36,7 +36,7 @@ FORMAT = "fire-test-plan"
 VERSION = "1.0.0"
 
 #: Highest format version this build can write.
-VERSION_LATEST = "1.4.0"
+VERSION_LATEST = "1.5.0"
 
 #: One schema per format version, so a 1.0 file is judged by the 1.0 rules. A 1.0
 #: plan holding a camera with a zoomFactor really is invalid, and validating it
@@ -47,6 +47,7 @@ _SCHEMA_FILES = {
     "1.2.0": "fire-test-plan-1.2.0.schema.json",
     "1.3.0": "fire-test-plan-1.3.0.schema.json",
     "1.4.0": "fire-test-plan-1.4.0.schema.json",
+    "1.5.0": "fire-test-plan-1.5.0.schema.json",
 }
 
 #: Where the schemas live INSIDE the package: `fireplan/schemas/`, shipped as

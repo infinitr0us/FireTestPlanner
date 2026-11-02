@@ -131,7 +131,7 @@ _TYPES_1_4 = ("reconstructedFlame",)
 #: Baseline, and the highest this build writes. Mirror of FORMAT_VERSIONS in
 #: web/src/core/types.ts.
 _VERSION_MIN = "1.0.0"
-_VERSION_LATEST = "1.4.0"
+_VERSION_LATEST = "1.5.0"
 
 
 _JS_NUMERIC = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
@@ -173,6 +173,10 @@ def required_version(data: Dict[str, Any]) -> str:
     factor, a radiative fraction or a sensor, it says 1.1.0 and means it. Mirror of
     `requiredFormatVersion` in web/src/core/types.ts.
     """
+    units = data.get("units")
+    display = units.get("display") if isinstance(units, dict) else None
+    if isinstance(display, dict) and display.get("length") == "ft-in":
+        return "1.5.0"
     objects = [o for o in data.get("objects", []) or [] if isinstance(o, dict)]
     if any(o.get("type") in _TYPES_1_4 or _uses_1_4_keys(o) for o in objects):
         return "1.4.0"

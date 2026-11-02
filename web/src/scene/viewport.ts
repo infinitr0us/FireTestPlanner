@@ -372,8 +372,8 @@ export class Viewport {
       const dz = Math.abs(b.z - a.z);
       const label = makeLabel(
         dz > 1e-3
-          ? `${formatLengthWithUnit(distance, unit)}  (Δz ${formatLengthWithUnit(dz, unit)})`
-          : formatLengthWithUnit(distance, unit),
+          ? `${formatLengthWithUnit(distance, unit, { fixed: true })}  (Δz ${formatLengthWithUnit(dz, unit, { fixed: true })})`
+          : formatLengthWithUnit(distance, unit, { fixed: true }),
         'dimension',
       );
       label.position.copy(a).add(b).multiplyScalar(0.5);
@@ -651,7 +651,7 @@ export class Viewport {
       const unit = this.store.displayUnit;
       for (const cam of planCameras(doc)) {
         this.dimensionRoot.add(
-          buildStandoffDimension(cam, formatLengthWithUnit(standoffHorizontalM(cam), unit)),
+          buildStandoffDimension(cam, formatLengthWithUnit(standoffHorizontalM(cam), unit, { fixed: true })),
         );
       }
     }

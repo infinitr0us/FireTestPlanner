@@ -12,11 +12,12 @@ const PER_METRE: Record<LengthUnit, number> = {
   cm: 100,
   mm: 1000,
   ft: 1 / 0.3048,
+  'ft-in': 1 / 0.3048, // bare input is feet; formatting is fractional inches
   in: 1 / 0.0254,
 };
 
 /** How many decimals to show so the displayed precision is roughly 1 mm. */
-const DECIMALS: Record<LengthUnit, number> = { m: 3, cm: 1, mm: 0, ft: 3, in: 2 };
+const DECIMALS = { m: 3, cm: 1, mm: 0, ft: 3, in: 2 };
 
 export const toDisplay = (metres: number, unit: LengthUnit): number =>
   metres * PER_METRE[unit];
@@ -24,14 +25,36 @@ export const toDisplay = (metres: number, unit: LengthUnit): number =>
 export const fromDisplay = (value: number, unit: LengthUnit): number =>
   value / PER_METRE[unit];
 
-export function formatLength(metres: number, unit: LengthUnit): string {
-  const v = toDisplay(metres, unit);
-  // Trim trailing zeros: "2.740" reads worse than "2.74" on a dimension line.
-  return String(Number(v.toFixed(DECIMALS[unit])));
+export interface LengthFormatOptions { fixed?: boolean }
+
+/** Round the magnitude once, in sixteenths, before splitting feet and inches.
+ * This carries through both inch and foot boundaries and rounds ties away from
+ * zero. A negative value smaller than half a sixteenth has no printed sign. */
+function formatFeetInches(metres: number): string {
+  const ticks = Math.round(Math.abs(metres) / 0.0254 * 16);
+  const feet = Math.floor(ticks / 192);
+  const inches = Math.floor(ticks % 192 / 16);
+  let numerator = ticks % 16;
+  let denominator = 16;
+  while (numerator > 0 && numerator % 2 === 0) {
+    numerator /= 2;
+    denominator /= 2;
+  }
+  return `${metres < 0 && ticks > 0 ? '-' : ''}${feet}' ${inches}${numerator ? ` ${numerator}/${denominator}` : ''}"`;
 }
 
-export const formatLengthWithUnit = (metres: number, unit: LengthUnit): string =>
-  `${formatLength(metres, unit)} ${unit}`;
+export function formatLength(metres: number, unit: LengthUnit, opts: LengthFormatOptions = {}): string {
+  if (!Number.isFinite(metres)) return String(metres);
+  if (unit === 'ft-in') return formatFeetInches(metres);
+  const v = toDisplay(metres, unit);
+  const rounded = v.toFixed(DECIMALS[unit]);
+  // Fields trim; adjacent dimensions and set-out coordinates retain precision.
+  // Number also removes a minus sign on rounded zero.
+  return opts.fixed ? Number(rounded).toFixed(DECIMALS[unit]) : String(Number(rounded));
+}
+
+export const formatLengthWithUnit = (metres: number, unit: LengthUnit, opts: LengthFormatOptions = {}): string =>
+  `${formatLength(metres, unit, opts)}${unit === 'ft-in' ? '' : ` ${unit}`}`;
 
 /**
  * One run of digits, dots and commas, with its commas read -- or null.
@@ -53,8 +76,16 @@ function readCommas(token: string): string | null {
 /** A number as typed: digits with an optional fraction, a leading `.5`, or a
  *  trailing `5.` -- which used to be refused. */
 const NUMBER = String.raw`(?:\d+\.?\d*|\.\d+)`;
-const FEET_INCHES = new RegExp(String.raw`^(-?${NUMBER})\s*(?:'|ft|feet|foot)\s*(${NUMBER})\s*(?:"|in|inch|inches)?$`);
+const FRACTION = String.raw`\d+\s*/\s*\d+`;
+const INCH_VALUE = String.raw`(?:\d+\s+${FRACTION}|${FRACTION}|${NUMBER})`;
+const FEET_INCHES = new RegExp(String.raw`^(-?${NUMBER})\s*(?:'|ft|feet|foot)\s*(${INCH_VALUE})\s*(?:"|in|inch|inches)?$`);
+const FRACTIONAL_INCHES = new RegExp(String.raw`^(-?)(${INCH_VALUE})\s*(?:"|in|inch|inches)$`);
 const SINGLE = new RegExp(String.raw`^(-?${NUMBER}(?:e[+-]?\d+)?)\s*([a-z"']*)$`);
+
+function readInches(text: string): number {
+  const fraction = text.match(/^(?:(\d+)\s+)?(\d+)\s*\/\s*(\d+)$/);
+  return fraction ? Number(fraction[1] ?? 0) + Number(fraction[2]) / Number(fraction[3]) : Number(text);
+}
 
 /**
  * Parse a length the user typed, in metres.
@@ -78,10 +109,16 @@ export function parseLength(text: string, displayUnit: LengthUnit): number | nul
   if (feetInches) {
     const sign = feetInches[1].startsWith('-') ? -1 : 1;
     const feet = Math.abs(parseFloat(feetInches[1]));
-    const inches = parseFloat(feetInches[2]);
-    return sign * (feet * 0.3048 + inches * 0.0254);
+    const inches = readInches(feetInches[2]);
+    const result = sign * (feet * 0.3048 + inches * 0.0254);
+    return Number.isFinite(result) ? result : null;
   }
 
+  const fractionalInches = s.match(FRACTIONAL_INCHES);
+  if (fractionalInches) {
+    const result = (fractionalInches[1] ? -1 : 1) * readInches(fractionalInches[2]) * 0.0254;
+    return Number.isFinite(result) ? result : null;
+  }
   const single = s.match(SINGLE);
   if (!single) return null;
 
@@ -126,5 +163,5 @@ export function formatAngleDeg(radians: number): string {
 
 /** A grid step that stays readable in the active unit: 1 m, or 1 ft in imperial. */
 export function gridStep(unit: LengthUnit): number {
-  return unit === 'ft' || unit === 'in' ? 0.3048 : 1;
+  return unit === 'ft' || unit === 'ft-in' || unit === 'in' ? 0.3048 : 1;
 }
