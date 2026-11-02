@@ -88,5 +88,17 @@
     {"name":"TC_1-TC_1","count":1,"ids":["TC_1-TC_1"]},
     {"name":"A1-B3","count":3,"ids":["A1-B3_1","A1-B3_2","A1-B3_3"]},
     {"name":"Rake","count":3,"ids":["Rake_1","Rake_2","Rake_3"]}
+  ],
+  "instruments17": [
+    {"name":"probe +X","type":"velocityProbe","normal":[1,0,0],"quantity":"U-VELOCITY"},
+    {"name":"probe -X","type":"velocityProbe","normal":[-1,0,0],"quantity":"U-VELOCITY"},
+    {"name":"probe +Y","type":"velocityProbe","normal":[0,1,0],"quantity":"V-VELOCITY"},
+    {"name":"probe -Y","type":"velocityProbe","normal":[0,-1,0],"quantity":"V-VELOCITY"},
+    {"name":"probe +Z","type":"velocityProbe","normal":[0,0,1],"quantity":"W-VELOCITY"},
+    {"name":"probe -Z","type":"velocityProbe","normal":[0,0,-1],"quantity":"W-VELOCITY"},
+    {"name":"off-axis probe","type":"velocityProbe","normal":[1,1,0],"quantity":"VELOCITY"},
+    {"name":"magnitude probe","type":"velocityProbe","quantity":"VELOCITY"},
+    {"name":"all sampled species","type":"gasSampling","species":["O2","CO","CO2","H2O","HCN","soot","other"],"specIds":["OXYGEN","CARBON MONOXIDE","CARBON DIOXIDE","WATER VAPOR","HYDROGEN CYANIDE","SOOT","other"]},
+    {"name":"load cell omitted","type":"loadCell"}
   ]
 }

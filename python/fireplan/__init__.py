@@ -35,6 +35,7 @@ from .objects import (
     Obstruction,
     PlanObject,
     Thermocouple,
+    VelocityProbe, GasSampling, LoadCell,
     UnknownObject,
     Wall,
 )
@@ -55,6 +56,7 @@ __all__ = [
     "Obstruction",
     "HeatFluxSensor",
     "Thermocouple",
+    "VelocityProbe", "GasSampling", "LoadCell",
     "PlanObject",
     "UnknownObject",
     "correlations",

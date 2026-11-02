@@ -3,5 +3,8 @@
 export const DEVICE_COLORS = {
   temperature: '#10b981',
   heatFlux: '#ef4444',
+  velocity: '#06b6d4',
+  gas: '#c084fc',
+  mass: '#f59e0b',
   other: '#e2e8f0',
 } as const;

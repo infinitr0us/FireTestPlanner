@@ -149,7 +149,8 @@ export class FdsDeviceLayer {
       const kind = deviceKind(site.devices[0]);
       ctx.fillStyle = DEVICE_KINDS[kind].color;
       ctx.beginPath();
-      if (kind === 'flux') ctx.rect(x - 5, y - 5, 10, 10);
+      if (kind === 'velocity') ctx.rect(x - 6, y - 2, 12, 4);
+      else if (kind === 'flux') ctx.rect(x - 5, y - 5, 10, 10);
       else if (kind === 'surface') {
         ctx.moveTo(x, y - 7);
         ctx.lineTo(x + 7, y);
@@ -157,7 +158,7 @@ export class FdsDeviceLayer {
         ctx.lineTo(x - 7, y);
         ctx.closePath();
       } else ctx.arc(x, y, 5, 0, Math.PI * 2);
-      if (kind === 'other' || kind === 'surface') {
+      if (kind === 'other' || kind === 'surface' || kind === 'gas') {
         // A dark halo separates hollow probes from bright scalar fields.
         ctx.lineWidth = 4;
         ctx.stroke();

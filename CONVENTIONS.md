@@ -168,7 +168,7 @@ helper, one aim-mismatch check, and the object's `forward` is exactly the vector
 `cos θ` term in section 5b needs. The object origin is the **sensing surface**, which
 is the point every distance in that model is measured from.
 
-`camera` and `heatFluxSensor` are the two aimable types — `isAimable` in
+`camera`, `heatFluxSensor` and `velocityProbe` are the aimable types. `isAimable` in
 `web/src/core/types.ts` is the single list. A `thermocouple` is not aimable: a bead
 has no facing.
 
@@ -425,10 +425,42 @@ full orientation, so a camera looking straight down covers the floor around its
 tripod, a gauge facing the ceiling is marked as facing up, and a horizontal rake is
 drawn bead by bead.
 
-## 5b. Instrument models (1.1)
+## 5b. Instruments and prediction models (1.1, 1.7)
 
 Both are first-order estimates for **sizing and placement**, not measurements, and
 both are reported with that caveat attached wherever they appear.
+
+### Additional instruments (1.7)
+
+These have no prediction model. They share `id`, `name`, `transform`, `display`,
+`notes` and optional spreadsheet `linkedFiles` with the existing instruments.
+
+| Type | Fields and meaning |
+|---|---|
+| `velocityProbe` | Bi-directional probe. `range_m_s` is a positive full-scale speed or null/absent. Its axis is transform forward (local -Z); `aimTarget_m` is advisory. An absent quaternion means a magnitude point with no recorded axis. |
+| `gasSampling` | `species` is an array of distinct strings from `O2`, `CO`, `CO2`, `H2O`, `HCN`, `soot`, `other`; an empty array means unstated. `inDuct` is a required boolean. |
+| `loadCell` | `capacity_kg` is positive or null/absent. `platform_m` is positive `[width, depth]` or null/absent for a point support. The platform is centred at the origin in local XY and follows the full transform. |
+
+The gauge's documentary `kind` also accepts `plate-thermometer` and `thin-skin`
+in 1.7. Neither changes the incident-flux estimate.
+
+Probe proximity uses distance to the finite rectangle of each opening, split at
+polyline corners, with wall yaw, translation, base and sill applied. The tolerance
+is inclusive at 0.1 m. This avoids accepting a probe elsewhere on the same wall
+plane. **Align with opening** uses the nearest such patch within 1 m and its
+normal toward the right of the directed polyline segment. Ties use file order.
+It records a target one metre along that normal and is disabled outside that reach.
+The probe never offers **Aim at fire**.
+
+A load cell passes its placement check when a burner footprint overlaps its
+platform in world XY (or contains its position without a platform), with the
+fuel surface at or above the overlapping part of the platform. Circular and rotated
+rectangular burners count, including unlit fuel. Hidden geometry still counts. There are no range,
+flow, gas-composition or mass predictions.
+
+Writer key order after `transform`: probe `range_m_s`; gas `species, inDuct`;
+load cell `capacity_kg, platform_m`; then `linkedFiles, display, notes` for each.
+The ordinary six-place writer rounding applies.
 
 ### More than one burner
 
@@ -551,6 +583,8 @@ one.
 | `tc-over-temperature` | error | A bead is past its letter type's limit, in flame (or below the mean tip inside the plume) or in plume |
 | `tc-in-flame` | warning | A bead the type survives, but reading flame rather than plume: in the cone, or below the mean tip inside the plume |
 | `tc-outside-plume` | info | No bead sees the fire. Legitimate for a wall rake; stated, not judged |
+| `probe-not-in-opening` | info | No opening patch is within 0.1 m; probes usually measure flow through a doorway or window |
+| `load-cell-not-under-fuel` | info | No burner footprint is directly above the platform or point support |
 
 ## 6. Forward compatibility
 
@@ -628,9 +662,9 @@ lower than the file already said:
 version = max(declared, required(contents))
 ```
 
-Format 1.7 is the explicit exception: it is declared only while a burner has a
-non-null curve. Removing the last curve from a 1.7 plan writes the version required
-by the remaining contents. Unknown higher declarations remain untouched.
+Format 1.7 is the explicit exception: it is declared only while a 1.7 feature is
+present. Removing the last such feature writes the version required by the
+remaining contents. Unknown higher declarations remain untouched.
 
 `required` is the highest applicable row:
 
@@ -643,7 +677,7 @@ by the remaining contents. Unknown higher declarations remain untouched.
 | 1.4.0 | `reconstructedFlame`, any object's `display.opacity` or `display.colorMode`, or a link's non-zero `timeOffset_s` |
 | 1.5.0 | `units.display.length` is `ft-in` |
 | 1.6.0 | Non-empty root `testData` |
-| 1.7.0 | A burner with non-null `fire.hrrCurve` |
+| 1.7.0 | Non-null `fire.hrrCurve`, `velocityProbe`, `gasSampling`, `loadCell`, or a `plate-thermometer` / `thin-skin` gauge kind |
 
 The 1.3 schema closes `linkedFile` and earlier schemas close `display`, which is
 why the 1.4 keys count even on an older object type. Only the `ft-in` preference
@@ -665,7 +699,7 @@ Three consequences, and all three are the point:
 - The claim is checkable. There is one schema per version, and
   `Plan.validate_schema("1.0.0")` is how you ask "would this still open in a 1.0
   tool?" and get a reason when the answer is no.
-- Apart from removing 1.7 with the last curve, the version never goes down. A
+- Apart from removing 1.7 with the last 1.7 feature, the version never goes down. A
   version this build does not recognise is left alone. A 2.0 file still says 2.0.
 
 A file whose label understates its contents is a hand edit or a broken writer.
@@ -762,6 +796,9 @@ Five of them, and the sample input in `fixtures/fds/` exercises the first three:
 | `&HOLE` ∩ a wall | | a wall `opening`, by arc length along the polyline |
 | `&DEVC` + a heat-flux quantity, `IOR` | | `heatFluxSensor`, `IOR` as the outward normal |
 | `&DEVC` + a temperature quantity | | `thermocouple`; a vertical run at one XY is one rake |
+| `&DEVC` + `U-VELOCITY`, `V-VELOCITY`, `W-VELOCITY` | | `velocityProbe` with the positive X, Y, Z axis |
+| `&DEVC` + `VELOCITY` | | `velocityProbe` with no quaternion; notes and preview identify velocity magnitude |
+| `&DEVC` + `VOLUME FRACTION` / `MASS FRACTION` and supported `SPEC_ID` | | `gasSampling`; exact coincident points merge distinct species, retaining source quantities in notes |
 | `&HEAD`, `&REAC`, `&TIME`, `&MISC`, `&MESH` | | title, fuel, notes, ambient, floor extent |
 
 Classification is by aspect ratio: a box is a slab when its height is at most
@@ -831,6 +868,21 @@ naming such a surface explicitly falls back to the real burner rather than obeyi
 surface burns on several faces — one `&SURF` over two `&VENT`s is two burners in a
 room — every face becomes a burner and the one at the origin is the primary
 (section 1).
+
+### Additional FDS instrument mappings (1.7)
+
+Species IDs accept the plan symbols and FDS names: OXYGEN, CARBON MONOXIDE,
+CARBON DIOXIDE, WATER VAPOR, HYDROGEN CYANIDE, SOOT and other. An unsupported or
+missing SPEC_ID is skipped and counted in the preview. Gas merging uses exact
+XYZ, across both fraction quantities, and counts only newly created objects.
+
+| Plan | FDS device export |
+|---|---|
+| `velocityProbe` | Within 5 degrees of a world axis, inclusive: `U-VELOCITY`, `V-VELOCITY` or `W-VELOCITY`. A negative axis gets a comment; FDS reports the positive component. Otherwise `VELOCITY`, with an off-axis or unstated-axis comment. |
+| `gasSampling` | One `VOLUME FRACTION` per species, ID `<name>_<species>`, SPEC_ID using the FDS names above. A comment states that FDS needs the species defined, including the user-defined `other`. |
+| `loadCell` | Omitted with a comment; there is no FDS device equivalent. |
+
+All use the existing source-frame offset and collision-safe device naming.
 
 ### The origin moves, and the move is recorded
 
@@ -941,7 +993,8 @@ loses nor refuses: it converts, and then says what it did.
 `linkedFiles` is an optional array of at most 100 entries per supported object.
 Each entry has `id` (unique within that object), `kind`, `path`, optional `label`
 and optional `plot`. Cameras accept `kind: "video"`; burners, heat flux sensors
-and thermocouples accept `kind: "spreadsheet"`. Other known types do not carry it.
+and thermocouples accept `kind: "spreadsheet"`, as do velocity probes, gas sampling
+points and load cells in 1.7. Other known types do not carry it.
 The IDs travel with the document; removal and relinking are undoable edits.
 
 `path` names a local file, never a URL. On disk it is relative to the plan file
@@ -1073,7 +1126,15 @@ reserved `camera.recording` is about — and is dropped by both writers at null 
 A root `testData` array links measured or simulated table channels to instruments.
 A source has `id` (unique among sources), `name`, `role` (`measured` or `simulated`),
 `file`, `table`, `channels` and `manifest`, with optional `timeOffset_s`. It has no
-position. Only burners, heat flux sensors and thermocouples can be targets.
+position. Burners, heat flux sensors, thermocouples and the three 1.7 instruments
+can be targets. Velocity uses `m/s`, load uses `kg`. Gas retains the extracted
+column's own unit, including null when unstated; its inspector shows the mapped
+manifest unit. `targetUnits` uses null to mark a free gas unit, distinct from a
+missing target. `plannedValue` returns a null value with `No prediction model.`
+for these instruments. Their planned series is absent. The existing one-channel
+per object per source rule remains: several gas species require separate sources
+or sampling objects to map simultaneously. Automatic suggestions do not choose
+between several gas channels for one object.
 
 **A source file is a linked file.** `file` uses the section 10 `linkedFile` definition,
 with `kind: "spreadsheet"`. It may carry `label` and the reserved link-level
@@ -1106,9 +1167,11 @@ rather than choosing one. A single channel may map to multiple different targets
 **Plan time is seconds from ignition.** `t = file time - timeOffset_s`, with 0 as
 the absent offset. `value = raw * scale + offset`, with defaults 1 and 0. Scale is
 finite and non-zero; negative calibration is allowed. The output quantity is the
-target's: `kW/m2` for a heat flux sensor, `°C` for a thermocouple and `kW` for a
-burner. These are API unit spellings. No automatic conversion is inferred from the
-raw unit, and no resampling or interpolation occurs. Missing samples and time
+target's: `kW/m2` for a heat flux sensor, `°C` for a thermocouple, `kW` for a
+burner, `m/s` for a velocity probe, and `kg` for a load cell. Gas sampling retains
+the column's unit, including null when unstated. These are API unit spellings.
+No automatic conversion is inferred from the raw unit, and no resampling or
+interpolation occurs. Missing samples and time
 cutoffs retain the reader's meaning. Calibration overflow is an error.
 
 **The manifest describes the original read.** `size` is file bytes; `modified` is

@@ -71,6 +71,9 @@ plan and simulation coordinates have been aligned.
 | Gas temperature / thermocouple | green `#10b981` | filled circle |
 | Surface temperature | the same temperature green | hollow diamond |
 | Heat-flux measurement | red `#ef4444` | filled square |
+| Velocity / bi-directional probe | cyan `#06b6d4` | short tube / bar along the axis; magnitude has a point glyph |
+| Gas sampling / species fraction | violet `#c084fc` | open ring |
+| Load / mass measurement | amber `#f59e0b` | flat square platform; no FDS results counterpart |
 | Other numerical probe | light neutral `#e2e8f0` | hollow circle with dark halo |
 
 `core/visual.ts` owns the instrument defaults. The editor's `TYPE_COLORS`, 3D
@@ -89,6 +92,13 @@ temperature color. Unknown quantities stay visible as other probes, while the
 planning importer may skip quantities with no supported instrument. Import overrides
 and user colors do not change external results. `core/visual.test.ts` checks color
 parity for every default imported quantity.
+
+The new colors distinguish flow, composition and mass from the existing heat-flux
+red and temperature green. Labels and the tube, ring and platform shapes provide
+identity without depending on color. Explicit object colors still take precedence.
+Velocity and fraction result families use the same colors, retaining exact recorded
+quantity labels; a fraction without a supported species can remain a result even
+when the planning importer cannot make a gas object from it.
 
 Other probes use a lighter neutral than the context walls; the dark halo remains
 necessary when a field is bright. Color and shape complement the quantity label.
@@ -153,7 +163,9 @@ read once, and tools most plans never use, fold behind a native `<details>`
 (`.palette__fold`): a section-style summary for a tool (**From FDS**), a hint-style
 one for help (**Camera not listed?**). A fold stays open across repaints, and opens
 by itself while it holds a draft or an error. A new rail section follows the same
-rule rather than adding to the rail's natural height.
+rule rather than adding to the rail's natural height. Heat flux, thermocouple,
+velocity, gas and load tiles share the Instruments disclosure, which preserves its
+open state on repaint. Checks remains visible at 1280 x 720 with it open.
 
 The FDS device export preview uses a native modal dialog with the existing
 `modal__panel`, `field__input` and shared buttons. Its read-only text uses `--mono`;
@@ -267,6 +279,7 @@ Token reuse alone is not an accessibility or scientific-validation claim.
 | PNG export | Results use current pixel ratio capped at 2 with labels/caption; editor uses 3× without DOM labels | Preserve current export semantics; resolution parity is separate work | Keep |
 | Scientific ramps | Slice, smoke/fire and reconstructed-height palettes retain their own meanings | A data scale is not an interaction accent | Keep |
 | HRR curve inspector and cone | Curve readout and undoable removal; cone remains at peak | Curve authoring and a fire clock are deferred; sizing checks remain at peak | Keep for M17 model/import part |
+| New planning instrument glyphs | Tube 0.24 m, ring radius 0.06 m, unstated load platform 0.18 m square are symbolic; a recorded platform uses its actual dimensions | Visible, pickable hardware proxies; these display sizes never enter checks, stored fields or results coordinates | Keep; magnitude probes have no directional tube |
 | Print | Paper background and dark ink; instrument defaults still shared | Screen surfaces are unsuitable for paper | Keep |
 | Length precision | Fixed decimals on dimensions and set-out coordinates; trimmed decimals in inspector fields | Adjacent construction labels need consistent precision; fields stay compact and editable | Keep; fractional ft-in uses the same reduced sixteenths everywhere |
 

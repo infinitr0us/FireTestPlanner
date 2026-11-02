@@ -7,7 +7,7 @@ import {
   createHeatFluxSensor,
   createHood,
   createObstruction,
-  createThermocouple,
+  createThermocouple, createVelocityProbe, createGasSampling, createLoadCell,
   createWall,
   defaultCameraPosition,
 } from '../core/factory';
@@ -32,6 +32,7 @@ const TYPE_ICON: Record<string, string> = {
   ceiling: '▭',
   heatFluxSensor: '◉',
   thermocouple: '⋮',
+  velocityProbe: '▬', gasSampling: '○', loadCell: '▱',
   obstruction: '▢',
   reconstructedFlame: '✶',
 };
@@ -82,10 +83,6 @@ export class Palette {
       this.tile('▭', 'Ceiling', () => createCeiling(this.store.document)),
       this.tile('▢', 'Obstruction', () => createObstruction(this.store.document),
         'A box: furniture, equipment, blockwork. What stands between an instrument and the fire.'),
-      this.tile('◉', 'Heat flux', () => createHeatFluxSensor(this.store.document),
-        'Gauge, aimed at the fire on drop. Its inspector predicts what it will read.'),
-      this.tile('⋮', 'Thermocouple', () => createThermocouple(this.store.document),
-        'One bead on drop; add more in the inspector to make it a rake.'),
       h('button', {
         class: 'palette__tile', type: 'button',
         title: 'A flame reconstructed from the test\'s cameras: pick the pipeline\'s voxels/ folder and play it back in the layout.',
@@ -93,6 +90,15 @@ export class Palette {
       }, [h('span', { class: 'palette__icon' }, ['✶']), h('span', {}, ['3D flame…'])]),
     ]));
 
+    this.root.append(this.disclosure('instruments', 'Instruments', [h('div', { class: 'palette__grid' }, [
+      this.tile('◉', 'Heat flux', () => createHeatFluxSensor(this.store.document),
+        'Gauge, aimed at the fire on drop. Its inspector predicts what it will read.'),
+      this.tile('⋮', 'Thermocouple', () => createThermocouple(this.store.document),
+        'One bead on drop; add more in the inspector to make it a rake.'),
+      this.tile('▬', 'Velocity probe', () => createVelocityProbe(this.store.document), 'Bi-directional tube. Align its axis with an opening in the inspector.'),
+      this.tile('○', 'Gas sample', () => createGasSampling(this.store.document), 'Sampling point with recorded species.'),
+      this.tile('▱', 'Load cell', () => createLoadCell(this.store.document), 'Mass measurement beneath the fuel.'),
+    ])]));
     this.root.append(h('h3', { class: 'panel__section' }, ['Cameras']));
     this.root.append(
       h('div', { class: 'palette__list' }, collapseBodies(cameraPresets()).map((preset) =>
@@ -191,7 +197,7 @@ export class Palette {
         ]),
         h('p', { class: 'panel__hint' }, [
           'One record at a time. &OBST becomes a wall, ceiling or box by its shape; '
-          + '&DEVC becomes a gauge or a thermocouple by its quantity. A &VENT is a '
+          + '&DEVC becomes an instrument by its quantity and species. A &VENT is a '
           + 'surface on a solid, not a solid: paste the &OBST it sits on.',
         ]),
       ].filter(Boolean) as HTMLElement[]),
@@ -276,7 +282,7 @@ export class Palette {
     // sit on the floor drop to the pick point. setPosition re-derives the
     // orientation for the actual drop point, so a camera or a gauge lands aimed at
     // the fire rather than at wherever the factory's default position faced.
-    setPosition(obj, [at[0], at[1], isMounted(obj) ? t.position_m[2] : at[2]]);
+    setPosition(obj, [at[0], at[1], (isMounted(obj) || obj.type === 'velocityProbe' || obj.type === 'gasSampling') ? t.position_m[2] : at[2]]);
     this.store.addObject(obj);
     this.cancel();
   }

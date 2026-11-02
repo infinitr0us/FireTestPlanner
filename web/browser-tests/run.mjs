@@ -120,6 +120,27 @@ try {
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
   };
+  phase('opening alignment and gas units');
+  await send('Page.navigate', { url: origin + '/browser-tests/instruments17.html' });
+  const align = "[...document.querySelectorAll('#inspector button')].find(b=>b.textContent==='Align with opening')";
+  await waitFor(() => evaluate('!!(' + align + ')'), 'alignment inspector');
+  check('nearby opening enables alignment', await evaluate('!(' + align + ').disabled'));
+  await click(align);
+  await waitFor(() => evaluate("Math.abs(JSON.parse(document.querySelector('#state').textContent).axis[1]+1)<1e-8"), 'aligned opening normal');
+  check('real alignment click sets the opening normal', true);
+  await click("[...document.querySelectorAll('#actions button')].find(b=>b.textContent==='Undo')");
+  await waitFor(() => evaluate("Math.abs(JSON.parse(document.querySelector('#state').textContent).axis[0]-1)<1e-8"), 'undo opening alignment');
+  const xField = "[...document.querySelectorAll('#inspector label.field')].find(l=>l.querySelector('.field__label')?.textContent==='Position (m)').querySelector('input')";
+  await click(xField); await evaluate(xField + '.select()');
+  await send('Input.insertText', { text: '20' }); await key('Tab', 'Tab', 9);
+  await waitFor(() => evaluate('(' + align + ').disabled'), 'distant opening disables alignment');
+  check('alignment beyond 1 m is disabled with a reason', await evaluate('(' + align + ').title.includes("1 m")'));
+  await screenshot('instruments17-alignment-disabled');
+  await click("[...document.querySelectorAll('#actions button')].find(b=>b.textContent==='Select gas')");
+  await waitFor(() => evaluate("document.querySelector('#inspector').textContent.includes('Gas logger: oxygen')"), 'mapped gas unit');
+  check('gas inspector shows the recorded column unit', await evaluate("[...document.querySelectorAll('#inspector .readout')].some(r=>r.textContent==='Gas logger: oxygen%')"));
+  await screenshot('instruments17-gas-unit');
+  await openTab();
   phase('HRR curve inspector and drawing');
   await send('Page.navigate', { url: origin + '/browser-tests/hrr.html' });
   const hrrReport = await waitFor(async () => {
@@ -429,6 +450,48 @@ try {
     + ' overflow: el.scrollHeight-el.clientHeight }; })()');
   check('on a 1280x720 screen Checks and its first card are on screen without scrolling the rail ('
     + JSON.stringify(rail) + ')', rail.overflow <= 1 && rail.firstCard + 40 < rail.height);
+  phase('new instrument palette, fields and undo');
+  const instrumentFold = 'document.querySelector("#palette details[data-fold=instruments]")';
+  await click(instrumentFold + '.querySelector("summary")');
+  await waitFor(() => evaluate(instrumentFold + '.open'), 'instrument tiles open');
+  const instrumentCount = await evaluate('document.querySelectorAll(".outliner__row").length');
+  for (const [name, field, value] of [['Velocity probe', 'Range (m/s)', '12'], ['Gas sample', 'In duct', null], ['Load cell', 'Capacity (kg)', '250']]) {
+    await click('[...document.querySelectorAll("#palette .palette__tile")].find(b=>b.textContent.includes(' + JSON.stringify(name) + '))');
+    await click('document.querySelector("#viewport canvas")');
+    const control = '[...document.querySelectorAll("#inspector label.field")].find(l=>l.querySelector(".field__label")?.textContent===' + JSON.stringify(field) + ').querySelector("input")';
+    await waitFor(() => evaluate('[...document.querySelectorAll("#inspector .panel__section")].some(s=>s.textContent===' + JSON.stringify(name) + ')'), name + ' inspector');
+    const before = await evaluate(control + (value === null ? '.checked' : '.value'));
+    if (value === null) await click(control);
+    else {
+      await click(control);
+      await evaluate(control + '.select()');
+      await send('Input.insertText', { text: value });
+      await key('Tab', 'Tab', 9);
+    }
+    await waitFor(() => evaluate(control + (value === null ? '.checked===true' : '.value===' + JSON.stringify(value))), name + ' field edit');
+    await evaluate('document.activeElement?.blur()'); await ctrlZ();
+    await waitFor(() => evaluate(control + (value === null ? '.checked===' : '.value===') + JSON.stringify(before)), name + ' field undo');
+    check(name + ' places from a real palette click, edits and undoes its field', true);
+    if (name === 'Velocity probe') check('probe offers opening alignment instead of fire aiming', await evaluate(`
+      [...document.querySelectorAll('#inspector button')].some(b=>b.textContent==='Align with opening') &&
+      ![...document.querySelectorAll('#inspector button')].some(b=>b.textContent==='Aim at fire')`));
+  }
+  check('all three instrument placements remain after undoing their edits',
+    await evaluate('document.querySelectorAll(".outliner__row").length') === instrumentCount + 3);
+  check('expanded instrument group still leaves Checks visible at 1280x720', await evaluate(`(() => {
+    const rail=document.querySelector('.panel--left'), card=document.querySelector('#checks .checks__item').getBoundingClientRect();
+    return rail.scrollHeight<=rail.clientHeight+1 && card.top+40<rail.getBoundingClientRect().bottom;
+  })()`));
+  await screenshot('instruments17-laptop');
+  await click('[...document.querySelectorAll("button")].find(b=>b.textContent.startsWith("Drawing"))');
+  await waitFor(() => evaluate('!!document.querySelector(".report")'), 'instrument drawing');
+  check('plan and both elevations carry each new marker and set-out row', await evaluate(`
+    ['velocityProbe','gasSampling','loadCell'].every(type=>document.querySelectorAll('.report [data-instrument="'+type+'"]').length===3)
+    && document.querySelectorAll('.report .set-out tbody tr').length===15`));
+  await screenshot('instruments17-drawing');
+  await click('[...document.querySelectorAll(".report-overlay__bar button")].find(b=>b.textContent==="Close")');
+  for (let i=0; i<3; i++) { await evaluate('document.activeElement?.blur()'); await ctrlZ(); }
+  await waitFor(() => evaluate('document.querySelectorAll(".outliner__row").length===' + instrumentCount), 'instrument placements undo');
   const fdsFold = '[...document.querySelectorAll("#palette details")].find(d=>d.querySelector("summary").textContent==="From FDS")';
   check('From FDS is folded by default', await evaluate(fdsFold + '.open') === false);
   await evaluate(fdsFold + '.querySelector("summary").focus()');

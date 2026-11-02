@@ -45,7 +45,7 @@ import {
   buildHood,
   buildStandoffDimension,
   buildObstruction,
-  buildThermocouple,
+  buildThermocouple, buildNewInstrument,
   buildWall,
 } from './builders';
 import { applyPlanCameraProjection, isLineLike, nearLineHits, shownHits } from './camera-model';
@@ -697,6 +697,10 @@ export class Viewport {
         return buildCamera(obj as never, this.options.showFrustums);
       case 'heatFluxSensor':
         return buildHeatFluxSensor(obj as never);
+      case 'velocityProbe':
+      case 'gasSampling':
+      case 'loadCell':
+        return buildNewInstrument(obj as never);
       case 'thermocouple':
         return buildThermocouple(obj as never);
       case 'obstruction':

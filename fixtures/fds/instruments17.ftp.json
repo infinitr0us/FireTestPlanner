@@ -1,0 +1,95 @@
+{
+  "format": "fire-test-plan",
+  "version": "1.7.0",
+  "meta": {
+    "title": "instruments17",
+    "testId": "instruments17",
+    "created": "2026-11-02T00:00:00Z",
+    "modified": "2026-11-02T00:00:00Z",
+    "notes": "Imported from instruments17.fds. &HEAD TITLE: Instrument import mappings",
+    "source": {
+      "tool": "FDS",
+      "file": "instruments17.fds",
+      "chid": "instruments17",
+      "importedAt": "2026-11-02T00:00:00Z",
+      "originOffset_m": [0, 0, 0]
+    }
+  },
+  "units": {
+    "length": "m",
+    "angle": "rad",
+    "power": "kW",
+    "temperature": "C",
+    "display": {
+      "length": "m",
+      "angle": "deg"
+    }
+  },
+  "coordinateSystem": {
+    "convention": "Z-up-right-handed",
+    "origin": "burner-center-floor"
+  },
+  "environment": {
+    "floorSize_m": [4, 8],
+    "ambientTemperature_C": 20
+  },
+  "objects": [
+    {
+      "id": "vp-u",
+      "type": "velocityProbe",
+      "name": "U",
+      "transform": {
+        "position_m": [0, 0, 1],
+        "rotation_quat": [0.5, -0.5, -0.5, 0.5]
+      },
+      "range_m_s": null,
+      "notes": "FDS &DEVC QUANTITY='U-VELOCITY'"
+    },
+    {
+      "id": "vp-v",
+      "type": "velocityProbe",
+      "name": "V",
+      "transform": {
+        "position_m": [0, 1, 1],
+        "rotation_quat": [0.707107, 0, 0, 0.707107]
+      },
+      "range_m_s": null,
+      "notes": "FDS &DEVC QUANTITY='V-VELOCITY'"
+    },
+    {
+      "id": "vp-w",
+      "type": "velocityProbe",
+      "name": "W",
+      "transform": {
+        "position_m": [0, 2, 1],
+        "rotation_quat": [0, 1, 0, 0]
+      },
+      "range_m_s": null,
+      "notes": "FDS &DEVC QUANTITY='W-VELOCITY'"
+    },
+    {
+      "id": "vp-speed",
+      "type": "velocityProbe",
+      "name": "Speed",
+      "transform": {
+        "position_m": [0, 3, 1]
+      },
+      "range_m_s": null,
+      "notes": "FDS &DEVC QUANTITY='VELOCITY'; velocity magnitude, no axis recorded."
+    },
+    {
+      "id": "gas-oxygen",
+      "type": "gasSampling",
+      "name": "Oxygen",
+      "transform": {
+        "position_m": [1, 1, 1]
+      },
+      "species": [
+        "O2",
+        "CO2"
+      ],
+      "inDuct": false,
+      "notes": "FDS &DEVC ID='Oxygen', QUANTITY='VOLUME FRACTION', SPEC_ID='OXYGEN'\nFDS &DEVC ID='Carbon dioxide', QUANTITY='MASS FRACTION', SPEC_ID='CARBON DIOXIDE'"
+    }
+  ]
+}

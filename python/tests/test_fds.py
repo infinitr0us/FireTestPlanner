@@ -169,7 +169,7 @@ def test_read_one_names_the_mistake_people_actually_make():
 def test_the_sample_converts_to_a_valid_plan(sample):
     sample.plan.validate_schema()
     assert sample.counts == {
-        "wall": 4, "ceiling": 1, "burner": 1, "heatFluxSensor": 13, "thermocouple": 4,
+        "wall": 4, "ceiling": 1, "burner": 1, "heatFluxSensor": 13, "thermocouple": 4, "velocityProbe": 3,
     }
     assert not sample.errors
 
@@ -384,7 +384,7 @@ def test_quantities_with_no_counterpart_are_reported_not_imported():
     result = fds.to_plan(text)
     assert result.counts.get("thermocouple") == 1
     velocity = next(g for g in result.devices if g.quantity == "VELOCITY")
-    assert velocity.mapped_to is None and velocity.count == 1
+    assert velocity.mapped_to == 'velocityProbe' and velocity.count == 1
 
 
 def test_skipping_geometry_does_not_move_the_instruments(sample):

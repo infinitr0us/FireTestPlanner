@@ -121,7 +121,7 @@ export const hasXbView = (o: PlanObject): boolean =>
 
 /** Which object types have an FDS `XYZ` + `IOR` view. */
 export const hasXyzView = (o: PlanObject): boolean =>
-  o.type === 'heatFluxSensor' || o.type === 'thermocouple';
+  o.type === 'heatFluxSensor' || o.type === 'thermocouple' || o.type === 'velocityProbe' || o.type === 'gasSampling';
 
 /**
  * This object as an FDS `XB`, or null if it has no meaningful one.

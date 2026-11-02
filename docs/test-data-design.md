@@ -79,7 +79,9 @@ Decisions, and why:
   same test is then one more source with its own mapping, and removing a source
   removes everything it brought.
 - **A channel maps to an object, and to a bead of a rake.** The quantity is the
-  object's: kW/m² for a gauge, °C for a bead, kW for a burner. `scale` and `offset`
+  object's: kW/m² for a gauge, °C for a bead, kW for a burner, m/s for a
+  velocity probe, and kg for a load cell. Gas sampling retains the column's own
+  unit, shown from the manifest in the inspector. `scale` and `offset`
   turn the column's own unit into it (`value = raw × scale + offset`), so a gauge
   logged in volts plots in kW/m² once its calibration constant is entered. A channel
   name carrying a constant in a recognisable form (`23.17kW/m2permV`) pre-fills it.
@@ -116,7 +118,8 @@ The following details resolve points the initial design left open:
 - Source files cannot carry `plot` or `sequence`. The inherited link-level offset
   stays reserved; only the source-level offset is applied, by subtraction.
 - Calibration coefficients, time offsets and manifest values keep recorded precision.
-  Negative non-zero scale is allowed. Output unit spellings are `kW/m2`, `°C`, `kW`.
+  Negative non-zero scale is allowed. Output unit spellings are `kW/m2`, `°C`, `kW`, `m/s`, `kg`, or the gas column unit
+  (null when unstated).
 - Manifest rows count the dense grid, including headers and trailing formulas.
   Manifest channels are unique by extracted name and describe raw units/file times.
   Zero samples require null endpoints, one sample equal endpoints, and multiple
@@ -136,6 +139,19 @@ The following details resolve points the initial design left open:
   equal the mapped object names; `TC low` names the five-bead rake and maps bead 0.
   The existing CSV has no HRR channel, so the fixture burner has no mapped series.
   Independent tests exercise burner calibration and kW output.
+
+### Additional mapping targets (1.7)
+
+`velocityProbe`, `gasSampling` and `loadCell` use the existing 1.6 mapping shape,
+without a bead index. All are checked by `test-data-dangling` and have no planned
+prediction: `plannedValue` returns a null value with a note, and no planned series is drawn.
+A gas target uses null in `targetUnits` to select the column's original unit rather
+than inventing a concentration scale. Calibration still applies to values.
+
+The one-target-per-source rule is unchanged. Multiple species at one sampling
+point do not introduce a species dimension into mappings. Use separate sources or
+objects for simultaneous species channels. Automatic FDS-name suggestions omit
+ambiguous multiple gas channels rather than choosing a species silently.
 
 ## In the editor
 

@@ -5,6 +5,7 @@ import { lookAtQuat } from './math';
 import { firePointSourceM, fuelSurfaceZM, nextId, primaryBurner } from './plan';
 import { specFromPreset, type CameraPreset } from './presets';
 import type {
+  VelocityProbeObject, GasSamplingObject, LoadCellObject,
   BurnerObject,
   CameraObject,
   CeilingObject,
@@ -217,4 +218,17 @@ export function createReconstructedFlame(doc: PlanDocument, burnerId: string | n
     representation: 'voxels',
     display: { visible: true, locked: true },
   };
+}
+
+export function createVelocityProbe(doc: PlanDocument, position: Vec3 = [0, 0, 1]): VelocityProbeObject {
+  return { id: nextId(doc, 'vp'), type: 'velocityProbe', name: 'Velocity probe',
+    transform: { position_m: position, rotation_quat: lookAtQuat(position, [position[0] + 1, position[1], position[2]]) }, range_m_s: null };
+}
+export function createGasSampling(doc: PlanDocument, position: Vec3 = [0, 0, 1]): GasSamplingObject {
+  return { id: nextId(doc, 'gas'), type: 'gasSampling', name: 'Gas sample',
+    transform: { position_m: position }, species: ['O2'], inDuct: false };
+}
+export function createLoadCell(doc: PlanDocument, position: Vec3 = [0, 0, 0]): LoadCellObject {
+  return { id: nextId(doc, 'lc'), type: 'loadCell', name: 'Load cell',
+    transform: { position_m: position }, capacity_kg: null, platform_m: null };
 }

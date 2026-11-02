@@ -90,7 +90,7 @@ describe('instrument export and existing importer', () => {
       expect(gauges.every(r => r.string('QUANTITY') === 'GAUGE HEAT FLUX')).toBe(true);
       const original = records(fixture('fds/room_corner.fds'));
       expect(exported.map(r => r.string('ID')).sort()).toEqual(original
-        .filter(r => !r.string('ID')!.startsWith('DOOR_V_')).map(r => r.string('ID')).sort());
+        .map(r => r.string('ID')).sort());
       for (const device of exported) {
         const name = device.string('ID')!;
         const input = original.find(r => r.string('ID') === name)!;

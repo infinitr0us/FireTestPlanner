@@ -1,8 +1,9 @@
 /** Deterministic instrument-only FDS writer. Mirror of fireplan/fds_export.py. */
-import { normalize, roundMicro } from './math';
+import { FDS_SPECIES } from './fds';
+import { forwardOf, normalize, roundMicro } from './math';
 import { mountingIor, nearestMountingIor } from './occlusion';
-import { beadPositions, gaugeNormal, positionOf } from './plan';
-import { isHeatFluxSensor, isThermocouple, type PlanDocument, type Vec3 } from './types';
+import { beadPositions, gaugeNormal, positionOf, quatOf } from './plan';
+import { isHeatFluxSensor, isThermocouple, isVelocityProbe, isGasSampling, isLoadCell, type PlanDocument, type Vec3 } from './types';
 
 const metres = (v: number): string => String(roundMicro(v));
 const oneLine = (s: string): string => s.replace(/[\x00-\x1f\x7f\u2028\u2029]/g, ' ');
@@ -24,11 +25,11 @@ function importedBeadIds(name: string, count: number): string[] | undefined {
 export function exportedDeviceIds(doc: PlanDocument): Map<string, string[]> {
   const taken = new Set<string>();
   const bases = new Set<string>();
-  const unique = (base: string, count: number, importedIds?: string[]): string[] => {
+  const unique = (base: string, count: number, importedIds?: string[], species?: string[]): string[] => {
     let suffix = 1;
     for (;;) {
       const name = suffix === 1 ? base : `${base}_${suffix}`;
-      const ids = suffix === 1 && importedIds ? importedIds
+      const ids = species ? species.map(s => `${name}_${s}`) : suffix === 1 && importedIds ? importedIds
         : count === 1 ? [name] : Array.from({ length: count }, (_, i) => `${name}_${i + 1}`);
       if (!bases.has(name) && ids.every(id => !taken.has(id))) {
         bases.add(name);
@@ -40,9 +41,11 @@ export function exportedDeviceIds(doc: PlanDocument): Map<string, string[]> {
   };
   const out = new Map<string, string[]>();
   for (const obj of doc.objects) {
-    if (!isHeatFluxSensor(obj) && !isThermocouple(obj)) continue;
+    if (!isHeatFluxSensor(obj) && !isThermocouple(obj) && !isVelocityProbe(obj) && !isGasSampling(obj) && !isLoadCell(obj)) continue;
     const base = safeId(obj.name || obj.id);
-    if (isHeatFluxSensor(obj)) out.set(obj.id, unique(base, 1));
+    if (isLoadCell(obj)) continue;
+    if (isGasSampling(obj)) out.set(obj.id, unique(base, obj.species.length, undefined, obj.species));
+    else if (isHeatFluxSensor(obj) || isVelocityProbe(obj)) out.set(obj.id, unique(base, 1));
     else {
       const count = beadPositions(obj).length;
       out.set(obj.id, unique(base, count, importedBeadIds(obj.name ?? '', count)));
@@ -67,8 +70,22 @@ export function devicesToFds(doc: PlanDocument): string {
   const idsOf = exportedDeviceIds(doc);
   const xyz = (p: Vec3): string => p.map((v, i) => metres(v + offset[i])).join(',');
   for (const obj of doc.objects) {
-    if (!isHeatFluxSensor(obj) && !isThermocouple(obj)) continue;
-    if (isHeatFluxSensor(obj)) {
+    if (!isHeatFluxSensor(obj) && !isThermocouple(obj) && !isVelocityProbe(obj) && !isGasSampling(obj) && !isLoadCell(obj)) continue;
+    if (isLoadCell(obj)) {
+      devices.push(`! ${oneLine(obj.name || obj.id)}: load cell omitted; no FDS device equivalent.`);
+    } else if (isGasSampling(obj)) {
+      devices.push(`! ${oneLine(obj.name || obj.id)}: FDS needs each sampled species defined.`);
+      obj.species.forEach((s, i) => devices.push(`&DEVC ID='${idsOf.get(obj.id)![i]}', XYZ=${xyz(positionOf(obj))}, QUANTITY='VOLUME FRACTION', SPEC_ID='${FDS_SPECIES[s]}' /`));
+    } else if (isVelocityProbe(obj)) {
+      const [id] = idsOf.get(obj.id)!;
+      const normal = obj.transform?.rotation_quat ? forwardOf(quatOf(obj)) : null;
+      const axis = normal ? normal.reduce((best, v, i) => Math.abs(v) > Math.abs(normal[best]) ? i : best, 0) : -1;
+      const aligned = normal !== null && Math.abs(normal[axis]) >= Math.cos(5 * Math.PI / 180) - 1e-10;
+      const quantity = aligned ? `${['U', 'V', 'W'][axis]}-VELOCITY` : 'VELOCITY';
+      if (!aligned) devices.push(`! ${id}: ${normal ? 'axis is more than 5 degrees from an FDS axis' : 'no axis recorded'}; exporting velocity magnitude.`);
+      else if (normal![axis] < 0) devices.push(`! ${id}: probe points along negative ${['X', 'Y', 'Z'][axis]}; FDS reports the positive-axis component.`);
+      devices.push(`&DEVC ID='${id}', XYZ=${xyz(positionOf(obj))}, QUANTITY='${quantity}' /`);
+    } else if (isHeatFluxSensor(obj)) {
       const [id] = idsOf.get(obj.id)!;
       const normal = normalize(gaugeNormal(obj));
       const ior = mountingIor(doc, positionOf(obj), normal);

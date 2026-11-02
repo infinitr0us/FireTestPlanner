@@ -48,6 +48,8 @@ import type {
   BurnerObject,
   CeilingObject,
   HeatFluxSensorObject,
+  GasSpecies,
+  GasSamplingObject,
   Issue,
   ObstructionObject,
   PlanDocument,
@@ -110,10 +112,35 @@ export const SURFACE_TC_QUANTITIES = [
   'ADIABATIC SURFACE TEMPERATURE',
 ];
 
-export type DeviceKind = 'heatFluxSensor' | 'thermocouple';
+export const VELOCITY_QUANTITIES = ['U-VELOCITY', 'V-VELOCITY', 'W-VELOCITY', 'VELOCITY'];
+export const FRACTION_QUANTITIES = ['VOLUME FRACTION', 'MASS FRACTION'];
+export const FDS_SPECIES = { O2: 'OXYGEN', CO: 'CARBON MONOXIDE', CO2: 'CARBON DIOXIDE',
+  H2O: 'WATER VAPOR', HCN: 'HYDROGEN CYANIDE', soot: 'SOOT', other: 'other' } as const;
+function gasSpecies(rec: NamelistRecord): GasSpecies | null {
+  const spec = (rec.string('SPEC_ID') ?? '').toUpperCase();
+  return (Object.keys(FDS_SPECIES) as GasSpecies[])
+    .find(s => s.toUpperCase() === spec || FDS_SPECIES[s].toUpperCase() === spec) ?? null;
+}
+function extraDevice(ids: Ids, rec: NamelistRecord, pos: Vec3, kind: DeviceKind, quantity: string): PlanObject | null {
+  const name = rec.string('ID');
+  if (kind === 'velocityProbe') {
+    const axis = VELOCITY_QUANTITIES.indexOf(quantity);
+    const target: Vec3 = [...pos]; if (axis >= 0 && axis < 3) target[axis] += 1;
+    return { id: ids.make('vp', name), type: 'velocityProbe', name: name ?? 'Velocity probe',
+      transform: { position_m: pos, ...(axis >= 0 && axis < 3 ? { rotation_quat: lookAtQuat(pos, target) } : {}) },
+      range_m_s: null, notes: `FDS &DEVC QUANTITY='${quantity}'` + (axis === 3 ? '; velocity magnitude, no axis recorded.' : '') };
+  }
+  const species = gasSpecies(rec);
+  return species ? { id: ids.make('gas', name), type: 'gasSampling', name: name ?? 'Gas sample',
+    transform: { position_m: pos }, species: [species], inDuct: false,
+    notes: `FDS &DEVC ID='${name ?? ''}', QUANTITY='${quantity}', SPEC_ID='${rec.string('SPEC_ID')}'` } : null;
+}
+export type DeviceKind = 'heatFluxSensor' | 'thermocouple' | 'velocityProbe' | 'gasSampling';
 
 export function defaultDeviceMap(): Map<string, DeviceKind | null> {
   const out = new Map<string, DeviceKind | null>();
+  for (const q of VELOCITY_QUANTITIES) out.set(q, 'velocityProbe');
+  for (const q of FRACTION_QUANTITIES) out.set(q, 'gasSampling');
   for (const q of GAUGE_QUANTITIES) out.set(q, 'heatFluxSensor');
   for (const q of [...GAS_TC_QUANTITIES, ...SURFACE_TC_QUANTITIES]) out.set(q, 'thermocouple');
   return out;
@@ -1073,6 +1100,7 @@ export function deviceFromRecord(
 
   const position: Vec3 = [xyz[0] - origin[0], xyz[1] - origin[1], xyz[2] - origin[2]];
   const name = rec.string('ID');
+  if (kind === 'velocityProbe' || kind === 'gasSampling') return extraDevice(ids, rec, position, kind, (quantity ?? '').toUpperCase());
   return kind === 'heatFluxSensor'
     ? gaugeObject(ids, name, position, deviceNormal(rec), aimTarget, quantity)
     : rakeObject(ids, name, position, [0], diameter, quantity);
@@ -1270,6 +1298,7 @@ function importDevices(
     else buckets.set(key, [[rec, diameter]]);
   }
 
+  const gasAt = new Map<string, GasSamplingObject>();
   const groupRakes = opts.groupRakes !== false;
   const objects: PlanObject[] = [];
   for (const [key, members] of buckets) {
@@ -1290,7 +1319,27 @@ function importDevices(
     }
 
     let made: PlanObject[];
-    if (kind === 'thermocouple' && groupRakes) {
+    if (kind === 'velocityProbe' || kind === 'gasSampling') {
+      made = [];
+      let skipped = 0, merged = 0;
+      for (const [rec] of positioned) {
+        const pos = rec.numbers('XYZ').map((v, i) => v - origin[i]) as Vec3;
+        const obj = extraDevice(ids, rec, pos, kind, key);
+        if (!obj) { skipped++; continue; }
+        if (kind === 'gasSampling') {
+          const gas = obj as GasSamplingObject, point = JSON.stringify(pos), old = gasAt.get(point);
+          if (old) {
+            for (const s of gas.species) if (!old.species.includes(s)) old.species.push(s);
+            old.notes += '\n' + gas.notes; merged++; continue;
+          }
+          gasAt.set(point, gas);
+        }
+        made.push(obj);
+      }
+      group.note = [group.note, skipped ? `${skipped} with unsupported or missing SPEC_ID` : '',
+        merged ? `${merged} merged at an existing gas sampling point` : '',
+        key === 'VELOCITY' ? 'Velocity magnitude; no axis recorded.' : ''].filter(Boolean).join('; ');
+    } else if (kind === 'thermocouple' && groupRakes) {
       made = groupedRakes(positioned, origin, ids, key);
     } else {
       made = positioned.map(([rec, diameter]) => {
@@ -1420,7 +1469,7 @@ function planSpan(objects: PlanObject[]): [number, number, number, number] | nul
       const size = (obj as ObstructionObject).size_m;
       xs.push(pos[0] - size[0] / 2, pos[0] + size[0] / 2);
       ys.push(pos[1] - size[1] / 2, pos[1] + size[1] / 2);
-    } else if (['burner', 'heatFluxSensor', 'thermocouple', 'camera'].includes(obj.type)) {
+    } else if (['burner', 'heatFluxSensor', 'thermocouple', 'velocityProbe', 'gasSampling', 'loadCell', 'camera'].includes(obj.type)) {
       xs.push(pos[0]);
       ys.push(pos[1]);
     }

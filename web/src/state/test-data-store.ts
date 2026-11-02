@@ -61,7 +61,7 @@ export class TestDataStore {
     const o = this.store.document.objects.find(o => o.id === c.object);
     return o && isThermocouple(o)
       ? c.bead !== undefined && Number.isInteger(c.bead) && c.bead >= 0 && c.bead < beadOffsetsOf(o).length
-      : (o?.type === 'heatFluxSensor' || o?.type === 'burner') && c.bead === undefined;
+      : (o !== undefined && ['heatFluxSensor', 'burner', 'velocityProbe', 'gasSampling', 'loadCell'].includes(o.type)) && c.bead === undefined;
   }
   private derive(source: TestDataSource, entry: CachedEntry): void {
     const channels = source.channels.filter(c => this.valid(c));

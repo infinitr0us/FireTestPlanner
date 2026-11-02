@@ -10,7 +10,7 @@ import numpy as np
 from . import tables, xlsx
 from .linked_files import local_path
 
-TARGET_UNITS = {'heatFluxSensor': 'kW/m2', 'thermocouple': '°C', 'burner': 'kW'}
+TARGET_UNITS = {'heatFluxSensor': 'kW/m2', 'thermocouple': '°C', 'burner': 'kW', 'velocityProbe': 'm/s', 'gasSampling': None, 'loadCell': 'kg'}
 
 
 @dataclass
@@ -106,7 +106,9 @@ def source_series(source, grid, targets, units=None):
         if key in result:
             raise ValueError(f'Source "{source.name}" maps target {key} more than once.')
         unit = targets.get(mapping['object'], '°C' if 'bead' in mapping else None)
-        if unit is None:
+        if mapping['object'] in targets and targets[mapping['object']] is None:
+            unit = channel.unit
+        elif unit is None:
             raise ValueError(f'Target unit for object "{mapping["object"]}" is required.')
         scale, offset, shift = mapping.get('scale', 1), mapping.get('offset', 0), source.time_offset_s
         if not all(tables.is_number(x) for x in (scale, offset, shift)) or scale == 0:
@@ -200,7 +202,7 @@ def checks(data):
                 valid = (tables.is_number(bead) and bead == int(bead)
                          and 0 <= bead < len(obj.get('beadOffsets_m') or [0]))
             else:
-                valid = obj.get('type') in ('heatFluxSensor', 'burner') and 'bead' not in c
+                valid = obj.get('type') in ('heatFluxSensor', 'burner', 'velocityProbe', 'gasSampling', 'loadCell') and 'bead' not in c
             if not valid:
                 issues.append(Issue('warning', 'test-data-dangling',
                     f'Source "{source["name"]}": channel "{c["channel"]}" targets a missing or incompatible object or bead.', c['object']))

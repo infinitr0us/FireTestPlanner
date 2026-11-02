@@ -2,7 +2,7 @@ import { beadOffsetsOf, displayName, gaugeRangeKwM2, positionOf, quatOf, toWorld
 import { forwardOf } from './math';
 import { facingText } from './facing';
 import { formatLength } from './units';
-import { isAimable, isCamera, isHeatFluxSensor, isThermocouple, type LengthUnit, type PlanDocument } from './types';
+import { isNewInstrument, isVelocityProbe, isGasSampling, isLoadCell, isAimable, isCamera, isHeatFluxSensor, isThermocouple, type LengthUnit, type PlanDocument } from './types';
 
 const csv = (s: string): string => /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 
@@ -10,19 +10,23 @@ const csv = (s: string): string => /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""'
 export function instrumentScheduleCsv(doc: PlanDocument, unit: LengthUnit): string {
   const sources = doc.testData ?? [];
   const rows: string[][] = [['Name', 'Type', 'ID', `X (${unit})`, `Y (${unit})`, `Height (${unit})`,
-    `Aim point (${unit}; X, Y, Z)`, 'Facing', 'Gauge range (kW/m²)', ...sources.map(s => s.name)]];
+    `Aim point (${unit}; X, Y, Z)`, 'Facing', 'Gauge range (kW/m²)', 'Probe range (m/s)', 'Gas species', 'In duct', 'Capacity (kg)', `Platform (${unit}; W, D)`, ...sources.map(s => s.name)]];
   const fmt = (v: number): string => formatLength(v, unit, { fixed: true });
   for (const o of doc.objects) {
-    if (!isHeatFluxSensor(o) && !isThermocouple(o) && !isCamera(o)) continue;
+    if (!isHeatFluxSensor(o) && !isThermocouple(o) && !isCamera(o) && !isNewInstrument(o)) continue;
     const beads = isThermocouple(o) ? beadOffsetsOf(o) : [null];
     beads.forEach((offset, bead) => {
       const p = offset === null ? positionOf(o) : toWorld(o, [0, 0, offset]);
       const name = displayName(o) + (beads.length > 1 ? `_${bead + 1}` : '');
       const aim = isAimable(o) ? o.transform?.aimTarget_m : undefined;
       const range = isHeatFluxSensor(o) ? gaugeRangeKwM2(o) : null;
-      rows.push([name, isHeatFluxSensor(o) ? 'Heat flux gauge' : isCamera(o) ? 'Camera' : 'Thermocouple bead',
+      rows.push([name, isHeatFluxSensor(o) ? 'Heat flux gauge' : isCamera(o) ? 'Camera' : isVelocityProbe(o) ? 'Velocity probe' : isGasSampling(o) ? 'Gas sample' : isLoadCell(o) ? 'Load cell' : 'Thermocouple bead',
         isThermocouple(o) ? `${o.id}[${bead}]` : o.id, ...p.map(fmt), aim ? aim.map(fmt).join(', ') : '',
-        isAimable(o) ? facingText(forwardOf(quatOf(o))) : '', range === null ? '' : String(range),
+        isVelocityProbe(o) && !o.transform?.rotation_quat ? 'axis unstated' : isAimable(o) ? facingText(forwardOf(quatOf(o))) : '', range === null ? '' : String(range),
+        isVelocityProbe(o) && o.range_m_s != null ? String(o.range_m_s) : '',
+        isGasSampling(o) ? o.species.join('; ') : '', isGasSampling(o) ? String(o.inDuct) : '',
+        isLoadCell(o) && o.capacity_kg != null ? String(o.capacity_kg) : '',
+        isLoadCell(o) && o.platform_m ? o.platform_m.map(fmt).join(', ') : '',
         ...sources.map(s => s.channels.filter(c => c.object === o.id
           && (isThermocouple(o) ? c.bead === bead : c.bead === undefined)).map(c => c.channel).join('; '))]);
     });

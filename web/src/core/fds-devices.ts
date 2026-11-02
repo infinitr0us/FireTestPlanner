@@ -5,6 +5,8 @@ export const DEVICE_KINDS = {
   thermocouple: { label: 'Gas temperatures / thermocouples', color: DEVICE_COLORS.temperature, symbol: '●' },
   surface: { label: 'Surface temperatures', color: DEVICE_COLORS.temperature, symbol: '◇' },
   flux: { label: 'Heat-flux probes', color: DEVICE_COLORS.heatFlux, symbol: '■' },
+  velocity: { label: 'Velocity probes', color: DEVICE_COLORS.velocity, symbol: '▬' },
+  gas: { label: 'Gas sampling', color: DEVICE_COLORS.gas, symbol: '○' },
   other: { label: 'Other probes', color: DEVICE_COLORS.other, symbol: '○' },
 } as const;
 export type DeviceKind = keyof typeof DEVICE_KINDS;
@@ -24,6 +26,8 @@ export function deviceKind(device: ResultDevice): DeviceKind {
   )
     return 'surface';
   if (q.includes('HEAT FLUX') || q === 'RADIOMETER') return 'flux';
+  if (['U-VELOCITY', 'V-VELOCITY', 'W-VELOCITY', 'VELOCITY'].includes(q)) return 'velocity';
+  if (['VOLUME FRACTION', 'MASS FRACTION'].includes(q)) return 'gas';
   return 'other';
 }
 

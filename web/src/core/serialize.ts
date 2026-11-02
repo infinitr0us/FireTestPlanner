@@ -51,6 +51,9 @@ const OBJECT_ORDER: Record<string, string[]> = {
   wall: ['id', 'type', 'name', 'transform', 'polyline_m', 'height_m', 'thickness_m', 'baseHeight_m', 'openings', 'display', 'notes'],
   ceiling: ['id', 'type', 'name', 'transform', 'polygon_m', 'height_m', 'thickness_m', 'display', 'notes'],
   heatFluxSensor: ['id', 'type', 'name', 'transform', 'gauge', 'mount', 'linkedFiles', 'display', 'notes'],
+  velocityProbe: ['id', 'type', 'name', 'transform', 'range_m_s', 'linkedFiles', 'display', 'notes'],
+  gasSampling: ['id', 'type', 'name', 'transform', 'species', 'inDuct', 'linkedFiles', 'display', 'notes'],
+  loadCell: ['id', 'type', 'name', 'transform', 'capacity_kg', 'platform_m', 'linkedFiles', 'display', 'notes'],
   thermocouple: ['id', 'type', 'name', 'transform', 'beadOffsets_m', 'thermocouple', 'mount', 'linkedFiles', 'display', 'notes'],
   obstruction: ['id', 'type', 'name', 'transform', 'size_m', 'display', 'notes'],
   reconstructedFlame: ['id', 'type', 'name', 'transform', 'burnerId', 'representation', 'linkedFiles', 'display', 'notes'],
@@ -246,7 +249,7 @@ export function canonicalize(data: PlanDocument): Obj {
   // factor it says so, rather than claiming a compatibility it no longer has.
   // A version this build does not recognise is left alone, not downgraded.
   const required = requiredFormatVersion(data);
-  // Format 1.7 is declared only while a curve is present, including after removal.
+  // Format 1.7 is declared only while a 1.7 feature is present, including after removal.
   d.version = d.version === '1.7.0' && required !== '1.7.0'
     ? required : maxVersion(String(d.version ?? ''), required);
 

@@ -91,7 +91,7 @@ def test_shared_bytes_and_round_trip(source):
         assert [r.string('ID') for r in gauges if r.number('IOR') == 3] == ['FLOOR_HF']
         assert all(r.string('QUANTITY') == 'GAUGE HEAT FLUX' for r in gauges)
         original = {r.string('ID'): r for r in devices((FIXTURES / 'fds/room_corner.fds').read_text(encoding='utf-8'))}
-        assert sorted(r.string('ID') for r in exported) == sorted(name for name in original if not name.startswith('DOOR_V_'))
+        assert sorted(r.string('ID') for r in exported) == sorted(original)
         for r in exported:
             name = r.string('ID')
             assert np.linalg.norm(np.array(r.numbers('XYZ')) - original[name].numbers('XYZ')) < 0.001

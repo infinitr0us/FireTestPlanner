@@ -42,7 +42,7 @@ import type {
   ObstructionObject,
   PlanObject,
   ReconstructedFlameObject,
-  ThermocoupleObject,
+  ThermocoupleObject, VelocityProbeObject, GasSamplingObject, LoadCellObject,
   WallObject,
 } from '../core/types';
 import { makeLabel } from './labels';
@@ -60,6 +60,9 @@ export const COLORS = {
   cameraBody: 0x334155,
   heatFlux: parseInt(DEVICE_COLORS.heatFlux.slice(1), 16),
   thermocouple: parseInt(DEVICE_COLORS.temperature.slice(1), 16),
+  velocity: parseInt(DEVICE_COLORS.velocity.slice(1), 16),
+  gas: parseInt(DEVICE_COLORS.gas.slice(1), 16),
+  mass: parseInt(DEVICE_COLORS.mass.slice(1), 16),
   instrumentBody: 0x334155,
 };
 
@@ -768,6 +771,24 @@ export function buildThermocouple(t: ThermocoupleObject): THREE.Group {
   label.position.set(0, 0.08, hi + 0.08);
   group.add(label);
 
+  return group;
+}
+
+/** Symbolic hardware sizes; only a recorded load platform carries measured dimensions. */
+export function buildNewInstrument(obj: VelocityProbeObject | GasSamplingObject | LoadCellObject): THREE.Group {
+  const group = new THREE.Group(); applyTransform(group, obj);
+  const color = new THREE.Color(objectColor(obj));
+  const material = new THREE.MeshStandardMaterial({ color, roughness: 0.5, side: THREE.DoubleSide });
+  let geometry: THREE.BufferGeometry;
+  if (obj.type === 'velocityProbe') {
+    geometry = obj.transform?.rotation_quat
+      ? upright(new THREE.CylinderGeometry(0.025, 0.025, 0.24, 16, 1, true))
+      : new THREE.SphereGeometry(0.045, 12, 8);
+  } else if (obj.type === 'gasSampling') geometry = new THREE.TorusGeometry(0.06, 0.012, 8, 24);
+  else geometry = new THREE.BoxGeometry(...(obj.platform_m ?? [0.18, 0.18]), 0.035);
+  group.add(new THREE.Mesh(geometry, material));
+  const label = makeLabel(displayName(obj), 'object', objectColor(obj));
+  label.position.set(0, 0, 0.16); group.add(label);
   return group;
 }
 

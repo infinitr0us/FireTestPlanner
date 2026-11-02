@@ -11,10 +11,10 @@
 
 import { lookAtQuat } from './math';
 import { isMounted } from './types';
-import type { CameraObject, HeatFluxSensorObject, PlanObject, Vec3 } from './types';
+import type { CameraObject, HeatFluxSensorObject, VelocityProbeObject, PlanObject, Vec3 } from './types';
 
-/** Anything that records what it is pointed at. Cameras, and since 1.1 gauges. */
-export type AimableObject = CameraObject | HeatFluxSensorObject;
+/** Anything that records an aim target: cameras, gauges and velocity probes. */
+export type AimableObject = CameraObject | HeatFluxSensorObject | VelocityProbeObject;
 
 const transformOf = (o: PlanObject): NonNullable<PlanObject['transform']> =>
   o.transform ?? (o.transform = { position_m: [0, 0, 0] });
@@ -49,7 +49,7 @@ export function setPosition(obj: PlanObject, position: Vec3): void {
 }
 
 /**
- * Point a camera or a gauge at a world point and record that as its intent.
+ * Point an aimable object at a world point and record that as its intent.
  *
  * The quaternion stays authoritative; the target is what lets a later move re-derive
  * it instead of silently disagreeing with it. Returns false, having changed nothing,

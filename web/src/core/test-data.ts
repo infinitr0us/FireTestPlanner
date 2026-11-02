@@ -3,7 +3,7 @@ import { linkedFilesProblem } from './linked-files';
 import { detectShape, extractSeries, isNumber, type Grid, type Layout } from './tables';
 import type { Issue, PlanDocument, PlanObject, TestDataManifest, TestDataSource } from './types';
 
-export type TargetUnit = 'kW/m2' | '°C' | 'kW';
+export type TargetUnit = string | null;
 export interface Series {
   sourceId: string;
   sourceName: string;
@@ -38,6 +38,9 @@ export function targetUnits(objects: readonly PlanObject[]): Map<string, TargetU
     if (o.type === 'heatFluxSensor') units.set(o.id, 'kW/m2');
     if (o.type === 'thermocouple') units.set(o.id, '°C');
     if (o.type === 'burner') units.set(o.id, 'kW');
+    if (o.type === 'velocityProbe') units.set(o.id, 'm/s');
+    if (o.type === 'loadCell') units.set(o.id, 'kg');
+    if (o.type === 'gasSampling') units.set(o.id, null);
   }
   return units;
 }
@@ -52,8 +55,9 @@ export function sourceSeries(source: TestDataSource, grid: Grid, units: SeriesUn
     if (result.has(key)) throw new Error(`Source "${source.name}" maps target ${key} more than once.`);
     // A bead identifies the thermocouple quantity. Object IDs alone cannot tell
     // a voltage-calibrated gauge from a voltage-calibrated burner.
-    const unit = units.targets?.get(mapping.object) ?? (mapping.bead !== undefined ? '°C' : undefined);
-    if (!unit) throw new Error(`Target unit for object "${mapping.object}" is required.`);
+    const target = units.targets?.get(mapping.object);
+    const unit = target === null ? channel.unit : target ?? (mapping.bead !== undefined ? '°C' : undefined);
+    if (unit === undefined) throw new Error(`Target unit for object "${mapping.object}" is required.`);
     const scale = mapping.scale ?? 1, offset = mapping.offset ?? 0, shift = source.timeOffset_s ?? 0;
     if (!isNumber(scale) || scale === 0 || !isNumber(offset) || !isNumber(shift)) throw new Error('Invalid test data calibration or time offset.');
     const t = Float64Array.from(channel.t, time => time - shift);
@@ -168,7 +172,7 @@ export function testDataChecks(plan: PlanDocument): Issue[] {
       const o = objects.get(c.object), key = seriesKey(c.object, c.bead);
       const valid = o?.type === 'thermocouple'
         ? integer(c.bead, 0) && c.bead < ((o.beadOffsets_m as number[] | undefined)?.length ?? 1)
-        : (o?.type === 'heatFluxSensor' || o?.type === 'burner') && c.bead === undefined;
+        : (o !== undefined && ['heatFluxSensor', 'burner', 'velocityProbe', 'gasSampling', 'loadCell'].includes(o.type)) && c.bead === undefined;
       if (!valid) issues.push({ severity: 'warning', code: 'test-data-dangling', objectId: c.object,
         message: `Source "${source.name}": channel "${c.channel}" targets a missing or incompatible object or bead.` });
       if (seen.has(key)) issues.push({ severity: 'warning', code: 'test-data-duplicate', objectId: c.object,

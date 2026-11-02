@@ -25,6 +25,7 @@ from .objects import (
     ReconstructedFlame,
     PlanObject,
     Thermocouple,
+    VelocityProbe, GasSampling, LoadCell,
     Wall,
     wrap,
 )
@@ -431,6 +432,18 @@ class Plan:
         return list(self._of_type("thermocouple"))
 
     @property
+    def velocity_probes(self) -> List[VelocityProbe]:
+        return list(self._of_type("velocityProbe"))
+
+    @property
+    def gas_sampling(self) -> List[GasSampling]:
+        return list(self._of_type("gasSampling"))
+
+    @property
+    def load_cells(self) -> List[LoadCell]:
+        return list(self._of_type("loadCell"))
+
+    @property
     def obstructions(self) -> List[Obstruction]:
         return list(self._of_type("obstruction"))
 
@@ -562,7 +575,7 @@ class Plan:
 
         The declared version is derived, not authored: the writer emits the lowest
         version that describes the contents, retaining an earlier declaration except
-        that 1.7 is removed with the last curve. A plan still says "1.0.0" the moment after
+        that 1.7 is removed with the last 1.7 feature. A plan still says "1.0.0" the moment after
         a thermocouple is appended to it, and validating that against the 1.0 schema
         would report a violation that saving is about to fix. This is the version to
         judge it by; `check()` reports the disagreement separately, because a file
@@ -655,7 +668,7 @@ class Plan:
             # quaternion disagrees with the target is a claim about a quaternion
             # that is not in the file.
             if (target is not None
-                    and isinstance(obj, (Camera, HeatFluxSensor))
+                    and isinstance(obj, (Camera, HeatFluxSensor, VelocityProbe))
                     and "rotation_quat" in t):
                 delta = target - obj.position
                 if float(np.linalg.norm(delta)) < 1e-9:
@@ -1130,6 +1143,16 @@ class Plan:
         """
         issues: List[Issue] = []
 
+        from .instrument_placement import nearest_opening, load_cell_under_fuel
+        for probe in self.velocity_probes:
+            if nearest_opening(self, probe.position, 0.1) is None:
+                issues.append(Issue('info', 'probe-not-in-opening',
+                    'Velocity probes usually measure flow through a doorway or window; this probe is not within 0.1 m of an opening.', probe.id))
+        for cell in self.load_cells:
+            if not load_cell_under_fuel(self, cell):
+                issues.append(Issue('info', 'load-cell-not-under-fuel',
+                    'No burner footprint is directly above this load cell.', cell.id))
+
         for sensor in self.heat_flux_sensors:
             est = self.heat_flux_estimate(sensor)
             if est is None:
@@ -1474,6 +1497,19 @@ class Plan:
                 "height_m": round(float(hf.position[2]), 3),
                 "hfov_deg": round(hf.view_angle_deg, 1), "intrinsics": None,
             })
+        for obj in self.velocity_probes + self.gas_sampling + self.load_cells:
+            if isinstance(obj, VelocityProbe):
+                axis = obj.axis
+                detail = 'range {} m/s; axis {}'.format(obj.range_m_s if obj.range_m_s is not None else 'unstated',
+                    'unstated' if axis is None else ', '.join('{:.4f}'.format(v) for v in axis))
+            elif isinstance(obj, GasSampling):
+                detail = ', '.join(obj.species) + ('; in duct' if obj.in_duct else '')
+            else:
+                detail = 'capacity {} kg; platform {}'.format(obj.capacity_kg if obj.capacity_kg is not None else 'unstated',
+                    '{} x {} m'.format(*obj.platform_m) if obj.platform_m is not None else 'unstated (point)')
+            rows.append({'id': obj.id, 'name': obj.name, 'category': obj.type, 'detail': detail,
+                         'standoff_m': round(float(np.linalg.norm(obj.position[:2])), 3),
+                         'height_m': round(float(obj.position[2]), 3), 'hfov_deg': None, 'intrinsics': None})
         for tc in self.thermocouples:
             heights = [float(p[2]) for p in tc.bead_positions]
             rows.append({

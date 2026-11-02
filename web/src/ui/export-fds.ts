@@ -12,10 +12,13 @@ export function fdsExportSummary(text: string): string {
     ['RADIATIVE HEAT FLUX GAS', 'radiative heat flux gas'],
     ['THERMOCOUPLE', 'thermocouple beads'],
     ['WALL TEMPERATURE', 'surface thermocouple beads'],
+    ['U-VELOCITY', 'X velocity probes'], ['V-VELOCITY', 'Y velocity probes'],
+    ['W-VELOCITY', 'Z velocity probes'], ['VELOCITY', 'velocity magnitude probes'],
+    ['VOLUME FRACTION', 'gas species'],
   ].map(([quantity, label]) => ({ label, count: devices.filter(r => r.string('QUANTITY') === quantity).length }))
     .filter(kind => kind.count);
   return `${devices.length} devices${kinds.length ? ': ' + kinds.map(k => `${k.count} ${k.label}`).join(', ') : ''}. `
-    + 'Cameras and geometry are not exported.';
+    + 'Cameras and geometry are not exported.' + (text.includes('load cell omitted') ? ' Load cells are omitted.' : '');
 }
 
 export class FdsExportDialog {

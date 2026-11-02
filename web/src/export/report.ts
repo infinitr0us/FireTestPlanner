@@ -1,3 +1,4 @@
+import { isNewInstrument, isVelocityProbe, isGasSampling, isLoadCell } from '../core/types';
 import { curveSummary, hrrAt } from '../core/hrr';
 /**
  * The printable deliverable: dimensioned plan, elevations, equipment list and
@@ -90,7 +91,7 @@ function setOutTable(doc: PlanDocument, unit: LengthUnit): string {
   const rows: string[] = [];
   for (const obj of doc.objects) {
     if (!(isCamera(obj) || isBurner(obj) || isHood(obj) || isHeatFluxSensor(obj)
-      || isThermocouple(obj) || isObstruction(obj) || isWall(obj) || isCeiling(obj))) continue;
+      || isThermocouple(obj) || isNewInstrument(obj) || isObstruction(obj) || isWall(obj) || isCeiling(obj))) continue;
     const p = positionOf(obj);
     let x = fmt(p[0]), y = fmt(p[1]), z = fmt(p[2]);
     let type: string = obj.type;
@@ -123,6 +124,9 @@ function setOutTable(doc: PlanDocument, unit: LengthUnit): string {
       // Authoritative quaternion, not a direction inferred from the advisory aim.
       facing = facingText(forwardOf(quatOf(obj)));
     }
+    if (isVelocityProbe(obj)) { type = 'velocity probe'; facing = obj.transform?.rotation_quat ? facingText(forwardOf(quatOf(obj))) : 'axis unstated'; }
+    if (isGasSampling(obj)) { type = 'gas sample'; facing = `Species: ${obj.species.join(', ') || 'unstated'}${obj.inDuct ? '; in duct' : ''}`; }
+    if (isLoadCell(obj)) { type = 'load cell'; facing = `${obj.capacity_kg ?? 'Unstated'} kg; platform ${obj.platform_m ? obj.platform_m.map(fmt).join(' x ') + ' ' + unit : 'unstated (point)'}`; }
     rows.push(`<tr data-object-id="${esc(obj.id)}">`
       + [cell(displayName(obj)), cell(type), ...[x, y, z, aim, standoff, facing].map(v => cell(v, 'coord'))].join('')
       + '</tr>');
@@ -134,7 +138,7 @@ function setOutTable(doc: PlanDocument, unit: LengthUnit): string {
   };
   return `<p class="note">${esc(`Origin: burner centre at floor level; ${axis('side', '+X', 'right')}; ${axis('front', '+Y', 'up')}; heights above the floor.`)}</p>
     <p class="note">Lengths in ${esc(unit)}. P1, P2, … follow each wall polyline; base/top give its height limits. Aim is the recorded target; a gauge's facing names the plan axis its sensing face looks along, any turn off that axis, and its tilt.</p>
-    <table class="set-out"><thead><tr>${['Item', 'Type', 'X', 'Y', 'Height (Z)', 'Aim point (X, Y, Z)', 'Standoff (plan / slant)', 'Facing'].map(head).join('')}</tr></thead>
+    <table class="set-out"><thead><tr>${['Item', 'Type', 'X', 'Y', 'Height (Z)', 'Aim point (X, Y, Z)', 'Standoff (plan / slant)', 'Facing / setup'].map(head).join('')}</tr></thead>
     <tbody>${rows.join('\n')}</tbody></table>`;
 }
 
@@ -262,6 +266,17 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
       cell(formatLength(Math.max(...heights), unit), 'num'),
       cell('—'),
     ].join('') + '</tr>');
+  }
+
+  for (const obj of doc.objects.filter(isNewInstrument)) {
+    const detail = isVelocityProbe(obj) ? `Range: ${obj.range_m_s ?? 'unstated'} m/s; ${obj.transform?.rotation_quat ? facingText(forwardOf(quatOf(obj))) : 'axis unstated'}`
+      : isGasSampling(obj) ? `${obj.species.join(', ') || 'Species unstated'}${obj.inDuct ? '; in duct' : ''}`
+        : `Capacity: ${obj.capacity_kg ?? 'unstated'} kg; platform ${obj.platform_m ? obj.platform_m.map(v => formatLength(v, unit)).join(' x ') + ' ' + unit : 'unstated (point)'}`;
+    rows.push('<tr>' + [
+      `<td><span class="swatch" style="background:${esc(objectColor(obj))}"></span>${esc(displayName(obj))}</td>`,
+      cell(isVelocityProbe(obj) ? 'velocity probe' : isGasSampling(obj) ? 'gas sample' : 'load cell'),
+      cell(detail), cell('No prediction model.'), cell(formatLength(planDistance(positionOf(obj)), unit)),
+      cell(formatLength(positionOf(obj)[2], unit)), cell('')].join('') + '</tr>');
   }
 
   // Recorded data, listed beside the equipment it was recorded with. The hull

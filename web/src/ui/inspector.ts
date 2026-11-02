@@ -1,3 +1,5 @@
+import { nearestOpening } from '../core/instrument-placement';
+import { isVelocityProbe, isGasSampling, isLoadCell, GAS_SPECIES, type VelocityProbeObject, type GasSamplingObject, type LoadCellObject } from '../core/types';
 import { curveSummary, hrrAt } from '../core/hrr';
 /**
  * Property inspector for the selected object.
@@ -136,6 +138,7 @@ import {
  *  panel title is uppercased by CSS, and "HEATFLUXSENSOR" is not a phrase. */
 const TYPE_LABEL: Record<string, string> = {
   heatFluxSensor: 'heat flux gauge',
+  velocityProbe: 'velocity probe', gasSampling: 'gas sample', loadCell: 'load cell',
   reconstructedFlame: 'reconstructed flame',
 };
 
@@ -315,6 +318,9 @@ export class Inspector {
     else if (isCeiling(obj)) this.renderCeiling(obj, unit);
     else if (isHeatFluxSensor(obj)) this.renderHeatFluxSensor(obj, unit);
     else if (isThermocouple(obj)) this.renderThermocouple(obj, unit);
+    else if (isVelocityProbe(obj)) this.renderVelocityProbe(obj, unit);
+    else if (isGasSampling(obj)) this.renderGasSampling(obj);
+    else if (isLoadCell(obj)) this.renderLoadCell(obj, unit);
     else if (isObstruction(obj)) this.renderObstruction(obj, unit);
     else if (isReconstructedFlame(obj)) { /* its sections are above the transform */ }
     else this.renderUnknown(obj);
@@ -487,6 +493,12 @@ export class Inspector {
       "A device's position, as &DEVC writes it",
     ));
 
+    if (isVelocityProbe(obj) || isGasSampling(obj)) {
+      this.root.append(h('p', { class: 'panel__hint' }, [isVelocityProbe(obj)
+        ? 'Velocity export uses the recorded axis to choose a component; IOR is not needed.'
+        : 'Gas export writes one fraction device per species at this position.']));
+      return;
+    }
     if (!view.aimable) {
       // A thermocouple bead has no facing, and FDS does not give one an IOR either.
       this.root.append(h('p', { class: 'panel__hint' }, [
@@ -570,10 +582,10 @@ export class Inspector {
   // -- aim ---------------------------------------------------------------
 
   /**
-   * The aim block, shared by cameras and heat flux gauges.
+   * The aim block, shared by cameras, heat flux gauges and velocity probes.
    *
-   * Both store their orientation the same way and both mean the same thing by it
-   * ("this is what I am pointed at"), so they get the same control rather than two
+   * They store their orientation the same way and mean the same thing by it
+   * ("this is what I am pointed at"), so they get the same control rather than several
    * that could drift.
    */
   private renderAim(obj: AimableObject, unit: LengthUnit, handRotatedHint: string): void {
@@ -584,17 +596,20 @@ export class Inspector {
     // direction from a point to itself. `setAimTarget` refuses that edit rather
     // than throwing halfway through it, so the button has to say why it is off
     // instead of looking like it does nothing.
-    const fire = defaultAimTarget(this.store.document);
     const here = positionOf(obj);
+    const opening = isVelocityProbe(obj) ? nearestOpening(this.store.document, here, 1) : null;
+    const fire: Vec3 = isVelocityProbe(obj)
+      ? here.map((v, i) => v + (opening?.normal[i] ?? 0)) as Vec3 : defaultAimTarget(this.store.document);
+    const action = isVelocityProbe(obj) ? 'Align with opening' : 'Aim at fire';
     const onTheFire =
       Math.hypot(fire[0] - here[0], fire[1] - here[1], fire[2] - here[2]) < 1e-9;
-    const aimAtFire = button('Aim at fire', () =>
-      this.patch(obj.id, 'Aim at fire', (o) => {
-        setAimTarget(o as AimableObject, defaultAimTarget(this.store.document));
+    const aimAtFire = button(action, () =>
+      this.patch(obj.id, action, (o) => {
+        setAimTarget(o as AimableObject, fire);
       }));
     if (onTheFire) {
       aimAtFire.disabled = true;
-      aimAtFire.title = 'This sits on the point the model puts the fire at, so there is no '
+      aimAtFire.title = isVelocityProbe(obj) ? 'No wall opening is within 1 m.' : 'This sits on the point the model puts the fire at, so there is no '
         + 'direction to aim along. Move it out of the flame first.';
     }
 
@@ -1341,6 +1356,8 @@ export class Inspector {
           { value: 'schmidt-boelter' as GaugeKind, label: 'Schmidt-Boelter' },
           { value: 'gardon' as GaugeKind, label: 'Gardon (foil)' },
           { value: 'thermopile' as GaugeKind, label: 'Thermopile' },
+          { value: 'plate-thermometer' as GaugeKind, label: 'Plate thermometer' },
+          { value: 'thin-skin' as GaugeKind, label: 'Thin skin' },
           { value: 'other' as GaugeKind, label: 'Other' },
         ], (v) => patchGauge('Set gauge kind', (g) => { g.kind = v; })),
         'Recorded for the equipment list; it does not change the predicted flux'),
@@ -1442,6 +1459,45 @@ export class Inspector {
 
     this.root.append(sectionTitle('Exposure'));
     this.root.append(h('div', { class: 'readouts' }, items));
+  }
+
+  private renderVelocityProbe(p: VelocityProbeObject, unit: LengthUnit): void {
+    this.renderAim(p, unit, p.transform?.rotation_quat ? 'Axis recorded by the quaternion.' : 'Axis unstated; velocity magnitude.');
+    this.root.append(sectionTitle('Velocity probe'),
+      row('Range (m/s)', numberField(p.range_m_s ?? 0, v => this.patch(p.id, 'Set velocity range', o => {
+        (o as VelocityProbeObject).range_m_s = v > 0 ? v : null;
+      }), { min: 0, step: 1 }), 'Full scale; zero means unrecorded.'),
+      readout('Prediction', 'No prediction model.', 'muted'));
+  }
+
+  private renderGasSampling(g: GasSamplingObject): void {
+    this.root.append(sectionTitle('Gas sample'));
+    for (const species of GAS_SPECIES) this.root.append(row(species, checkboxField(g.species.includes(species), checked =>
+      this.patch(g.id, 'Set gas species', o => {
+        const gas = o as GasSamplingObject;
+        gas.species = checked ? [...gas.species, species] : gas.species.filter(s => s !== species);
+      }))));
+    this.root.append(row('In duct', checkboxField(g.inDuct, value => this.patch(g.id, 'Set duct sampling', o => {
+      (o as GasSamplingObject).inDuct = value;
+    }))), readout('Prediction', 'No prediction model.', 'muted'));
+    for (const source of this.store.document.testData ?? []) for (const mapping of source.channels.filter(c => c.object === g.id)) {
+      const unit = source.manifest.channels.find(c => c.name === mapping.channel)?.unit;
+      this.root.append(readout(`${source.name}: ${mapping.channel}`, unit ?? 'Unit unstated'));
+    }
+  }
+
+  private renderLoadCell(c: LoadCellObject, unit: LengthUnit): void {
+    this.root.append(sectionTitle('Load cell'),
+      row('Capacity (kg)', numberField(c.capacity_kg ?? 0, v => this.patch(c.id, 'Set load capacity', o => {
+        (o as LoadCellObject).capacity_kg = v > 0 ? v : null;
+      }), { min: 0, step: 10 }), 'Zero means unrecorded.'),
+      row('Platform recorded', checkboxField(c.platform_m != null, value => this.patch(c.id, 'Set load platform', o => {
+        (o as LoadCellObject).platform_m = value ? [0.5, 0.5] : null;
+      }))));
+    if (c.platform_m) this.root.append(row(`Platform (${unit})`, vecField(c.platform_m, unit, ['W', 'D'], (i, value) => {
+      if (value > 0) this.patch(c.id, 'Resize load platform', o => { (o as LoadCellObject).platform_m![i] = value; });
+    })));
+    this.root.append(readout('Prediction', 'No prediction model.', 'muted'));
   }
 
   // -- thermocouple ------------------------------------------------------
