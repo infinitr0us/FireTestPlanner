@@ -147,8 +147,9 @@ export class Palette {
   }
 
   /** Which folded sections are open, carried across repaints (a Create repaints
-   *  the palette, and a repaint must not close what the user opened). */
-  private open: Record<string, boolean> = {};
+   *  the palette, and a repaint must not close what the user opened). Instruments
+   *  starts open: gauges and thermocouples are core tools, not ones to go looking for. */
+  private open: Record<string, boolean> = { instruments: true };
 
   /** A folded palette section: a native disclosure, so keyboard and screen-reader
    *  behaviour is the browser's own (docs/visual-language.md). */

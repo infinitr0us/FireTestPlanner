@@ -173,8 +173,9 @@ read once, and tools most plans never use, fold behind a native `<details>`
 one for help (**Camera not listed?**). A fold stays open across repaints, and opens
 by itself while it holds a draft or an error. A new rail section follows the same
 rule rather than adding to the rail's natural height. Heat flux, thermocouple,
-velocity, gas and load tiles share the Instruments disclosure, which preserves its
-open state on repaint. Checks remains visible at 1280 x 720 with it open.
+velocity, gas and load tiles share the Instruments disclosure. It starts open
+(gauges and thermocouples are core tools) and keeps whatever state the user leaves it
+in across repaints. Checks remains visible at 1280 x 720 with it open.
 
 The FDS device export preview uses a native modal dialog with the existing
 `modal__panel`, `field__input` and shared buttons. Its read-only text uses `--mono`;

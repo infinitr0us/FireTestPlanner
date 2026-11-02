@@ -505,8 +505,8 @@ try {
     + JSON.stringify(rail) + ')', rail.overflow <= 1 && rail.firstCard + 40 < rail.height);
   phase('new instrument palette, fields and undo');
   const instrumentFold = 'document.querySelector("#palette details[data-fold=instruments]")';
-  await click(instrumentFold + '.querySelector("summary")');
-  await waitFor(() => evaluate(instrumentFold + '.open'), 'instrument tiles open');
+  check('the Instruments group starts open, so Heat flux and Thermocouple are one click away',
+    await evaluate(instrumentFold + '.open && [...document.querySelectorAll("#palette .palette__tile")].some(b=>b.textContent.includes("Heat flux") && b.offsetParent!==null)'));
   const instrumentCount = await evaluate('document.querySelectorAll(".outliner__row").length');
   for (const [name, field, value] of [['Velocity probe', 'Range (m/s)', '12'], ['Gas sample', 'In duct', null], ['Load cell', 'Capacity (kg)', '250']]) {
     await click('[...document.querySelectorAll("#palette .palette__tile")].find(b=>b.textContent.includes(' + JSON.stringify(name) + '))');
