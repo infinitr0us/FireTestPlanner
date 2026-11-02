@@ -4,8 +4,12 @@
 # pulls pythonnet and clr-loader on Windows and that is not a change worth making
 # to an environment other projects share.
 #
-#   python -m venv .venv
+# Python 3.11 or later; releases are built with 3.14.
+#
+#   py -3.14 -m venv .venv
 #   .venv\Scripts\python.exe -m pip install -r requirements.txt
 
-pywebview>=5.0
-pyinstaller>=6.0
+pywebview>=6.2
+# pywebview's Windows backend. 3.1 is the first release that runs on Python 3.14.
+pythonnet>=3.1
+pyinstaller>=6.22

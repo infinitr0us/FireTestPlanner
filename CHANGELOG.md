@@ -5,7 +5,7 @@ while the version is 0.x, a minor release may change behaviour. The plan file fo
 has its own version (`fire-test-plan` 1.0.0 to 1.7.0, one JSON Schema each in `schema/`),
 and a plan written by any release opens in every later one.
 
-## [Unreleased]
+## [0.8.0] - 2026-11-02
 
 Plan formats 1.5.0, 1.6.0 and 1.7.0.
 
@@ -63,7 +63,7 @@ Plan formats 1.5.0, 1.6.0 and 1.7.0.
   the editor, check messages and the printed drawing, with decimal commas in French.
   The choice is a per-user setting, never part of a plan, and every file the tool
   writes is unchanged. `docs/french-review.md` lists the terms for a francophone
-  engineer to confirm.
+  engineer to confirm; that review waits for feedback from French-speaking users.
 - **Accessibility.** The editor and every dialog pass automated WCAG 2.1 AA checks
   (axe-core) in both languages. Dialogs take keyboard focus and give it back, the
   object list and the checks work from the keyboard, status messages are announced
@@ -88,6 +88,12 @@ Plan formats 1.5.0, 1.6.0 and 1.7.0.
 - The FLIR A700 24° preset stores the 18 mm focal length FLIR prints for that lens
   instead of 18.07 mm back-solved from the angle, so it now frames 24.1° × 18.2°.
   Cameras already in a plan keep their own stored focal length.
+- The desktop app is built with Python 3.14 instead of 3.9, which no longer gets
+  security fixes, with pythonnet 3.2 for its window. `build.bat` makes its venv from
+  Python 3.11 or later (`FIREPLAN_PYTHON`, else `py -3.14`, else `python`) and stops
+  with a message when it finds an older one. The build now fails when the exe lacks a
+  DLL that its own binaries load, and the exe no longer carries the packager's own
+  modules (PyInstaller, setuptools). CI tests the Python package on 3.9 and 3.14.
 
 ### Fixed
 - **Print / Save as PDF** in the drawing preview printed only the first page of the
@@ -96,6 +102,9 @@ Plan formats 1.5.0, 1.6.0 and 1.7.0.
   show an empty field instead of 0.
 - The drawing's north arrow no longer overlaps objects placed at the plan's far
   top-right corner.
+- `THIRD_PARTY_NOTICES.md` also covers the native libraries inside the exe (OpenSSL,
+  libffi, zlib, bzip2, XZ, Zstandard, Expat, libmpdec and the Microsoft C runtime),
+  which the 0.7.0 notices left out.
 
 ## [0.7.0] - 2026-10-18
 
@@ -223,6 +232,7 @@ Plan format 1.0.0.
 - The desktop app: the same bundle in a native window (pywebview, WebView2), native
   file dialogs and recent files, packaged as one exe.
 
+[0.8.0]: https://github.com/infinitr0us/FireTestPlanner/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/infinitr0us/FireTestPlanner/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/infinitr0us/FireTestPlanner/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/infinitr0us/FireTestPlanner/compare/v0.4.0...v0.5.0

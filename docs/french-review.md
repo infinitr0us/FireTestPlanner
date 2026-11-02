@@ -1,8 +1,10 @@
 # French interface review
 
 The Canadian French catalogue is a draft pending review by a francophone fire
-safety engineer. The supplied glossary is the baseline. No glossary entry was
-deliberately rejected. Review these terms in their engineering context:
+safety engineer. It ships in v0.8.0 marked as a draft; the review is deferred until a
+French-speaking user of the tool can give feedback (decided 2026-11-02). The supplied
+glossary is the baseline. No glossary entry was deliberately rejected. Review these
+terms in their engineering context:
 
 | English term | Draft French | Where | Alternatives or question for the reviewer |
 |---|---|---|---|

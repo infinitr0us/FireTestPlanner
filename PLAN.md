@@ -1,8 +1,9 @@
 # FireTestPlanner: plan and roadmap
 
-Status: **v0.7.0 released** (format 1.4, 2026-10-18). The next round, from a review of
-the whole project with the fire safety engineers' data in hand, is in
-[section 9](#9-next-round-2026-11) (2026-11-02).
+Status: **v0.8.0 released** (format 1.7, 2026-11-02). It carries the round planned in
+[section 9](#9-next-round-2026-11) from a review of the whole project with the fire
+safety engineers' data in hand. The French interface ships as a draft; its review
+waits for a French-speaking user.
 Complements `ideas.md`, the original brief.
 
 ---
@@ -238,8 +239,8 @@ tool to exist.
 | M13 | **FDS results** | Separate simulation session, slices, boundary fields, Smoke3D preview and device histories | **done** |
 | M14 | **Lens choice** | A8303sc lenses from its datasheet (17/25/50/100 mm), a Lens field and a lens comparison in the inspector | **done** |
 
-Phase 1 is complete and Phase 2 has landed (v0.7.0). M15 onwards are in
-[section 9](#9-next-round-2026-11).
+Phase 1 is complete and Phase 2 has landed (v0.7.0). M15 to M18 are in
+[section 9](#9-next-round-2026-11) and landed in v0.8.0.
 
 ### M9, from fire safety engineer feedback
 
@@ -605,10 +606,14 @@ about walls. The engineers' answers and their data settled the rest.
 | **C** (M17) | A heat release rate curve on the burner (a table, t² growth, an FDS `RAMP` or a measured HRR), checks at its peak and a cone that follows the clock. Velocity probes, gas sampling points, load cells, and plate thermometer and thin-skin gauge kinds. As-built positions beside planned ones. `&DEVC` export of the instruments. Test series | 1.7 |
 | **D** (M18) | More camera presets from datasheets (handheld, consumer and phone cameras the lab uses), a French interface and an accessibility pass | none |
 
-Progress (2026-11-02): **Phase A is done** (format 1.5), with the camera presets of
-phase D. **Phase B is done** (format 1.6): readers, the model, the editor's sources,
-mapping and plots, sharing and the instrument schedule, checked on the engineers' own
-workbooks. Of **phase C** (format 1.7), the `&DEVC` export, the heat release rate
-curve (model, import, editor and fire clock) and the new instrument types are in;
-as-built positions and test series are next, then the rest of phase D (French and an
-accessibility pass).
+Progress (2026-11-02): **all four phases are done** and released in v0.8.0. Phase A
+(format 1.5) came with the camera presets of phase D. Phase B (format 1.6) was checked
+on the engineers' own workbooks. Phase C (format 1.7) added the `&DEVC` export, the
+heat release rate curve with its fire clock, the new instrument types, as-built
+positions and test series. Phase D finished with a French interface and an
+accessibility pass (axe-core checks in both languages).
+
+Still open from this round: the French is a draft. Its terms
+([docs/french-review.md](docs/french-review.md)) wait for feedback from a
+French-speaking user of the tool, deferred until one is available (decided
+2026-11-02).

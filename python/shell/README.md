@@ -7,7 +7,7 @@ and a recent-files list. Packaged as one `.exe`.
 cd web && npm run build             # the bundle the shell hosts
 
 cd python/shell
-python -m venv .venv
+py -3.14 -m venv .venv              # Python 3.11 or later; releases use 3.14
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 
 .venv\Scripts\python.exe app.py                 # run it

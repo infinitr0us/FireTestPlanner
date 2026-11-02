@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fireplan"
-version = "0.7.0"
+version = "0.8.0"
 description = "Read, validate and export fire test plans (.ftp.json)"
 readme = "README.md"
 requires-python = ">=3.9"

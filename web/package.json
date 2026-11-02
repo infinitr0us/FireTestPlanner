@@ -1,6 +1,6 @@
 {
   "name": "fire-test-plan-editor",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "description": "3D editor for fire test plans (.ftp.json)",

@@ -150,7 +150,7 @@ def test_results_dir_outputs_named_by_the_smv_are_offered(tmp_path):
     (tmp_path / 'case.smv').write_text(
         'SLCF     1 # STRUCTURED &     0    5     0    5     0    5\n out/case_1_1.sf\nTEMPERATURE\ntemp\nC\n'
         # RESULTS_DIR='out\' -- FDS appends '/', giving a doubled separator.
-        'BNDF     1     1\n out\/case_1_2.bf\nWALL TEMPERATURE\nwtemp\nC\n'
+        'BNDF     1     1\n out\\/case_1_2.bf\nWALL TEMPERATURE\nwtemp\nC\n'
         'SLCF     1\n ../escape.sf\nX\nx\nC\n', encoding='utf-8')
     opened = ResultFiles().open(str(tmp_path / 'case.smv'))
     names = {f['name'] for f in opened['files']}

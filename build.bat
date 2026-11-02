@@ -12,6 +12,9 @@ REM      build.bat noverify         skip the post-build selftest
 REM
 REM  Arguments combine:  build.bat clean test
 REM
+REM  The first run makes python\shell\.venv from Python 3.11 or later (releases
+REM  use 3.14): FIREPLAN_PYTHON if set, else `py -3.14`, else python on PATH.
+REM
 REM  The exe carries web/dist/index.html as bundled data, so the web bundle is
 REM  rebuilt first every time -- an exe packaged around a stale bundle is the
 REM  one failure mode that looks like the code change simply did not work.
@@ -58,22 +61,54 @@ if errorlevel 1 (
   goto fail
 )
 
-if not exist "%VENV_PY%" (
-  echo [build] No venv at python\shell\.venv -- creating it.
-  where python >nul 2>&1
-  if errorlevel 1 (
-    echo [build] python not found on PATH either. Install Python 3.9+, then re-run.
-    goto fail
-  )
-  pushd "%SHELL_DIR%" || goto fail
-  python -m venv .venv
-  if errorlevel 1 ( popd & goto fail )
-  ".venv\Scripts\python.exe" -m pip install --upgrade pip
-  ".venv\Scripts\python.exe" -m pip install -r requirements.txt
-  if errorlevel 1 ( popd & goto fail )
-  popd
-  echo.
+REM The desktop build needs Python 3.11 or later: the current pythonnet, which
+REM pywebview needs on Windows, supports 3.11 to 3.15. Releases are built with 3.14.
+REM A new venv is made from FIREPLAN_PYTHON (the full path of a python.exe) when it
+REM is set, else from the py launcher's 3.14, else from python on PATH.
+
+if exist "%VENV_PY%" goto venv_ready
+
+echo [build] No venv at python\shell\.venv -- creating it.
+if defined FIREPLAN_PYTHON (
+  set BASE_PY="%FIREPLAN_PYTHON:"=%"
+  goto base_found
 )
+py -3.14 -c "pass" >nul 2>&1
+if not errorlevel 1 (
+  set "BASE_PY=py -3.14"
+  goto base_found
+)
+where python >nul 2>&1
+if errorlevel 1 (
+  echo [build] No Python found. Install Python 3.14, or set FIREPLAN_PYTHON to a python.exe.
+  goto fail
+)
+set "BASE_PY=python"
+
+:base_found
+%BASE_PY% -c "import sys; sys.exit(sys.version_info < (3, 11))" >nul 2>&1
+if errorlevel 1 (
+  echo [build] %BASE_PY% is not Python 3.11 or later, which the desktop build needs.
+  echo [build] Install Python 3.14, or set FIREPLAN_PYTHON to a newer python.exe.
+  goto fail
+)
+pushd "%SHELL_DIR%" || goto fail
+%BASE_PY% -m venv .venv
+if errorlevel 1 ( popd & goto fail )
+".venv\Scripts\python.exe" -m pip install --upgrade pip
+".venv\Scripts\python.exe" -m pip install -r requirements.txt
+if errorlevel 1 ( popd & goto fail )
+popd
+echo.
+
+:venv_ready
+"%VENV_PY%" -c "import sys; sys.exit(sys.version_info < (3, 11))" >nul 2>&1
+if errorlevel 1 (
+  echo [build] python\shell\.venv is older than Python 3.11, which the desktop build needs.
+  echo [build] Delete python\shell\.venv and re-run; build.bat makes a new one.
+  goto fail
+)
+for /f "delims=" %%V in ('"%VENV_PY%" --version') do echo [build] Build venv: %%V
 
 if not exist "%WEB%\node_modules" (
   echo [build] web\node_modules missing -- running npm install.

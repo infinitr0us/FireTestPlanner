@@ -241,7 +241,8 @@ or a point. The choice is remembered for you (in the desktop app's settings, or 
 browser), not stored in the plan, so a plan opens the same for a colleague working
 in English. Names and notes you type, file names, FDS keywords and check codes stay
 as they are. The French is a draft awaiting review by a francophone fire safety
-engineer; [docs/french-review.md](docs/french-review.md) lists the terms to confirm.
+engineer; [docs/french-review.md](docs/french-review.md) lists the terms to confirm,
+and corrections from French-speaking users are welcome.
 
 ### Playing back a reconstructed flame
 
@@ -319,7 +320,8 @@ ends are explicit; neither has to remember the other's choice. Full definitions 
 
 ## Build from source
 
-The web editor needs Node 22; the Python package needs Python 3.9 or later.
+The web editor needs Node 22; the Python package needs Python 3.9 or later, and the
+desktop build Python 3.11 or later (releases are built with 3.14).
 
 ```bash
 cd web && npm install
@@ -340,13 +342,16 @@ build.bat noverify          :: skip the post-build selftest
 
 It creates `python/shell/.venv` and runs `npm install` on first use, stops on the first
 failure rather than shipping a broken build, and finishes by running the packaged exe's
-own `--selftest`. Output lands in `python/shell/dist/FireTestPlanner.exe` (about 10 MB).
+own `--selftest`. The venv is made from `FIREPLAN_PYTHON` (the path of a `python.exe`)
+when that is set, else from `py -3.14`, else from `python` on PATH, and must be Python
+3.11 or later. Output lands in `python/shell/dist/FireTestPlanner.exe` (about 13 MB),
+and the build fails if a DLL that the exe's own binaries load is missing from it.
 The steps by hand:
 
 ```bash
 cd web && npm run build                         # the bundle the exe will carry
 cd ../python/shell
-python -m venv .venv
+py -3.14 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 .venv\Scripts\python.exe app.py                 # run from source
 .venv\Scripts\python.exe build_exe.py           # -> dist/FireTestPlanner.exe
