@@ -17,30 +17,42 @@ editor; a data scientist reads the same file as a camera rig description with th
 ## Features
 
 - **3D layout editor.** Cameras, a burner, a calorimeter hood, walls, ceilings,
-  obstructions, heat flux gauges and thermocouples (one bead or a rake), in plan,
-  orbit and elevation views, stored in SI and displayed in metric or imperial units.
+  obstructions, heat flux gauges, thermocouples (one bead or a rake), velocity probes,
+  gas sampling points and load cells, in plan, orbit and elevation views, stored in SI
+  and displayed in metric, decimal feet or feet and inches.
 - **Checks that answer the planning questions.** Each camera's frustum, live preview,
   field of view, standoff, mm/px at the fire, and whether the flame base, tip and plume
-  are in frame. Each gauge's predicted incident flux against its range and noise floor,
-  each thermocouple bead's predicted plume temperature, hood capture and ceiling
-  clearance, all from standard fire correlations (Heskestad).
+  are in frame and not hidden behind a wall. Each gauge's predicted incident flux
+  against its range and noise floor, scaled by how much of the flame it can see; each
+  thermocouple bead's predicted plume temperature; hood capture and ceiling clearance;
+  all from standard fire correlations (Heskestad).
+- **Fires that change.** A heat release rate curve on the burner (t² growth, a pasted
+  table, an FDS ramp or a measured series) and a fire clock that plays the predicted
+  flame through it. Checks judge the peak.
 - **Camera presets** derived from manufacturer datasheets, including the FLIR A8303sc
   and A700 with a choice of lenses and a lens comparison, plus presets of your own.
-- **Drawings.** A dimensioned plan and elevations with an equipment list and coverage
-  table, ready to print to PDF.
+- **Drawings a crew can build from.** A dimensioned plan and elevations with doors and
+  windows, an equipment list, a set-out table of coordinates and aim points, a
+  planned-against-measured check once positions are surveyed, and an instrument schedule
+  (CSV), ready to print to PDF.
 - **Share.** One self-contained HTML file with the plan baked in: a collaborator
   double-clicks it and orbits the scene with nothing installed.
-- **FDS import.** Build a plan from an [FDS](https://pages.nist.gov/fds-smv/) input
-  file: walls, ceilings, obstructions, the burner and its heat release, doorways, and
-  the devices that correspond to real instruments.
+- **FDS both ways.** Build a plan from an [FDS](https://pages.nist.gov/fds-smv/) input
+  file (walls, ceilings, obstructions, the burner and its heat release curve, doorways,
+  and the devices that correspond to real instruments), and write the plan's
+  instruments back as `&DEVC` lines.
 - **FDS results playback.** Replay slices, boundary maps, Smoke3D and device histories
   of a completed simulation, including multi-gigabyte runs, read frame by frame.
-- **Linked test data.** Link videos to cameras and spreadsheets to burners and
-  instruments; plot a reconstruction's volume and surface area in the viewport.
+- **Measured and simulated data on the instruments.** Link a logger workbook, a CSV or
+  an FDS device file, map its columns to the instruments, and plot each instrument's
+  measured and simulated series against the plan's prediction.
+- **After setup.** Record each object's as-built position beside the planned one, and
+  start the next test of a series from the same rig.
 - **Reconstructed flame playback.** Play a visual-hull reconstruction (one voxel file
   per timestep) inside the layout, against the predicted flame.
-- **`fireplan` for Python.** Intrinsics and extrinsics in the OpenCV frame, the same
-  checks, nerfstudio export, FDS conversion and flame sequences.
+- **`fireplan` for Python.** Intrinsics and extrinsics in the OpenCV frame (planned or
+  as built), the same checks, instrument series, nerfstudio export, FDS conversion and
+  flame sequences.
 
 ## Download
 
@@ -102,8 +114,13 @@ and opening someone else's plan offers to adopt the preset it names.
 ### Drawing and Share
 
 **Drawing…** produces the dimensioned plan and elevations with an equipment list and
-coverage table, ready to print to PDF. **Share…** writes a copy of the single-file
-editor with the current plan baked in.
+coverage table, ready to print to PDF. Doors and windows are cut out of their walls and
+dimensioned, and a **Set-out** table gives every object's coordinates from the burner
+centre, its aim point, a camera's standoff and a gauge's facing in words ("toward -X,
+6° down"), in the plan's display unit: choose **ft-in** for feet and inches to the
+nearest 1/16". **Download schedule (CSV)** lists every gauge, bead, probe and camera with
+its position and the logger channel mapped to it, for wiring. **Share…** writes a copy
+of the single-file editor with the current plan baked in.
 
 ### Starting from an FDS model
 
@@ -174,6 +191,45 @@ snapshot travels inside the plan and shared HTML; originals stay external. See t
 [`linked-test.ftp.json`](fixtures/linked-files/linked-test.ftp.json) for a working
 example with a synthetic CSV and a short test-pattern video.
 
+### Measured and simulated data on the instruments
+
+**Test data…** links a file a test or a simulation produced: a data-logger workbook
+(`.xlsx`, including the raw logger sheet with a time column per channel and
+hand-processed sheets with several header rows), a CSV, or an FDS `_devc.csv` /
+`_hrr.csv`. It shows how the file was read, offers the ignition time written in the
+workbook's processed sheets, and maps columns to gauges, thermocouple beads, probes,
+gas points, load cells and burners. A gauge logged in volts takes its calibration
+constant from the channel name (`..._23.17kW/m2permV`), and an FDS run of a plan
+exported to FDS maps itself by device name. Selecting an instrument then plots its
+measured series (solid), its simulated series (dashed), the plan's prediction and the
+gauge's range, against seconds from ignition. The plan records the mapping, never the
+samples; **Share…** embeds them. See [docs/test-data-design.md](docs/test-data-design.md).
+
+### A fire that changes
+
+A burner's heat release rate can be a curve: **Curve** in its inspector makes one from
+t² growth (slow to ultra-fast), a table pasted from a spreadsheet, or a mapped HRR
+series, and an FDS import keeps the input's `RAMP_Q` or `TAU_Q`. Checks still judge the
+peak. A plan with a curve gets a fire clock on the playback bar that plays the predicted
+flame through it, and the instrument plots draw the prediction as a curve.
+
+### Writing the instruments back to FDS
+
+**Export to FDS…** writes the plan's gauges, thermocouple beads, velocity probes and gas
+sampling points as `&DEVC` lines, in the source FDS file's frame and under its device
+IDs when the plan came from an import. Wall-mounted gauges and surface thermocouples
+get their `IOR`. Geometry is not written: a model needs a mesh and surfaces the plan does
+not hold. FDS 6.9.1 accepts the result (`tools/check_fds_device_export.py`).
+
+### After setup: as built, and the next test
+
+**Record as built** in any object's inspector stores where it was actually set up,
+beside the planned position, and says how far off it is; **As built** in the toolbar
+shows the surveyed positions as ghosts, and the drawing adds a planned-against-measured
+table for sign-off. In Python, `cam.extrinsics(pose="best")` uses the surveyed pose.
+**Next test…** saves a copy for the next test of a series (the next test ID, the same
+rig) without the previous test's data.
+
 ### Playing back a reconstructed flame
 
 A reconstruction pipeline that turns the cameras' footage into a visual hull writes one
@@ -229,6 +285,8 @@ gauge = p.heat_flux_sensors[0]
 p.heat_flux_estimate(gauge)          # predicted incident kW/m2, and whether it is usable
 p.thermocouple_beads(p.thermocouples[0])   # each bead: flame / plume / outside, and its
                                            # predicted plume-centreline temperature
+p.series(gauge)             # measured and simulated series mapped to it (format 1.6)
+cam.extrinsics(pose="best") # the surveyed (as-built) pose when there is one
 ```
 
 Before reconstructing from a plan, check `intrinsics_source`. `nominal` means the
