@@ -608,6 +608,7 @@ about walls. The engineers' answers and their data settled the rest.
 Progress (2026-11-02): **Phase A is done** (format 1.5), with the camera presets of
 phase D. **Phase B is done** (format 1.6): readers, the model, the editor's sources,
 mapping and plots, sharing and the instrument schedule, checked on the engineers' own
-workbooks. Of **phase C** (format 1.7), the `&DEVC` export and the heat release rate
-curve's model and import are in; the curve editor and a fire clock, the new
-instrument types, as-built positions and test series are next.
+workbooks. Of **phase C** (format 1.7), the `&DEVC` export, the heat release rate
+curve (model, import, editor and fire clock) and the new instrument types are in;
+as-built positions and test series are next, then the rest of phase D (French and an
+accessibility pass).

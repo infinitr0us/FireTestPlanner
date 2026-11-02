@@ -30,10 +30,18 @@ Plan formats 1.5.0, 1.6.0 and 1.7.0.
   samples (format 1.6.0); **Share…** embeds them; **Download schedule (CSV)** in the
   drawing lists every instrument with its channel. In Python, `Plan.series(obj)`
   returns an instrument's series in seconds from ignition.
-- **A heat release rate curve on the burner** (format 1.7.0): time and kW points, kept
-  from an FDS `RAMP_Q` or `TAU_Q` on import, with t² growth and measured-series helpers.
-  Checks still judge the peak; predictions can be evaluated at any time, in the editor
-  and in Python (`burner.hrr_at(t)`, `heat_flux_estimate(g, t=...)`).
+- **A heat release rate curve on the burner** (format 1.7.0). The burner's **Curve**
+  control makes one from t² growth (slow to ultra-fast, peak, hold, decay), a table
+  pasted from a spreadsheet, or a measured HRR series; an FDS `RAMP_Q` or `TAU_Q` is
+  kept on import. Checks still judge the peak. A **fire clock** plays the predicted
+  cone through the curve even without a reconstructed flame, and the planned value in
+  the instrument plots becomes a curve. In Python, `burner.hrr_at(t)` and
+  `heat_flux_estimate(g, t=...)`.
+- **Velocity probes, gas sampling points and load cells** (format 1.7.0), with gauge
+  kinds for plate thermometers and thin-skin calorimeters: in the palette, the
+  inspector, the drawings, the schedule and as test-data targets; checks for a probe
+  that is not in an opening and a load cell with no fuel above it. FDS velocity and
+  gas-fraction devices import as these and export back.
 - **Line of sight.** Walls (with their doors and windows), ceilings, obstructions and
   hood skirts now block a view. A heat flux gauge's predicted flux is scaled by how
   much of the flame it can see, with a check when it sees none or only part; a
