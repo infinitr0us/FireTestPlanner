@@ -124,7 +124,7 @@ says how many files end part-way through a frame, a smoke index that runs ahead 
 data is cut to the frames present, and a CSV's partial last row is dropped with a
 warning. Nonmonotonic/restarted timelines are unsupported.
 
-Outputs the `.smv` names in a subfolder — FDS `RESULTS_DIR` — are read from there,
+Outputs the `.smv` names in a subfolder (FDS `RESULTS_DIR`) are read from there,
 on the desktop as in a browser folder pick. A path that would leave the case folder
 (`..`, a drive or an absolute path) skips that one output with a warning; the rest of
 the case still opens.

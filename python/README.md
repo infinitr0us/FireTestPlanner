@@ -43,9 +43,11 @@ for bead in p.thermocouple_beads(rake):
 ```
 
 Both are first-order estimates for sizing and placement, not measurements. The heat
-flux model assumes an unobstructed view and knows nothing about walls in the plan; the
-plume temperature is a centreline value quoted only above the mean flame tip. Details
-in [`../CONVENTIONS.md`](../CONVENTIONS.md) section 5b.
+flux is scaled by the gauge's line of sight to the flame past the walls, ceilings,
+obstructions and hood skirts in the plan (`estimate["visible_fraction"]`), and does
+not estimate radiation that arrives indirectly; the plume temperature is a centreline
+value quoted only above the mean flame tip. Details in
+[`../CONVENTIONS.md`](../CONVENTIONS.md) section 5b.
 
 ## Format versions
 
@@ -63,7 +65,7 @@ p.validate_schema("1.0.0")        # "would this still open in a 1.0 tool?" -- ra
 ## Before you reconstruct from a plan
 
 Check `cam.intrinsics_source`. `nominal` means the numbers are a plausible
-placeholder good enough to check framing and **not** good enough to reconstruct from —
+placeholder good enough to check framing and **not** good enough to reconstruct from.
 `cam.is_reconstruction_ready` is False for anything that has not been calibrated.
 `p.check()` reports these as `nominal-intrinsics` findings.
 

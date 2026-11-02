@@ -1,4 +1,4 @@
-# Reconstructed flame playback — design (M12, format 1.4)
+# Reconstructed flame playback: design (M12, format 1.4)
 
 Status: **implemented, 2026-09-19** (commits `4db780c`, `a21df3a` and the docs that
 followed). The open questions of the first draft were answered the same day and
@@ -9,8 +9,8 @@ given inline. `docs/flame-playback.md` is the usage guide; CONVENTIONS.md
 section 11 is the normative statement of the format.
 
 This is the last major feature in `ideas.md` and the milestone PLAN.md has carried as
-M8 since M0: *import reconstructed 3D flame; time sequence playback — blocked on
-format decision.* The NPZ contract below and CONVENTIONS.md section 11 define
+M8 since M0: *import reconstructed 3D flame; time sequence playback*, deferred as
+*blocked on format decision.* The NPZ contract below and CONVENTIONS.md section 11 define
 the format independently of any reconstruction implementation.
 
 ---
@@ -47,8 +47,8 @@ explain the storage and rendering choices; they do not describe today's fixture:
   200³ grid at 10 mm, 100 frames at 2 s, **up to 2.0 million voxels in one frame**,
   77.6 M over the run (~36 MB packed, ~48 MB of surface cubes). The design has to
   hold from 10⁴ to 10⁶⁺ voxels per frame.
-- Parsing all 80 NPZ files with no library — ZIP local headers + the browser's own
-  `DecompressionStream('deflate-raw')` + the `.npy` dict header — takes **100 ms** in
+- Parsing all 80 NPZ files with no library (ZIP local headers + the browser's own
+  `DecompressionStream('deflate-raw')` + the `.npy` dict header) takes **100 ms** in
   Node 22. WebView2 is Chromium, so the page reads the NPZ format
   directly and the exe still carries no numpy.
 
@@ -80,7 +80,7 @@ No measurements, statistics or reconstruction code were used to generate it.
 The coordinates are in the **reconstruction rig's frame**: Z-up, origin at the
 centre of the camera ring. In the fixture that coincides with the plan frame (x and y
 symmetric about 0, z from the floor up), and it should whenever the camera config
-came from `cam.extrinsics()` — but nothing enforces it, so the design carries a
+came from `cam.extrinsics()`. Nothing enforces it, though, so the design carries a
 correction (section 3) and checks (section 8) rather than an assumption.
 
 ## 2. Where it goes: integrated, not a second interface
@@ -90,7 +90,7 @@ viewport's bottom edge whenever the plan holds a flame sequence. No separate
 "review" window.
 
 The reason is what the feature is for. On its own the reconstruction is a blob; its
-value here is seeing it **in the layout** — against the hood the plume has to enter,
+value here is seeing it **in the layout**, against the hood the plume has to enter,
 inside the frustums of the cameras that produced it, beside the gauge that read
 50 kW/m² at 55 s. Three things then come free from how the viewport is built:
 
@@ -99,7 +99,7 @@ inside the frustums of the cameras that produced it, beside the gauge that read
   `LAYER_DEFAULT` therefore appears in the **picture-in-picture** with no new code:
   what the T650 saw at t = 55 s, to be held against the linked video of the same
   moment. The later video feature becomes "show the linked video in that frame at
-  the playhead" — measured against reconstructed from one viewpoint.
+  the playhead", which sets measured against reconstructed from one viewpoint.
 - The **plan, front and side views** show the hull in elevation with the predicted
   Heskestad cone over it: a measured flame height beside a predicted one, in the
   views the engineers already read.
@@ -115,8 +115,8 @@ the correlation on the observation is the comparison a thesis wants, and hiding 
 when the other appears would remove it.
 
 Two hazards of living in an editor, both handled: selecting the object attaches the
-gizmo (`syncSelection`), so an accidental drag would silently shift measured data —
-the object is created with **`display.locked: true`**, which the store already
+gizmo (`syncSelection`), so an accidental drag would silently shift measured data.
+The object is therefore created with **`display.locked: true`**, which the store already
 honours (the inspector's transform fields still work for a deliberate correction).
 And the transport must not be a store event: `main.ts`'s subscriber rebuilds the
 toolbar on any event it does not name, so the clock has its own subscription
@@ -160,7 +160,7 @@ knob for a rig frame that is not the plan frame, and it needs to be a thing in t
 outliner: hidden, shown, selected, inspected, deleted, listed. Two reconstructions
 of one test are two objects. And the 1.3 schema pins burner links to
 `kind: "spreadsheet"` with closed entries, so a new kind *on the burner* would make
-every 1.3 build refuse the file — whereas a new object *type* goes through the
+every 1.3 build refuse the file, whereas a new object *type* goes through the
 unknown-object path 1.1 and 1.2 already proved: `linkedFilesProblem` returns null
 for unknown types, the writer re-emits everything but `transform` and `display`
 verbatim, and the viewport draws a placeholder.
@@ -168,8 +168,8 @@ verbatim, and the viewport draws a placeholder.
 **Why the reference is a `linkedFiles` entry and not a bespoke `source.path`.** The
 first draft had `source.path`. `mapLinkedPaths` (web) and `for_destination`
 (Python) rebase **only** `linkedFiles[].path` on `LINK_TYPES` objects, so a second
-path-bearing field would have broken silently on the first Save As — the bug class
-M11 spent a release closing. Holding it as a link gives Relink, Show in folder,
+path-bearing field would have broken silently on the first Save As. That is the bug
+class M11 spent a release closing. Holding it as a link gives Relink, Show in folder,
 rebasing, the browser's basename-only semantics and the shell's `checked_path`
 for free (each extended to accept a directory for this kind), and the manifest
 lives on the link the way `plot` does, so relinking a different folder replaces it
@@ -179,7 +179,7 @@ What the file holds is **a reference and a manifest, never the voxels.** The pla
 the diffable product; a 40 MB base64 blob in it is not a diff anyone reads. The
 manifest is small, says what the plan expects ("80 frames, 0–395 s, 15.7 mm
 pitch"), lets a relinked folder be checked against what was linked, and carries
-enough — `bounds_m`, `grid` — for the checks in section 8 to run on the document
+enough (`bounds_m`, `grid`) for the checks in section 8 to run on the document
 alone, in both engines, with the data absent. Like a plot, a saved manifest keeps
 full supplied precision; geometry's 1 µm rounding does not apply to it.
 
@@ -187,7 +187,7 @@ Rules, extending CONVENTIONS §10:
 
 - `reconstructedFlame` joins `LINK_TYPES`; its links are `kind: "voxelSequence"`,
   `maxItems: 1`, and only they may carry `sequence`. `path` names a directory (or,
-  later, a packed file — section 10) and obeys every existing path rule.
+  later, a packed file, as section 10 describes) and obeys every existing path rule.
 - `frames` timestamps strictly increase; counts are non-negative integers. `bounds_m`
   is two `vec3`; `pitch_m` and `voxelSize_m` are positive; `resolution` is a
   positive integer.
@@ -195,8 +195,8 @@ Rules, extending CONVENTIONS §10:
   advisory, in `display` because that is what `display` is for: a 1.3 build keeps
   them (the writer emits known keys, then the rest) and ignoring them changes nothing.
 - `representation` is `"voxels"`, the only value; `timeOffset_s` is reserved for
-  clock synchronisation between the reconstruction timebase and the test clock —
-  the same question the reserved `camera.recording` is about — and is omitted at 0
+  clock synchronisation between the reconstruction timebase and the test clock,
+  the same question the reserved `camera.recording` is about, and is omitted at 0
   the way `zoomFactor` is omitted at 1.
 - Writer key order: object `id, type, name, transform, burnerId, representation,
   linkedFiles, display, notes`; link `id, kind, path, label, timeOffset_s, plot,
@@ -212,8 +212,8 @@ Rules, extending CONVENTIONS §10:
 
 ## 4. Loading: one reader for both shells
 
-`web/src/core/flame.ts` — pure, DOM-free, unit-tested, run in a **Web Worker** with
-transferred buffers so a large run does not freeze the page (Vite's
+`web/src/core/flame.ts` is pure, DOM-free and unit-tested, and runs in a **Web Worker**
+with transferred buffers so a large run does not freeze the page (Vite's
 `?worker&inline` keeps it inside the single-file build; verify that in the first
 spike):
 
@@ -226,14 +226,14 @@ spike):
   `resolution = round(pitch / (pitch − voxel_size))` (from the `linspace` identity;
   informational). Every frame is checked to sit on the lattice (residual < 1 % of
   pitch); one that does not fails the import with its name.
-- `packFrame(voxels, grid)` → `{ origin: [i,j,k], dims: [nx,ny,nz], bits }` —
-  bounding-box-cropped, bit-packed occupancy: the resident form (288,028 bytes
+- `packFrame(voxels, grid)` → `{ origin: [i,j,k], dims: [nx,ny,nz], bits }`, the
+  bounding-box-cropped, bit-packed occupancy that is the resident form (288,028 bytes
   including headers for the synthetic fixture; the historical large-run estimate
   was ~0.5 MB/frame).
 - `surfaceCells(frame)` → a `Uint8Array` (or `Uint16Array` when a box axis exceeds
   256) of bbox-local `(i, j, k)` triples for voxels with an empty 6-neighbour (the
-  box boundary counts as empty). 3 B per cube, 48 MB worst case for the big run —
-  and it is the render buffer directly (section 5).
+  box boundary counts as empty). 3 B per cube, 48 MB worst case for the big run.
+  It is also the render buffer directly (section 5).
 - `FlameSequence`: `grid`, `frames[]`, `bounds`, `frameAt(t)` (binary search; a
   frame **holds** until the next timestamp), `manifest()` → the `sequence` block.
 - Empty `(0, 3)` frames are legal and the fixture has them: count 0, no cubes.
@@ -255,20 +255,20 @@ evicted when `documentId` changes (the `cacheDocumentId` pattern).
 
 The original design estimated 0.1–0.3 s for its small run. For a 2 M-voxel run
 it estimated 10–25 s of
-inflating 4.8 GB of float64 and packing it, on every open — the case the packed
-form in section 10 exists for.
+inflating 4.8 GB of float64 and packing it, on every open, which is the case the
+packed form in section 10 exists for.
 
 ## 5. Rendering: surface voxels as instanced cubes
 
 Cubes are the honest representation of a visual hull: the blockiness *is* the
-resolution, and the argument `buildBurner` makes for the cone — it "should not read
-as solid geometry" — applies in reverse here. Points are cheaper but stop reading as
+resolution, and the argument `buildBurner` makes for the cone, that it "should not
+read as solid geometry", applies in reverse here. Points are cheaper but stop reading as
 a volume when zoomed; surface nets or marching cubes on a binary field imply
 sub-voxel precision the hull does not have (offer them later in `fireplan` with
 scikit-image for thesis figures, not in the page); volume ray-marching has no scalar
 to march.
 
-`web/src/scene/flame.ts` — a `FlameLayer` owning one mesh per flame object, in a
+`web/src/scene/flame.ts` defines a `FlameLayer` owning one mesh per flame object, in a
 `flameRoot` beside `measureRoot` that **`rebuild()` never disposes**: `rebuild()`
 runs on every edit and disposing 48 MB of instance buffers per keystroke would
 stall. The layer re-syncs transform, visibility, opacity and colour mode from the
@@ -280,12 +280,12 @@ or the `documentId` changes.
   uniforms `origin`, `pitch`, `zRange`, `opacity`, `colorMode`. The vertex shader
   places the cube at `origin + (ijk + 0.5) × pitch`. A frame switch is
   `setAttribute('ijk', frames[n])` plus `instanceCount`: no allocation, no upload.
-  Not `InstancedMesh`: 64 B per instance, and its `computeBoundingBox` walks every
-  instance — which `tick()` triggers through `selectionBox.update()` every frame
-  while the object is selected.
+  Not `InstancedMesh`: 64 B per instance, and its `computeBoundingBox`, which
+  `tick()` triggers through `selectionBox.update()` every frame while the object is
+  selected, walks every instance.
 - `geometry.boundingBox` / `boundingSphere` set once from the manifest bounds;
   `raycast` overridden to a no-op; a `colorWrite: false` bounding-box proxy makes
-  `pick()` work. `castShadow = false` — a flame does not cast a shadow, and 10⁶
+  `pick()` work. `castShadow = false`, because a flame does not cast a shadow and 10⁶
   instances in the shadow pass would cost for a wrong picture.
 - Colour: **height ramp, blue → yellow → red**, on a **fixed scale over the
   sequence's z-range** with a legend in the bar. A per-frame ramp is a rank,
@@ -301,7 +301,7 @@ or the `documentId` changes.
 
 ## 6. Time: one clock, three followers
 
-`web/src/state/playhead.ts` — session state, deliberately not in the store (not
+`web/src/state/playhead.ts` holds session state, deliberately not in the store (not
 undoable, not in the file; the reasoning behind `setDisplayUnit` not being an edit):
 
 ```
@@ -313,19 +313,20 @@ subscribe(fn)   seek(t)   step(±1)   play()  pause()
 - Built in `main.ts` and handed to the `FlameLayer`, the `ReconstructionPlotPanel`
   and the bar. `Viewport.tick()` advances it from `performance.now()` deltas while
   playing; each flame maps `time_s` to the last frame with `t ≤ time_s` and calls
-  `setFrame` only when the index changes — no per-frame work while a 5 s frame is
-  held.
+  `setFrame` only when the index changes, so there is no per-frame work while a 5 s
+  frame is held.
 - **Hold, do not interpolate.** Binary hulls 5 s apart cannot be morphed honestly.
   This is ParaView's *Snap to TimeSteps* mode: transport in seconds, frames held to
-  the next timestep. Smokeview's bottom time bar gives the layout — `t = 55.0 s` is
-  the primary readout, `frame 12/80 · 4,758 cubes` secondary (surface cells drawn).
+  the next timestep. Smokeview's bottom time bar gives the layout, with `t = 55.0 s`
+  as the primary readout and `frame 12/80 · 4,758 cubes` as the secondary one
+  (surface cells drawn).
 - Real time at ×1 makes the fixture a 6.6-minute watch and one frame every 5 s; the
   default is **×10**, and ×60 gives 12 fps on 5 s data and 30 fps on 2 s data, which
   covers the flicker study without a separate frames-per-second mode (dropped from
   the first draft: it was a second way to say the same thing).
 - The **playback bar** (`web/src/ui/playback-bar.ts`): ⏮ ⏪ ▶/⏸ ⏩ ⏭, a scrubber that
   snaps to frames, the readout, speed, loop, the colour legend, the snapshot button,
-  and the loading/error line. Keys: Space, `,` / `.`, Home / End — all free today.
+  and the loading/error line. Keys: Space, `,` / `.`, Home / End. All are free today.
   Hidden when no flame object exists, like the plot panel.
 - The **plot panel** follows the clock when a sequence is present (cursor at the last
   sample with `t ≤ time_s`) and seeks it when its slider moves (`time_s =
@@ -350,7 +351,7 @@ subscribe(fn)   seek(t)   step(±1)   play()  pause()
 - **Toolbar**: the **Flame** toggle becomes **Predicted**.
 - **Drawing export**: draws nothing for the flame in v1 and says so under Known
   limitations; the equipment list names the object. The addition worth making later
-  is a time-invariant **envelope** — the union of all frames — as a dashed outline
+  is a time-invariant **envelope**, the union of all frames, as a dashed outline
   beside the Heskestad cone in the elevations: prediction against measurement on a
   sheet.
 
@@ -362,7 +363,7 @@ On the document alone, both engines:
 |---|---|---|
 | `flame-below-floor` | warning | Transformed `bounds_m` reaches more than one pitch below `fuelSurfaceZM` of its burner: a rig-frame offset, not a flame under the pan |
 | `flame-off-burner` | warning | The hull's plan-view centre is further than `max(D_eff, 0.25 m)` from its burner: the rig frame is probably not the plan frame; correct the transform |
-| `flame-csv-mismatch` | info | The burner's `plot` and this manifest disagree — timestamps not the same set, or a sample's `round(volume_m3 / voxelSize_m³)` off by more than one from the frame's count: the CSV is not from this run |
+| `flame-csv-mismatch` | info | The burner's `plot` and this manifest disagree (timestamps not the same set, or a sample's `round(volume_m3 / voxelSize_m³)` off by more than one from the frame's count): the CSV is not from this run |
 
 Session-side, after a load (desktop only, where the folder can be read):
 
@@ -391,8 +392,8 @@ plan.add_reconstructed_flame("reconstruction/voxels")   # scans, writes the link
 ```
 
 `scan_folder()` computes the same manifest the editor writes, and a parity test holds
-the two to identical output on the fixture — the discipline of the FDS importer and
-the CSV reader. Schema 1.4 validation, `required_version`, writer key order, the
+the two to identical output on the fixture, the same discipline the FDS importer and
+the CSV reader follow. Schema 1.4 validation, `required_version`, writer key order, the
 `LINK_TYPES` extension and Save-As rebasing all mirror the TypeScript side.
 
 ## 10. The packed form: Share payload, and the large-run path
@@ -405,7 +406,7 @@ gzipped. It is in v1 because
 **Share needs it**: the exporter embeds it, base64, in a second script block next to
 the plan (whose link paths it already strips), under a **25 MB cap on the gzipped
 payload**. Over the cap the export says so before writing, and the viewer shows the
-timeline with "sequence not included — open the plan in the desktop app". The saved
+timeline with "sequence not included; open the plan in the desktop app". The saved
 `.ftp.json` never carries it. The numpy side writes the same bytes, held
 byte-identical by a parity test, so `python -m fireplan.flame pack voxels/ -o
 run3.flame` costs a CLI wrapper.
@@ -433,12 +434,12 @@ fixture's scale is the typical one and loads in well under a second from NPZ:
 
 | Phase | Contents | Held by |
 |---|---|---|
-| **A — Format** | Types, schema 1.4.0 + mirror, writer orders, the version tier, `LINK_TYPES` and the per-kind rule, `display` extension, `boundsPoints`; `fixtures/flame/` plan | Byte-identical parity from both writers; forward compatibility (a 1.3-style round-trip keeps the object and its extra display keys verbatim); Save-As rebasing of the new kind through `path-cases.json`; schema refusals |
-| **B — Codec** | `flame.ts` reader (NPZ/NPY, timestamps, grid inference, packing, surface cells, manifest) and `flame-pack.ts`; `fireplan/flame.py` with `scan_folder` and the same pack writer | Shared JSON cases for pitch inference (including the `res−1` trap), filename timestamps, empty frames, boxes over 256; manifest and packed bytes identical between engines on the 80 fixture frames; surface counts pinned against numpy's 6-neighbour test |
-| **C — Scene and clock** | `FlameLayer`, `Playhead`, playback bar, plot linkage, snapshot | Vitest for the `t ≤` mapping, hold, loop, speed, range union, and for the clock emitting no store events; the bar's DOM with a stub sequence. WebGL is not mocked: verified in the browser and logged in PLAN.md as M11 was |
-| **D — Shells** | Browser folder picker; shell routes (folder dialog, list, frame bytes) with confinement; inspector section; relink and refresh; checks; outliner | `test_shell.py` against a temp folder of tiny NPZs numpy writes in the test, with dialogs mocked; check cases in both engines |
-| **E — Share, Example and docs** | Embedding with the cap; the Example plan's bundled flame; `docs/flame-playback.md`; README, PLAN (M8 → done), CONVENTIONS §11; exe rebuild and `--selftest`; browser verification with the fixture, including the PIP from the GoPro at t = 55 s | Export tests (embedded under the cap, absent over it, never in a saved plan); the Example loads its flame with no folder |
-| **F — Later** | Packed-file source and cache (10 a/b) if not pulled forward; envelope outline in the drawing; video as a clock follower; measured-vs-predicted `L_f` from the CSV; surface-nets export in `fireplan` | — |
+| **A. Format** | Types, schema 1.4.0 + mirror, writer orders, the version tier, `LINK_TYPES` and the per-kind rule, `display` extension, `boundsPoints`; `fixtures/flame/` plan | Byte-identical parity from both writers; forward compatibility (a 1.3-style round-trip keeps the object and its extra display keys verbatim); Save-As rebasing of the new kind through `path-cases.json`; schema refusals |
+| **B. Codec** | `flame.ts` reader (NPZ/NPY, timestamps, grid inference, packing, surface cells, manifest) and `flame-pack.ts`; `fireplan/flame.py` with `scan_folder` and the same pack writer | Shared JSON cases for pitch inference (including the `res−1` trap), filename timestamps, empty frames, boxes over 256; manifest and packed bytes identical between engines on the 80 fixture frames; surface counts pinned against numpy's 6-neighbour test |
+| **C. Scene and clock** | `FlameLayer`, `Playhead`, playback bar, plot linkage, snapshot | Vitest for the `t ≤` mapping, hold, loop, speed, range union, and for the clock emitting no store events; the bar's DOM with a stub sequence. WebGL is not mocked: verified in the browser and logged in PLAN.md as M11 was |
+| **D. Shells** | Browser folder picker; shell routes (folder dialog, list, frame bytes) with confinement; inspector section; relink and refresh; checks; outliner | `test_shell.py` against a temp folder of tiny NPZs numpy writes in the test, with dialogs mocked; check cases in both engines |
+| **E. Share, Example and docs** | Embedding with the cap; the Example plan's bundled flame; `docs/flame-playback.md`; README, PLAN (M8 → done), CONVENTIONS §11; exe rebuild and `--selftest`; browser verification with the fixture, including the PIP from the GoPro at t = 55 s | Export tests (embedded under the cap, absent over it, never in a saved plan); the Example loads its flame with no folder |
+| **F. Later** | Packed-file source and cache (10 a/b) if not pulled forward; envelope outline in the drawing; video as a clock follower; measured-vs-predicted `L_f` from the CSV; surface-nets export in `fireplan` | — |
 
 ## 12. Decisions
 
@@ -452,7 +453,7 @@ The first draft ended in eight open questions. They were answered on 2026-09-19:
    camera config derived from the plan this tool wrote (`cam.extrinsics()`). The
    object's transform therefore stays a rarely-touched correction, the two geometric
    checks in section 8 are the safety net, and there is no "centre on burner" action.
-3. **Integrated playback** and **reference-only plan files** — confirmed.
+3. **Integrated playback** and **reference-only plan files** were confirmed.
 4. **Colour and speed** were left to this document: the height ramp on a fixed
    sequence-wide scale, opaque, ×10, hold-until-next-frame.
 5. **Fixtures live** in `fixtures/flame/`: synthetic `voxels/`, matching
@@ -472,14 +473,15 @@ The first draft ended in eight open questions. They were answered on 2026-09-19:
   frames took a tenth of a second, and a worker inside the single-file build was a spike not
   worth making before a run that needs it exists. PLAN.md lists it as a limitation.
 - **The embedded payload rides on the link**, as `linkedFiles[].embedded`, not on a
-  `source.embedded` — there is no `source` block, per section 3's own revision.
+  `source.embedded`. There is no `source` block, per section 3's own revision.
 - **One instance buffer per flame, refilled on a frame switch**, rather than one
   attribute per frame resident on the GPU (section 5). Three.js frees a geometry's
   buffers when the geometry is disposed and never frees a swapped-out attribute's,
   so per-frame attributes would have leaked GPU memory on every sequence change.
   Six bytes a cube refilled per switch costs nothing at any scale seen.
 - **The clock applies frames synchronously on its own event**, not from the render
-  loop, so the bar's readout — registered after the viewport — never lags a step.
+  loop, so the bar's readout, which is registered after the viewport, never lags a
+  step.
 - **The transport keys leave a focused button alone.** Space on the toolbar's
   Example button activated it *and* toggled playback, which reloaded the plan.
 - **No frames-per-second mode** (section 6 already dropped it), and no
@@ -499,9 +501,9 @@ seams the build left:
   for any burner plot the moment any flame is loaded.
 - **The flame proxy is selection-only.** The measure tool skips it and lands on the
   room behind; it is the envelope of every frame, not a surface.
-- **The packed reader refuses what the writer could not have written** — count
+- **The packed reader refuses what the writer could not have written** (count
   against set bits, bytes against the box, bits past the last cell, boxes outside
-  the bounds, frames out of order — in both engines with one message, and both
+  the bounds, frames out of order) in both engines with one message, and both
   writers refuse a box axis past the u16 field rather than one wrapping it.
 - **Drift detection compares the whole manifest**, bounds and resolution included.
 - **Share serialises the plan before it compresses the frames** and aborts if the

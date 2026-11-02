@@ -5,6 +5,21 @@ while the version is 0.x, a minor release may change behaviour. The plan file fo
 has its own version (`fire-test-plan` 1.0.0 to 1.4.0, one JSON Schema each in `schema/`),
 and a plan written by any release opens in every later one.
 
+## [Unreleased]
+
+### Added
+- **Line of sight.** Walls (with their doors and windows), ceilings, obstructions and
+  hood skirts now block a view. A heat flux gauge's predicted flux is scaled by how
+  much of the flame it can see, with a check when it sees none or only part; a
+  camera's coverage shows how much of the flame it frames is unobstructed, and a
+  check names what is in the way.
+
+### Changed
+- The editor's left rail keeps **Checks** on screen on a laptop (1280 × 720): the
+  palette, the object list and the checks share the height and each scrolls its own
+  contents. **From FDS** and the help for adding a camera preset fold away until
+  needed.
+
 ## [0.7.0] - 2026-10-18
 
 The first public release.

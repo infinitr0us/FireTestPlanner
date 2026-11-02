@@ -355,11 +355,13 @@ is invisible until someone works the arithmetic — or opens the plan.
   `js_api` bound to this page the WebView2 message channel never came up; see
   `python/shell/README.md`. The HTTP bridge is also the right shape for Phase 2.
 - **Measurements are not saved.** The measure tool is a ruler, not an annotation.
-- **The heat flux model assumes an unobstructed view.** It is a point source at
-  mid-flame height and knows nothing about the walls in the plan, so a gauge behind
-  one still reads a full flux. Shape factors and shadowing are out of scope. It is
-  also far-field only: inside two effective diameters it is an order of magnitude,
-  and says so.
+- **Shadowing is by line of sight, not by view factor.** Since M15 a gauge's flux is
+  scaled by the share of nine flame centreline samples it can see past walls,
+  ceilings, obstructions and hood skirts, and a camera reports the share of the
+  flame it frames that is hidden. That is a sampled visibility, not a configuration
+  factor, and nothing estimates radiation that arrives indirectly (off a hot wall or
+  a smoke layer). The flux model is also far-field only: inside two effective
+  diameters it is an order of magnitude, and says so.
 - **Plume temperatures are centreline values**, quoted only above the mean flame tip.
   A bead inside the envelope but off the axis reads lower than the figure shown, and
   nothing here corrects a bare bead for radiation error or thermal lag.
