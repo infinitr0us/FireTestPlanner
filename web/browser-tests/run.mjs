@@ -352,6 +352,32 @@ try {
       && getComputedStyle(table.tHead).display==='table-header-group'
       && table.scrollWidth<=table.clientWidth+1;
   })()`));
+  // Capture the actual download Blob while the Example drawing is open.
+  await evaluate(`(() => {
+    window.__scheduleCreateUrl = URL.createObjectURL;
+    window.__scheduleBlob = null;
+    URL.createObjectURL = function(blob) {
+      if (blob.type.startsWith('text/csv')) window.__scheduleBlob = blob;
+      return window.__scheduleCreateUrl.call(URL, blob);
+    };
+  })()`);
+  try {
+    await click('[...document.querySelectorAll(".report-overlay__bar button")].find(b=>b.textContent==="Download schedule (CSV)")');
+    await waitFor(() => evaluate('Boolean(window.__scheduleBlob)'), 'instrument schedule download');
+    const schedule = await evaluate(`(async () => {
+      const blob = window.__scheduleBlob;
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      return { text: await blob.text(), bom: Array.from(bytes.slice(0, 3)), type: blob.type };
+    })()`);
+    check('Example schedule downloads a UTF-8 BOM CSV with all instruments and fractional coordinates',
+      JSON.stringify(schedule.bom) === '[239,187,191]' && schedule.type.startsWith('text/csv')
+      && schedule.text.includes('Height (ft-in)') && schedule.text.includes('FLIR A8303sc MWIR')
+      && schedule.text.includes('East wall rake_4') && schedule.text.includes('Plume rake_3')
+      && schedule.text.includes('toward') && schedule.text.includes('""')
+      && schedule.text.split('\r\n').length === 15);
+  } finally {
+    await evaluate('URL.createObjectURL = window.__scheduleCreateUrl; delete window.__scheduleCreateUrl; delete window.__scheduleBlob;');
+  }
   await evaluate('document.querySelector(".set-out").scrollIntoView({block:"center"})');
   await screenshot('set-out-ft-in');
   await click('[...document.querySelectorAll(".report-overlay__bar button")].find(b=>b.textContent==="Close")');

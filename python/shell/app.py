@@ -34,6 +34,8 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import datetime, timezone
+import stat
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional
@@ -53,6 +55,7 @@ PLAN_FILTER = ("Fire test plan (*.ftp.json;*.json)", "All files (*.*)")
 FDS_FILTER = ("FDS input (*.fds)", "All files (*.*)")
 HTML_FILTER = ("Web page (*.html)", "All files (*.*)")
 MAX_BODY_BYTES = 256 * 1024 * 1024  # a plan with an embedded viewer can be large
+MAX_TEST_DATA_BYTES = 64 * 1024 * 1024
 #: What the native close prompt says. pywebview shows it only while the page has
 #: reported unsaved changes (`Shell.set_dirty` flips `confirm_close`).
 CLOSE_PROMPT = "This plan has unsaved changes. Close the window and discard them?"
@@ -605,6 +608,15 @@ class Shell:
         error = self._write(path, text)
         return {"error": error} if error else {"path": path}
 
+    def save_csv(self, text: str, suggested_name: str) -> Optional[Dict[str, str]]:
+        path = self._ask_save(suggested_name, ("CSV table (*.csv)", "All files (*.*)"))
+        if not path:
+            return None
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+        error = self._write(path, text)
+        return {"error": error} if error else {"path": path}
+
     def save_results_png(self, data_url: Any) -> Optional[Dict[str, str]]:
         if not isinstance(data_url, str) or not data_url.startswith('data:image/png;base64,') or len(data_url) > 48 * 1024 * 1024:
             return {"error": "Invalid or oversized PNG snapshot."}
@@ -812,6 +824,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json(self.shell.save_html(body.get("html", ""), body.get("name", "page.html")))
             elif route == "/api/save-fds":
                 self._send_json(self.shell.save_fds(body.get("text", ""), body.get("name", "devices.fds")))
+            elif route == "/api/save-csv":
+                self._send_json(self.shell.save_csv(body.get("text", ""), body.get("name", "schedule.csv")))
             elif route == "/api/presets":
                 self._send_json(self.shell.save_camera_presets(body.get("presets")))
             else:
@@ -831,12 +845,45 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json(self.shell.camera_presets())
             elif route == "/api/flame/frame":
                 self._send_flame_frame()
+            elif route == "/api/test-data/file":
+                self._send_test_data_file()
             elif route == "/api/results/read":
                 self._send_result_range()
             else:
                 self._send_json({"error": "unknown route"}, 404)
             return
         super().do_GET()
+
+    def _send_test_data_file(self) -> None:
+        """Authenticated, bounded file read. The editor defers network paths until
+        Load data, using the same isNetworkPath predicate as flame sequences."""
+        path = (parse_qs(urlparse(self.path).query).get("path") or [""])[0]
+        try:
+            path = linked_files.checked_path(path, "spreadsheet")
+            if os.path.splitext(path)[1].lower() not in (".xlsx", ".xlsm", ".csv", ".tsv", ".txt"):
+                raise ValueError("Choose an .xlsx, .xlsm, .csv, .tsv or .txt file.")
+            # Check before allocating and bound the read too, in case the file grows.
+            info = os.stat(path)
+            if not stat.S_ISREG(info.st_mode):
+                raise ValueError("Test data must be a regular file.")
+            if info.st_size > MAX_TEST_DATA_BYTES:
+                raise ValueError("Test data file exceeds the 64 MiB limit.")
+            with open(path, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                data = stream.read(MAX_TEST_DATA_BYTES + 1)
+            if len(data) > MAX_TEST_DATA_BYTES:
+                raise ValueError("Test data file exceeds the 64 MiB limit.")
+            modified = datetime.fromtimestamp(info.st_mtime, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        except (OSError, ValueError, TypeError) as exc:
+            self._send_json({"error": str(exc)}, 404 if isinstance(exc, FileNotFoundError) else 400)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-File-Modified", modified)
+        self.end_headers()
+        self.wfile.write(data)
 
     def _send_result_range(self) -> None:
         query = parse_qs(urlparse(self.path).query)

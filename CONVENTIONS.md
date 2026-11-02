@@ -994,7 +994,8 @@ with `kind: "spreadsheet"`. It may carry `label` and the reserved link-level
 `timeOffset_s`, but no `plot` or `sequence`: a source stores references and a manifest,
 never samples. Source-level `timeOffset_s` alone controls its clock. Paths resolve
 relative to the plan and rebase on Save As in both engines; shared pages strip
-private directories to a basename. Reading is explicit. A browser needs reselection.
+private directories to a basename. The desktop editor queues local reads after
+opening a plan; network paths wait for explicit Load data. A browser needs reselection.
 
 **The saved layout reproduces the read.** `table` has `sheet` (a non-empty workbook
 sheet name, or null for delimited text), `shape` (`paired-time`, `processed`, `fds`
@@ -1067,4 +1068,7 @@ then each interior bucket's minimum and maximum in original time order, within
 partition sample indices equally; ties keep the first occurrence. Budgets must be
 integers of at least 2, and an odd budget may leave one slot unused. Only finite
 samples at strictly increasing times are accepted. This helper does not change
-stored data, and embedded test-data series and editor plots are deferred.
+stored data. Shared pages carry these decimated series in an HTML-only
+`embeddedTestData` block, removed before document validation and never written to
+a plan. The session and sharing APIs are documented in
+`docs/test-data-design.md` under Editor plumbing; editor plots are deferred.

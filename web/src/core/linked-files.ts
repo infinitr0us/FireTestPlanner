@@ -12,7 +12,7 @@ export const linkKindFor = (type: string): LinkedFileKind =>
   type === 'camera' ? 'video' : type === 'reconstructedFlame' ? 'voxelSequence' : 'spreadsheet';
 /** A flame has one data source; the others collect runs and recordings. */
 export const maxLinksFor = (type: string): number => (type === 'reconstructedFlame' ? 1 : 100);
-export const SPREADSHEET_EXTENSIONS = ['csv', 'tsv', 'xlsx', 'xls', 'ods'];
+export const SPREADSHEET_EXTENSIONS = ['csv', 'tsv', 'txt', 'xlsx', 'xlsm', 'xls', 'ods'];
 export const VIDEO_EXTENSIONS = ['mp4', 'm4v', 'mov', 'avi', 'mkv', 'wmv', 'webm', 'mpg', 'mpeg', 'mts', 'm2ts'];
 export const canLinkFiles = (obj: PlanObject): boolean => LINK_TYPES.includes(obj.type);
 export const fileName = (path: string): string => path.split(/[\\/]/).pop() || path;

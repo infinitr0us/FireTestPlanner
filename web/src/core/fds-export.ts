@@ -18,19 +18,10 @@ function importedBeadIds(name: string, count: number): string[] | undefined {
   return Array.from({ length: count }, (_, i) => safeId(`${match[1]}${first + BigInt(i)}`));
 }
 
-export function devicesToFds(doc: PlanDocument): string {
-  const offset = doc.meta?.source?.originOffset_m ?? [0, 0, 0];
-  const imported = doc.meta?.source?.tool === 'FDS';
-  const lines = [
-    `! Plan: ${oneLine(doc.meta?.title ?? 'Untitled')}`,
-    `! Test ID: ${oneLine(doc.meta?.testId ?? '(none)')}`,
-    '! Instruments only: no geometry, mesh, surfaces or reactions',
-    imported ? "! coordinates in the source FDS file's frame"
-      : '! plan frame: origin at the burner centre at floor level',
-    '! Written by FireTestPlanner',
-  ];
-  const props = new Map<number, string>();
-  const devices: string[] = [];
+/** The `&DEVC` IDs the export gives each gauge and each bead, keyed by object id (one
+ *  per bead, in bead order). The test data session suggests mappings from these, so a
+ *  run's `_devc.csv` maps to the instruments by exactly the names this file wrote. */
+export function exportedDeviceIds(doc: PlanDocument): Map<string, string[]> {
   const taken = new Set<string>();
   const bases = new Set<string>();
   const unique = (base: string, count: number, importedIds?: string[]): string[] => {
@@ -47,12 +38,38 @@ export function devicesToFds(doc: PlanDocument): string {
       suffix += 1;
     }
   };
-  const xyz = (p: Vec3): string => p.map((v, i) => metres(v + offset[i])).join(',');
+  const out = new Map<string, string[]>();
   for (const obj of doc.objects) {
     if (!isHeatFluxSensor(obj) && !isThermocouple(obj)) continue;
     const base = safeId(obj.name || obj.id);
+    if (isHeatFluxSensor(obj)) out.set(obj.id, unique(base, 1));
+    else {
+      const count = beadPositions(obj).length;
+      out.set(obj.id, unique(base, count, importedBeadIds(obj.name ?? '', count)));
+    }
+  }
+  return out;
+}
+
+export function devicesToFds(doc: PlanDocument): string {
+  const offset = doc.meta?.source?.originOffset_m ?? [0, 0, 0];
+  const imported = doc.meta?.source?.tool === 'FDS';
+  const lines = [
+    `! Plan: ${oneLine(doc.meta?.title ?? 'Untitled')}`,
+    `! Test ID: ${oneLine(doc.meta?.testId ?? '(none)')}`,
+    '! Instruments only: no geometry, mesh, surfaces or reactions',
+    imported ? "! coordinates in the source FDS file's frame"
+      : '! plan frame: origin at the burner centre at floor level',
+    '! Written by FireTestPlanner',
+  ];
+  const props = new Map<number, string>();
+  const devices: string[] = [];
+  const idsOf = exportedDeviceIds(doc);
+  const xyz = (p: Vec3): string => p.map((v, i) => metres(v + offset[i])).join(',');
+  for (const obj of doc.objects) {
+    if (!isHeatFluxSensor(obj) && !isThermocouple(obj)) continue;
     if (isHeatFluxSensor(obj)) {
-      const [id] = unique(base, 1);
+      const [id] = idsOf.get(obj.id)!;
       const normal = normalize(gaugeNormal(obj));
       const ior = mountingIor(doc, positionOf(obj), normal);
       const quantity = ior === null ? 'RADIATIVE HEAT FLUX GAS' : 'GAUGE HEAT FLUX';
@@ -66,7 +83,7 @@ export function devicesToFds(doc: PlanDocument): string {
       devices.push(`&DEVC ID='${id}', XYZ=${xyz(positionOf(obj))}, QUANTITY='${quantity}', ${facing} /`);
     } else {
       const beads = beadPositions(obj);
-      const ids = unique(base, beads.length, importedBeadIds(obj.name ?? '', beads.length));
+      const ids = idsOf.get(obj.id)!;
       const diameter = obj.thermocouple?.beadDiameter_mm;
       const surface = obj.mount?.type === 'wall' || obj.mount?.type === 'ceiling';
       beads.forEach((bead, i) => {

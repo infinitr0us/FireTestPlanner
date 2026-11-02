@@ -10,6 +10,8 @@ import { readNamelist } from '../core/namelist';
 import type { Issue, LinkedFileKind } from '../core/types';
 import { mapLinkedPaths } from './link-paths';
 import { LINK_TYPES, fileName } from '../core/linked-files';
+import type { TestDataBytes } from './test-data-sources';
+import type { TestDataPayload } from './test-data-embed';
 
 export interface PickedLinkedFile { path: string; text?: string; warning?: string; file?: File }
 
@@ -52,6 +54,8 @@ export interface ShellBridge {
   ): Promise<SavedPlan | null>;
   saveHtml(html: string, suggestedName: string): Promise<string | null>;
   saveFds(text: string, suggestedName: string): Promise<string | null>;
+  saveCsv(text: string, suggestedName: string): Promise<string | null>;
+  readTestDataFile(path: string): Promise<TestDataBytes>;
   recentFiles(): Promise<string[]>;
   /** A plan from the recent list. Rejects with the shell's reason otherwise. */
   openRecent(path: string): Promise<OpenedPlan | null>;
@@ -161,6 +165,18 @@ export function connectShell(onReady: () => void): void {
       call<SaveResult>('/api/save-html', { html, name }).then((r) => unwrapSave(r)?.path ?? null),
     saveFds: (text, name) =>
       call<SaveResult>('/api/save-fds', { text, name }).then((r) => unwrapSave(r)?.path ?? null),
+    saveCsv: (text, name) =>
+      call<SaveResult>('/api/save-csv', { text, name }).then((r) => unwrapSave(r)?.path ?? null),
+    readTestDataFile: async (path) => {
+      const response = await fetch(`/api/test-data/file?${new URLSearchParams({ path })}`, {
+        headers: { 'X-Shell-Token': shellToken ?? '' }, cache: 'no-store',
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(body?.error ?? `Could not read test data: HTTP ${response.status}.`);
+      }
+      return { bytes: new Uint8Array(await response.arrayBuffer()), modified: response.headers.get('X-File-Modified') };
+    },
     recentFiles: () => call<string[]>('/api/recent').then((r) => (Array.isArray(r) ? r : [])),
     openRecent: async (path) => {
       const result = await call<{ path: string; text: string; token?: unknown; error?: string } | null>(
@@ -564,13 +580,15 @@ export type EmbeddedFlames = Map<string, string>;
 
 export const embeddedFlameKey = (objectId: string, linkId: string): string => `${objectId}/${linkId}`;
 
-export function embedPlanInHtml(boot: string, planJson: string, title: string, flames: EmbeddedFlames = new Map()): string {
+export function embedPlanInHtml(boot: string, planJson: string, title: string, flames: EmbeddedFlames = new Map(), testData?: TestDataPayload): string {
   // A shared viewer cannot use desktop directories. Keep only attachment names,
   // labels and snapshots, including for cross-drive, UNC and relative paths.
   // Every object's links, not only the types this build knows: an object from a
   // newer format carries its links the same way, and its directories are no more
   // the recipient's business than a camera's.
   const shared = JSON.parse(planJson);
+  delete shared.embeddedTestData;
+  if (testData) shared.embeddedTestData = testData;
   for (const obj of shared.objects ?? []) {
     if (!Array.isArray(obj?.linkedFiles)) continue;
     for (const link of obj.linkedFiles) {
@@ -603,9 +621,9 @@ export function embedPlanInHtml(boot: string, planJson: string, title: string, f
  * the whole application inline. A split dev build produces a page that cannot find
  * its own assets, so the caller warns instead.
  */
-export function buildShareableHtml(planJson: string, title: string, flames?: EmbeddedFlames): string {
+export function buildShareableHtml(planJson: string, title: string, flames?: EmbeddedFlames, testData?: TestDataPayload): string {
   if (!bootHtml) throw new Error('Boot HTML was never captured');
-  return embedPlanInHtml(bootHtml, planJson, title, flames);
+  return embedPlanInHtml(bootHtml, planJson, title, flames, testData);
 }
 
 /**
@@ -641,6 +659,13 @@ export async function saveShareableHtml(html: string, suggestedName: string): Pr
   const bridge = shell();
   if (bridge) return bridge.saveHtml(html, suggestedName);
   download(new Blob([html], { type: 'text/html' }), suggestedName);
+  return suggestedName;
+}
+
+export async function saveScheduleCsv(text: string, suggestedName: string): Promise<string | null> {
+  const bridge = shell();
+  if (bridge) return bridge.saveCsv(text, suggestedName);
+  download(new Blob([text], { type: 'text/csv;charset=utf-8' }), suggestedName);
   return suggestedName;
 }
 

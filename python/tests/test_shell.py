@@ -860,3 +860,56 @@ def test_an_include_through_a_junction_to_another_drive_is_refused_not_a_crash(t
     monkeypatch.setattr(shell_app.os.path, "commonpath", other_drive)
     answer = shell.read_fds_include("geometry/walls.fds")
     assert "text" not in answer and "folder" in answer["error"]
+
+
+# -- measured test data and the instrument schedule -------------------------
+
+@pytest.mark.parametrize("suffix", [".csv", ".tsv", ".txt", ".xlsx", ".xlsm"])
+def test_test_data_route_auth_bytes_and_missing_file(server, tmp_path, suffix):
+    from urllib.parse import urlencode
+    _, _, base, _ = server
+    path = tmp_path / ("readings" + suffix)
+    raw = b"Time,TC\r\n0,20\r\n"
+    path.write_bytes(raw)
+    route = "/api/test-data/file?" + urlencode({"path": str(path)})
+    for token in (None, "wrong-token"):
+        with pytest.raises(urllib.error.HTTPError) as error:
+            request(base, route, token)
+        assert error.value.code == 403
+    req = urllib.request.Request(base + route, headers={"X-Shell-Token": "test-token"})
+    with urllib.request.urlopen(req, timeout=10) as response:
+        assert response.read() == raw
+        assert response.headers["Cache-Control"] == "no-store"
+        assert response.headers["X-File-Modified"].endswith("Z")
+    missing = "/api/test-data/file?" + urlencode({"path": str(tmp_path / ("absent" + suffix))})
+    with pytest.raises(urllib.error.HTTPError) as error:
+        request(base, missing, "test-token")
+    assert error.value.code == 404
+
+
+def test_test_data_route_size_cap(server, tmp_path):
+    from urllib.parse import urlencode
+    _, _, base, _ = server
+    path = tmp_path / "large.csv"
+    # A sparse file exercises the real production limit without a 64 MiB allocation.
+    with path.open("wb") as stream:
+        stream.truncate(shell_app.MAX_TEST_DATA_BYTES + 1)
+    with pytest.raises(urllib.error.HTTPError) as error:
+        request(base, "/api/test-data/file?" + urlencode({"path": str(path)}), "test-token")
+    assert error.value.code == 400
+    assert "64 MiB" in json.loads(error.value.read().decode("utf-8"))["error"]
+
+
+def test_schedule_csv_bridge_preserves_bom_and_crlf(server, tmp_path, monkeypatch):
+    shell, _, base, _ = server
+    dest = tmp_path / "schedule.csv"
+    asked = []
+    monkeypatch.setattr(shell, "_ask_save", lambda name, filters: asked.append((name, filters)) or str(dest))
+    text = '\ufeffName,Facing\r\nGauge,"toward -X, 6° down"\r\n'
+    _, result = request(base, "/api/save-csv", "test-token", {"text": text, "name": "schedule.csv"})
+    assert result["path"] == str(dest)
+    assert dest.read_bytes() == text.encode("utf-8")
+    assert asked[0][0] == "schedule.csv"
+    assert "*.csv" in asked[0][1][0]
+    monkeypatch.setattr(shell, "_ask_save", lambda *_: None)
+    assert request(base, "/api/save-csv", "test-token", {"text": text})[1] is None

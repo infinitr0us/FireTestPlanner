@@ -237,6 +237,11 @@ Gauge facing is the quaternion's dimensionless world unit normal; an absent
 advisory aim target is shown as unstated. These are setup values, not exposure
 predictions or reconstructed-flame positions.
 
+The Drawing toolbar's schedule CSV uses the same fixed length formatting and
+world coordinates as set-out, with one row per thermocouple bead. Facing words
+come from `core/facing.ts` for both exports. The toolbar wraps on narrow screens
+and the schedule action reuses its existing native button and focus styling.
+
 For future changes, reuse existing identity and interface tokens, preserve the
 meaning of data colors, and document a difference when it helps the task. Verify
 real focus, selection, playback and export behavior when touching those paths.
