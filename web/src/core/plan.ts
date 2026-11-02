@@ -1,3 +1,4 @@
+import { nearestOpening, loadCellUnderFuel, platformCorners } from './instrument-placement';
 import { hrrAt } from './hrr';
 export { hrrAt } from './hrr';
 /**
@@ -39,6 +40,9 @@ import {
   isCamera,
   isCeiling,
   isHeatFluxSensor,
+  isVelocityProbe,
+  isGasSampling,
+  isLoadCell,
   isHood,
   isObstruction,
   isReconstructedFlame,
@@ -50,6 +54,9 @@ import {
   type CameraObject,
   type CeilingObject,
   type HeatFluxSensorObject,
+  type VelocityProbeObject,
+  type GasSamplingObject,
+  type LoadCellObject,
   type HoodObject,
   type Issue,
   type LinkedFile,
@@ -70,7 +77,7 @@ import {
 // having to know that narrowing helpers live next door in types.ts.
 export {
   isAimable, isBurner, isCamera, isCeiling, isHeatFluxSensor, isHood, isObstruction,
-  isReconstructedFlame, isThermocouple, isWall,
+  isReconstructedFlame, isThermocouple, isWall, isVelocityProbe, isGasSampling, isLoadCell,
 } from './types';
 
 export const MODALITY_COLORS: Record<Modality, string> = {
@@ -136,6 +143,12 @@ export const heatFluxSensors = (d: PlanDocument): HeatFluxSensorObject[] =>
   d.objects.filter(isHeatFluxSensor);
 export const thermocouples = (d: PlanDocument): ThermocoupleObject[] =>
   d.objects.filter(isThermocouple);
+export const velocityProbes = (d: PlanDocument): VelocityProbeObject[] =>
+  d.objects.filter(isVelocityProbe);
+export const gasSampling = (d: PlanDocument): GasSamplingObject[] =>
+  d.objects.filter(isGasSampling);
+export const loadCells = (d: PlanDocument): LoadCellObject[] =>
+  d.objects.filter(isLoadCell);
 
 export const obstructions = (d: PlanDocument): ObstructionObject[] =>
   d.objects.filter(isObstruction);
@@ -411,6 +424,9 @@ export const cameraColor = (c: CameraObject): string => objectColor(c);
 export const TYPE_COLORS: Record<string, string> = {
   heatFluxSensor: DEVICE_COLORS.heatFlux,
   thermocouple: DEVICE_COLORS.temperature,
+  velocityProbe: DEVICE_COLORS.velocity,
+  gasSampling: DEVICE_COLORS.gas,
+  loadCell: DEVICE_COLORS.mass,
 };
 
 /** Own-property lookup. `type in TYPE_COLORS` is true for an object whose type is
@@ -1236,6 +1252,12 @@ export function thermocoupleVerdict(d: PlanDocument, t: ThermocoupleObject): Ins
  */
 export function instrumentChecks(d: PlanDocument): Issue[] {
   const out: Issue[] = [];
+  for (const p of d.objects.filter(isVelocityProbe)) if (!nearestOpening(d, positionOf(p), 0.1)) {
+    out.push(issue('info', 'probe-not-in-opening', 'Velocity probes usually measure flow through a doorway or window; this probe is not within 0.1 m of an opening.', p.id));
+  }
+  for (const c of d.objects.filter(isLoadCell)) if (!loadCellUnderFuel(d, c)) {
+    out.push(issue('info', 'load-cell-not-under-fuel', 'No burner footprint is directly above this load cell.', c.id));
+  }
 
   for (const s of heatFluxSensors(d)) {
     const e = heatFluxEstimate(d, s);
@@ -1630,6 +1652,8 @@ export function boundsPoints(d: PlanDocument, opts: { ducts?: boolean } = {}): V
       // be framed as a point on the floor.
       for (const offset of beadOffsetsOf(obj)) pts.push(toWorld(obj, [0, 0, offset]));
       pts.push([p[0], p[1], 0]);
+    } else if (isLoadCell(obj)) {
+      pts.push(...platformCorners(obj));
     } else if (isCamera(obj) || isHeatFluxSensor(obj)) {
       pts.push([p[0], p[1], 0]); // the tripod foot
     } else if (isReconstructedFlame(obj)) {

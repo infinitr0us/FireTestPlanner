@@ -56,7 +56,7 @@ export function decodeTestData(value: unknown): Map<string, Series[]> {
     const targets = new Set<string>();
     for (const s of source.series) {
       if (!s || s.sourceId !== source.id || typeof s.sourceName !== 'string' || typeof s.objectId !== 'string'
-        || !['measured', 'simulated'].includes(s.role) || !['kW/m2', '°C', 'kW'].includes(s.unit)
+        || !['measured', 'simulated'].includes(s.role) || !(s.unit === null || typeof s.unit === 'string')
         || !(s.bead === null || Number.isInteger(s.bead) && s.bead >= 0)
         || !Number.isInteger(s.missing) || s.missing < 0 || !Array.isArray(s.t) || !Array.isArray(s.values)
         || s.t.length > 2000 || s.t.length !== s.values.length) return bad();

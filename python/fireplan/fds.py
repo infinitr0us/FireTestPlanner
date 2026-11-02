@@ -152,7 +152,7 @@ class DeviceGroup:
 
     quantity: Optional[str]
     count: int
-    mapped_to: Optional[str]        # 'thermocouple' | 'heatFluxSensor' | None
+    mapped_to: Optional[str]        # An instrument type, or None for skipped devices.
     objects: int = 0                # how many plan objects it produced
     note: str = ""
 
@@ -1122,13 +1122,45 @@ def device_from_record(rec: Record, props: Optional[Dict[str, Record]] = None,
     position = [xyz[0] - ox, xyz[1] - oy, xyz[2] - oz]
     name = rec.string("ID")
 
+    if kind in ('velocityProbe', 'gasSampling'):
+        return _extra_device(ids, rec, position, kind, (quantity or '').upper())
     if kind == "heatFluxSensor":
         return _gauge_object(ids, name, position, _device_normal(rec), aim_target, quantity)
     return _rake_object(ids, name, position, [0.0], diameter, quantity)
 
 
+VELOCITY_QUANTITIES = ['U-VELOCITY', 'V-VELOCITY', 'W-VELOCITY', 'VELOCITY']
+FRACTION_QUANTITIES = ['VOLUME FRACTION', 'MASS FRACTION']
+FDS_SPECIES = {'O2': 'OXYGEN', 'CO': 'CARBON MONOXIDE', 'CO2': 'CARBON DIOXIDE',
+               'H2O': 'WATER VAPOR', 'HCN': 'HYDROGEN CYANIDE', 'soot': 'SOOT', 'other': 'other'}
+
+
+def _extra_device(ids, rec, pos, kind, quantity):
+    from ._math import look_at_quat
+    import numpy as np
+    name = rec.string('ID')
+    if kind == 'velocityProbe':
+        axis = VELOCITY_QUANTITIES.index(quantity) if quantity in VELOCITY_QUANTITIES else -1
+        transform = {'position_m': pos}
+        if 0 <= axis < 3:
+            target = list(pos)
+            target[axis] += 1
+            transform['rotation_quat'] = look_at_quat(np.array(pos), np.array(target)).tolist()
+        return {'id': ids.make('vp', name), 'type': 'velocityProbe', 'name': name if name is not None else 'Velocity probe',
+                'transform': transform, 'range_m_s': None,
+                'notes': "FDS &DEVC QUANTITY='{}'".format(quantity) + ('; velocity magnitude, no axis recorded.' if axis == 3 else '')}
+    spec = (rec.string('SPEC_ID') or '').upper()
+    species = next((s for s, full in FDS_SPECIES.items() if spec in (s.upper(), full.upper())), None)
+    if species is None:
+        return None
+    return {'id': ids.make('gas', name), 'type': 'gasSampling', 'name': name if name is not None else 'Gas sample',
+            'transform': {'position_m': pos}, 'species': [species], 'inDuct': False,
+            'notes': "FDS &DEVC ID='{}', QUANTITY='{}', SPEC_ID='{}'".format(name or '', quantity, rec.string('SPEC_ID'))}
+
+
 def default_device_map() -> Dict[str, Optional[str]]:
-    out: Dict[str, Optional[str]] = {}
+    out: Dict[str, Optional[str]] = {q: 'velocityProbe' for q in VELOCITY_QUANTITIES}
+    out.update({q: 'gasSampling' for q in FRACTION_QUANTITIES})
     for q in GAUGE_QUANTITIES:
         out[q] = "heatFluxSensor"
     for q in GAS_TC_QUANTITIES | SURFACE_TC_QUANTITIES:
@@ -1648,6 +1680,7 @@ def _import_devices(records: List[Record], props: Dict[str, Record],
         buckets[key].append((rec, diameter))
 
     objects: List[Dict[str, Any]] = []
+    gas_at = {}
     for key in order:
         members = buckets[key]
         kind = mapping.get(key)
@@ -1662,7 +1695,29 @@ def _import_devices(records: List[Record], props: Dict[str, Record],
             group.note = "{} of them have no XYZ (a region or a global quantity)".format(
                 len(members) - len(positioned))
 
-        if kind == "thermocouple" and opts.group_rakes:
+        if kind in ('velocityProbe', 'gasSampling'):
+            made = []
+            skipped, merged = 0, 0
+            for rec, diameter in positioned:
+                pos = [v - o for v, o in zip(rec.numbers('XYZ'), (ox, oy, oz))]
+                obj = _extra_device(ids, rec, pos, kind, key)
+                if obj is None:
+                    skipped += 1
+                    continue
+                if kind == 'gasSampling':
+                    old = gas_at.get(tuple(pos))
+                    if old is not None:
+                        old['species'].extend(s for s in obj['species'] if s not in old['species'])
+                        old['notes'] += '\n' + obj['notes']
+                        merged += 1
+                        continue
+                    gas_at[tuple(pos)] = obj
+                made.append(obj)
+            group.note = '; '.join(n for n in [group.note,
+                '{} with unsupported or missing SPEC_ID'.format(skipped) if skipped else '',
+                '{} merged at an existing gas sampling point'.format(merged) if merged else '',
+                'Velocity magnitude; no axis recorded.' if key == 'VELOCITY' else ''] if n)
+        elif kind == "thermocouple" and opts.group_rakes:
             made = _grouped_rakes(positioned, origin, ids, key)
         else:
             made = []
@@ -1844,7 +1899,7 @@ def _plan_span(objects: List[Dict[str, Any]]) -> Optional[List[float]]:
         if obj["type"] == "obstruction":
             xs.extend([pos[0] - obj["size_m"][0] / 2, pos[0] + obj["size_m"][0] / 2])
             ys.extend([pos[1] - obj["size_m"][1] / 2, pos[1] + obj["size_m"][1] / 2])
-        elif obj["type"] in ("burner", "heatFluxSensor", "thermocouple", "camera"):
+        elif obj["type"] in ("burner", "heatFluxSensor", "thermocouple", "velocityProbe", "gasSampling", "loadCell", "camera"):
             xs.append(pos[0])
             ys.append(pos[1])
     if not xs:

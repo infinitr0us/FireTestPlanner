@@ -1,0 +1,60 @@
+{
+  "format": "fire-test-plan",
+  "version": "1.7.0",
+  "meta": {
+    "title": "Format 1.7 instruments"
+  },
+  "units": {
+    "length": "m",
+    "angle": "rad",
+    "power": "kW",
+    "temperature": "C",
+    "display": {
+      "length": "m",
+      "angle": "deg"
+    }
+  },
+  "coordinateSystem": {
+    "convention": "Z-up-right-handed",
+    "origin": "burner-center-floor"
+  },
+  "environment": {
+    "floorSize_m": [20, 20],
+    "ambientTemperature_C": 20
+  },
+  "objects": [
+    {
+      "id": "vp",
+      "type": "velocityProbe",
+      "name": "Door probe",
+      "transform": {
+        "position_m": [0, 0, 1],
+        "rotation_quat": [0.5, -0.5, -0.5, 0.5]
+      },
+      "range_m_s": 20
+    },
+    {
+      "id": "gas",
+      "type": "gasSampling",
+      "name": "Gas sample",
+      "transform": {
+        "position_m": [1, 1, 1]
+      },
+      "species": [
+        "O2",
+        "CO2"
+      ],
+      "inDuct": false
+    },
+    {
+      "id": "lc",
+      "type": "loadCell",
+      "name": "Load cell",
+      "transform": {
+        "position_m": [0, 0, 0]
+      },
+      "capacity_kg": 100,
+      "platform_m": [1, 0.5]
+    }
+  ]
+}

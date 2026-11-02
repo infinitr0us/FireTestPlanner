@@ -1,0 +1,11 @@
+! Plan: Format 1.7 instruments
+! Test ID: (none)
+! Instruments only: no geometry, mesh, surfaces or reactions
+! plan frame: origin at the burner centre at floor level
+! Written by FireTestPlanner
+
+&DEVC ID='Door probe', XYZ=0,0,1, QUANTITY='U-VELOCITY' /
+! Gas sample: FDS needs each sampled species defined.
+&DEVC ID='Gas sample_O2', XYZ=1,1,1, QUANTITY='VOLUME FRACTION', SPEC_ID='OXYGEN' /
+&DEVC ID='Gas sample_CO2', XYZ=1,1,1, QUANTITY='VOLUME FRACTION', SPEC_ID='CARBON DIOXIDE' /
+! Load cell: load cell omitted; no FDS device equivalent.

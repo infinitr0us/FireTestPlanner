@@ -88,9 +88,12 @@ export function suggestMappings(names: string[], doc?: PlanDocument): TestDataMa
         const channel = beads.length > 1 ? `${name}_${bead + 1}` : name;
         add(channel, { channel, object: o.id, bead });
       });
-    } else if (o.type === 'heatFluxSensor' || o.type === 'burner') add(name, { channel: name, object: o.id });
+    } else if (['heatFluxSensor', 'burner', 'velocityProbe', 'gasSampling', 'loadCell'].includes(o.type)) add(name, { channel: name, object: o.id });
   }
-  return names.flatMap(name => candidates.get(name)?.length === 1 ? candidates.get(name)! : []);
+  const suggested = names.flatMap(name => candidates.get(name)?.length === 1 ? candidates.get(name)! : []);
+  // Format 1.6 maps one channel per object per source. Do not pick a gas species arbitrarily.
+  return suggested.filter(m => doc?.objects.find(o => o.id === m.object)?.type !== 'gasSampling'
+    || suggested.filter(other => other.object === m.object).length === 1);
 }
 
 /** Progress and cancellation for a long draft. Every sheet is read, so a large

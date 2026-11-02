@@ -1,3 +1,5 @@
+import { isNewInstrument, isVelocityProbe, isGasSampling } from '../core/types';
+import { platformCorners } from '../core/instrument-placement';
 /**
  * Dimensioned plan and elevation drawings as SVG.
  *
@@ -559,6 +561,36 @@ function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
  * of view: the direction is not decoration, it is a term in what the instrument
  * reads, and a rig sheet that omits it cannot be checked on site.
  */
+function drawNewInstruments(doc: PlanDocument, p: Projector, labels: LabelStacker): string {
+  const out: string[] = [];
+  for (const obj of doc.objects.filter(isNewInstrument)) {
+    const [x, y] = p.project(positionOf(obj)), color = escapeXml(objectColor(obj));
+    out.push(`<g data-instrument="${obj.type}" data-object-id="${escapeXml(obj.id)}">`);
+    let hint = '';
+    if (isVelocityProbe(obj)) {
+      if (obj.transform?.rotation_quat) {
+        const [ex, ey] = p.project(toWorld(obj, [0, 0, -0.3]));
+        const length = Math.hypot(ex - x, ey - y);
+        if (length > 0.01) {
+          const dx = (ex - x) / length * 7, dy = (ey - y) / length * 7;
+          out.push(line(x - dx, y - dy, x + dx, y + dy, color, 'stroke-width="4"'));
+          out.push(line(x, y, ex, ey, color, 'stroke-width="0.8" stroke-dasharray="3 2"'));
+        } else out.push(`<circle cx="${x}" cy="${y}" r="3" fill="none" stroke="${color}" stroke-width="2"/>`);
+      } else {
+        hint = ' (axis unstated)';
+        out.push(`<circle cx="${x}" cy="${y}" r="3" fill="${color}"/>`);
+      }
+    } else if (isGasSampling(obj)) {
+      out.push(`<circle cx="${x}" cy="${y}" r="5" fill="none" stroke="${color}" stroke-width="1.8"/>`);
+    } else {
+      if (obj.platform_m) out.push(polygon(platformCorners(obj).map(v => p.project(v)), `fill="${color}" fill-opacity="0.15" stroke="${color}" stroke-width="1.2"`));
+      out.push(`<rect x="${x - 4}" y="${y - 3}" width="8" height="6" fill="${color}"/>`);
+    }
+    out.push(labels.label(x, y, 10, displayName(obj) + hint).svg, '</g>');
+  }
+  return out.join('\n');
+}
+
 function drawInstrumentsPlan(doc: PlanDocument, p: Projector, labels: LabelStacker): string {
   const out: string[] = [];
 
@@ -620,6 +652,7 @@ function drawInstrumentsPlan(doc: PlanDocument, p: Projector, labels: LabelStack
       beads.length > 1 ? `${displayName(tc)} (×${beads.length})` : displayName(tc)).svg);
   }
 
+  out.push(drawNewInstruments(doc, p, labels));
   return out.join('\n');
 }
 
@@ -845,6 +878,7 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
     out.push(labels.label(top[0], top[1], 8, displayName(tc)).svg);
   }
 
+  out.push(drawNewInstruments(doc, p, labels));
   return out.join('\n');
 }
 

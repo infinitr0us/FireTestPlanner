@@ -96,3 +96,17 @@ describe('dialog helpers', () => {
     expect(nextSourceId(d)).toBe('td-2');
   });
 });
+
+describe('targets for the instruments added in format 1.7', () => {
+  it('lists velocity probes, gas points and load cells with their units, and no unit warning for gas', async () => {
+    const { createVelocityProbe, createGasSampling, createLoadCell } = await import('../core/factory');
+    const { targetOptions, mappingNote, TARGET_GROUPS } = await import('./test-data-model');
+    const d = doc();
+    d.objects.push(createVelocityProbe(d), createGasSampling(d), createLoadCell(d));
+    const added = targetOptions(d, 'm').filter(t => ['velocityProbe', 'gasSampling', 'loadCell'].includes(t.group));
+    expect(added.map(t => [t.group, t.unit])).toEqual([['velocityProbe', 'm/s'], ['gasSampling', null], ['loadCell', 'kg']]);
+    expect(Object.keys(TARGET_GROUPS)).toEqual(['gauge', 'thermocouple', 'velocityProbe', 'gasSampling', 'loadCell', 'burner']);
+    expect(mappingNote({ name: 'O2', unit: '%Vol' }, added[1], {})).toBeNull();
+    expect(mappingNote({ name: 'Mass', unit: 'g' }, added[2], {})?.tone).toBe('warn');
+  });
+});

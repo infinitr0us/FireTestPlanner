@@ -6,7 +6,7 @@ export const MAX_CSV_BYTES = 5 * 1024 * 1024;
 export const MAX_PLOT_SAMPLES = 20_000;
 /** Also the cap on a voxel sequence's frames: the manifest is one row per frame. */
 export const MAX_SEQUENCE_FRAMES = 20_000;
-export const LINK_TYPES = ['burner', 'camera', 'heatFluxSensor', 'thermocouple', 'reconstructedFlame'];
+export const LINK_TYPES = ['burner', 'camera', 'heatFluxSensor', 'thermocouple', 'velocityProbe', 'gasSampling', 'loadCell', 'reconstructedFlame'];
 /** The one kind of file each linking type accepts. A flame links a folder of frames. */
 export const linkKindFor = (type: string): LinkedFileKind =>
   type === 'camera' ? 'video' : type === 'reconstructedFlame' ? 'voxelSequence' : 'spreadsheet';

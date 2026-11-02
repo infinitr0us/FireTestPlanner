@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import re
+import math
+from .fds import FDS_SPECIES
 from decimal import Decimal, ROUND_HALF_UP
 
-from .objects import HeatFluxSensor, Thermocouple
+from .objects import HeatFluxSensor, Thermocouple, VelocityProbe, GasSampling, LoadCell
 from .occlusion import mounting_ior, nearest_mounting_ior
 from .serialize import _js_number, _round_micro
 
@@ -49,11 +51,11 @@ def devices_to_fds(plan) -> str:
     props, devices, taken = {}, [], set()
     bases = set()
 
-    def unique(base, count, imported_ids=None):
+    def unique(base, count, imported_ids=None, species=None):
         suffix = 1
         while True:
             name = base if suffix == 1 else "{}_{}".format(base, suffix)
-            ids = imported_ids if suffix == 1 and imported_ids is not None else (
+            ids = [name + "_" + s for s in species] if species is not None else imported_ids if suffix == 1 and imported_ids is not None else (
                 [name] if count == 1 else ["{}_{}".format(name, i + 1) for i in range(count)])
             if name not in bases and all(v not in taken for v in ids):
                 bases.add(name)
@@ -66,10 +68,29 @@ def devices_to_fds(plan) -> str:
 
     objects = plan.objects
     for obj in objects:
-        if not isinstance(obj, (HeatFluxSensor, Thermocouple)):
+        if not isinstance(obj, (HeatFluxSensor, Thermocouple, VelocityProbe, GasSampling, LoadCell)):
             continue
         base = _one_line(obj.raw.get("name") or obj.id).replace("'", "_")
-        if isinstance(obj, HeatFluxSensor):
+        if isinstance(obj, LoadCell):
+            devices.append('! {}: load cell omitted; no FDS device equivalent.'.format(_one_line(obj.name)))
+        elif isinstance(obj, GasSampling):
+            names = unique(base, len(obj.species), species=obj.species)
+            devices.append('! {}: FDS needs each sampled species defined.'.format(_one_line(obj.name)))
+            for name, species in zip(names, obj.species):
+                devices.append("&DEVC ID='{}', XYZ={}, QUANTITY='VOLUME FRACTION', SPEC_ID='{}' /".format(name, xyz(obj.position), FDS_SPECIES[species]))
+        elif isinstance(obj, VelocityProbe):
+            name, = unique(base, 1)
+            normal = obj.axis
+            axis = max(range(3), key=lambda i: abs(normal[i])) if normal is not None else -1
+            aligned = normal is not None and abs(normal[axis]) >= math.cos(math.radians(5)) - 1e-10
+            quantity = ['U-VELOCITY', 'V-VELOCITY', 'W-VELOCITY'][axis] if aligned else 'VELOCITY'
+            if not aligned:
+                devices.append('! {}: {}; exporting velocity magnitude.'.format(name,
+                    'axis is more than 5 degrees from an FDS axis' if normal is not None else 'no axis recorded'))
+            elif normal[axis] < 0:
+                devices.append('! {}: probe points along negative {}; FDS reports the positive-axis component.'.format(name, 'XYZ'[axis]))
+            devices.append("&DEVC ID='{}', XYZ={}, QUANTITY='{}' /".format(name, xyz(obj.position), quantity))
+        elif isinstance(obj, HeatFluxSensor):
             name, = unique(base, 1)
             normal = obj.normal
             normal = normal / sum(float(v) ** 2 for v in normal) ** 0.5

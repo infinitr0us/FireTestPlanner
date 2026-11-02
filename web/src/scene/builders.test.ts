@@ -12,7 +12,9 @@ import { lookAtQuat } from '../core/math';
 import { burnerFlameHeightM, reconstructedFlames, standoffM } from '../core/plan';
 import type { BurnerObject, CameraObject, PlanDocument, ReconstructedFlameObject, WallObject } from '../core/types';
 import { shownHits } from './camera-model';
-import { buildBurner, buildCamera, buildFlameProxy, buildPredictedFlame, buildWall, labelPoint } from './builders';
+import { buildBurner, buildCamera, buildFlameProxy, buildPredictedFlame, buildWall, labelPoint, buildNewInstrument } from './builders';
+import { createVelocityProbe, createGasSampling, createLoadCell } from '../core/factory';
+import { newPlan, objectColor } from '../core/plan';
 
 vi.mock('./labels', async () => {
   const three = await import('three');
@@ -23,6 +25,20 @@ const PLAN = fileURLToPath(new URL('../../../fixtures/flame/flame-test.ftp.json'
 const doc = JSON.parse(readFileSync(PLAN, 'utf8')) as PlanDocument;
 const linked = (): ReconstructedFlameObject => reconstructedFlames(doc)[0];
 const unlinked = (): ReconstructedFlameObject => ({ ...linked(), linkedFiles: [] });
+
+it('builds distinct instrument glyphs with recorded transforms and explicit colors', () => {
+  const plan = newPlan(), probe = createVelocityProbe(plan), gas = createGasSampling(plan), cell = createLoadCell(plan);
+  cell.platform_m = [1, 0.5]; cell.display = { color: '#123456' };
+  for (const [obj, shape] of [[probe, 'CylinderGeometry'], [gas, 'TorusGeometry'], [cell, 'BoxGeometry']] as const) {
+    const built = buildNewInstrument(obj), mesh = built.children[0] as THREE.Mesh;
+    expect(built.userData.planId).toBe(obj.id);
+    expect(mesh.geometry.type).toBe(shape);
+    expect('#' + (mesh.material as THREE.MeshStandardMaterial).color.getHexString()).toBe(objectColor(obj));
+    expect(built.position.toArray()).toEqual(obj.transform!.position_m);
+  }
+  delete probe.transform!.rotation_quat;
+  expect((buildNewInstrument(probe).children[0] as THREE.Mesh).geometry.type).toBe('SphereGeometry');
+});
 
 /**
  * The viewport's two readings of one ray, cast straight down at (x, y): the object

@@ -186,7 +186,7 @@ describe('importing the sample', () => {
     const result = sample();
     expect(validateStructure(result.doc)).toEqual([]);
     expect(result.counts).toEqual({
-      wall: 4, ceiling: 1, burner: 1, heatFluxSensor: 13, thermocouple: 4,
+      wall: 4, ceiling: 1, burner: 1, heatFluxSensor: 13, thermocouple: 4, velocityProbe: 3,
     });
   });
 

@@ -58,7 +58,7 @@ describe('SMV probe directions', () => {
 const path = fileURLToPath(new URL('../../../fixtures/fds-results/room_corner.smv', import.meta.url));
 it('retains all 40 public-case probes at 16 locations, including the upward floor gauge', () => {
   const data = parseSmv(readFileSync(path, 'utf8'));
-  expect(deviceKinds.map(k => data.devices.filter(d => deviceKind(d) === k).length)).toEqual([12, 12, 13, 3]);
+  expect(deviceKinds.map(k => data.devices.filter(d => deviceKind(d) === k).length)).toEqual([12, 12, 13, 3, 0, 0]);
   const sites = deviceSites(data.devices, all());
   expect(sites).toHaveLength(16); expect(sites.filter(s => s.devices.length === 3)).toHaveLength(12);
   expect(data.devices.find(d => d.id === 'FLOOR_HF')).toMatchObject({ position: [2.25, 4.45, 0.5], orientation: [0, 0, 1] });

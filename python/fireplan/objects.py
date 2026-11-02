@@ -48,6 +48,9 @@ MODALITY_COLORS = {
 TYPE_COLORS = {
     "heatFluxSensor": "#ef4444",
     "thermocouple": "#10b981",
+    "velocityProbe": "#06b6d4",
+    "gasSampling": "#c084fc",
+    "loadCell": "#f59e0b",
 }
 
 # Standard continuous-use upper limits, ASTM/ANSI, largest wire gauge. These are
@@ -744,6 +747,47 @@ class HeatFluxSensor(PlanObject):
         return self.forward
 
 
+class VelocityProbe(PlanObject):
+    """Bi-directional probe. Axis is local -Z; absent quaternion means magnitude."""
+
+    @property
+    def axis(self):
+        return self.forward if self._transform_view.get('rotation_quat') is not None else None
+
+    @property
+    def range_m_s(self):
+        return self.raw.get('range_m_s')
+
+
+class GasSampling(PlanObject):
+    @property
+    def species(self):
+        return self.raw['species']
+
+    @property
+    def in_duct(self):
+        return self.raw['inDuct']
+
+
+class LoadCell(PlanObject):
+    @property
+    def capacity_kg(self):
+        return self.raw.get('capacity_kg')
+
+    @property
+    def platform_m(self):
+        value = self.raw.get('platform_m')
+        return tuple(value) if value is not None else None
+
+    @property
+    def platform_corners(self):
+        if self.platform_m is None:
+            return [self.position]
+        w, d = self.platform_m
+        return [self.to_world([x, y, 0]) for x, y in
+                [(-w / 2, -d / 2), (w / 2, -d / 2), (w / 2, d / 2), (-w / 2, d / 2)]]
+
+
 class Thermocouple(PlanObject):
     """One thermocouple, or a rake of them on a common support. Format 1.1.
 
@@ -932,6 +976,9 @@ TYPE_MAP = {
     "ceiling": Ceiling,
     "heatFluxSensor": HeatFluxSensor,
     "thermocouple": Thermocouple,
+    "velocityProbe": VelocityProbe,
+    "gasSampling": GasSampling,
+    "loadCell": LoadCell,
     "obstruction": Obstruction,
     "reconstructedFlame": ReconstructedFlame,
 }

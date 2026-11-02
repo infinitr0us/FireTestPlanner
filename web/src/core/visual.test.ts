@@ -10,9 +10,9 @@ describe('instrument identity across import, plan and results', () => {
     const kind = deviceKind({ id: 'probe', quantity, position: [0, 0, 0] });
     const resultColor = DEVICE_KINDS[kind].color;
     expect(resultColor).toBe(TYPE_COLORS[type!]);
-    expect(parseInt(resultColor.slice(1), 16)).toBe(type === 'thermocouple' ? COLORS.thermocouple : COLORS.heatFlux);
+    expect(parseInt(resultColor.slice(1), 16)).toBe(({ thermocouple: COLORS.thermocouple, heatFluxSensor: COLORS.heatFlux, velocityProbe: COLORS.velocity, gasSampling: COLORS.gas }[type!]));
   });
-  it.each(['PRESSURE', 'VELOCITY', 'VOLUME FRACTION'])('%s remains an unclassified numerical probe', quantity => {
+  it.each(['PRESSURE'])('%s remains an unclassified numerical probe', quantity => {
     expect(deviceKind({ id: 'probe', quantity, position: [0, 0, 0] })).toBe('other');
   });
   it('normalizes quantity spelling without changing the source record', () => {

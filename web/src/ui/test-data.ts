@@ -20,7 +20,7 @@ import { button } from './fields';
 import { fmt } from './plot-svg';
 import {
   defaultRole, mappingNote, nextSourceId, parseTargetKey, prefill, previewRows, shiftHintLabel, statusText,
-  targetKey, targetOptions, unitLabel, updateManifestChannels, type ChannelInfo, type Target,
+  TARGET_GROUPS, targetKey, targetOptions, unitLabel, updateManifestChannels, type ChannelInfo, type Target,
 } from './test-data-model';
 
 const SHAPES: Record<TestDataTable['shape'], string> = {
@@ -873,9 +873,9 @@ export class TestDataDialog {
         disabled: this.busy, onchange: (e: Event) => setMapping(row, (e.target as HTMLSelectElement).value) }, [
         h('option', { value: '', selected: !mapping }, ['Not mapped']),
         mapping && !target ? h('option', { value: key, selected: true }, [`Missing: ${mapping.object}${mapping.bead === undefined ? '' : ` bead ${mapping.bead + 1}`}`]) : null,
-        ...(['gauge', 'thermocouple', 'burner'] as const).map((group) => {
+        ...(Object.entries(TARGET_GROUPS) as Array<[Target['group'], string]>).map(([group, label]) => {
           const list = targets.filter((t) => t.group === group);
-          return list.length ? h('optgroup', { label: group === 'gauge' ? 'Heat flux gauges' : group === 'thermocouple' ? 'Thermocouple beads' : 'Burners (HRR)' },
+          return list.length ? h('optgroup', { label },
             list.map((t) => h('option', { value: t.key, selected: t.key === key }, [t.label]))) : null;
         }),
       ]);

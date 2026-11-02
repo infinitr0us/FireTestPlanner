@@ -523,6 +523,39 @@
         "height_m": 0
       },
       "notes": "FDS &DEVC QUANTITY='GAUGE HEAT FLUX'"
+    },
+    {
+      "id": "vp-door-v-low",
+      "type": "velocityProbe",
+      "name": "DOOR_V_LOW",
+      "transform": {
+        "position_m": [1.14, 3.54, 0.35],
+        "rotation_quat": [0.707107, 0, 0, 0.707107]
+      },
+      "range_m_s": null,
+      "notes": "FDS &DEVC QUANTITY='V-VELOCITY'"
+    },
+    {
+      "id": "vp-door-v-mid",
+      "type": "velocityProbe",
+      "name": "DOOR_V_MID",
+      "transform": {
+        "position_m": [1.14, 3.54, 0.95],
+        "rotation_quat": [0.707107, 0, 0, 0.707107]
+      },
+      "range_m_s": null,
+      "notes": "FDS &DEVC QUANTITY='V-VELOCITY'"
+    },
+    {
+      "id": "vp-door-v-high",
+      "type": "velocityProbe",
+      "name": "DOOR_V_HIGH",
+      "transform": {
+        "position_m": [1.14, 3.54, 1.65],
+        "rotation_quat": [0.707107, 0, 0, 0.707107]
+      },
+      "range_m_s": null,
+      "notes": "FDS &DEVC QUANTITY='V-VELOCITY'"
     }
   ]
 }

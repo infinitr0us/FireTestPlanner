@@ -15,7 +15,7 @@ import { HEX_COLOR, parsePlan } from './plan';
 import { linkedFilesProblem } from './linked-files';
 import { testDataProblem } from './test-data';
 import type { Issue, PlanDocument, PlanObject } from './types';
-import { FORMAT } from './types';
+import { FORMAT, GAS_SPECIES } from './types';
 
 const MODALITIES = ['RGB', 'LWIR', 'MWIR', 'SWIR', 'NIR', 'other'];
 const SHAPES = ['circle', 'square', 'rectangle'];
@@ -24,7 +24,7 @@ const MOUNT_TYPES = ['tripod', 'pole', 'ceiling', 'wall', 'handheld', 'other'];
 /** Instruments can sit on the floor. A camera in format 1.0 could not say so, and
  *  the 1.1 schema still keeps the two enums apart, so this check does too. */
 const INSTRUMENT_MOUNT_TYPES = [...MOUNT_TYPES, 'floor'];
-const GAUGE_KINDS = ['schmidt-boelter', 'gardon', 'thermopile', 'other'];
+const GAUGE_KINDS = ['schmidt-boelter', 'gardon', 'thermopile', 'plate-thermometer', 'thin-skin', 'other'];
 
 const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
@@ -375,6 +375,19 @@ function validateByType(obj: PlanObject, err: Reporter): void {
       break;
     }
 
+    case 'velocityProbe':
+      checkOptionalLength(raw, 'range_m_s', id, err, { positive: true, label: 'Velocity probe' });
+      break;
+    case 'gasSampling':
+      if (!Array.isArray(raw.species) || !raw.species.every(s => GAS_SPECIES.includes(s))
+          || new Set(raw.species).size !== raw.species.length) err('bad-species', `Gas sample "${id}" needs distinct supported species.`, id);
+      if (typeof raw.inDuct !== 'boolean') err('bad-in-duct', `Gas sample "${id}" needs a boolean inDuct.`, id);
+      break;
+    case 'loadCell':
+      checkOptionalLength(raw, 'capacity_kg', id, err, { positive: true, label: 'Load cell' });
+      if (isStated(raw.platform_m) && (!isNumberArray(raw.platform_m, 2) || (raw.platform_m as number[]).some(v => v <= 0)))
+        err('bad-platform', `Load cell "${id}" needs two positive platform dimensions or null.`, id);
+      break;
     case 'heatFluxSensor': {
       const g = raw.gauge as Record<string, unknown> | undefined;
       if (g) {

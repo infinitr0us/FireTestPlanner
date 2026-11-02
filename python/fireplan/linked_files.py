@@ -13,7 +13,7 @@ import re
 from ._text import js_trim
 from .delimited import delimited_rows
 
-LINK_TYPES = {'burner', 'camera', 'heatFluxSensor', 'thermocouple', 'reconstructedFlame'}
+LINK_TYPES = {'burner', 'camera', 'heatFluxSensor', 'thermocouple', 'velocityProbe', 'gasSampling', 'loadCell', 'reconstructedFlame'}
 MAX_CSV_BYTES = 5 * 1024 * 1024
 MAX_PLOT_SAMPLES = 20_000
 #: Also the cap on a voxel sequence's frames: the manifest is one row per frame.

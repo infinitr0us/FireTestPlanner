@@ -33,7 +33,7 @@ export type FootprintShape = 'circle' | 'square' | 'rectangle';
 export type MountType = 'tripod' | 'pole' | 'ceiling' | 'wall' | 'handheld' | 'other';
 /** Instruments can sit on the floor; a camera in format 1.0 could not say so. */
 export type InstrumentMountType = MountType | 'floor';
-export type GaugeKind = 'schmidt-boelter' | 'gardon' | 'thermopile' | 'other';
+export type GaugeKind = 'schmidt-boelter' | 'gardon' | 'thermopile' | 'plate-thermometer' | 'thin-skin' | 'other';
 export type TcType = 'K' | 'J' | 'T' | 'E' | 'N' | 'R' | 'S' | 'B';
 
 export interface Transform {
@@ -223,6 +223,25 @@ export interface HeatFluxSensorObject extends BaseObject {
   mount?: InstrumentMount;
 }
 
+/** Bi-directional probe. Format 1.7; absent quaternion means no recorded axis. */
+export interface VelocityProbeObject extends BaseObject {
+  type: 'velocityProbe';
+  range_m_s?: number | null;
+}
+export const GAS_SPECIES = ['O2', 'CO', 'CO2', 'H2O', 'HCN', 'soot', 'other'] as const;
+export type GasSpecies = typeof GAS_SPECIES[number];
+export interface GasSamplingObject extends BaseObject {
+  type: 'gasSampling';
+  species: GasSpecies[];
+  inDuct: boolean;
+}
+export interface LoadCellObject extends BaseObject {
+  type: 'loadCell';
+  capacity_kg?: number | null;
+  /** Centred local XY platform. Null means a point support. */
+  platform_m?: Vec2 | null;
+}
+
 /**
  * One thermocouple, or a rake of them on a common support. Format 1.1.
  *
@@ -294,6 +313,9 @@ export type PlanObject =
   | CeilingObject
   | HeatFluxSensorObject
   | ThermocoupleObject
+  | VelocityProbeObject
+  | GasSamplingObject
+  | LoadCellObject
   | ObstructionObject
   | ReconstructedFlameObject
   | UnknownObject;
@@ -420,15 +442,20 @@ export const isHeatFluxSensor = (o: PlanObject): o is HeatFluxSensorObject =>
   o.type === 'heatFluxSensor';
 export const isThermocouple = (o: PlanObject): o is ThermocoupleObject =>
   o.type === 'thermocouple';
+export const isVelocityProbe = (o: PlanObject): o is VelocityProbeObject => o.type === 'velocityProbe';
+export const isGasSampling = (o: PlanObject): o is GasSamplingObject => o.type === 'gasSampling';
+export const isLoadCell = (o: PlanObject): o is LoadCellObject => o.type === 'loadCell';
+export const isNewInstrument = (o: PlanObject): o is VelocityProbeObject | GasSamplingObject | LoadCellObject =>
+  isVelocityProbe(o) || isGasSampling(o) || isLoadCell(o);
 export const isObstruction = (o: PlanObject): o is ObstructionObject =>
   o.type === 'obstruction';
 export const isReconstructedFlame = (o: PlanObject): o is ReconstructedFlameObject =>
   o.type === 'reconstructedFlame';
 
 /** Objects whose orientation means "what it is pointed at", so they get an aim
- *  target, an aim-at-fire button, and the aim-mismatch check. */
-export const isAimable = (o: PlanObject): o is CameraObject | HeatFluxSensorObject =>
-  o.type === 'camera' || o.type === 'heatFluxSensor';
+ *  target and the aim-mismatch check. Probes align with openings; cameras and gauges aim at fire. */
+export const isAimable = (o: PlanObject): o is CameraObject | HeatFluxSensorObject | VelocityProbeObject =>
+  o.type === 'camera' || o.type === 'heatFluxSensor' || o.type === 'velocityProbe';
 
 /**
  * Objects that stand on their own support rather than on the floor.
@@ -445,7 +472,7 @@ export const isMounted = (
 
 export const KNOWN_TYPES = [
   'camera', 'burner', 'hood', 'wall', 'ceiling', 'heatFluxSensor', 'thermocouple',
-  'obstruction', 'reconstructedFlame',
+  'obstruction', 'reconstructedFlame', 'velocityProbe', 'gasSampling', 'loadCell',
 ] as const;
 export const isKnownType = (t: string): boolean =>
   (KNOWN_TYPES as readonly string[]).includes(t);
@@ -504,6 +531,7 @@ const uses1_4Keys = (o: PlanObject): boolean => {
  */
 export function requiredFormatVersion(doc: PlanDocument): string {
   if (Array.isArray(doc.objects) && doc.objects.some(o => o && isBurner(o) && o.fire?.hrrCurve != null)) return '1.7.0';
+  if (Array.isArray(doc.objects) && doc.objects.some(o => o && (isNewInstrument(o) || (isHeatFluxSensor(o) && ['plate-thermometer', 'thin-skin'].includes(o.gauge?.kind ?? ''))))) return '1.7.0';
   if (Array.isArray(doc.testData) && doc.testData.length) return '1.6.0';
   if (doc.units?.display?.length === 'ft-in') return '1.5.0';
   const objects = Array.isArray(doc.objects) ? doc.objects.filter((o) => o && typeof o === 'object') : [];

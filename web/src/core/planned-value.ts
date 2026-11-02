@@ -1,7 +1,7 @@
 import { heatFluxEstimate, hrrAt, thermocoupleBeads } from './plan';
 import { decimateMinMax } from './test-data';
 import type { TargetUnit } from './test-data';
-import { isHeatFluxSensor, isBurner, isThermocouple, type PlanDocument } from './types';
+import { isNewInstrument, isVelocityProbe, isLoadCell, isHeatFluxSensor, isBurner, isThermocouple, type PlanDocument } from './types';
 
 export interface PlannedValue { value: number | null; unit: TargetUnit; note: string }
 /** Null is an unsupported/missing target; a null value carries the reason no line applies. */
@@ -24,13 +24,14 @@ export function plannedValue(doc: PlanDocument, objectId: string, bead?: number,
       : b.region === 'flame' || b.flameZone ? 'No gas temperature correlation applies in the flame zone.'
         : 'No gas temperature correlation applies outside a predicted plume.' };
   }
+  if (o && isNewInstrument(o) && bead === undefined) return { value: null, unit: isVelocityProbe(o) ? 'm/s' : isLoadCell(o) ? 'kg' : null, note: 'No prediction model.' };
   return null;
 }
 
 /** Null samples keep gaps where a temperature correlation does not apply.
  * All knots are retained when they fit; denser inputs use min/max thinning. */
 export function plannedSeries(doc: PlanDocument, objectId: string, bead?: number): { t: number[]; values: (number | null)[] } | null {
-  if (!plannedValue(doc, objectId, bead)) return null;
+  if (!plannedValue(doc, objectId, bead) || doc.objects.some(o => o.id === objectId && isNewInstrument(o))) return null;
   const target = doc.objects.find(o => o.id === objectId)!;
   const fires = doc.objects.filter(isBurner).filter(b => !isBurner(target) || b.id === target.id);
   let knots = [...new Set(fires.flatMap(b => b.fire?.hrrCurve?.points.map(p => p[0]) ?? []))].sort((a, b) => a - b);

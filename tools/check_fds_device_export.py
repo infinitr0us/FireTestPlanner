@@ -28,6 +28,10 @@ def setup_input() -> str:
     """Keep source geometry and properties, replace devices, and stop after setup."""
     source = (ROOT / 'fixtures/fds/room_corner.fds').read_text(encoding='utf-8')
     exported = Plan.load(ROOT / 'fixtures/fds/room_corner.ftp.json').to_fds_devices()
+    extra = Plan.load(ROOT / 'fixtures/instruments17.ftp.json')
+    for obj in extra.objects:
+        obj.position = [2.2, 4.0, 1.5]
+    exported += '\n' + extra.to_fds_devices()
     parts, cursor, times = [], 0, 0
     for record in namelist.read(source):
         if record.group not in ('DEVC', 'TIME', 'TAIL'):

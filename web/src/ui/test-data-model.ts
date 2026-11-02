@@ -6,20 +6,27 @@
 import { beadPositions, displayName } from '../core/plan';
 import { calibrationHint } from '../core/tables';
 import { seriesKey, type TargetUnit } from '../core/test-data';
-import { isBurner, isHeatFluxSensor, isThermocouple,
+import { isBurner, isGasSampling, isHeatFluxSensor, isLoadCell, isThermocouple, isVelocityProbe,
   type LengthUnit, type PlanDocument, type TestDataManifest, type TestDataMapping, type TestDataTable } from '../core/types';
 import { formatLengthWithUnit } from '../core/units';
 import { fmt } from './plot-svg';
 
-/** Something a channel can be mapped to: a gauge, one bead, or a burner's HRR. */
+/** Something a channel can be mapped to: a gauge, one bead, a probe, a gas point, a load
+ *  cell, or a burner's HRR. */
 export interface Target {
   key: string;
   object: string;
   bead?: number;
   label: string;
-  group: 'gauge' | 'thermocouple' | 'burner';
+  group: 'gauge' | 'thermocouple' | 'velocityProbe' | 'gasSampling' | 'loadCell' | 'burner';
   unit: TargetUnit;
 }
+
+/** The Instrument select's option groups, in the order targetOptions lists them. */
+export const TARGET_GROUPS: Record<Target['group'], string> = {
+  gauge: 'Heat flux gauges', thermocouple: 'Thermocouple beads', velocityProbe: 'Velocity probes',
+  gasSampling: 'Gas sampling points', loadCell: 'Load cells', burner: 'Burners (HRR)',
+};
 
 export const targetKey = (m: { object: string; bead?: number | null }): string => seriesKey(m.object, m.bead);
 export function parseTargetKey(key: string): { object: string; bead?: number } {
@@ -29,7 +36,12 @@ export function parseTargetKey(key: string): { object: string; bead?: number } {
 
 /** Display spelling of the API units (CONVENTIONS section 12 keeps `kW/m2`). */
 export const unitLabel = (unit: string | null): string => unit === 'kW/m2' ? 'kW/m²' : unit ?? 'no unit';
-export const QUANTITY: Record<TargetUnit, string> = { 'kW/m2': 'Heat flux', '°C': 'Temperature', kW: 'Heat release rate' };
+const QUANTITY_BY_UNIT: Record<string, string> = {
+  'kW/m2': 'Heat flux', '°C': 'Temperature', kW: 'Heat release rate', 'm/s': 'Velocity', kg: 'Mass',
+};
+/** The plotted quantity's name. A gas sampling point keeps its column's own unit, so
+ *  any other unit, or none, is a plain "Value". */
+export const quantityOf = (unit: TargetUnit): string => (unit !== null ? QUANTITY_BY_UNIT[unit] : undefined) ?? 'Value';
 
 /** A bead's label: the rake's name, its one-based number and its height above the floor. */
 export function beadLabel(name: string, bead: number, beads: number, heightM: number, unit: LengthUnit): string {
@@ -37,11 +49,15 @@ export function beadLabel(name: string, bead: number, beads: number, heightM: nu
   return beads > 1 ? `${name} · bead ${bead + 1} at ${height}` : `${name} at ${height}`;
 }
 
-/** Every target in the plan, gauges first, then each bead of every thermocouple, then burners. */
+/** Every target in the plan: gauges, each bead of every thermocouple, velocity probes,
+ *  gas sampling points (which keep the column's own unit), load cells, then burners. */
 export function targetOptions(doc: PlanDocument, unit: LengthUnit): Target[] {
-  const gauges: Target[] = [], beads: Target[] = [], burners: Target[] = [];
+  const gauges: Target[] = [], beads: Target[] = [], others: Target[] = [], burners: Target[] = [];
   for (const o of doc.objects) {
     if (isHeatFluxSensor(o)) gauges.push({ key: targetKey({ object: o.id }), object: o.id, label: displayName(o), group: 'gauge', unit: 'kW/m2' });
+    else if (isVelocityProbe(o)) others.push({ key: targetKey({ object: o.id }), object: o.id, label: `${displayName(o)} (velocity)`, group: 'velocityProbe', unit: 'm/s' });
+    else if (isGasSampling(o)) others.push({ key: targetKey({ object: o.id }), object: o.id, label: `${displayName(o)} (gas)`, group: 'gasSampling', unit: null });
+    else if (isLoadCell(o)) others.push({ key: targetKey({ object: o.id }), object: o.id, label: `${displayName(o)} (mass)`, group: 'loadCell', unit: 'kg' });
     else if (isBurner(o)) burners.push({ key: targetKey({ object: o.id }), object: o.id, label: `${displayName(o)} (HRR)`, group: 'burner', unit: 'kW' });
     else if (isThermocouple(o)) {
       const positions = beadPositions(o);
@@ -49,7 +65,7 @@ export function targetOptions(doc: PlanDocument, unit: LengthUnit): Target[] {
         label: beadLabel(displayName(o), bead, positions.length, p[2], unit), group: 'thermocouple', unit: '°C' }));
     }
   }
-  return [...gauges, ...beads, ...burners];
+  return [...gauges, ...beads, ...others, ...burners];
 }
 
 const normalUnit = (unit: string | null): string => {
@@ -96,7 +112,8 @@ export function mappingNote(channel: { name: string; unit: string | null }, targ
     if (hint && scale === hint.scale) return { text: calibrationNote(hint), tone: 'info' };
     if (sameUnit(channel.unit, 'kW/m2') && scale === 1) return { text: 'Already in kW/m², so the scale is 1', tone: 'info' };
   }
-  if (channel.unit !== null && !sameUnit(channel.unit, target.unit) && scale === 1 && (mapping.offset ?? 0) === 0) {
+  // A gas point has no fixed unit: it plots in the column's own, so nothing to warn about.
+  if (target.unit !== null && channel.unit !== null && !sameUnit(channel.unit, target.unit) && scale === 1 && (mapping.offset ?? 0) === 0) {
     return { text: `Recorded in ${unitLabel(channel.unit)}; enter the scale that gives ${unitLabel(target.unit)}`, tone: 'warn' };
   }
   return null;

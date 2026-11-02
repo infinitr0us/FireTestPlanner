@@ -115,6 +115,9 @@ _OBJECT_ORDER = {
     "wall": ["id", "type", "name", "transform", "polyline_m", "height_m", "thickness_m", "baseHeight_m", "openings", "display", "notes"],
     "ceiling": ["id", "type", "name", "transform", "polygon_m", "height_m", "thickness_m", "display", "notes"],
     "heatFluxSensor": ["id", "type", "name", "transform", "gauge", "mount", "linkedFiles", "display", "notes"],
+    "velocityProbe": ["id", "type", "name", "transform", "range_m_s", "linkedFiles", "display", "notes"],
+    "gasSampling": ["id", "type", "name", "transform", "species", "inDuct", "linkedFiles", "display", "notes"],
+    "loadCell": ["id", "type", "name", "transform", "capacity_kg", "platform_m", "linkedFiles", "display", "notes"],
     "thermocouple": ["id", "type", "name", "transform", "beadOffsets_m", "thermocouple", "mount", "linkedFiles", "display", "notes"],
     "obstruction": ["id", "type", "name", "transform", "size_m", "display", "notes"],
     "reconstructedFlame": ["id", "type", "name", "transform", "burnerId", "representation", "linkedFiles", "display", "notes"],
@@ -180,6 +183,10 @@ def required_version(data: Dict[str, Any]) -> str:
     """
     if any(isinstance(o, dict) and o.get("type") == "burner" and (o.get("fire") or {}).get("hrrCurve") is not None for o in data.get("objects", [])):
         return "1.7.0"
+    if any(isinstance(o, dict) and (o.get("type") in ("velocityProbe", "gasSampling", "loadCell")
+           or (o.get("type") == "heatFluxSensor" and (o.get("gauge") or {}).get("kind") in ("plate-thermometer", "thin-skin")))
+           for o in data.get("objects", [])):
+        return "1.7.0"
     if isinstance(data.get("testData"), list) and data["testData"]:
         return "1.6.0"
     units = data.get("units")
@@ -214,7 +221,7 @@ def required_version(data: Dict[str, Any]) -> str:
 def effective_version(data: Dict[str, Any]) -> str:
     """The version to write: whichever of declared and required is higher.
 
-    Format 1.7 is declared only while a curve is present. Other declared versions,
+    Format 1.7 is declared only while a 1.7 feature is present. Other declared versions,
     including unknown future versions, retain the existing no-downgrade rule.
     """
     declared = str(data.get("version") or "")

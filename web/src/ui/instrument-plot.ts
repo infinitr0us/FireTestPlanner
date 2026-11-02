@@ -18,7 +18,7 @@ import {
   beadColor, fmt, formatTime, heightRanks, lastIndexAtOrBefore, PLANNED_DASH, RANGE_DASH, roleColor, runs,
   seriesDash, svgElement, timeAxis, unionTimes, valueAt, valueExtent,
 } from './plot-svg';
-import { QUANTITY, unitLabel } from './test-data-model';
+import { quantityOf, unitLabel } from './test-data-model';
 
 /** One drawn line: a series with its colour, dash and legend words. */
 interface Line { series: Series; color: string; dash: string; bead: number | null }
@@ -225,7 +225,7 @@ export class TestDataView implements PlotView {
     const extent = valueExtent(lo, hi);
     const x = (t: number): number => t1 === t0 ? (X0 + X1) / 2 : X0 + ((t - t0) / (t1 - t0)) * (X1 - X0);
     const y = (v: number): number => Y1 - ((v - extent.lo) / (extent.hi - extent.lo)) * (Y1 - Y0);
-    const quantity = `${QUANTITY[plot.unit]} (${unitLabel(plot.unit)})`;
+    const quantity = `${quantityOf(plot.unit)} (${unitLabel(plot.unit)})`;
     const svg = svgElement('svg', { viewBox: '0 0 350 160', role: 'img',
       'aria-label': `${quantity} of ${plot.name} over time, ${plot.lines.length} series` });
     svg.append(svgElement('title', {}, `${quantity} against time from ignition`));

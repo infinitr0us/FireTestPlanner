@@ -26,6 +26,7 @@ const TYPE_LABEL: Record<string, string> = {
   burner: 'burners',
   heatFluxSensor: 'heat flux gauges',
   thermocouple: 'thermocouples',
+  velocityProbe: 'velocity probes', gasSampling: 'gas sampling points', loadCell: 'load cells',
   camera: 'cameras',
   hood: 'hoods',
 };
@@ -177,7 +178,7 @@ export class FdsImportDialog {
       h('td', {}, [g.quantity ?? '(no quantity)']),
       h('td', { class: 'import__num' }, [String(g.count)]),
       g.mappedTo
-        ? h('td', {}, [`${g.objects} ${plural(g.mappedTo, g.objects)}`])
+        ? h('td', {}, [`${g.objects} ${plural(g.mappedTo, g.objects)}${g.note ? `; ${g.note}` : ''}`])
         : h('td', { class: 'import__skip' }, [g.note || 'not imported']),
     ]));
 
