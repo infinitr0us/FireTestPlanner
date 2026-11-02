@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decimateMinMax, type Series } from '../core/test-data';
 import { parseAndValidatePlan } from '../core/validate';
 import { Store } from '../state/store';
@@ -12,7 +12,13 @@ const doc = () => parseAndValidatePlan(new TextDecoder().decode(fixture('test-da
 const boot = '<html><head><title>Test</title><script type="application/json" id="embedded-plan"></script></head></html>';
 
 describe('shared test data', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
   it('round-trips through HTML and the session, with exactly the decimated samples and no saved payload', async () => {
+    // serialize() stamps meta.modified to the second; hold the clock so two calls
+    // compare equal however long the loads take.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-02T12:00:00Z'));
     const store = new Store(doc());
     const data = new TestDataStore(store, path => Promise.resolve({ bytes: fixture(path), modified: null }));
     await Promise.all(store.document.testData!.map(s => data.load(s.id)));

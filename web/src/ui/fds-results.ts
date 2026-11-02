@@ -367,7 +367,7 @@ export class FdsResultsDialog {
         value: 2,
         'aria-label': i18n.t("Cutaway height in metres"),
       });
-      const cut = h('input', { type: 'checkbox', 'aria-label': i18n.t("Cut away above height") });
+      const cut = h('input', { type: 'checkbox' });
       const applyCut = () => {
         if (!cut.checked) this.scene?.setCutaway();
         else if (Number.isFinite(cutHeight.valueAsNumber)) this.scene?.setCutaway(cutHeight.valueAsNumber);
@@ -412,7 +412,10 @@ export class FdsResultsDialog {
           ]),
           this.autoScaleButton,
           h('label', {}, [i18n.t("Opacity / smoke density"), opacity]),
-          h('label', {}, [cut, i18n.t("Cut away above Z (m)"), cutHeight]),
+          h('div', { class: 'fds-results__cut' }, [
+            h('label', { class: 'fds-results__check' }, [cut, i18n.t("Cut away above Z (m)")]),
+            cutHeight,
+          ]),
           h('hr'),
           this.devicePanel.root,
           h('hr'),
