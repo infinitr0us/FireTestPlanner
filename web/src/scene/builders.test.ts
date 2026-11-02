@@ -12,7 +12,7 @@ import { lookAtQuat } from '../core/math';
 import { burnerFlameHeightM, reconstructedFlames, standoffM } from '../core/plan';
 import type { BurnerObject, CameraObject, PlanDocument, ReconstructedFlameObject, WallObject } from '../core/types';
 import { shownHits } from './camera-model';
-import { buildBurner, buildCamera, buildFlameProxy, buildWall, labelPoint } from './builders';
+import { buildBurner, buildCamera, buildFlameProxy, buildPredictedFlame, buildWall, labelPoint } from './builders';
 
 vi.mock('./labels', async () => {
   const three = await import('three');
@@ -127,6 +127,28 @@ describe('scene geometry (review 2026-09-22)', () => {
       expect(box.min.z).toBeCloseTo(rim, 6);
       expect(box.max.z).toBeCloseTo(rim + burnerFlameHeightM(b)!, 6);
     }
+  });
+
+  it('takes the cone height at Q(t) for a curve, and the peak without a time (M17)', () => {
+    const b = { ...burner(), rimHeight_m: 0.05 };
+    b.fire = { ...b.fire, hrr_kw: 80, hrrCurve: { points: [[0, 0], [60, 20], [120, 80], [180, 0]], source: 'table' } };
+    const coneTop = (t?: number): number | null => {
+      const cone = buildBurner(b, true, t).children.find((c) => c.userData.selectionOnly);
+      return cone ? new THREE.Box3().setFromObject(cone).max.z : null;
+    };
+    expect(coneTop()).toBeCloseTo(0.05 + burnerFlameHeightM(b)!, 6);
+    expect(coneTop(120)).toBeCloseTo(coneTop()!, 6);
+    expect(coneTop(60)).toBeCloseTo(0.05 + burnerFlameHeightM(b, 60)!, 6);
+    expect(coneTop(60)!).toBeLessThan(coneTop()! - 0.3);
+    // No heat release, no cone and no plume: nothing predicted is drawn.
+    expect(coneTop(0)).toBeNull();
+    expect(buildPredictedFlame(b, 0)).toEqual([]);
+    // Every predicted part is tagged, so the viewport can swap them as the clock moves.
+    const parts = buildPredictedFlame(b, 90);
+    expect(parts.length).toBe(2);
+    expect(parts.every((p) => p.userData.predictedFlame === true)).toBe(true);
+    expect(buildBurner(b, true, 90).children.filter((c) => c.userData.predictedFlame).length).toBe(2);
+    expect(buildBurner(b, false, 90).children.some((c) => c.userData.predictedFlame)).toBe(false);
   });
 
   it('draws a non-unit quaternion as the rotation it stands for (SCN-4)', () => {

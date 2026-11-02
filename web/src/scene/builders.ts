@@ -100,7 +100,11 @@ function setEditorLayer(o: THREE.Object3D): void {
 
 // -- burner ---------------------------------------------------------------
 
-export function buildBurner(b: BurnerObject, showFlame: boolean): THREE.Group {
+/**
+ * A burner: its pan, label and, with `showFlame`, the predicted flame cone and
+ * plume envelope at Q(t). Without a time they show the peak, as the checks do.
+ */
+export function buildBurner(b: BurnerObject, showFlame: boolean, t?: number): THREE.Group {
   const group = new THREE.Group();
   applyTransform(group, b);
 
@@ -123,34 +127,7 @@ export function buildBurner(b: BurnerObject, showFlame: boolean): THREE.Group {
   pan.castShadow = true;
   group.add(pan);
 
-  if (showFlame) {
-    const flameHeight = burnerFlameHeightM(b);
-    if (flameHeight !== null && flameHeight > 0) {
-      const dEff = burnerDiameterM(b);
-      // Cone from the fuel surface to the mean flame tip. Translucent because it is
-      // a correlation, not an observation -- it should not read as solid geometry.
-      const flame = new THREE.Mesh(
-        upright(new THREE.ConeGeometry(dEff / 2, flameHeight, 32, 1, true)),
-        new THREE.MeshBasicMaterial({
-          color: COLORS.flame,
-          transparent: true,
-          opacity: 0.35,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        }),
-      );
-      // From the fuel surface the checks use, not the top of the drawn pan: the pan
-      // is drawn at least 2 cm tall to stay visible, and starting the cone there
-      // drew a rimless burner's flame 2 cm above the one every check judges.
-      flame.position.z = rimHeightM(b) + flameHeight / 2;
-      // A correlation, not a surface: a click on it selects the burner, but the
-      // ruler looks through it to what is really there.
-      flame.userData.selectionOnly = true;
-      group.add(flame);
-
-      group.add(buildPlume(b, flameHeight));
-    }
-  }
+  if (showFlame) for (const part of buildPredictedFlame(b, t)) group.add(part);
 
   const label = makeLabel(displayName(b), 'object');
   label.position.set(0, 0, rim + 0.15);
@@ -160,15 +137,50 @@ export function buildBurner(b: BurnerObject, showFlame: boolean): THREE.Group {
 }
 
 /**
+ * The predicted flame cone and plume envelope of one burner at Q(t), in the
+ * burner group's frame; the peak without a time. Each part is tagged
+ * `userData.predictedFlame`, so the viewport can swap them as the clock moves
+ * without rebuilding the burner the gizmo and selection box are bound to.
+ */
+export function buildPredictedFlame(b: BurnerObject, t?: number): THREE.Object3D[] {
+  const flameHeight = burnerFlameHeightM(b, t);
+  if (flameHeight === null || !(flameHeight > 0)) return [];
+  const dEff = burnerDiameterM(b);
+  // Cone from the fuel surface to the mean flame tip. Translucent because it is
+  // a correlation, not an observation -- it should not read as solid geometry.
+  const flame = new THREE.Mesh(
+    upright(new THREE.ConeGeometry(dEff / 2, flameHeight, 32, 1, true)),
+    new THREE.MeshBasicMaterial({
+      color: COLORS.flame,
+      transparent: true,
+      opacity: 0.35,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+  );
+  // From the fuel surface the checks use, not the top of the drawn pan: the pan
+  // is drawn at least 2 cm tall to stay visible, and starting the cone there
+  // drew a rimless burner's flame 2 cm above the one every check judges.
+  flame.position.z = rimHeightM(b) + flameHeight / 2;
+  // A correlation, not a surface: a click on it selects the burner, but the
+  // ruler looks through it to what is really there.
+  flame.userData.selectionOnly = true;
+  flame.userData.predictedFlame = true;
+  const plume = buildPlume(b, flameHeight, t);
+  plume.userData.predictedFlame = true;
+  return [flame, plume];
+}
+
+/**
  * Plume cone above the flame, opening from the Heskestad virtual origin.
  *
  * Drawn as a wireframe rather than a surface: it is the boundary used for the hood
  * capture check, and a solid cone would imply more certainty than a 15 degree rule
  * of thumb deserves.
  */
-function buildPlume(b: BurnerObject, flameHeight: number): THREE.Object3D {
+function buildPlume(b: BurnerObject, flameHeight: number, t?: number): THREE.Object3D {
   const group = new THREE.Group();
-  const z0 = burnerVirtualOriginM(b);
+  const z0 = burnerVirtualOriginM(b, t);
   if (z0 === null) return group;
 
   const base = fuelSurfaceZM(b);
@@ -182,24 +194,24 @@ function buildPlume(b: BurnerObject, flameHeight: number): THREE.Object3D {
 
   for (let i = 1; i <= rings; i += 1) {
     const z = base + ((top - base) * i) / rings;
-    const r = plumeRadiusAtZ(b, z);
+    const r = plumeRadiusAtZ(b, z, t);
     if (r === null || r <= 0) continue;
     const pts: THREE.Vector3[] = [];
     for (let a = 0; a <= 48; a += 1) {
-      const t = (a / 48) * Math.PI * 2;
-      pts.push(new THREE.Vector3(Math.cos(t) * r, Math.sin(t) * r, z - positionOf(b)[2]));
+      const angle = (a / 48) * Math.PI * 2;
+      pts.push(new THREE.Vector3(Math.cos(angle) * r, Math.sin(angle) * r, z - positionOf(b)[2]));
     }
     group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), material));
   }
 
   // Four generatrices, so the cone reads as a cone from any angle.
-  const rTop = plumeRadiusAtZ(b, top) ?? 0;
+  const rTop = plumeRadiusAtZ(b, top, t) ?? 0;
   const apexZ = base + z0 - positionOf(b)[2];
   for (let a = 0; a < 4; a += 1) {
-    const t = (a / 4) * Math.PI * 2;
+    const angle = (a / 4) * Math.PI * 2;
     const pts = [
       new THREE.Vector3(0, 0, apexZ),
-      new THREE.Vector3(Math.cos(t) * rTop, Math.sin(t) * rTop, top - positionOf(b)[2]),
+      new THREE.Vector3(Math.cos(angle) * rTop, Math.sin(angle) * rTop, top - positionOf(b)[2]),
     ];
     group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), material));
   }

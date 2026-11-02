@@ -1,4 +1,4 @@
-import { curveSummary, hrrAt } from '../core/hrr';
+import { curvePeak, hrrAt } from '../core/hrr';
 /**
  * Property inspector for the selected object.
  *
@@ -118,6 +118,8 @@ import { FlamePanel } from './flame-panel';
 import { LinkedFilesPanel } from './linked-files';
 import type { FlameActions } from '../state/flame-actions';
 import type { FlameStore } from '../state/flame-store';
+import type { TestDataStore } from '../state/test-data-store';
+import { CurveEditor } from './hrr-curve-editor';
 import {
   button,
   checkboxField,
@@ -183,10 +185,40 @@ export class Inspector {
   /** Fields, or the FDS spelling of the same geometry. See `core/fdsview.ts`. */
   private coordMode: CoordMode = 'fields';
 
+  /** The session's test data, for a burner's From test data curve; none in fixtures. */
+  private testData: TestDataStore | null = null;
+
+  /** A burner's Curve control, with its drafts. */
+  private curveEditor = new CurveEditor({
+    apply: (id, label, curve) => this.patch(id, label, (o) => {
+      const burner = o as BurnerObject;
+      if (curve) {
+        // hrr_kw is the curve's peak; the writer enforces the same.
+        burner.fire = { ...(burner.fire ?? {}), hrr_kw: curvePeak(curve), hrrCurve: curve };
+      } else {
+        // Remove curve keeps the peak as the steady rate; a zero peak is an unset rate.
+        const peak = hrrAt(burner);
+        burner.fire = { ...burner.fire, hrr_kw: peak === 0 ? null : peak, hrrCurve: null };
+      }
+    }),
+    series: (id) => this.testData?.seriesFor(id).filter((s) => s.unit === 'kW') ?? [],
+    rerender: () => this.render(),
+    documentId: () => this.store.documentId,
+  });
+
   constructor(
     private root: HTMLElement,
     private store: Store,
   ) { this.linkedFiles = new LinkedFilesPanel(store, () => this.render()); }
+
+  /** A burner's From test data curve reads the session's loaded series. */
+  attachTestData(testData: TestDataStore): void {
+    this.testData = testData;
+    testData.subscribe(() => {
+      const sole = this.store.soleSelected;
+      if (sole && isBurner(sole)) this.render();
+    });
+  }
 
   /** The flame sections need the session's loaded sequences and the link actions. */
   attachFlames(flames: FlameStore, actions: FlameActions): FlamePanel {
@@ -257,9 +289,24 @@ export class Inspector {
     const before = controls();
     const focusedIndex = before.indexOf(document.activeElement as Element);
     const focusedKind = kind(before[focusedIndex]);
+    // A control with a stable key (the Curve control's) is found again by that key,
+    // with its caret, although controls before it come and go: Make t² curve turns
+    // the HRR field above it into a readout.
+    const active = before[focusedIndex] as (HTMLElement & Partial<HTMLInputElement>) | undefined;
+    const focusKey = active?.dataset.focusKey;
+    const caret = active && typeof active.selectionStart === 'number' && /^(TEXTAREA|INPUT)$/.test(active.tagName)
+      ? [active.selectionStart, active.selectionEnd ?? active.selectionStart] as const : null;
 
     this.renderInner();
 
+    if (focusKey) {
+      const next = this.root.querySelector<HTMLElement>(`[data-focus-key="${focusKey}"]`);
+      if (next) {
+        next.focus();
+        if (caret && (next instanceof HTMLTextAreaElement || next instanceof HTMLInputElement)) next.setSelectionRange(caret[0], caret[1]);
+        return;
+      }
+    }
     if (focusedIndex >= 0) {
       const next = controls()[focusedIndex] as HTMLElement | undefined;
       if (next === undefined || kind(next) !== focusedKind) return;
@@ -1035,7 +1082,7 @@ export class Inspector {
           const burner = o as BurnerObject;
           burner.fire = { ...(burner.fire ?? {}), fuel: v || null };
         }))),
-      b.fire?.hrrCurve ? readout('Peak HRR (kW)', String(hrrAt(b))) : row('HRR (kW)',
+      b.fire?.hrrCurve ? readout('Peak HRR (kW)', String(Number(hrrAt(b)!.toFixed(6)))) : row('HRR (kW)',
         numberField(b.fire?.hrr_kw ?? 0, (v) =>
           this.patch(b.id, 'Set HRR', (o) => {
             const burner = o as BurnerObject;
@@ -1057,16 +1104,9 @@ export class Inspector {
         + '≈0.35 heptane, 0.2 methanol. 0.3 is the default and is not written to the file'),
     );
 
-    if (b.fire?.hrrCurve) {
-      this.root.append(
-        h('p', { class: 'readout__note hrr-curve', style: { overflowWrap: 'anywhere' } }, [curveSummary(b.fire.hrrCurve)]),
-        button('Remove curve', () => this.patch(b.id, 'Remove curve', o => {
-          const burner = o as BurnerObject;
-          const peak = hrrAt(burner);
-          burner.fire = { ...burner.fire, hrr_kw: peak === 0 ? null : peak, hrrCurve: null };
-        })),
-      );
-    }
+    // The Curve control: Steady, t² growth, a pasted table or a test data series,
+    // the readout with a sparkline, and Remove curve (ui/hrr-curve-editor.ts).
+    this.root.append(...this.curveEditor.render(b));
     const flame = burnerFlameHeightM(b);
     const tip = flameTipZM(b);
     this.root.append(sectionTitle('Predicted fire'));

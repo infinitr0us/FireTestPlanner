@@ -16,6 +16,8 @@ import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import {
   aspectOf,
   boundsPoints,
+  burnerFlameHeightM,
+  burners,
   cameras as planCameras,
   displayName,
   findObject,
@@ -29,7 +31,8 @@ import {
 import { setPosition, setRotation } from '../core/transform';
 import { formatLengthWithUnit, gridStep } from '../core/units';
 import { makeLabel } from './labels';
-import type { CameraObject, PlanObject } from '../core/types';
+import type { BurnerObject, CameraObject, PlanObject } from '../core/types';
+import { coneTime } from '../state/fire-clock';
 import type { FlameStore } from '../state/flame-store';
 import type { Playhead } from '../state/playhead';
 import { isOrthoMode, type Store } from '../state/store';
@@ -39,6 +42,7 @@ import {
   LAYER_EDITOR,
   buildBurner,
   buildCamera,
+  buildPredictedFlame,
   buildCeiling,
   buildFlameProxy,
   buildHeatFluxSensor,
@@ -199,6 +203,9 @@ export class Viewport {
     // after this one, and a readout one step behind the scrubber reads as broken.
     this.playhead.subscribe((event) => {
       if (event === 'time') this.flames.setTime(this.playhead.time_s, this.store.document);
+      // Every event: a play from rest, a pause at the start or a new range can
+      // move the cone between the peak and Q(t) without the time changing.
+      this.syncPredictedFlames();
     });
 
     this.resize();
@@ -663,6 +670,45 @@ export class Viewport {
     this.syncSelection();
   }
 
+  /**
+   * What a burner's predicted flame is drawn for: 'peak', or its mean height at the
+   * clock's time to a tenth of a millimetre. Only a burner with a curve changes.
+   */
+  private predictedKey(b: BurnerObject): string {
+    const t = coneTime(this.playhead);
+    return t === undefined || !b.fire?.hrrCurve ? 'peak' : String(Math.round((burnerFlameHeightM(b, t) ?? -1) * 1e4));
+  }
+
+  /**
+   * The clock moved: give each burner with a heat release rate curve its cone and
+   * plume at Q(t), or back at the peak when the clock is at rest. Only the tagged
+   * flame parts are swapped; the burner group, its gizmo binding and the selection
+   * box (refitted every frame in `tick`) stay.
+   */
+  private syncPredictedFlames(): void {
+    if (!this.options.showFlame) return;
+    const t = coneTime(this.playhead);
+    for (const b of burners(this.store.document)) {
+      const group = this.objectGroups.get(b.id);
+      if (!group || !b.fire?.hrrCurve) continue;
+      const key = this.predictedKey(b);
+      if (group.userData.predictedKey === key) continue;
+      group.userData.predictedKey = key;
+      const old = group.children.filter((c) => c.userData.predictedFlame);
+      for (const child of old) {
+        child.traverse((node) => {
+          const mesh = node as Partial<THREE.Mesh>;
+          mesh.geometry?.dispose();
+          const material = mesh.material;
+          if (Array.isArray(material)) material.forEach((m) => m.dispose());
+          else material?.dispose();
+        });
+        group.remove(child);
+      }
+      for (const part of buildPredictedFlame(b, t)) group.add(part);
+    }
+  }
+
   /** The loaded sequences changed: bind them without touching anything else. */
   syncFlames(): void {
     this.flames.sync(this.store.document);
@@ -681,8 +727,11 @@ export class Viewport {
 
   private buildObject(obj: PlanObject): THREE.Group | null {
     switch (obj.type) {
-      case 'burner':
-        return buildBurner(obj as never, this.options.showFlame);
+      case 'burner': {
+        const group = buildBurner(obj as BurnerObject, this.options.showFlame, coneTime(this.playhead));
+        group.userData.predictedKey = this.predictedKey(obj as BurnerObject);
+        return group;
+      }
       case 'hood':
         return buildHood(obj as never);
       case 'wall':

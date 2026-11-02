@@ -149,7 +149,7 @@ export class ReconstructionView implements PlotView {
     return `CSV snapshot · ${link.plot!.samples.length.toLocaleString()} samples · ${link.plot!.importedAt.replace('T', ' ').replace(/(?:\.\d+)?Z$/, ' UTC')}. `
       + (following
         ? 'The cursor follows the flame playback; dragging it seeks the playback.'
-        : this.playhead?.hasRange
+        : this.playhead?.kind === 'flame'
           ? 'Not this burner\'s reconstruction, so the cursor is its own. Refresh or relink from Linked files after the source changes.'
           : 'Refresh or relink from Linked files after the source changes.');
   }

@@ -4,8 +4,8 @@
  * for a gauge its full-scale range. A rake plots one line per bead, coloured by
  * height; the source is told apart by dash, never by hue alone.
  */
-import { decimateMinMax, type Series } from '../core/test-data';
-import { plannedValue, type PlannedValue } from '../core/planned-value';
+import { decimateMinMax, seriesKey, type Series } from '../core/test-data';
+import { plannedSeries, plannedValue, type PlannedValue } from '../core/planned-value';
 import { beadPositions, displayName, gaugeRangeKwM2 } from '../core/plan';
 import { isBurner, isHeatFluxSensor, isThermocouple, type LengthUnit, type PlanObject } from '../core/types';
 import { formatLengthWithUnit } from '../core/units';
@@ -22,8 +22,11 @@ import { QUANTITY, unitLabel } from './test-data-model';
 
 /** One drawn line: a series with its colour, dash and legend words. */
 interface Line { series: Series; color: string; dash: string; bead: number | null }
-interface Bead { index: number; heightM: number; color: string; planned: PlannedValue | null }
+/** The planned value over time when a burner's heat release rate has a curve. */
+interface PlannedCurve { t: number[]; values: (number | null)[]; lo: number; hi: number; peakAt: number; fingerprint: string }
+interface Bead { index: number; heightM: number; color: string; planned: PlannedValue | null; curve: PlannedCurve | null }
 interface Plot {
+  id: string;
   name: string;
   unit: Series['unit'];
   lines: Line[];
@@ -52,6 +55,9 @@ export class TestDataView implements PlotView {
   private times: Float64Array = new Float64Array();
   private draw: (() => void) | null = null;
   private following = false;
+  /** Planned curves for the document revision they were predicted for. */
+  private curves = new Map<string, PlannedCurve | null>();
+  private curvesFor = '';
 
   constructor(private store: Store, private data: TestDataStore, private playhead?: Playhead) {}
 
@@ -69,12 +75,13 @@ export class TestDataView implements PlotView {
     let beads: Bead[];
     if (isHeatFluxSensor(obj) || isBurner(obj)) {
       unit = isBurner(obj) ? 'kW' : 'kW/m2';
-      beads = [{ index: -1, heightM: 0, color: '', planned: plannedValue(doc, obj.id) }];
+      beads = [{ index: -1, heightM: 0, color: '', planned: plannedValue(doc, obj.id), curve: null }];
     } else if (isThermocouple(obj)) {
       unit = '°C';
       const heights = beadPositions(obj).map((p) => p[2]);
       const { ranks, count } = heightRanks(heights);
-      beads = heights.map((heightM, index) => ({ index, heightM, color: beadColor(ranks[index], count), planned: plannedValue(doc, obj.id, index) }));
+      beads = heights.map((heightM, index) => ({ index, heightM, color: beadColor(ranks[index], count),
+        planned: plannedValue(doc, obj.id, index), curve: null }));
     } else return null;
     const rake = beads.length > 1;
     const sources: Plot['sources'] = [];
@@ -92,6 +99,7 @@ export class TestDataView implements PlotView {
       }
     }
     if (!lines.length) return null;
+    for (const bead of beads) bead.curve = this.plannedCurve(obj.id, bead.index < 0 ? undefined : bead.index);
     // Sources that map this object but have nothing loaded, and loaded sources
     // whose file is not the one the plan recorded.
     const warnings: string[] = [], waiting: string[] = [];
@@ -107,7 +115,35 @@ export class TestDataView implements PlotView {
       }
     }
     const range = isHeatFluxSensor(obj) ? gaugeRangeKwM2(obj) : null;
-    return { name: displayName(obj), unit, lines, beads, rake, range, sources, warnings, waiting };
+    return { id: obj.id, name: displayName(obj), unit, lines, beads, rake, range, sources, warnings, waiting };
+  }
+
+  /**
+   * The planned value over time when a burner's heat release rate has a curve:
+   * a burner's own curve, or a gauge's or bead's prediction from every burner's
+   * Q(t) (`plannedSeries`). Cached per document revision, since a rake predicts
+   * each bead at up to 2,000 times and the panel asks on every store event.
+   */
+  private plannedCurve(objectId: string, bead?: number): PlannedCurve | null {
+    const revision = `${this.store.documentId}/${this.store.revision}`;
+    if (revision !== this.curvesFor) { this.curvesFor = revision; this.curves.clear(); }
+    const key = seriesKey(objectId, bead);
+    if (this.curves.has(key)) return this.curves.get(key)!;
+    const series = plannedSeries(this.store.document, objectId, bead);
+    let curve: PlannedCurve | null = null;
+    if (series) {
+      let lo = Infinity, hi = -Infinity, peakAt = series.t[0], sum = 0;
+      series.values.forEach((v, i) => {
+        // A fingerprint for the signature: any change of shape or timing changes it.
+        sum += ((v ?? -1) + 1e-3 * series.t[i]) * (i + 1);
+        if (v === null) return;
+        lo = Math.min(lo, v);
+        if (v > hi) { hi = v; peakAt = series.t[i]; }
+      });
+      if (hi >= lo) curve = { t: series.t, values: series.values, lo, hi, peakAt, fingerprint: `${series.t.length}/${sum}` };
+    }
+    this.curves.set(key, curve);
+    return curve;
   }
 
   signature(obj: PlanObject, key: string): string | null {
@@ -117,10 +153,10 @@ export class TestDataView implements PlotView {
     this.plot = plot;
     this.following = Boolean(this.playhead?.hasRange);
     return JSON.stringify([plot.name, this.store.displayUnit, plot.range, plot.warnings, plot.waiting,
-      plot.beads.map((b) => [b.heightM, b.color, b.planned]),
+      plot.beads.map((b) => [b.heightM, b.color, b.planned, b.curve?.fingerprint ?? null]),
       plot.lines.map((l) => [l.series.sourceId, l.series.sourceName, l.series.role, l.bead, l.color, l.dash,
         this.snapshot(l.series.t), this.snapshot(l.series.values), l.series.missing]),
-      this.following]);
+      this.following, this.playhead?.kind ?? null]);
   }
 
   follow(): void {
@@ -140,7 +176,8 @@ export class TestDataView implements PlotView {
     root.append(h('div', { class: 'plot-panel__source' }, [`${plot.name} · ${kind}`]));
     for (const warning of plot.warnings) root.append(h('p', { class: 'plot-panel__warning', role: 'note' }, [warning]));
 
-    const times = unionTimes(plot.lines.map((l) => l.series.t));
+    // A planned curve joins the time axis, so the whole planned test is in view.
+    const times = unionTimes([...plot.lines.map((l) => l.series.t), ...plot.beads.flatMap((b) => b.curve ? [b.curve.t] : [])]);
     this.times = times;
     const axis = timeAxis(times[0], times[times.length - 1]);
     const chart = this.chart(plot, times, axis);
@@ -175,8 +212,10 @@ export class TestDataView implements PlotView {
     const t0 = times[0], t1 = times[times.length - 1];
     let lo = Infinity, hi = -Infinity;
     for (const l of plot.lines) for (const v of l.series.values) { if (v < lo) lo = v; if (v > hi) hi = v; }
-    const planned = plot.beads.filter((b) => b.planned?.value !== null && b.planned?.value !== undefined);
-    for (const b of planned) { lo = Math.min(lo, b.planned!.value!); hi = Math.max(hi, b.planned!.value!); }
+    // A planned curve where a burner's heat release rate changes; otherwise a line.
+    const planned = plot.beads.filter((b) => b.curve !== null || (b.planned?.value !== null && b.planned?.value !== undefined));
+    const top = (b: Bead): number => b.curve ? b.curve.hi : b.planned!.value!;
+    for (const b of planned) { lo = Math.min(lo, b.curve ? b.curve.lo : top(b)); hi = Math.max(hi, top(b)); }
     // Heat flux and HRR are non-negative quantities read from zero; temperatures are not.
     if (plot.unit !== '°C') lo = Math.min(lo, 0);
     // The range joins the axis while it stays within twice what is plotted; beyond
@@ -209,13 +248,34 @@ export class TestDataView implements PlotView {
       }
     }
     // Planned lines: neutral for one instrument, the bead's own colour on a rake,
-    // where only the highest is labelled so five labels do not stack.
-    const top = planned.reduce<Bead | null>((best, b) => (best && best.planned!.value! >= b.planned!.value! ? best : b), null);
+    // where only the highest is labelled so five labels do not stack. With a curve
+    // the planned value is a path over time, broken where no correlation applies,
+    // and its label sits over its highest point.
+    const highest = planned.reduce<Bead | null>((best, b) => (best && top(best) >= top(b) ? best : b), null);
     for (const b of planned) {
-      const yy = y(b.planned!.value!);
-      svg.append(svgElement('line', { x1: X0, x2: X1, y1: yy, y2: yy, stroke: plot.rake ? b.color : 'var(--plot-planned)',
-        'stroke-width': 1.2, 'stroke-dasharray': PLANNED_DASH, class: 'plot-panel__planned' }));
-      if (b === top) svg.append(svgElement('text', { x: X1 - 2, y: yy - 3, 'text-anchor': 'end', class: 'plot-panel__line-label' }, 'Planned'));
+      const style = { stroke: plot.rake ? b.color : 'var(--plot-planned)', 'stroke-width': 1.2, 'stroke-dasharray': PLANNED_DASH,
+        class: 'plot-panel__planned' };
+      if (b.curve) {
+        const path: string[] = [];
+        let open = false;
+        b.curve.t.forEach((t, i) => {
+          const v = b.curve!.values[i];
+          if (v === null) { open = false; return; }
+          path.push(`${open ? 'L' : 'M'}${x(t).toFixed(2)},${y(v).toFixed(2)}`);
+          open = true;
+        });
+        svg.append(svgElement('path', { d: path.join(' '), fill: 'none', 'stroke-linejoin': 'round', ...style,
+          ...(b.index >= 0 ? { 'data-bead': b.index } : {}) }));
+        if (b === highest) {
+          const xx = x(b.curve.peakAt), right = xx > (X0 + X1) / 2;
+          svg.append(svgElement('text', { x: right ? xx - 3 : xx + 3, y: Math.max(y(b.curve.hi) - 4, Y0 + 8),
+            'text-anchor': right ? 'end' : 'start', class: 'plot-panel__line-label' }, 'Planned'));
+        }
+      } else {
+        const yy = y(b.planned!.value!);
+        svg.append(svgElement('line', { x1: X0, x2: X1, y1: yy, y2: yy, ...style }));
+        if (b === highest) svg.append(svgElement('text', { x: X1 - 2, y: yy - 3, 'text-anchor': 'end', class: 'plot-panel__line-label' }, 'Planned'));
+      }
     }
 
     const cursor = svgElement('line', { y1: Y0, y2: Y1, stroke: 'var(--plot-cursor)', 'stroke-dasharray': '3 3' });
@@ -261,6 +321,14 @@ export class TestDataView implements PlotView {
     const u = unitLabel(plot.unit);
     const value = (v: number | null): string => v === null ? '–' : `${fmt(v)} ${u}`;
     const cells: { cell: HTMLElement; line: Line }[] = [];
+    // Planned cells: a fixed value, or with a curve the prediction at the cursor,
+    // within the curve's span (plannedValue at t), like every other row.
+    const plannedCells: { cell: HTMLElement; bead: Bead }[] = [];
+    const plannedCell = (bead: Bead): HTMLElement => {
+      const cell = h('td', { class: 'plot-panel__num' }, [value(bead.planned?.value ?? null)]);
+      if (bead.curve) plannedCells.push({ cell, bead });
+      return cell;
+    };
     const table = h('table', { class: 'plot-panel__legend', 'aria-label': 'Legend and values at the cursor' });
     if (!plot.rake) {
       const rows = plot.lines.map((line) => {
@@ -269,10 +337,10 @@ export class TestDataView implements PlotView {
         return h('tr', {}, [h('td', {}, [this.lineKey(line.color, line.dash)]),
           h('th', { scope: 'row' }, [`${line.series.sourceName} · ${line.series.role}`]), cell]);
       });
-      const planned = plot.beads[0].planned;
-      if (planned?.value !== null && planned?.value !== undefined) {
+      const bead = plot.beads[0];
+      if (bead.curve || (bead.planned?.value !== null && bead.planned?.value !== undefined)) {
         rows.push(h('tr', {}, [h('td', {}, [this.lineKey('var(--plot-planned)', PLANNED_DASH)]), h('th', { scope: 'row' }, ['Planned']),
-          h('td', { class: 'plot-panel__num' }, [value(planned.value)])]));
+          plannedCell(bead)]));
       }
       if (plot.range !== null) {
         rows.push(h('tr', {}, [h('td', {}, [this.lineKey('var(--plot-limit)', RANGE_DASH)]), h('th', { scope: 'row' }, ['Range']),
@@ -293,11 +361,16 @@ export class TestDataView implements PlotView {
           if (line) cells.push({ cell, line });
           return cell;
         }),
-        h('td', { class: 'plot-panel__num' }, [value(bead.planned?.value ?? null)]),
+        plannedCell(bead),
       ]))));
     }
     return { table, select: (t) => {
       for (const { cell, line } of cells) cell.textContent = value(valueAt(line.series.t, line.series.values, t));
+      for (const { cell, bead } of plannedCells) {
+        const c = bead.curve!;
+        const inside = t >= c.t[0] && t <= c.t[c.t.length - 1];
+        cell.textContent = value(inside ? plannedValue(this.store.document, plot.id, bead.index < 0 ? undefined : bead.index, t)?.value ?? null : null);
+      }
     } };
   }
 
@@ -305,21 +378,31 @@ export class TestDataView implements PlotView {
     const notes: string[] = [];
     // Why there is no planned line, grouped so a rake says it once per reason.
     const reasons = new Map<string, number[]>();
+    const gaps: number[] = [];
     for (const b of plot.beads) {
       if (!b.planned) continue;
+      if (b.curve) { if (b.curve.values.includes(null)) gaps.push(b.index + 1); continue; }
       if (b.planned.value === null) reasons.set(b.planned.note, [...(reasons.get(b.planned.note) ?? []), b.index + 1]);
     }
     for (const [note, beads] of reasons) {
       notes.push(plot.rake ? `No planned line for bead${beads.length > 1 ? 's' : ''} ${beads.join(', ')}: ${note}` : `No planned line: ${note}`);
     }
-    const said = plot.beads.find((b) => b.planned?.value !== null && b.planned?.value !== undefined)?.planned?.note;
+    if (gaps.length) {
+      notes.push(plot.rake ? `The planned line for bead${gaps.length > 1 ? 's' : ''} ${gaps.join(', ')} breaks where no gas temperature correlation applies.`
+        : 'The planned line breaks where no correlation applies.');
+    }
+    const curved = plot.beads.find((b) => b.curve);
+    const said = plot.beads.find((b) => !b.curve && b.planned?.value !== null && b.planned?.value !== undefined)?.planned?.note
+      ?? (curved ? plannedValue(this.store.document, plot.id, curved.index < 0 ? undefined : curved.index, curved.curve!.peakAt)?.note : undefined);
     if (said) notes.push(`Planned: ${said}`);
+    if (curved) notes.push('The planned line follows the heat release rate curve; the checks use its peak.');
     for (const s of plot.sources) {
       const missing = plot.lines.filter((l) => l.series.sourceId === s.id).reduce((sum, l) => sum + l.series.missing, 0);
       if (missing) notes.push(`${s.name}: ${missing.toLocaleString()} missing sample${missing > 1 ? 's' : ''} skipped, not interpolated.`);
     }
     notes.push(...plot.waiting);
-    notes.push(following ? 'The cursor follows the flame playback; dragging it seeks the playback.'
+    notes.push(following ? (this.playhead?.kind === 'fire' ? 'The cursor follows the fire clock; dragging it seeks the clock.'
+      : 'The cursor follows the flame playback; dragging it seeks the playback.')
       : 'Plan time is seconds from ignition. Drag the slider to read every series at one time.');
     return notes;
   }

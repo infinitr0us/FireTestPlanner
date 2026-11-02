@@ -616,6 +616,231 @@ try {
   await waitFor(() => evaluate('!document.querySelector(".toolbar__file").textContent.includes("•")'), 'undo of the gauge deletion');
   check('undo restores the gauge and clears the dangling check', await evaluate('!' + dangling));
 
+  phase('planned curves and a curve from test data');
+  // A burner curve made in the inspector (M17): the plan has no flame, so it gets
+  // the fire clock on the shared bar; the gauge's planned value becomes a curve the
+  // plot's cursor and the clock read together; and a mapped series becomes a curve.
+  const curveField = field('Curve');
+  const curveSummaryText = 'document.querySelector("#inspector .hrr-curve")?.textContent ?? ""';
+  const barReadout = 'document.querySelector(".playback-bar__readout")?.textContent ?? ""';
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("Synthetic burner"))');
+  await waitFor(() => evaluate('!!' + curveField), 'burner Curve select');
+  check('a steady burner offers the ways to make a curve, and no fire clock yet', await evaluate(
+    '[...(' + curveField + ').options].map(o=>o.textContent).join("|")') === 'Steady|t² growth|Table|From test data'
+    && await evaluate('(' + curveField + ').value') === 'steady'
+    && await evaluate('!document.querySelector(".playback-bar:not([hidden])")'));
+  await evaluate('(' + curveField + ').focus()');
+  await key('ArrowDown', 'ArrowDown', 40);
+  const makeT2 = '[...document.querySelectorAll("#inspector button")].find(b=>b.textContent==="Make t² curve")';
+  await waitFor(() => evaluate('!!' + makeT2), 't² form on the synthetic burner');
+  await click(makeT2);
+  await waitFor(async () => (await evaluate(curveSummaryText)).endsWith('source t2-medium'), 't² medium curve on the synthetic burner');
+  await waitFor(() => evaluate('document.querySelector(".playback-bar:not([hidden])")?.getAttribute("aria-label")==="Fire clock"'), 'fire clock for the curve');
+  check('a curve without a flame gets the fire clock, at rest with the cone at the peak (' + await evaluate(barReadout) + ')',
+    /^Cone at peak, Q = 80 kW · flame [\d.]+ m · t = 0\.0 s$/.test(await evaluate(barReadout)));
+
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("HF east"))');
+  const plannedLine = 'document.querySelector(".plot-panel svg[role=img] .plot-panel__planned")';
+  await waitFor(() => evaluate(plannedLine + '?.tagName==="path"'), 'planned curve on the gauge plot');
+  check('the gauge plot draws the planned value as a labelled dashed curve, not a line', await evaluate(`(() => {
+    const p=${plannedLine};
+    const ys=new Set(p.getAttribute('d').split(/[ML]/).filter(Boolean).map(s=>s.split(',')[1]));
+    return p.getAttribute('stroke-dasharray')!==null && ys.size>20
+      && [...document.querySelectorAll('.plot-panel svg .plot-panel__line-label')].some(t=>t.textContent==='Planned');
+  })()`));
+  const plannedCell = '[...document.querySelectorAll(".plot-panel__legend tbody tr")].find(r=>r.querySelector("th").textContent==="Planned").querySelector("td.plot-panel__num").textContent';
+  const plotTime = 'Number(document.querySelector(".plot-panel__values").textContent.match(/t = ([\\d.]+) s/)[1])';
+  const clockTime = 'Number(document.querySelector(".playback-bar__readout").textContent.match(/t = ([\\d.]+) s/)[1])';
+  check('at ignition the legend reads the planned curve at 0 kW/m² (' + await evaluate(plannedCell) + ')',
+    await evaluate(plannedCell) === '0 kW/m²');
+  // A click on the plot's slider seeks the fire clock; the clock and the cursor agree,
+  // the cone follows, and the legend reads the planned curve at that time.
+  await click('document.querySelector("input[aria-label=\\"Test data time\\"]")');
+  await waitFor(async () => (await evaluate(barReadout)).startsWith('Q = '), 'plot slider seeks the fire clock');
+  const midPlanned = await evaluate(plannedCell);
+  check('the plot\'s cursor and the fire clock read one time, and Planned reads the curve there ('
+    + await evaluate(barReadout) + ' | ' + midPlanned + ')',
+    Math.abs(await evaluate(plotTime) - await evaluate(clockTime)) < 0.06 && await evaluate(plotTime) > 100
+    && /^[\d.]+ kW\/m²$/.test(midPlanned) && midPlanned !== '0 kW/m²'
+    && (await evaluate('[...document.querySelectorAll(".plot-panel__note")].map(n=>n.textContent).join("|")'))
+      .includes('The cursor follows the fire clock; dragging it seeks the clock.'));
+  await screenshot('planned-curve');
+
+  await click(button('Test data…'));
+  await waitFor(() => evaluate('!!document.querySelector("dialog.test-data[open]")'), 'Test data dialog for an HRR series');
+  await click('[...document.querySelectorAll("[data-source-id=\\"logger\\"] button")].find(b=>b.textContent==="Edit…")');
+  await waitFor(() => evaluate('!!document.querySelector(".test-data__map")'), 'source editor for an HRR series');
+  await evaluate('(' + instrument('TC duct lower') + ').focus()');
+  await key('End', 'End', 35);
+  await waitFor(() => evaluate('(' + instrument('TC duct lower') + ').value===\'["burner",null]\''), 'channel mapped to the burner');
+  await key('Escape', 'Escape', 27);
+  await waitFor(() => evaluate('!document.querySelector("dialog.test-data")'), 'Test data dialog closed');
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("Synthetic burner"))');
+  await waitFor(() => evaluate('(' + curveField + ')?.value==="t2"'), 'burner with its t² curve');
+  await evaluate('(' + curveField + ').focus()');
+  await key('End', 'End', 35);
+  const useSeries = '[...document.querySelectorAll("#inspector button")].find(b=>b.textContent==="Use series")';
+  await waitFor(() => evaluate('!!' + useSeries), 'From test data form');
+  const seriesPreview = await evaluate('document.querySelector("#inspector .hrr-curve__preview").textContent.replace(/\\u00a0/g, " ")');
+  check('From test data names the mapped series and its thinning (' + seriesPreview + ')',
+    /^Synthetic logger · measured: [\d,]+ samples from -?[\d.]+ s to [\d.]+ s(?:; the [\d,]+ before ignition are left out)?, thinned to at most 200 points keeping the extremes\.$/.test(seriesPreview));
+  await click(useSeries);
+  await waitFor(async () => (await evaluate(curveSummaryText)).endsWith('source measured:logger'), 'curve from test data');
+  const kept = await evaluate('document.querySelector("#inspector .hrr-curve__message")?.textContent ?? ""');
+  check('Use series makes a measured curve and says how many points it kept (' + kept + ')',
+    /^Kept (\d+) of [\d,]+ samples, with the extremes\./.test(kept) && Number(kept.match(/^Kept (\d+)/)[1]) <= 200
+    && (await evaluate(curveSummaryText)).startsWith('Curve: ' + kept.match(/^Kept (\d+)/)[1] + ' points'));
+  await screenshot('curve-from-test-data');
+  await evaluate('document.activeElement?.blur()');
+  for (let i = 0; i < 3; i += 1) await ctrlZ();
+  // The inspector repaints a task after the store; wait for all three together.
+  await waitFor(() => evaluate('!document.querySelector(".toolbar__file").textContent.includes("•") && (' + curveField + ')?.value==="steady"'
+    + ' && !document.querySelector(".playback-bar:not([hidden])")'), 'undo of the curves and the mapping');
+  check('undo of the curves and the mapping leaves the plan unmodified, without a fire clock', true);
+
+  phase('HRR curve editor and the fire clock');
+  // Making a curve (M17) on the Example's burner: a t² fast growth by real keys on
+  // the Curve and Growth rate selects, typed hold and decay with their readout, the
+  // cone following the flame clock, and undo; a pasted table; then, with the flame
+  // deleted, the fire clock on the same bar stepping the cone.
+  await openTab();
+  await send('Page.navigate', { url: origin + '/dist/index.html' });
+  await waitFor(() => evaluate('[...document.querySelectorAll("button")].some(b=>b.textContent==="Example")'), 'built editor for the curve');
+  await click('[...document.querySelectorAll("button")].find(b=>b.textContent==="Example")');
+  await waitFor(() => evaluate('!!document.querySelector(".playback-bar:not([hidden]) input[aria-label=\\"Frame\\"]:not(:disabled)")'), 'Example flame for the curve');
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("Heptane pan"))');
+  const exampleCurve = field('Curve');
+  const exampleSummary = 'document.querySelector("#inspector .hrr-curve")?.textContent ?? ""';
+  const exampleBar = 'document.querySelector(".playback-bar__readout")?.textContent ?? ""';
+  // Previews keep a number and its unit together with a no-break space.
+  const curvePreview = '(document.querySelector("#inspector .hrr-curve__preview")?.textContent ?? "").replace(/\\u00a0/g, " ")';
+  const unmodified = '!document.querySelector(".toolbar__file").textContent.includes("•")';
+  await waitFor(() => evaluate('!!' + exampleCurve), 'Example Curve select');
+  await evaluate('(' + exampleCurve + ').focus()');
+  await key('ArrowDown', 'ArrowDown', 40);
+  await waitFor(() => evaluate('!!' + field('Growth rate') + ' && document.activeElement===' + exampleCurve), 't² form, focus kept on Curve');
+  await evaluate('(' + field('Growth rate') + ').focus()');
+  await key('ArrowDown', 'ArrowDown', 40);
+  await waitFor(async () => await evaluate('(' + field('Growth rate') + ').value==="fast"') && (await evaluate(curvePreview)).startsWith('Time to peak 41.3 s'), 'fast growth by a key');
+  check('the t² form reads out the time to peak of a fast growth to the burner\'s 80 kW (' + await evaluate(curvePreview) + ')',
+    await evaluate(curvePreview) === 'Time to peak 41.3 s · holds to 341.3 s · ends at 641.3 s'
+    && await evaluate('(' + field('Peak (kW)') + ').value') === '80'
+    && await evaluate('[...document.querySelectorAll("#inspector label.field")].find(l=>l.querySelector(".field__label")?.textContent==="α (kW/s²)")?.querySelector(".hrr-curve__alpha")?.textContent') === '0.0469');
+  const typeInto = async (expression, text) => {
+    await evaluate('(() => { const e=' + expression + '; e.focus(); e.select(); })()');
+    await send('Input.insertText', { text });
+  };
+  await typeInto(field('Hold (s)'), '60');
+  await waitFor(async () => (await evaluate(curvePreview)) === 'Time to peak 41.3 s · holds to 101.3 s · ends at 401.3 s', 'typed hold');
+  const makeExampleT2 = '[...document.querySelectorAll("#inspector button")].find(b=>b.textContent==="Make t² curve")';
+  await typeInto(field('Decay (s)'), '0');
+  await waitFor(() => evaluate('(' + field('Decay (s)') + ').getAttribute("aria-invalid")==="true"'), 'invalid decay');
+  check('an invalid decay is named, keeps its text and turns Make t² curve off', await evaluate(curvePreview) === 'The decay must be longer than 0 s.'
+    && await evaluate('(' + field('Decay (s)') + ').value') === '0' && await evaluate(makeExampleT2 + '.disabled'));
+  await typeInto(field('Decay (s)'), '300');
+  await waitFor(() => evaluate('!' + makeExampleT2 + '.disabled'), 'valid decay');
+  await screenshot('hrr-t2-form');
+  await click(makeExampleT2);
+  await waitFor(async () => (await evaluate(exampleSummary)).endsWith('source t2-fast'), 't² fast curve made');
+  const peakReadout = '[...document.querySelectorAll("#inspector .readout")].find(r=>r.querySelector(".readout__label").textContent==="Peak HRR (kW)")?.querySelector(".readout__value").textContent';
+  check('Make t² curve sets the curve as one edit: readout, sparkline, the peak in place of the HRR field, focus kept ('
+    + await evaluate(exampleSummary) + ')',
+    /^Curve: \d+ points, peak 80 kW at 41\.3\d* s, source t2-fast$/.test(await evaluate(exampleSummary))
+    && await evaluate(peakReadout) === '80' && !(await evaluate('!!' + field('HRR (kW)')))
+    && await evaluate('(' + exampleCurve + ').value') === 't2'
+    && await evaluate('document.querySelector("#inspector .hrr-curve__spark")?.getAttribute("aria-label")') === 'Heat release rate curve, peak 80 kW at 41.3 s'
+    && await evaluate('!!document.querySelector("#inspector .hrr-curve__spark circle.hrr-curve__peak")')
+    && await evaluate('document.activeElement.textContent') === 'Make t² curve'
+    && !(await evaluate(unmodified)));
+  // The Example's flame is loaded, so its frames stay the clock and the cone follows it.
+  check('the flame clock at rest says the cone shows the peak (' + await evaluate(exampleBar) + ')',
+    /^t = 0\.0 s · frame 1\/80 · [\d,]+ cubes · cone at peak, Q = 80 kW · flame [\d.]+ ft$/.test(await evaluate(exampleBar)));
+  for (let i = 0; i < 4; i += 1) await key('.', 'Period', 190);
+  await waitFor(async () => /^t = 20\.0 s · frame 5\/80 · [\d,]+ cubes · Q = 18\.8 kW · flame [\d.]+ ft$/.test(await evaluate(exampleBar)), 'cone follows the flame clock');
+  check('stepped, the cone follows the flame clock at Q(t)', true);
+  await key('Home', 'Home', 36);
+  await waitFor(async () => (await evaluate(exampleBar)).includes('cone at peak'), 'Home returns the cone to the peak');
+  check('Home returns the clock to rest and the cone to the peak', true);
+  await evaluate('document.activeElement?.blur()');
+  await ctrlZ();
+  await waitFor(() => evaluate('!document.querySelector("#inspector .hrr-curve") && !!' + field('HRR (kW)')), 'undo of the t² curve');
+  check('undo removes the curve, restores the steady HRR field and an unmodified plan',
+    await evaluate('(' + exampleCurve + ').value') === 'steady' && await evaluate(unmodified)
+    && !(await evaluate(exampleBar)).includes('Q = '));
+
+  // A table pasted from a spreadsheet: refused by row while out of order, then used.
+  await evaluate('(' + exampleCurve + ').focus()');
+  await key('End', 'End', 35);
+  await waitFor(async () => (await evaluate('document.querySelector("#inspector .hrr-curve__form")?.textContent ?? ""'))
+    .startsWith('No heat release rate series is loaded for this burner.'), 'From test data by End');
+  check('From test data without a mapped series says what it needs, with nothing to apply',
+    await evaluate('(' + exampleCurve + ').value') === 'measured' && !(await evaluate('[...document.querySelectorAll("#inspector button")].some(b=>b.textContent==="Use series")')));
+  await evaluate('(' + exampleCurve + ').focus()');
+  await key('ArrowUp', 'ArrowUp', 38);
+  const tableArea = 'document.querySelector("#inspector textarea.hrr-curve__table")';
+  const useTable = '[...document.querySelectorAll("#inspector button")].find(b=>b.textContent==="Use table")';
+  await waitFor(() => evaluate('!!' + tableArea), 'table form');
+  check('a steady burner\'s table starts empty, with a hint and Use table off', await evaluate(tableArea + '.value') === ''
+    && (await evaluate(tableArea + '.placeholder')).startsWith('Paste two columns') && await evaluate(useTable + '.disabled'));
+  await evaluate(tableArea + '.focus()');
+  await send('Input.insertText', { text: 'Time (s)\tHRR (kW)\n0\t60\n30\t120\n20\t120' });
+  await waitFor(() => evaluate(tableArea + '.getAttribute("aria-invalid")==="true"'), 'table refused');
+  check('a pasted table out of order is refused by row, its text kept (' + await evaluate(curvePreview) + ')',
+    await evaluate(curvePreview) === 'Row 4: time 20 s does not follow 30 s; times must increase strictly.'
+    && await evaluate(useTable + '.disabled') && (await evaluate(tableArea + '.value')).endsWith('20\t120'));
+  await evaluate(tableArea + '.select()');
+  await send('Input.insertText', { text: 'Time (s)\tHRR (kW)\n0\t60\n30\t120\n90\t120\n150\t0' });
+  await waitFor(async () => (await evaluate(curvePreview)) === '4 points from 0 s to 150 s, peak 120 kW at 30 s', 'table preview');
+  await click(useTable);
+  await waitFor(async () => (await evaluate(exampleSummary)) === 'Curve: 4 points, peak 120 kW at 30 s, source table', 'curve from a table');
+  check('Use table sets the pasted curve as one edit, with its peak', await evaluate(peakReadout) === '120'
+    && await evaluate('(' + exampleCurve + ').value') === 'table');
+
+  // Without the flame there is no frame clock: the same bar becomes the fire clock.
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("Synthetic flame"))');
+  await new Promise(r => setTimeout(r, 150));
+  await key('Delete', 'Delete', 46);
+  await waitFor(() => evaluate('document.querySelector(".playback-bar:not([hidden])")?.getAttribute("aria-label")==="Fire clock"'), 'fire clock without the flame');
+  const atRest = await evaluate(exampleBar);
+  check('the fire clock uses the shared transport and speeds, and at rest draws the peak (' + atRest + ')',
+    /^Cone at peak, Q = 120 kW · flame ([\d.]+) ft · t = 0\.0 s$/.test(atRest)
+    && await evaluate('document.querySelector(".playback-bar input[aria-label=\\"Fire clock time\\"]").max') === '150'
+    && await evaluate('[...document.querySelectorAll(".playback-bar__controls .playback-bar__btn")].slice(0, 5).map(b=>b.getAttribute("aria-label")).join("|")')
+      === 'First frame (Home)|Previous frame (,)|Play (Space)|Next frame (.)|Last frame (End)'
+    && JSON.stringify(await evaluate('[...document.querySelector(".playback-bar [aria-label=\\"Playback speed\\"]").options].map(o=>[o.value,o.textContent])')) === JSON.stringify(editorSpeeds)
+    && await evaluate('!document.querySelector(".playback-bar__legend")'));
+  await click('document.querySelector(".playback-bar button[aria-label=\\"First frame (Home)\\"]")');
+  await key('.', 'Period', 190);
+  await waitFor(async () => (await evaluate(exampleBar)).startsWith('Q = 62 kW at t = 1.0 s'), 'fire clock step');
+  const stepped = await evaluate(exampleBar);
+  check('a step of the fire clock moves the cone to Q(t), lower than the peak (' + stepped + ')',
+    /^Q = 62 kW at t = 1\.0 s · flame ([\d.]+) ft$/.test(stepped)
+    && Number(stepped.match(/flame ([\d.]+) ft/)[1]) < Number(atRest.match(/flame ([\d.]+) ft/)[1]));
+  await evaluate('document.activeElement?.blur()');
+  await key(' ', 'Space', 32);
+  await waitFor(async () => Number((await evaluate(exampleBar)).match(/t = ([\d.]+) s/)?.[1] ?? 0) > 2, 'Space plays the fire clock');
+  await key(' ', 'Space', 32);
+  check('Space plays and pauses the fire clock from the page', await evaluate('!!document.querySelector(".playback-bar button[aria-label=\\"Play (Space)\\"]")'));
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("Heptane pan"))');
+  await waitFor(() => evaluate('!!document.querySelector("#inspector .hrr-curve__spark")'), 'burner with its table curve');
+  await screenshot('fire-clock');
+  await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+  await new Promise(r => setTimeout(r, 300));
+  check('at 1280 x 720 the fire clock bar and the curve readout fit their panels', await evaluate(`(() => {
+    const bar=document.querySelector('.playback-bar').getBoundingClientRect();
+    const note=document.querySelector('#inspector .hrr-curve');
+    return bar.right<=innerWidth && bar.bottom<=innerHeight && note.scrollWidth<=note.clientWidth+1;
+  })()`));
+  await evaluate('document.querySelector("#inspector .hrr-curve__form").scrollIntoView({block:"center"})');
+  await screenshot('fire-clock-laptop');
+  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await evaluate('document.activeElement?.blur()');
+  await ctrlZ();
+  await ctrlZ();
+  await waitFor(() => evaluate(unmodified + ' && !!document.querySelector(".playback-bar input[aria-label=\\"Frame\\"]")'
+    + ' && !document.querySelector("#inspector .hrr-curve") && (' + exampleCurve + ')?.value==="steady"'), 'undo of the flame deletion and the table');
+  check('undo restores the flame clock and the steady burner', true);
+
   check('no uncaught browser exceptions', errors.length===0);
   const result = { browser: executable, passed: checks.length, checks };
   if (process.env.BROWSER_TEST_OUTPUT) {

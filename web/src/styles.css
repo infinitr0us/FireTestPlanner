@@ -462,6 +462,21 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
   color: var(--text-faint);
 }
 
+/* The burner's Curve control (ui/hrr-curve-editor.ts). The readout keeps the note
+   voice, with the curve's sparkline beside it in the planned-value token; the
+   forms are grouped by a rule and preview their result in the same small type.
+   An invalid table or t² field keeps its text with an error border. */
+.hrr-curve__row { display: flex; align-items: flex-start; gap: 8px; margin: 7px 0 6px; padding-top: 7px; border-top: 1px solid var(--border); }
+.hrr-curve__row .readout__note { flex: 1; min-width: 0; margin: 0; padding: 0; border: 0; }
+.hrr-curve__spark { flex: none; display: block; }
+.hrr-curve__form { margin: 8px 0 4px; padding-left: 8px; border-left: 2px solid var(--border); }
+.hrr-curve__form .field__input[aria-invalid=true] { border-color: var(--bad); }
+.hrr-curve__preview, .hrr-curve__hint { margin: 5px 0; font-size: 11px; line-height: 1.45; color: var(--text-dim); overflow-wrap: anywhere; }
+.hrr-curve__hint { color: var(--text-faint); }
+.hrr-curve__preview.panel__error { color: var(--bad); }
+.hrr-curve__alpha { font: 11px var(--mono); color: var(--text-dim); }
+.hrr-curve__table { display: block; font-family: var(--mono); font-size: 11px; resize: vertical; white-space: pre; overflow-x: auto; tab-size: 8; }
+
 /* The lens comparison: a readouts box laid out as a table, because it compares
    rows. Same type, surface and verdict colours as Coverage; the camera's own lens
    is the selected row, so it takes the accent and a marker rather than colour alone. */

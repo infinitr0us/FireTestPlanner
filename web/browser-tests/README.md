@@ -51,6 +51,24 @@ and source. Deleting a mapped gauge raises `test-data-dangling`; clicking it ope
 source with the flagged mapping focused, and at 1280 × 720 the dialog and its actions
 fit the window.
 
+Heat release rate curves (M17) are made with real input. On the test data plan a
+key on the burner's Curve select and Make t² curve give it a t² curve: the plan,
+which has no flame, gets the fire clock at rest with the cone at the peak; the
+gauge plot's Planned is a labelled dashed curve whose legend reads 0 kW/m² at
+ignition; a click on the plot's slider seeks the clock, and the plot and the bar
+read one time. A channel mapped to the burner by an End key in Test data… then
+becomes a curve through From test data, which says how many points it kept, and
+three undos leave the plan unmodified. On the Example, real keys pick t² growth
+and Fast, typed hold and decay update the time to peak, an invalid decay keeps its
+text and turns the button off, and Make t² curve gives the readout, sparkline and
+peak with focus kept; the flame clock's readout says the cone is at the peak at
+rest, follows Q(t) after four steps and returns to the peak on Home, and undo
+restores the steady burner. A table pasted out of order is refused by row, then a
+valid one is used. Deleting the flame turns the same bar into the fire clock
+(shared transport and speeds, no height legend), whose step lowers the flame
+height in the readout and whose Space plays and pauses; at 1280 × 720 the bar and
+the curve readout fit.
+
 For manual inspection, run `npm run dev -- --host 127.0.0.1` and open
 `/browser-tests/visual-consistency.html` at the URL and port Vite prints.
 The page also opens the public `room_corner` subset, selects a directed gauge and

@@ -1,6 +1,9 @@
 /**
  * The playback bar: transport, scrubber and readout for the reconstructed flames,
- * docked along the bottom of the viewport whenever the plan holds one.
+ * docked along the bottom of the viewport whenever the plan holds one, and for the
+ * fire clock when a burner has a heat release rate curve (state/fire-clock.ts).
+ * There is one bar and one clock: with a flame loaded, its frames are the marks
+ * and the cone follows them too; otherwise the fire clock's marks span the curves.
  *
  * Smokeview's time bar is the model: `t = 55.0 s` is the primary readout and the
  * frame index is secondary, because the engineers think in test seconds. The
@@ -13,6 +16,7 @@ import { fileName } from '../core/linked-files';
 import { shell } from '../io/files';
 import { flameSequenceLink, reconstructedFlames } from '../core/plan';
 import type { ReconstructedFlameObject } from '../core/types';
+import { conePart, coneTime, fireReadout, hasHrrCurve } from '../state/fire-clock';
 import type { FlameStore } from '../state/flame-store';
 import { SPEEDS, type Playhead } from '../state/playhead';
 import type { Store } from '../state/store';
@@ -67,8 +71,10 @@ export class PlaybackBar {
   render(): void {
     const doc = this.store.document;
     const flames = reconstructedFlames(doc);
-    this.root.hidden = flames.length === 0;
-    if (!flames.length) { this.signature = ''; return; }
+    const curves = hasHrrCurve(doc);
+    this.root.hidden = flames.length === 0 && !curves;
+    if (this.root.hidden) { this.signature = ''; return; }
+    this.root.setAttribute('aria-label', flames.length ? 'Flame playback' : 'Fire clock');
 
     const marks = this.playhead.marks;
     const status = flames.map((f) => this.statusOf(f));
@@ -77,7 +83,7 @@ export class PlaybackBar {
     // rebuild on every press would drop the keyboard focus from the button pressed.
     const signature = JSON.stringify([
       this.store.documentId, flames.map((f) => [f.id, f.name, f.display?.visible]), status,
-      marks.length, this.playhead.start, this.playhead.end,
+      marks.length, this.playhead.start, this.playhead.end, this.playhead.kind, curves,
     ]);
     if (signature === this.signature) { this.update(); return; }
     this.signature = signature;
@@ -96,7 +102,8 @@ export class PlaybackBar {
     this.playButton = transport('play', () => this.playhead.toggle());
     this.slider = h('input', {
       type: 'range', class: 'playback-bar__slider', min: 0, max: Math.max(marks.length - 1, 0), step: 1,
-      value: Math.max(this.playhead.markIndexAt(this.playhead.time_s), 0), 'aria-label': 'Frame',
+      value: Math.max(this.playhead.markIndexAt(this.playhead.time_s), 0),
+      'aria-label': this.playhead.kind === 'fire' ? 'Fire clock time' : 'Frame',
       oninput: (e: Event) => {
         const index = Number((e.target as HTMLInputElement).value);
         if (marks[index] !== undefined) this.playhead.seek(marks[index]);
@@ -114,7 +121,9 @@ export class PlaybackBar {
       }, this.slider ?? undefined),
     }) as HTMLInputElement;
     this.slider.disabled = !ready;
-    this.readout = h('output', { class: 'playback-bar__readout', 'aria-live': 'off' });
+    this.readout = h('output', { class: 'playback-bar__readout', 'aria-live': 'off',
+      title: curves ? 'The predicted cone shows the peak heat release rate, the worst case the checks and the drawing use, '
+        + "while the clock is paused at its start. Played or moved, it follows each burner's curve; Home returns it to the peak." : '' });
 
     const speed = h('select', { class: 'playback-bar__select', title: 'Playback speed, times real time', 'aria-label': 'Playback speed',
       onchange: (e: Event) => this.playhead.setSpeed(Number((e.target as HTMLSelectElement).value)) },
@@ -123,9 +132,10 @@ export class PlaybackBar {
       h('input', { type: 'checkbox', checked: this.playhead.loop, onchange: (e: Event) => this.playhead.setLoop((e.target as HTMLInputElement).checked) }),
       'Loop',
     ]);
-    const legend = h('span', { class: 'playback-bar__legend', title: 'Height ramp: blue at the base, red at the tip, on a fixed scale over the whole sequence' }, [
+    // The height ramp describes reconstructed voxels; the fire clock alone has none.
+    const legend = flames.length ? h('span', { class: 'playback-bar__legend', title: 'Height ramp: blue at the base, red at the tip, on a fixed scale over the whole sequence' }, [
       h('span', { class: 'playback-bar__ramp' }), 'base → tip',
-    ]);
+    ]) : null;
     const snapshot = button('PNG', 'Save the viewport at 3× resolution, for a figure', () => this.host.snapshot(), false);
 
     const controls = h('div', { class: 'playback-bar__controls' }, [
@@ -153,10 +163,18 @@ export class PlaybackBar {
     const marks = this.playhead.marks;
     const index = this.playhead.markIndexAt(this.playhead.time_s);
     if (marks.length) this.slider.value = String(Math.max(index, 0));
-    const cubes = this.host.cubeCount();
-    this.readout.textContent = marks.length
-      ? `t = ${formatTime(this.playhead.time_s)} · frame ${Math.max(index, 0) + 1}/${marks.length} · ${cubes.toLocaleString()} cubes`
-      : 'no frames loaded';
+    const doc = this.store.document, unit = this.store.displayUnit;
+    const cone = coneTime(this.playhead);
+    if (this.playhead.kind === 'fire') {
+      this.readout.textContent = fireReadout(doc, this.playhead.time_s, cone, unit);
+    } else {
+      const cubes = this.host.cubeCount();
+      // With a curve the cone follows this clock too, and the readout says what it shows.
+      this.readout.textContent = marks.length
+        ? `t = ${formatTime(this.playhead.time_s)} · frame ${Math.max(index, 0) + 1}/${marks.length} · ${cubes.toLocaleString()} cubes`
+          + (hasHrrCurve(doc) ? ` · ${conePart(doc, cone, unit)}` : '')
+        : 'no frames loaded';
+    }
     if (this.playButton) setTransportPlaying(this.playButton, this.playhead.playing);
   }
 

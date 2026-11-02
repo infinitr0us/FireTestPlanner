@@ -38,6 +38,7 @@ import { FlameStore } from './state/flame-store';
 import { TestDataStore } from './state/test-data-store';
 import { embedTestData, splitEmbeddedTestData, type TestDataShareSummary } from './io/test-data-embed';
 import type { Series } from './core/test-data';
+import { fireClockMarks } from './state/fire-clock';
 import { Playhead } from './state/playhead';
 import { Store } from './state/store';
 import { h, qs } from './ui/dom';
@@ -109,6 +110,7 @@ new PlotPanel(qs('#viewport'), store,
 const flameHost: FlameActionsHost = {};
 const flameOps = flameActions(store, flameStore, flameHost);
 const flamePanel = inspector.attachFlames(flameStore, flameOps);
+inspector.attachTestData(testDataStore);
 flameHost.onProgress = (text) => flamePanel.setProgress(text);
 const playbackBar = new PlaybackBar(qs('#viewport'), store, flameStore, playhead, {
   cubeCount: () => viewport.flameCubeCount,
@@ -125,7 +127,9 @@ new ResizeObserver(() => {
 
 /**
  * The instants the clock can stand at: every loaded sequence's timestamps, for the
- * flames the document holds. Recomputed whenever either side changes; `setMarks`
+ * flames the document holds, or with none loaded the fire clock over the burners'
+ * heat release rate curves. One clock either way: the cone follows the flame's
+ * frames when there are some. Recomputed whenever either side changes; `setMarks`
  * is a no-op when nothing did.
  */
 function syncPlayback(): void {
@@ -135,7 +139,8 @@ function syncPlayback(): void {
     const sequence = link ? flameStore.sequenceOf(link) : undefined;
     if (sequence) marks.push(...sequence.timestamps);
   }
-  playhead.setMarks(marks);
+  if (marks.length) playhead.setMarks(marks, 'flame');
+  else playhead.setMarks(fireClockMarks(store.document), 'fire');
   viewport.syncFlames();
 }
 
@@ -854,6 +859,7 @@ inspector.render();
 outliner.render();
 checks.render();
 renderToolbar();
+syncPlayback(); // a shared plan's curve gets its fire clock before any edit
 viewport.setGizmoMode(gizmoMode);
 viewport.frameAll();
 

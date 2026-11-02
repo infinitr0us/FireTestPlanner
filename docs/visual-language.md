@@ -27,6 +27,8 @@ the feature:
 | Results scalar colour scale | `scene/fds-results.ts`: the shader's `ramp`, and `resultRampRgb` for anything drawn outside it (the PNG colour bar); `.fds-results__ramp` shows the same five stops |
 | Playback controls and shortcuts | `ui/transport.ts`; speeds from `state/playhead.ts` |
 | HRR curve readout in inspector, drawing and import preview | `core/hrr.ts`: `curveSummary` |
+| Making a curve in the inspector, and its sparkline | `ui/hrr-curve-editor.ts`, with `ui/hrr-curve-model.ts` |
+| Fire clock marks, the cone's time and the Q readout | `state/fire-clock.ts` |
 | Plot series, grid and cursor | `--plot-*` tokens in `styles.css` |
 | Viewport plot frame, collapse and view selector | `ui/plot-panel.ts` |
 | Plot dashes, bead ramp, ticks and time axis | `ui/plot-svg.ts` |
@@ -176,6 +178,22 @@ curve keeps the peak as the steady rate (a zero peak becomes an unset steady rat
 and is undoable. The full point count, peak, first peak time and source also appear
 in the drawing's equipment row. Source text wraps at narrow inspector widths.
 
+The burner's **Curve** select names the ways to make a curve: Steady, t² growth,
+Table and From test data, plus the source of a curve made elsewhere (**From FDS:
+FIRE_RAMP**, **Imported: …**), which is kept as it is until replaced or removed.
+Picking a way only opens its form, grouped by a left rule; the form's primary
+button (`btn--primary`: Make t² curve, Use table, Use series) commits one undoable
+edit. A named growth rate shows its α as static text; Custom α makes it a field.
+Each form previews its result in the note voice as it is typed (time to peak, the
+table's points and peak, the series' samples), keeping a number and its unit on one
+line. An invalid t² field or table keeps its text, takes the error border and
+`aria-invalid`, says why in `panel__error` text (by row for a table) and turns the
+button off. Drafts survive repaints, Escape restores a field's text as elsewhere,
+and focus returns to the same control after an apply even when the HRR field above
+it becomes a readout. The readout sits beside a 96 × 34 px sparkline: the curve in
+solid `--plot-planned` on a `--plot-grid` baseline, the first peak marked with a dot,
+and its peak and time as the accessible name.
+
 ## Playback
 
 `ui/transport.ts` supplies the shared five button glyphs, accessible names and
@@ -203,6 +221,19 @@ The flame bar retains its cube count and height legend; results retain Fit, fiel
 coverage and their own scientific scale. Sharing a small set of controls does not
 require merging the two playback systems.
 
+The **fire clock** is the same editor bar, not a second one. A plan with a burner
+curve and no loaded flame sequence gets it (`aria-label` "Fire clock", scrubber
+"Fire clock time", no height legend): its marks are a round step of about 1 % over
+the curves' span, and the readout is `Q = 168.8 kW at t = 60.0 s · flame 1.23 m`
+(the total over burners, and the tallest flame, when there are several). When a
+flame is loaded there is still one clock, the flame's, and its readout gains the
+same `Q = … · flame …` part. The predicted cone and plume take each burner's Q(t)
+once the clock is played or moved; paused at the first mark, where a plan opens and
+where Home returns, the clock is at rest and the cone shows the peak the checks and
+the drawing use, and the readout says so (`Cone at peak, Q = 1000 kW · …`). The
+readout's tooltip explains the rule. Keys, speeds, Loop and focus follow the rules
+above.
+
 ## Plots, geometry and scientific color
 
 Plot series use `--plot-primary` and `--plot-secondary`; the grid and dashed time
@@ -229,6 +260,14 @@ would flatten the data. Line labels, the axis title and the legend use text
 tokens; colour sits in the line keys. The legend is a table that doubles as the
 readout at the cursor, and no value is shown outside a series' own span. Missing
 samples break the line and are counted in a note; nothing is interpolated.
+
+When a burner's heat release rate has a curve, Planned is that same long-dash line
+drawn as a path over time (`plannedSeries`), labelled over its highest point and
+broken where no correlation applies; on a burner's own plot it is the burner's
+curve. Its span joins the time axis, and its legend cell reads the prediction at
+the cursor (`plannedValue` at t), '–' outside the curve's span. Without a curve it
+stays the horizontal line. The cursor follows whichever clock runs, and the note
+names it (flame playback or fire clock).
 
 The Test data dialog is a native modal like the FDS export preview, with
 `modal__panel`, `field__input`, the shared buttons and a status line in the shared
@@ -302,7 +341,8 @@ Token reuse alone is not an accessibility or scientific-validation claim.
 | History renderers | Results canvas; reconstruction SVG | Different interaction/export paths already work | Keep |
 | PNG export | Results use current pixel ratio capped at 2 with labels/caption; editor uses 3× without DOM labels | Preserve current export semantics; resolution parity is separate work | Keep |
 | Scientific ramps | Slice, smoke/fire and reconstructed-height palettes retain their own meanings | A data scale is not an interaction accent | Keep |
-| HRR curve inspector and cone | Curve readout and undoable removal; cone remains at peak | Curve authoring and a fire clock are deferred; sizing checks remain at peak | Keep for M17 model/import part |
+| HRR curve cone | The predicted cone follows Q(t) only once the clock is played or moved; at rest, in checks, coverage and the drawing it is the peak | The 3D view opens on the worst case every verdict uses; the curve is scrubbed on demand | Keep |
+| HRR curve sparkline | Solid `--plot-planned` line, not Planned's long dash | At 96 px a 10 4 dash breaks the curve into a few marks; the sparkline stands alone beside its readout, not among measured and simulated lines | Keep |
 | Print | Paper background and dark ink; instrument defaults still shared | Screen surfaces are unsuitable for paper | Keep |
 | Length precision | Fixed decimals on dimensions and set-out coordinates; trimmed decimals in inspector fields | Adjacent construction labels need consistent precision; fields stay compact and editable | Keep; fractional ft-in uses the same reduced sixteenths everywhere |
 | Rake plots | Bead lines take the ordinal `--plot-ramp-*` colours instead of `--plot-primary`/`--plot-secondary` | Colour encodes bead height; the measured/simulated distinction is carried by dash, as on every instrument plot | Keep |
@@ -331,8 +371,8 @@ the print block in `styles.css`; the page is A4 portrait with 14 mm margins.
 
 `npm test` includes imported-device color parity across plan, builders and results,
 transport key policy, and a zero-private-color-literal guard on the migrated device,
-results-dialog, plot-panel, reconstruction and instrument plot, test data dialog and
-palette consumers. The guard is focused on
+results-dialog, plot-panel, reconstruction and instrument plot, test data dialog,
+burner curve editor, playback bar and palette consumers. The guard is focused on
 these consumers; it does not claim to count shader data colors, print ink or all
 legacy geometry literals. New screen colors belong in `styles.css :root`, and new
 instrument defaults in `core/visual.ts`.

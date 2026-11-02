@@ -14,6 +14,9 @@
 
 export type PlayheadEvent = 'time' | 'state' | 'range';
 type Listener = (event: PlayheadEvent) => void;
+/** Whose instants the marks are: loaded flame frames, or the fire clock over the
+ *  plan's heat release rate curves when no flame is loaded (state/fire-clock.ts). */
+export type ClockKind = 'flame' | 'fire';
 
 /** Real-time multipliers the bar offers. x1 is one 5 s frame every 5 s. */
 export const SPEEDS = [1, 2, 5, 10, 30, 60] as const;
@@ -27,6 +30,7 @@ export class Playhead {
   private _loop = true;
   /** Every instant a follower has a sample at, sorted and unique. */
   private _marks: number[] = [];
+  private _kind: ClockKind | null = null;
 
   /** The clock's time. Never past the last mark: the last frame is held, not exceeded. */
   get time_s(): number { return this._marks.length ? Math.min(this._time, this.end) : this._time; }
@@ -37,6 +41,15 @@ export class Playhead {
   get start(): number { return this._marks.length ? this._marks[0] : 0; }
   get end(): number { return this._marks.length ? this._marks[this._marks.length - 1] : 0; }
   get hasRange(): boolean { return this._marks.length > 0; }
+  /** What the marks are, or null without a range. Followers word their notes by it. */
+  get kind(): ClockKind | null { return this._marks.length ? this._kind : null; }
+
+  /**
+   * Paused at the first mark: where a clock stands until it is played or moved, and
+   * where Home returns it. The predicted cone shows the peak here, the worst case
+   * the checks and the drawing use, and follows Q(t) anywhere else.
+   */
+  get atRest(): boolean { return !this._playing && this.time_s <= this.start; }
 
   /**
    * How long the last frame is held before a loop starts over: the previous
@@ -65,11 +78,13 @@ export class Playhead {
    * the scrubber snaps to them, and playback runs from the first to the last. The
    * current time is kept where it is unless it has fallen outside the new range.
    */
-  setMarks(marks: Iterable<number>): void {
+  setMarks(marks: Iterable<number>, kind: ClockKind = 'flame'): void {
     const next = [...new Set(marks)].filter(Number.isFinite).sort((a, b) => a - b);
-    if (next.length === this._marks.length && next.every((t, i) => t === this._marks[i])) return;
+    if (next.length === this._marks.length && next.every((t, i) => t === this._marks[i])
+      && (kind === this._kind || !next.length)) return;
     const time = this.time_s; // clamped: a clock holding the old last frame is at that frame
     this._marks = next;
+    this._kind = kind;
     if (!next.length) this.pause();
     else this._time = time < this.start || time > this.end ? this.start : time;
     this.emit('range');

@@ -336,7 +336,11 @@ may have a zero peak, so the 1.7 schema permits `hrr_kw: 0`.
 `hrrAt(burner, t)` / `burner.hrr_at(t)` interpolates linearly, holding the first
 value before the first time and the last value after the last time. Without a
 curve it returns `hrr_kw`. Negative query times are allowed; non-finite times are
-rejected. Checks and the editor's 3D cone use the peak. Optional `t` arguments on
+rejected. Checks, coverage and the drawing use the peak. The editor's 3D cone uses
+the peak too while the playback clock is at rest (paused at its first mark, where
+a plan opens), and each burner's Q(t) once the clock is played or moved: the fire
+clock over the curves' span when no flame sequence is loaded, otherwise the
+flame's clock. Optional `t` arguments on
 flame height/tip, heat-flux estimates and thermocouple beads evaluate each burner's
 own Q(t), including its source height, plume envelope and gauge line of sight.
 Omitting time preserves the existing peak predictions. At zero HRR the flame
@@ -372,7 +376,24 @@ max_points=200)` returns `{curve, notes}`. It requires finite samples at increas
 non-negative times, keeps endpoints and each interior interval's minimum and
 maximum in time order, and clamps negative HRR to zero with a counted note. An
 odd budget can leave one slot unused; a budget of two keeps only the endpoints.
-These helpers produce ordinary curves for later editor workflows.
+These helpers produce ordinary curves.
+
+The editor's burner **Curve** control makes curves these ways, each one undoable
+edit that also sets `hrr_kw` to the peak, and records the way in `source`:
+
+| Way | `source` |
+|---|---|
+| t² growth at a named rate | `t2-slow`, `t2-medium`, `t2-fast`, `t2-ultra-fast` |
+| t² growth with a typed alpha | `t2` (as `t2Curve` writes) |
+| Table pasted from a spreadsheet | `table` |
+| From test data | `measured:<source id>`, or `simulated:<source id>` for a simulated source |
+
+A pasted table has two columns, seconds and kW, split by tab, else semicolon, else
+comma, else spaces; one header row of text is skipped. Beside a tab or semicolon a
+comma inside a cell is a decimal comma, or a thousands separator when the table's
+decimals are points. From test data drops samples before ignition (t < 0), since a
+curve starts at 0 s or later, then thins with `curveFromSeries` (200 points). A
+curve made elsewhere, such as `fds-ramp:<ID>`, keeps its source until replaced.
 
 ## 5a. Object frames
 
