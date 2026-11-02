@@ -393,8 +393,9 @@ is invisible until someone works the arithmetic — or opens the plan.
 - **A gauge imported from FDS has no range**, so the over-range and low-signal checks
   stay quiet on it until one is set. That is deliberate — see CONVENTIONS §9 — and the
   import says so, but a plan taken straight from an import has not had those verdicts.
-- **The import is one-way.** A plan cannot yet emit `&OBST` / `&DEVC` back. The mapping
-  is written so an exporter is an addition rather than a rewrite, but it is not there.
+- **Only devices go back to FDS.** Since M17 a plan writes its gauges and thermocouple
+  beads as `&DEVC` lines; walls, obstructions and the burner are not written, because
+  a model needs a mesh and surfaces this format does not hold.
 - **Pitch and roll of a wall, hood or ceiling are honoured in the 3D view only** —
   checks, plan view and elevations all read a tilted one as if it were upright. Yaw
   is handled consistently everywhere, and cameras, gauges and rakes use their full
@@ -446,11 +447,12 @@ Raised by M9 and worth settling before the next format bump:
 
 Raised by M10:
 
-7. **Should a plan be able to write FDS?** The engineers design the layout here and
-   run the simulation there, so a `&OBST` / `&DEVC` skeleton would close the loop.
-   Deferred deliberately: an exporter has to decide mesh, resolution and surfaces,
+7. ~~**Should a plan be able to write FDS?**~~ **Devices, yes (M17).** Geometry stays
+   deferred: an exporter of `&OBST` would have to decide mesh, resolution and surfaces,
    none of which this format holds, and guessing them produces an input that runs and
-   is wrong.
+   is wrong. An `&DEVC` is a quantity at a point, which the plan does hold, so
+   **Export to FDS…** writes the instruments, in the source file's frame and under
+   their source IDs, and FDS 6.9.1 accepts the result (`tools/check_fds_device_export.py`).
 8. **Does a burning surface deserve a field?** `HRRPUA` on a wall lining is a real
    planning fact — it decides where a gauge survives — and it currently lives in
    `notes`, where nothing can check it. A `combustible` block on `wall`, `ceiling` and

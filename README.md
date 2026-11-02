@@ -306,7 +306,7 @@ by fire safety engineers; that data is not distributed.
 
 - [CONVENTIONS.md](CONVENTIONS.md): the normative rules of the plan format: frames,
   units, correlations, versioning, FDS mapping, linked files and flame sequences.
-- [schema/](schema/): one JSON Schema per format version, 1.0.0 to 1.4.0.
+- [schema/](schema/): one JSON Schema per format version, 1.0.0 to 1.6.0.
 - [docs/visual-language.md](docs/visual-language.md): colours, labels, transport
   controls and print palette, and the checklist for any new UI.
 - [docs/fds-results.md](docs/fds-results.md), [docs/linked-files.md](docs/linked-files.md),

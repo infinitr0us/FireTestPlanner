@@ -2,12 +2,30 @@
 
 All notable changes to FireTestPlanner. Versions follow [Semantic Versioning](https://semver.org/);
 while the version is 0.x, a minor release may change behaviour. The plan file format
-has its own version (`fire-test-plan` 1.0.0 to 1.4.0, one JSON Schema each in `schema/`),
+has its own version (`fire-test-plan` 1.0.0 to 1.6.0, one JSON Schema each in `schema/`),
 and a plan written by any release opens in every later one.
 
 ## [Unreleased]
 
+Plan formats 1.5.0 and 1.6.0.
+
 ### Added
+- **Drawings a crew can build from.** The elevations cut doors and windows out of
+  their walls and dimension their width and sill; the plan marks windows; a
+  **Set-out** table gives every object's coordinates, aim point, standoff and facing
+  in words.
+- A **feet and inches** display unit (`ft-in`, to 1/16"), for inspector fields,
+  dimensions, the drawing and the set-out table. Plan format 1.5.0 (only a plan shown
+  in `ft-in` declares it).
+- **Export to FDS…** writes the plan's gauges and thermocouple beads as `&DEVC` lines,
+  in the source FDS file's frame and under its device IDs when the plan came from an
+  import: wall-mounted gauges and surface thermocouples with their `IOR`. Checked
+  against FDS 6.9.1.
+- Measured test data, first parts: readers for logger workbooks (`.xlsx`), CSV and FDS
+  output with no new dependency, and plan format 1.6.0, in which a plan records which
+  column of which file is which gauge, thermocouple bead or burner. In Python,
+  `Plan.series(obj)` returns an instrument's series in seconds from ignition. The
+  editor's plots follow.
 - **Line of sight.** Walls (with their doors and windows), ceilings, obstructions and
   hood skirts now block a view. A heat flux gauge's predicted flux is scaled by how
   much of the flame it can see, with a check when it sees none or only part; a
