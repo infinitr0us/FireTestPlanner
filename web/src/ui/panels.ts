@@ -65,6 +65,12 @@ export class Palette {
   ) {}
 
   render(): void {
+    // Read which folds are open from the DOM being replaced, synchronously. A
+    // `toggle` listener would be a race: the event is queued as a task, so a repaint
+    // in the same turn as the click that opened a fold would not see it yet.
+    for (const d of this.root.querySelectorAll<HTMLDetailsElement>('details[data-fold]')) {
+      this.open[d.dataset.fold as string] = d.open;
+    }
     clear(this.root);
 
     this.root.append(h('h3', { class: 'panel__section' }, ['Add']));
@@ -110,19 +116,46 @@ export class Palette {
     );
 
     // Where new presets come from. Stated here because the action lives in the
-    // inspector, which is the only place the optics being saved are visible.
-    this.root.append(h('p', { class: 'panel__hint' }, [
-      'A camera this list does not have: place the nearest one, correct its optics in the '
-      + 'inspector, then Save as preset. It joins this list',
-      presetsArePersistent() ? ' and survives a restart.' : ' for this session only — the '
-        + 'last attempt to store the library did not land, so it will not survive a restart.',
-    ]));
+    // inspector, which is the only place the optics being saved are visible. Folded
+    // behind one line: it is read once, and the rail's height belongs to Checks. The
+    // failure case is not folded, because it is news about the user's own presets.
+    const howTo = 'Place the nearest camera, correct its optics in the inspector, then '
+      + 'Save as preset. It joins this list';
+    if (presetsArePersistent()) {
+      this.root.append(this.disclosure('presetHelp', 'Camera not listed?', [
+        h('p', { class: 'panel__hint' }, [`${howTo} and survives a restart.`]),
+      ], false, 'hint'));
+    } else {
+      this.root.append(h('p', { class: 'panel__hint' }, [
+        `A camera this list does not have: ${howTo.charAt(0).toLowerCase()}${howTo.slice(1)} `
+        + 'for this session only. The last attempt to store the library did not land, so '
+        + 'it will not survive a restart.',
+      ]));
+    }
 
     this.root.append(h('p', { class: 'panel__hint' }, [
       'Click an item, then click in the viewport to place it. Press Esc to cancel.',
     ]));
 
     this.renderFdsPaste();
+  }
+
+  /** Which folded sections are open, carried across repaints (a Create repaints
+   *  the palette, and a repaint must not close what the user opened). */
+  private open: Record<string, boolean> = {};
+
+  /** A folded palette section: a native disclosure, so keyboard and screen-reader
+   *  behaviour is the browser's own (docs/visual-language.md). */
+  private disclosure(key: string, label: string, body: HTMLElement[], forceOpen = false,
+    variant: 'section' | 'hint' = 'section'): HTMLElement {
+    return h('details', {
+      class: `palette__fold palette__fold--${variant}`,
+      dataset: { fold: key },
+      open: forceOpen || this.open[key] === true,
+    }, [
+      h('summary', { class: 'palette__fold-summary' }, [label]),
+      ...body,
+    ]);
   }
 
   /**
@@ -136,8 +169,6 @@ export class Palette {
    * wall imported from a file are classified by one rule rather than two.
    */
   private renderFdsPaste(): void {
-    this.root.append(h('h3', { class: 'panel__section' }, ['From FDS']));
-
     const input = h('textarea', {
       class: 'fdspaste__input',
       spellcheck: false,
@@ -146,20 +177,25 @@ export class Palette {
       oninput: (e: Event) => { this.fdsDraft = (e.target as HTMLTextAreaElement).value; },
     });
 
-    this.root.append(h('div', { class: 'fdspaste' }, [
-      input,
-      this.fdsError ? h('p', { class: 'fdspaste__error' }, [this.fdsError]) : null,
-      h('div', { class: 'panel__actions' }, [
-        h('button', {
-          class: 'btn', type: 'button', onclick: () => this.createFromFds(),
-        }, ['Create']),
-      ]),
-      h('p', { class: 'panel__hint' }, [
-        'One record at a time. &OBST becomes a wall, ceiling or box by its shape; '
-        + '&DEVC becomes a gauge or a thermocouple by its quantity. A &VENT is a '
-        + 'surface on a solid, not a solid — paste the &OBST it sits on.',
-      ]),
-    ].filter(Boolean) as HTMLElement[]));
+    // Folded by default: most plans never paste a record, and the rail's height is
+    // what decides whether Checks is on screen. It stays open while it holds a draft
+    // or an error, so a repaint never hides what the user is in the middle of.
+    this.root.append(this.disclosure('fds', 'From FDS', [
+      h('div', { class: 'fdspaste' }, [
+        input,
+        this.fdsError ? h('p', { class: 'fdspaste__error' }, [this.fdsError]) : null,
+        h('div', { class: 'panel__actions' }, [
+          h('button', {
+            class: 'btn', type: 'button', onclick: () => this.createFromFds(),
+          }, ['Create']),
+        ]),
+        h('p', { class: 'panel__hint' }, [
+          'One record at a time. &OBST becomes a wall, ceiling or box by its shape; '
+          + '&DEVC becomes a gauge or a thermocouple by its quantity. A &VENT is a '
+          + 'surface on a solid, not a solid: paste the &OBST it sits on.',
+        ]),
+      ].filter(Boolean) as HTMLElement[]),
+    ], this.fdsDraft !== '' || this.fdsError !== null));
   }
 
   private createFromFds(): void {

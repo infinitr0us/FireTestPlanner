@@ -1,7 +1,9 @@
-# Fire Test Plan 3D Visualization — Implementation Plan
+# FireTestPlanner: plan and roadmap
 
-Status: **Phase 2 landed: format 1.4, reconstructed flame playback and FDS results** (2026-09-21)
-Supersedes nothing; complements `ideas.md`.
+Status: **v0.7.0 released** (format 1.4, 2026-10-18). The next round, from a review of
+the whole project with the fire safety engineers' data in hand, is in
+[section 9](#9-next-round-2026-11) (2026-11-02).
+Complements `ideas.md`, the original brief.
 
 ---
 
@@ -50,17 +52,19 @@ The Python backend supplies only what a browser genuinely cannot:
 - format conversion (NeRF / 3DGS → renderable representation)
 - offline video export via ffmpeg
 
-pywebview uses the WebView2 runtime already present on Windows 11, so the exe stays
-around 40–60 MB rather than the ~150 MB an Electron or QtWebEngine bundle would cost.
+pywebview uses the WebView2 runtime already present on Windows 11, so the exe is about
+10 MB, where an Electron or QtWebEngine bundle would cost around 150 MB.
 
-## 3. Target machine
+## 3. Target machines
 
-i9-12900KS (16C/24T) · 96 GB RAM · RTX 5090 32 GB + RTX 3090 Ti 24 GB · Node 22 · Anaconda
-
-The editor is not remotely compute-bound — a few hundred objects renders at display
-refresh rate. Phase 2 is the only part with real headroom questions, and it fits
-comfortably: a 256³ uint8 volume is ~17 MB/frame, so a 300-frame sequence is ~5 GB,
-resident in 5090 VRAM. A 512³ sequence streams from system RAM without difficulty.
+The engineers run the desktop exe on their own Windows laptops, and the single HTML
+file less often. Those laptops have differing security levels, and the exe is not
+code-signed, so the HTML file stays a first-class way in. The editor is not
+compute-bound: a few hundred objects render at display refresh rate on integrated
+graphics. Flame playback is the only part with headroom questions, and it was sized
+for a development workstation: a 256³ uint8 volume is about 17 MB a frame, so a
+300-frame sequence is about 5 GB, which a laptop does not hold. M12 renders surface
+voxels only and pauses the camera preview above 400,000 cubes for that reason.
 
 ## 4. File format (`.ftp.json`)
 
@@ -218,24 +222,24 @@ tool to exist.
 
 | # | Milestone | Contents | Status |
 |---|---|---|---|
-| M0 | **Contract** | JSON Schema, `fireplan` reader, convention docs, fixture | **done** — 80 tests |
+| M0 | **Contract** | JSON Schema, `fireplan` reader, convention docs, fixture | **done** (80 tests) |
 | M1 | **Scene core** | Vite + TS + Three.js, Z-up world, scaled grid, ortho/persp toggle, orbit | **done** |
 | M2 | **Editing** | Palette placement, transform gizmo, grid snapping, unit-aware inspector, undo/redo, multi-select, duplicate | **done** |
 | M3 | **Cameras** | Preset library, frustum, PIP preview, aim-at-target, coverage readout | **done** |
 | M4 | **Geometry** | Burner shapes + HRR + plume cone, hood + skirt + duct, walls with openings | **done** |
-| M5 | **Share** | Save/load, single-file HTML export with plan embedded, standoff dimensions | **done** — measure tool still to do |
+| M5 | **Share** | Save/load, single-file HTML export with plan embedded, standoff dimensions, measure tool | **done** |
 | M6 | **Drawing** | Dimensioned plan + elevations, equipment list, coverage table, print to PDF | **done** |
-| M7 | **Desktop** | pywebview shell, native dialogs, recent files, PyInstaller exe | **done** — 9.9 MB exe |
+| M7 | **Desktop** | pywebview shell, native dialogs, recent files, PyInstaller exe | **done** (about 10 MB) |
 | M8 | **Flame** *(Phase 2)* | Import reconstructed 3D flame; time sequence playback | **done** as M12, format 1.4 |
 | M9 | **Instruments** | Format 1.1: camera zoom, heat flux gauges, thermocouple rakes, predicted exposure, user-added camera presets | **done** |
 | M10 | **FDS bridge** | Namelist reader, FDS → plan import with a preview, format 1.2 obstructions, FDS-style coordinate entry | **done** |
-
 | M11 | **Linked test files** | External videos and spreadsheets, saved plot snapshots | **done** |
 | M12 | **Reconstructed flame playback** | Format 1.4 voxel sequences, shared playback clock, PNG and embedded examples | **done** |
 | M13 | **FDS results** | Separate simulation session, slices, boundary fields, Smoke3D preview and device histories | **done** |
 | M14 | **Lens choice** | A8303sc lenses from its datasheet (17/25/50/100 mm), a Lens field and a lens comparison in the inspector | **done** |
 
-Phase 1 is complete and Phase 2 has landed. Current verification is recorded with the review evidence.
+Phase 1 is complete and Phase 2 has landed (v0.7.0). M15 onwards are in
+[section 9](#9-next-round-2026-11).
 
 ### M9, from fire safety engineer feedback
 
@@ -420,9 +424,10 @@ Schema-affecting, so worth settling before M0 closes:
 
 Not schema-affecting; can be answered during M4 / M3 respectively:
 
-3. **Enclosure realism** — do tests ever need a ceiling/roof and openings, or is it
-   typically a hood in a large open lab bay? Determines how much wall/enclosure
-   machinery M4 actually needs.
+3. ~~**Enclosure realism**~~ **Settled.** Both happen: tests under the calorimeter hood
+   in an open bay, and full-scale room fires (an ISO 9705 sized room with a doorway or
+   window of varying size, seen from outside through the opening). Ceilings, wall
+   openings and the line-of-sight checks of section 9 serve the second kind.
 4. ~~**What is MW2R?**~~ **Settled in practice.** The sketch's mid-wave camera is
    taken to be the FLIR A8303sc, which is the MWIR body this lab expects to use. The
    generic `mwir-640-25mm` placeholder has been removed rather than left in the
@@ -573,3 +578,27 @@ The mechanism is generic: another body's lenses are a data change in
 `presets/cameras.json`. The A700's optional lenses (6°, 14°, 42°, 80°) are not
 added; its sheet designates lenses by angle, so each focal length would be
 back-solved like the 24° one.
+
+## 9. Next round (2026-11)
+
+A review of the whole project on 2026-11-02 found it strongest before a test, when the
+layout is decided, and weakest at three points: handing the layout to the crew who set
+it up, working with what was measured afterwards, and predictions that knew nothing
+about walls. The engineers' answers and their data settled the rest.
+
+| Question | Answer |
+|---|---|
+| How is the tool run? | Mostly the desktop exe, sent to them directly; the HTML file less often. Laptops differ in security level, so both stay supported |
+| Metric or imperial? | Usually imperial on site, depending on the crew. Decimal feet cannot be read off a tape, hence a feet-and-inches unit |
+| What does test data look like? | A data-acquisition export: one workbook per test, raw channels with a time column each (gauges in volts, thermocouples in °C), plus hand-processed sheets with several header rows and a time shift to ignition. FDS output is the usual `_hrr.csv` / `_devc.csv` with a units row above the names |
+| Do fires change over time? | Yes. Fires that grow and fires that change abruptly are routine, so one constant heat release rate is a design figure, not the test |
+| French and accessibility? | Worth doing |
+
+| Phase | Contents | Format |
+|---|---|---|
+| **A** (M15) | Drawings a crew can build from: wall openings in the elevations, windows in plan, a set-out table, a feet-and-inches unit and fixed label precision. Line-of-sight checks for gauges and cameras. The Checks panel visible on a laptop screen. Documentation housekeeping | 1.5 (`ft-in`) |
+| **B** (M16) | Measured data on the instruments: a workbook reader with no new dependency in either engine, the layouts above, one test-data link per plan, a channel per instrument with a scale (a gauge's calibration constant) and an ignition offset; the instrument's series plotted in the viewport against the plan's prediction and the matching FDS device; an instrument schedule export | 1.6 |
+| **C** (M17) | A heat release rate curve on the burner (a table, t² growth, an FDS `RAMP` or a measured HRR), checks at its peak and a cone that follows the clock. Velocity probes, gas sampling points, load cells, and plate thermometer and thin-skin gauge kinds. As-built positions beside planned ones. `&DEVC` export of the instruments. Test series | 1.7 |
+| **D** (M18) | More camera presets from datasheets (handheld, consumer and phone cameras the lab uses), a French interface and an accessibility pass | none |
+
+Phase A is in progress.

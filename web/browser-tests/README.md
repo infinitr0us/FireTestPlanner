@@ -28,7 +28,9 @@ synthetic flame it checks the 55 s surface count, the linked CSV cursor, and act
 play/pause advancement, and captures a nonempty frame for visual review. On its
 A8303sc camera it checks the single palette entry, the Lens options, a lens change
 by a real key on the Lens select (comparison row, field of view and focal length)
-and its undo.
+and its undo. At a 1280 × 720 window it checks that the left rail shows Checks and
+its first card without scrolling, and that **From FDS** is folded, opens with a real
+Space and stays open through a pasted record's Create.
 
 For manual inspection, run `npm run dev -- --host 127.0.0.1` and open
 `/browser-tests/visual-consistency.html` at the URL and port Vite prints.

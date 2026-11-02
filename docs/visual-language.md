@@ -145,6 +145,15 @@ A red device is a measurement class; red error text is a status. These meanings 
 kept apart by placement, shape and explicit text. Data ramps and plot series are
 also distinct from interaction colors.
 
+The editor's left rail is laid out so that Checks is on screen at laptop size (a
+1280 × 720 window): its sections share the height, each scrolling its own contents,
+with floors for the Add tiles, five object rows and two check cards. Help that is
+read once, and tools most plans never use, fold behind a native `<details>`
+(`.palette__fold`): a section-style summary for a tool (**From FDS**), a hint-style
+one for help (**Camera not listed?**). A fold stays open across repaints, and opens
+by itself while it holds a draft or an error. A new rail section follows the same
+rule rather than adding to the rail's natural height.
+
 ## Playback
 
 `ui/transport.ts` supplies the shared five button glyphs, accessible names and

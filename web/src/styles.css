@@ -119,25 +119,35 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
    targets. The parent's own `overflow-y` does not help -- it scrolls the rail, it
    does not contain one section against the next.
 
-   So: every section holds its natural height and refuses to shrink, except the
-   Outliner, which is the elastic one and scrolls its own contents. Checks carries
-   the test-validity findings, and it stays where the user last saw it however long
-   the object list grows. When even the fixed sections do not fit -- a short window,
-   a long checks list -- the rail itself scrolls, which is the escape hatch rather
-   than the everyday case.
+   So each section contains its own overflow. The Outliner is the elastic one: it
+   takes whatever is spare and scrolls its own rows. The Palette and Checks hold
+   their natural height while everything fits, and otherwise shrink together, in
+   proportion to that height, down to a floor each, scrolling inside. Checks carries
+   the test-validity findings, the reason to open a plan at all, and on a laptop (a
+   rail of about 630 px under a two-row toolbar) it used to start below the fold: the
+   Palette alone is about 560 px. Now all three sections are on screen at that size.
+   When even the floors do not fit, the rail itself scrolls, which is the escape
+   hatch rather than the everyday case.
 */
 .panel__block { padding: 4px 12px 12px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
 /* An explicit `min-height` is what lets this box be shorter than its content at
    all -- a flex item defaults to `min-height: auto`, which floors it at the content
-   and puts the overflow straight back.
-
-   The floor is the height the section actually gets in the packaged window, not a
-   safety net: the Palette above it is tall enough (six tiles, the camera list and
-   two hints) to leave nothing spare, so `flex-grow` never gets a say and this
-   number IS the list. 90 px left room for three rows, which is a slot rather than
-   an outliner. When the floor pushes the rail past its own height the rail scrolls,
-   which is the trade being made for a list you can work in. */
-.panel__block--grow { flex: 1 1 0; min-height: 225px; overflow-y: auto; }
+   and puts the overflow straight back. The floor is a quarter of the rail, and never
+   less than five rows: a list you can work in, rather than a slot. */
+.panel__block--grow { flex: 1 1 0; min-height: max(140px, 25%); overflow-y: auto; }
+/* Natural height when it fits (flex-basis auto); when the rail is short, shrinking
+   to a floor and scrolling inside. The Palette's floor keeps the Add tiles in view;
+   Checks keeps two or three cards. Thin scrollbars, so a scrolling Palette does not
+   narrow its tiles enough to wrap their labels. */
+#palette { flex: 0 1 auto; min-height: 215px; overflow-y: auto; }
+#checks { flex: 0 1 auto; min-height: 150px; overflow-y: auto; }
+.panel--left > .panel__block { scrollbar-width: thin; }
+/* The heading carries the counts ("2 errors"), so it stays put while the cards
+   under it scroll. */
+#checks > .panel__section {
+  position: sticky; top: -4px; z-index: 1;
+  margin: 0 0 8px; padding: 14px 0 4px; background: var(--bg-panel);
+}
 .panel__block:last-child { border-bottom: 0; }
 
 .panel__section {
@@ -152,6 +162,22 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
   color: var(--text-dim);
 }
 .panel__count { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-faint); }
+/* A folded palette section (From FDS) reads as a section heading with a disclosure
+   marker; a folded hint (Camera not listed?) reads as a hint. Native <details>, so
+   Enter and Space toggle it and its state is announced. */
+.palette__fold-summary { cursor: pointer; list-style-position: inside; }
+.palette__fold-summary:hover { color: var(--text); }
+.palette__fold-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.palette__fold--section > .palette__fold-summary {
+  margin: 14px 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+}
+.palette__fold--hint > .palette__fold-summary { margin: 8px 0; font-size: 12px; color: var(--text-faint); }
+.palette__fold--hint > .palette__fold-summary:hover { color: var(--text-dim); }
 .panel__empty, .panel__hint { color: var(--text-faint); font-size: 12px; margin: 8px 0; }
 .panel__actions { display: flex; gap: 6px; margin: 10px 0; flex-wrap: wrap; }
 /* The inline 'name this preset' form. Boxed so it reads as one step rather

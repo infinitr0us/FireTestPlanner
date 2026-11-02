@@ -263,6 +263,37 @@ try {
     await evaluate(fovReadout) === '39.4° × 22.8°'
     && await evaluate('!document.querySelector(".toolbar__file").textContent.includes("•")'));
 
+  phase('left rail on a laptop');
+  // The left rail (2026-11-02): on a 1280x720 laptop the Checks used to start below
+  // the fold under the Palette and the object list. All three sections must be on
+  // screen, each scrolling its own contents. From FDS is folded by default, opens
+  // with a real Space on its summary, and stays open through a create.
+  await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+  await new Promise(r => setTimeout(r, 200));
+  const rail = await evaluate('(() => { const rail=document.querySelector(".panel--left").getBoundingClientRect();'
+    + ' const top=s=>document.querySelector(s).getBoundingClientRect().top - rail.top;'
+    + ' const el=document.querySelector(".panel--left");'
+    + ' return { height: rail.height, checks: top("#checks"), firstCard: top("#checks .checks__item"),'
+    + ' overflow: el.scrollHeight-el.clientHeight }; })()');
+  check('on a 1280x720 screen Checks and its first card are on screen without scrolling the rail ('
+    + JSON.stringify(rail) + ')', rail.overflow <= 1 && rail.firstCard + 40 < rail.height);
+  const fdsFold = '[...document.querySelectorAll("#palette details")].find(d=>d.querySelector("summary").textContent==="From FDS")';
+  check('From FDS is folded by default', await evaluate(fdsFold + '.open') === false);
+  await evaluate(fdsFold + '.querySelector("summary").focus()');
+  await key(' ', 'Space', 32);
+  await waitFor(() => evaluate(fdsFold + '.open'), 'From FDS opens on Space');
+  const objectCount = await evaluate('document.querySelectorAll(".outliner__row").length');
+  await evaluate('document.querySelector(".fdspaste__input").focus()');
+  await send('Input.insertText', { text: "&OBST XB=3,3.2,-1,1,0,2.4, SURF_ID='WALL' /" });
+  await click('[...document.querySelectorAll(".fdspaste button")].find(b=>b.textContent==="Create")');
+  await waitFor(() => evaluate('document.querySelectorAll(".outliner__row").length===' + (objectCount + 1)), 'object from a pasted record');
+  check('From FDS stays open after Create repaints the palette', await evaluate(fdsFold + '.open'));
+  await screenshot('rail-laptop');
+  await evaluate('document.activeElement?.blur()');
+  await ctrlZ();
+  await waitFor(() => evaluate('document.querySelectorAll(".outliner__row").length===' + objectCount), 'undo of the pasted object');
+  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+
   phase('focus after rebuild');
   // Tab from the last field onto a button keeps focus there through the rebuild,
   // and a rebuild into a different panel does not push focus into a field (Codex
