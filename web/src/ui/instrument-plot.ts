@@ -1,3 +1,5 @@
+import { domainLabel } from './domain-labels';
+import * as i18n from './i18n';
 /**
  * An instrument's test data in the shared plot panel: measured and simulated
  * series on plan time (seconds from ignition), the plan's own planned value, and
@@ -8,7 +10,7 @@ import { decimateMinMax, seriesKey, type Series } from '../core/test-data';
 import { plannedSeries, plannedValue, type PlannedValue } from '../core/planned-value';
 import { beadPositions, displayName, gaugeRangeKwM2 } from '../core/plan';
 import { isBurner, isHeatFluxSensor, isThermocouple, type LengthUnit, type PlanObject } from '../core/types';
-import { formatLengthWithUnit } from '../core/units';
+import { formatLengthWithUnit } from './display-units';
 import type { TestDataStore } from '../state/test-data-store';
 import type { Playhead } from '../state/playhead';
 import type { Store } from '../state/store';
@@ -46,7 +48,7 @@ const X0 = 50, X1 = 330, Y0 = 26, Y1 = 126;
 
 export class TestDataView implements PlotView {
   readonly id = 'test-data';
-  readonly label = 'Test data';
+  get label(): string { return i18n.t("Test data"); }
   private key = '';
   private time: number | null = null;
   private snapshots = new WeakMap<Float64Array, number>();
@@ -61,7 +63,7 @@ export class TestDataView implements PlotView {
 
   constructor(private store: Store, private data: TestDataStore, private playhead?: Playhead) {}
 
-  title(): string { return 'Test data'; }
+  title(): string { return i18n.t("Test data"); }
 
   private snapshot(a: Float64Array): number {
     if (!this.snapshots.has(a)) this.snapshots.set(a, ++this.nextSnapshot);
@@ -107,11 +109,11 @@ export class TestDataView implements PlotView {
       if (!source.channels.some((c) => c.object === obj.id)) continue;
       const entry = this.data.get(source.id);
       if (entry?.mismatches.length && lines.some((l) => l.series.sourceId === source.id)) {
-        warnings.push(`${source.name}: the file differs from the one recorded. ${entry.mismatches.join(' ')}`);
+        warnings.push(i18n.t("{p1}: the file differs from the one recorded. {p2}", { p1: source.name, p2: entry.mismatches.join(' ') }));
       }
       if (!lines.some((l) => l.series.sourceId === source.id)) {
-        waiting.push(entry?.status === 'error' ? `${source.name} could not be read: ${entry.error ?? 'unknown error'}`
-          : `${source.name} is not loaded; open Test data… to load it.`);
+        waiting.push(entry?.status === 'error' ? i18n.t("{p1} could not be read: {p2}", { p1: source.name, p2: entry.error ?? i18n.t("unknown error") })
+          : i18n.t("{p1} is not loaded; open Test data… to load it.", { p1: source.name }));
       }
     }
     const range = isHeatFluxSensor(obj) ? gaugeRangeKwM2(obj) : null;
@@ -171,8 +173,8 @@ export class TestDataView implements PlotView {
     const plot = this.plot;
     if (!plot) return;
     const unit = this.store.displayUnit;
-    const kind = isHeatFluxSensor(obj) ? 'heat flux gauge' : isBurner(obj) ? 'burner, heat release rate'
-      : plot.rake ? `thermocouple rake, ${plot.beads.length} beads` : 'thermocouple';
+    const kind = isHeatFluxSensor(obj) ? domainLabel('heat flux gauge') : isBurner(obj) ? i18n.t("burner, heat release rate")
+      : plot.rake ? i18n.t("thermocouple rake, {p1} beads", { p1: plot.beads.length }) : domainLabel('thermocouple');
     root.append(h('div', { class: 'plot-panel__source' }, [`${plot.name} · ${kind}`]));
     for (const warning of plot.warnings) root.append(h('p', { class: 'plot-panel__warning', role: 'note' }, [warning]));
 
@@ -187,7 +189,7 @@ export class TestDataView implements PlotView {
     const following = this.following;
     const slider = h('input', { type: 'range', min: 0, max: times.length - 1, step: 1,
       value: Math.max(lastIndexAtOrBefore(times, this.time), 0),
-      'aria-label': 'Test data time', disabled: times.length === 1,
+      'aria-label': i18n.t("Test data time"), disabled: times.length === 1,
       oninput: (e: Event) => {
         this.time = times[Number((e.target as HTMLInputElement).value)];
         if (following) this.playhead!.seek(this.time);
@@ -198,7 +200,7 @@ export class TestDataView implements PlotView {
       const t = this.time!;
       chart.select(t);
       slider.value = String(Math.max(lastIndexAtOrBefore(times, t), 0));
-      readout.textContent = `t = ${formatTime(t, axis)} from ignition`;
+      readout.textContent = i18n.t("t = {p1} from ignition", { p1: formatTime(t, axis) });
       legend.select(t);
     };
     this.draw = draw;
@@ -227,8 +229,8 @@ export class TestDataView implements PlotView {
     const y = (v: number): number => Y1 - ((v - extent.lo) / (extent.hi - extent.lo)) * (Y1 - Y0);
     const quantity = `${quantityOf(plot.unit)} (${unitLabel(plot.unit)})`;
     const svg = svgElement('svg', { viewBox: '0 0 350 160', role: 'img',
-      'aria-label': `${quantity} of ${plot.name} over time, ${plot.lines.length} series` });
-    svg.append(svgElement('title', {}, `${quantity} against time from ignition`));
+      'aria-label': i18n.t("{p1} of {p2} over time, {p3} series", { p1: quantity, p2: plot.name, p3: plot.lines.length }) });
+    svg.append(svgElement('title', {}, i18n.t("{p1} against time from ignition", { p1: quantity })));
     svg.append(svgElement('text', { x: X0, y: 15, class: 'plot-panel__axis-title' }, quantity));
     for (const tick of extent.ticks) {
       svg.append(svgElement('line', { x1: X0, x2: X1, y1: y(tick), y2: y(tick), stroke: 'var(--plot-grid)', 'stroke-width': 0.6 }));
@@ -241,10 +243,10 @@ export class TestDataView implements PlotView {
       if (rangeShown) {
         svg.append(svgElement('line', { x1: X0, x2: X1, y1: y(plot.range), y2: y(plot.range), stroke: 'var(--plot-limit)',
           'stroke-width': 1, 'stroke-dasharray': RANGE_DASH, class: 'plot-panel__range' }));
-        svg.append(svgElement('text', { x: X1 - 2, y: y(plot.range) - 3, 'text-anchor': 'end', class: 'plot-panel__line-label' }, 'Range'));
+        svg.append(svgElement('text', { x: X1 - 2, y: y(plot.range) - 3, 'text-anchor': 'end', class: 'plot-panel__line-label' }, i18n.t("Range")));
       } else {
         svg.append(svgElement('text', { x: X1 - 2, y: Y0 + 9, 'text-anchor': 'end', class: 'plot-panel__line-label' },
-          `Range ${fmt(plot.range)} ${unitLabel(plot.unit)} ↑`));
+          i18n.t("Range {p1} {p2} ↑", { p1: fmt(plot.range), p2: unitLabel(plot.unit) })));
       }
     }
     // Planned lines: neutral for one instrument, the bead's own colour on a rake,
@@ -269,12 +271,12 @@ export class TestDataView implements PlotView {
         if (b === highest) {
           const xx = x(b.curve.peakAt), right = xx > (X0 + X1) / 2;
           svg.append(svgElement('text', { x: right ? xx - 3 : xx + 3, y: Math.max(y(b.curve.hi) - 4, Y0 + 8),
-            'text-anchor': right ? 'end' : 'start', class: 'plot-panel__line-label' }, 'Planned'));
+            'text-anchor': right ? 'end' : 'start', class: 'plot-panel__line-label' }, i18n.t("Planned")));
         }
       } else {
         const yy = y(b.planned!.value!);
         svg.append(svgElement('line', { x1: X0, x2: X1, y1: yy, y2: yy, ...style }));
-        if (b === highest) svg.append(svgElement('text', { x: X1 - 2, y: yy - 3, 'text-anchor': 'end', class: 'plot-panel__line-label' }, 'Planned'));
+        if (b === highest) svg.append(svgElement('text', { x: X1 - 2, y: yy - 3, 'text-anchor': 'end', class: 'plot-panel__line-label' }, i18n.t("Planned")));
       }
     }
 
@@ -319,7 +321,7 @@ export class TestDataView implements PlotView {
    */
   private legend(plot: Plot, unit: LengthUnit): { table: HTMLTableElement; select: (t: number) => void } {
     const u = unitLabel(plot.unit);
-    const value = (v: number | null): string => v === null ? '–' : `${fmt(v)} ${u}`;
+    const value = (v: number | null): string => v === null ? '–' : `${fmt(v)}${i18n.unitSpace()}${u}`;
     const cells: { cell: HTMLElement; line: Line }[] = [];
     // Planned cells: a fixed value, or with a curve the prediction at the cursor,
     // within the curve's span (plannedValue at t), like every other row.
@@ -329,29 +331,29 @@ export class TestDataView implements PlotView {
       if (bead.curve) plannedCells.push({ cell, bead });
       return cell;
     };
-    const table = h('table', { class: 'plot-panel__legend', 'aria-label': 'Legend and values at the cursor' });
+    const table = h('table', { class: 'plot-panel__legend', 'aria-label': i18n.t("Legend and values at the cursor") });
     if (!plot.rake) {
       const rows = plot.lines.map((line) => {
         const cell = h('td', { class: 'plot-panel__num' });
         cells.push({ cell, line });
         return h('tr', {}, [h('td', {}, [this.lineKey(line.color, line.dash)]),
-          h('th', { scope: 'row' }, [`${line.series.sourceName} · ${line.series.role}`]), cell]);
+          h('th', { scope: 'row' }, [`${line.series.sourceName} · ${domainLabel(line.series.role)}`]), cell]);
       });
       const bead = plot.beads[0];
       if (bead.curve || (bead.planned?.value !== null && bead.planned?.value !== undefined)) {
-        rows.push(h('tr', {}, [h('td', {}, [this.lineKey('var(--plot-planned)', PLANNED_DASH)]), h('th', { scope: 'row' }, ['Planned']),
+        rows.push(h('tr', {}, [h('td', {}, [this.lineKey('var(--plot-planned)', PLANNED_DASH)]), h('th', { scope: 'row' }, [i18n.t("Planned")]),
           plannedCell(bead)]));
       }
       if (plot.range !== null) {
-        rows.push(h('tr', {}, [h('td', {}, [this.lineKey('var(--plot-limit)', RANGE_DASH)]), h('th', { scope: 'row' }, ['Range']),
+        rows.push(h('tr', {}, [h('td', {}, [this.lineKey('var(--plot-limit)', RANGE_DASH)]), h('th', { scope: 'row' }, [i18n.t("Range")]),
           h('td', { class: 'plot-panel__num' }, [value(plot.range)])]));
       }
       table.append(h('tbody', {}, rows));
     } else {
       table.append(h('thead', {}, [h('tr', {}, [
-        h('th', { scope: 'col' }, ['Bead']),
-        ...plot.sources.map((s) => h('th', { scope: 'col' }, [this.lineKey('var(--text-dim)', s.dash), h('span', {}, [`${s.name} · ${s.role}`])])),
-        h('th', { scope: 'col' }, [this.lineKey('var(--text-dim)', PLANNED_DASH), h('span', {}, ['Planned'])]),
+        h('th', { scope: 'col' }, [i18n.t("Bead")]),
+        ...plot.sources.map((s) => h('th', { scope: 'col' }, [this.lineKey('var(--text-dim)', s.dash), h('span', {}, [`${s.name} · ${domainLabel(s.role)}`])])),
+        h('th', { scope: 'col' }, [this.lineKey('var(--text-dim)', PLANNED_DASH), h('span', {}, [i18n.t("Planned")])]),
       ])]));
       table.append(h('tbody', {}, plot.beads.map((bead) => h('tr', {}, [
         h('th', { scope: 'row' }, [this.lineKey(bead.color, ''), `${bead.index + 1} · ${formatLengthWithUnit(bead.heightM, unit)}`]),
@@ -385,25 +387,25 @@ export class TestDataView implements PlotView {
       if (b.planned.value === null) reasons.set(b.planned.note, [...(reasons.get(b.planned.note) ?? []), b.index + 1]);
     }
     for (const [note, beads] of reasons) {
-      notes.push(plot.rake ? `No planned line for bead${beads.length > 1 ? 's' : ''} ${beads.join(', ')}: ${note}` : `No planned line: ${note}`);
+      notes.push(plot.rake ? i18n.plural("No planned line for bead {p2}: {p3}", "No planned line for beads {p2}: {p3}", beads.length, { p2: beads.join(', '), p3: note }) : i18n.t("No planned line: {p1}", { p1: note }));
     }
     if (gaps.length) {
-      notes.push(plot.rake ? `The planned line for bead${gaps.length > 1 ? 's' : ''} ${gaps.join(', ')} breaks where no gas temperature correlation applies.`
-        : 'The planned line breaks where no correlation applies.');
+      notes.push(plot.rake ? i18n.plural("The planned line for bead {p2} breaks where no gas temperature correlation applies.", "The planned line for beads {p2} breaks where no gas temperature correlation applies.", gaps.length, { p2: gaps.join(', ') })
+        : i18n.t("The planned line breaks where no correlation applies."));
     }
     const curved = plot.beads.find((b) => b.curve);
     const said = plot.beads.find((b) => !b.curve && b.planned?.value !== null && b.planned?.value !== undefined)?.planned?.note
       ?? (curved ? plannedValue(this.store.document, plot.id, curved.index < 0 ? undefined : curved.index, curved.curve!.peakAt)?.note : undefined);
-    if (said) notes.push(`Planned: ${said}`);
-    if (curved) notes.push('The planned line follows the heat release rate curve; the checks use its peak.');
+    if (said) notes.push(i18n.t("Planned: {p1}", { p1: said }));
+    if (curved) notes.push(i18n.t("The planned line follows the heat release rate curve; the checks use its peak."));
     for (const s of plot.sources) {
       const missing = plot.lines.filter((l) => l.series.sourceId === s.id).reduce((sum, l) => sum + l.series.missing, 0);
-      if (missing) notes.push(`${s.name}: ${missing.toLocaleString()} missing sample${missing > 1 ? 's' : ''} skipped, not interpolated.`);
+      if (missing) notes.push(i18n.plural("{p1}: {p2} missing sample skipped, not interpolated.", "{p1}: {p2} missing samples skipped, not interpolated.", missing, { p1: s.name, p2: missing.toLocaleString(i18n.language() === 'fr' ? 'fr-CA' : undefined) }));
     }
     notes.push(...plot.waiting);
-    notes.push(following ? (this.playhead?.kind === 'fire' ? 'The cursor follows the fire clock; dragging it seeks the clock.'
-      : 'The cursor follows the flame playback; dragging it seeks the playback.')
-      : 'Plan time is seconds from ignition. Drag the slider to read every series at one time.');
+    notes.push(following ? (this.playhead?.kind === 'fire' ? i18n.t("The cursor follows the fire clock; dragging it seeks the clock.")
+      : i18n.t("The cursor follows the flame playback; dragging it seeks the playback."))
+      : i18n.t("Plan time is seconds from ignition. Drag the slider to read every series at one time."));
     return notes;
   }
 }

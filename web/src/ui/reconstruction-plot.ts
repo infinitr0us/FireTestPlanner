@@ -1,3 +1,4 @@
+import * as i18n from './i18n';
 import { fileName } from '../core/linked-files';
 import { flameSequenceLink, plotFollowsFlame } from '../core/plan';
 import { isBurner, type LinkedFile, type PlanObject, type ReconstructionPlot } from '../core/types';
@@ -11,7 +12,7 @@ import { fmt, lastIndexAtOrBefore, svgElement } from './plot-svg';
 /** Two aligned plots keep volume and area in their own units and scales. */
 function chart(plot: ReconstructionPlot, column: 1 | 2): { svg: SVGElement; select: (index: number) => void } {
   const samples = plot.samples;
-  const title = column === 1 ? 'Volume (m³)' : 'Surface area (m²)';
+  const title = column === 1 ? i18n.t("Volume (m³)") : i18n.t("Surface area (m²)");
   const color = column === 1 ? 'var(--plot-primary)' : 'var(--plot-secondary)';
   const minTime = samples[0][0], maxTime = samples.at(-1)![0];
   let ymax = 0;
@@ -19,8 +20,8 @@ function chart(plot: ReconstructionPlot, column: 1 | 2): { svg: SVGElement; sele
   ymax ||= 1;
   const x = (t: number): number => maxTime === minTime ? 192 : 56 + ((t - minTime) / (maxTime - minTime)) * 272;
   const y = (v: number): number => 103 - (v / ymax) * 70;
-  const svg = svgElement('svg', { viewBox: '0 0 350 135', role: 'img', 'aria-label': `${title} over time, ${samples.length} measurements` });
-  svg.append(svgElement('title', {}, `${title} over time (s)`));
+  const svg = svgElement('svg', { viewBox: '0 0 350 135', role: 'img', 'aria-label': i18n.t("{p1} over time, {p2} measurements", { p1: title, p2: samples.length }) });
+  svg.append(svgElement('title', {}, i18n.t("{p1} over time (s)", { p1: title })));
   svg.append(svgElement('text', { x: 56, y: 18, fill: color, 'font-weight': '600' }, title));
   for (const fraction of [0, 0.5, 1]) {
     const yy = y(ymax * fraction);
@@ -30,7 +31,7 @@ function chart(plot: ReconstructionPlot, column: 1 | 2): { svg: SVGElement; sele
   for (const t of maxTime === minTime ? [minTime] : [minTime, minTime + (maxTime - minTime) / 2, maxTime]) {
     svg.append(svgElement('text', { x: x(t), y: 119, 'text-anchor': 'middle' }, fmt(t)));
   }
-  svg.append(svgElement('text', { x: 192, y: 133, 'text-anchor': 'middle' }, 'Time (s)'));
+  svg.append(svgElement('text', { x: 192, y: 133, 'text-anchor': 'middle' }, i18n.t("Time (s)")));
   svg.append(svgElement('path', { d: samples.map((s, i) => `${i ? 'L' : 'M'}${x(s[0]).toFixed(2)},${y(s[column]).toFixed(2)}`).join(' '), fill: 'none', stroke: color, 'stroke-width': 1.5 }));
   const cursor = svgElement('line', { y1: 28, y2: 103, stroke: 'var(--plot-cursor)', 'stroke-dasharray': '3 3' });
   const point = svgElement('circle', { r: 3, fill: color });
@@ -54,7 +55,7 @@ function chart(plot: ReconstructionPlot, column: 1 | 2): { svg: SVGElement; sele
  */
 export class ReconstructionView implements PlotView {
   readonly id = 'reconstruction';
-  readonly label = 'Reconstruction';
+  get label(): string { return i18n.t("Reconstruction"); }
   private selectedLink = '';
   private index = 0;
   private key = '';
@@ -69,7 +70,7 @@ export class ReconstructionView implements PlotView {
 
   constructor(private store: Store, private playhead?: Playhead, private flames?: FlameStore) {}
 
-  title(): string { return 'Reconstruction results'; }
+  title(): string { return i18n.t("Reconstruction results"); }
 
   /** Whether a flame's frames are in the session, for `plotFollowsFlame`. */
   private loaded = (flame: Parameters<typeof flameSequenceLink>[0]): boolean => {
@@ -115,7 +116,7 @@ export class ReconstructionView implements PlotView {
     const plot = link.plot!;
     this.index = Math.min(this.index, plot.samples.length - 1);
     root.append(h('div', { class: 'plot-panel__source', title: link.path }, [`${obj.name || obj.id} · ${link.label || fileName(link.path)}`]));
-    if (links.length > 1) root.append(h('select', { 'aria-label': 'Reconstruction dataset', class: 'field__input',
+    if (links.length > 1) root.append(h('select', { 'aria-label': i18n.t("Reconstruction dataset"), class: 'field__input',
       onchange: (e: Event) => { this.selectedLink = (e.target as HTMLSelectElement).value; this.index = 0; rerender(); } },
     links.map((l) => h('option', { value: l.id, selected: l.id === link.id }, [l.label || fileName(l.path)]))));
     const charts = h('div');
@@ -123,7 +124,7 @@ export class ReconstructionView implements PlotView {
     charts.append(volume.svg, area.svg);
     const value = h('output', { class: 'plot-panel__values', 'aria-live': 'polite' });
     const slider = h('input', { type: 'range', min: 0, max: plot.samples.length - 1, step: 1, value: this.index,
-      'aria-label': 'Measurement sample', disabled: plot.samples.length === 1,
+      'aria-label': i18n.t("Measurement sample"), disabled: plot.samples.length === 1,
       oninput: (e: Event) => {
         this.index = Number((e.target as HTMLInputElement).value);
         // Seeking the clock brings the cursor back here through `follow`; drawing
@@ -135,7 +136,7 @@ export class ReconstructionView implements PlotView {
       volume.select(this.index); area.select(this.index);
       const sample = plot.samples[this.index];
       slider.value = String(this.index);
-      value.textContent = `${fmt(sample[0])} s · ${fmt(sample[1])} m³ · ${fmt(sample[2])} m²`;
+      value.textContent = `${fmt(sample[0])}${i18n.unitSpace()}s · ${fmt(sample[1])}${i18n.unitSpace()}m³ · ${fmt(sample[2])}${i18n.unitSpace()}m²`;
     };
     this.draw = draw;
     this.samples = plot.samples;
@@ -146,11 +147,10 @@ export class ReconstructionView implements PlotView {
   }
 
   private caption(link: LinkedFile, following: boolean): string {
-    return `CSV snapshot · ${link.plot!.samples.length.toLocaleString()} samples · ${link.plot!.importedAt.replace('T', ' ').replace(/(?:\.\d+)?Z$/, ' UTC')}. `
-      + (following
-        ? 'The cursor follows the flame playback; dragging it seeks the playback.'
+    return i18n.plural("CSV snapshot · {p1} sample · {p2}. {p3}", "CSV snapshot · {p1} samples · {p2}. {p3}", link.plot!.samples.length, { p1: link.plot!.samples.length.toLocaleString(i18n.language() === 'fr' ? 'fr-CA' : undefined), p2: link.plot!.importedAt.replace('T', ' ').replace(/(?:\.\d+)?Z$/, ' UTC'), p3: (following
+        ? i18n.t("The cursor follows the flame playback; dragging it seeks the playback.")
         : this.playhead?.kind === 'flame'
-          ? 'Not this burner\'s reconstruction, so the cursor is its own. Refresh or relink from Linked files after the source changes.'
-          : 'Refresh or relink from Linked files after the source changes.');
+          ? i18n.t("Not this burner's reconstruction, so the cursor is its own. Refresh or relink from Linked files after the source changes.")
+          : i18n.t("Refresh or relink from Linked files after the source changes.")) });
   }
 }

@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 /** Byte readers and source drafts. No document edits or automatic calibration. */
 import { beadOffsetsOf } from '../core/plan';
 import { exportedDeviceIds } from '../core/fds-export';
@@ -12,16 +13,16 @@ export type TestDataReader = (path: string) => Promise<TestDataBytes>;
 export interface ParsedTable { grid: Grid; units: Map<string, string>; unitsGrid?: Grid }
 
 function workbook(name: string, bytes: Uint8Array): boolean {
-  if (bytes.length > TEST_DATA_FILE_CAP) throw new Error('Test data exceeds the 64 MiB limit.');
+  if (bytes.length > TEST_DATA_FILE_CAP) throw new Error(i18n.t("Test data exceeds the 64 MiB limit."));
   if (/\.(xlsx|xlsm)$/i.test(name)) return true;
   if (/\.(csv|tsv|txt)$/i.test(name)) return false;
-  throw new Error('Unsupported test data file. Save as .xlsx, .xlsm, .csv, .tsv or .txt.');
+  throw new Error(i18n.t("Unsupported test data file. Save as .xlsx, .xlsm, .csv, .tsv or .txt."));
 }
 
 export async function parseTestData(name: string, bytes: Uint8Array, table: TestDataTable): Promise<ParsedTable> {
   await yieldToPage();
   if (!workbook(name, bytes)) return { grid: readDelimited(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), units: new Map() };
-  if (!table.sheet) throw new Error('Choose a workbook sheet.');
+  if (!table.sheet) throw new Error(i18n.t("Choose a workbook sheet."));
   const grid = await readSheet(bytes, table.sheet);
   await yieldToPage();
   if (table.unitsSheet === null) return { grid, units: await workbookChannelUnits(bytes) };
@@ -109,7 +110,7 @@ export async function draftFromFile(name: string, bytes: Uint8Array, doc?: PlanD
   const { onProgress, signal } = options;
   const checkpoint = async (): Promise<void> => {
     await yieldToPage();
-    if (signal?.aborted) throw new DOMException('Reading the file was cancelled.', 'AbortError');
+    if (signal?.aborted) throw new DOMException(i18n.t("Reading the file was cancelled."), 'AbortError');
   };
   await checkpoint();
   const isWorkbook = workbook(name, bytes);

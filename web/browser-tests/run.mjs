@@ -979,6 +979,56 @@ try {
     && nextDownloaded.objects.every(o => o.type !== 'reconstructedFlame' && !('asBuilt' in o) && !('linkedFiles' in o)));
   check('next test opens the new plan and explains what was left behind', await evaluate('(' + field('Test ID') + ').value==="EX-002" && window.__nextNotices.some(s=>s.includes("Left behind:"))'));
   await screenshot('next-test');
+  phase('French interface at 1280 x 720');
+  await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+  await click('document.querySelector("[data-language=fr]")');
+  await waitFor(() => evaluate('document.documentElement.lang === "fr"'), 'French language switch');
+  await evaluate('document.querySelector(".outliner__row").scrollIntoView({block:"nearest"})');
+  await click('document.querySelector(".outliner__row")');
+  await waitFor(() => evaluate('[...document.querySelectorAll("#inspector .field__label")].some(e=>e.textContent==="Nom")'), 'French object inspector');
+  const frenchState = await evaluate(`({
+    toolbar: [...document.querySelectorAll('#toolbar button')].map(b => b.textContent),
+    palette: [...document.querySelectorAll('.palette__tile')].map(b => b.textContent),
+    inspector: [...document.querySelectorAll('#inspector .field__label')].map(b => b.textContent),
+    checks: [...document.querySelectorAll('.checks__message')].map(e => e.textContent),
+    lang: document.documentElement.lang, stored: localStorage.getItem('fire-test-plan.language')
+  })`);
+  check('French toolbar, palette, inspector, diagnostics and document language: ' + JSON.stringify(frenchState),
+    frenchState.toolbar.includes('Enregistrer') && frenchState.palette.some(s => s.includes('Bac de combustible'))
+    && frenchState.inspector.includes('Nom') && frenchState.checks.some(s => /intrinsèques|brûleur|flamme|panache|fluxmètre/.test(s))
+    && frenchState.lang === 'fr' && frenchState.stored === 'fr');
+  const frenchOverflow = await evaluate(`
+    [...document.querySelectorAll('.toolbar__group, .panel--left > section, #inspector')]
+      .filter(e => e.scrollWidth > e.clientWidth + 1)
+      .map(e => ({ box: e.id || e.className, scroll: e.scrollWidth, client: e.clientWidth }))`);
+  check('French toolbar, rail and inspector fit their widths: ' + JSON.stringify(frenchOverflow), frenchOverflow.length === 0);
+  const splitWords = await evaluate(`(() => {
+    const split=[];
+    for (const label of document.querySelectorAll('.palette__tile > span:last-child')) {
+      const text=label.firstChild;
+      if (!text || text.nodeType!==Node.TEXT_NODE) continue;
+      for (const match of text.textContent.matchAll(/\\S+/g)) {
+        const range=document.createRange(); range.setStart(text,match.index); range.setEnd(text,match.index+match[0].length);
+        if(range.getClientRects().length>1) split.push(match[0]);
+      }
+    }
+    return split;
+  })()`);
+  check('French palette words stay together: ' + JSON.stringify(splitWords), splitWords.length === 0);
+  await screenshot('french-editor');
+  await click('[...document.querySelectorAll("#toolbar button")].find(b=>b.textContent==="Dessin…")');
+  check('French drawing has its set-out heading', await evaluate(`
+    [...document.querySelectorAll('.report h2')].some(e => e.textContent === 'Tableau d’implantation')`));
+  await screenshot('french-drawing');
+  await click('[...document.querySelectorAll(".report-overlay button")].find(b=>b.textContent==="Fermer")');
+  await openTab();
+  await send('Page.navigate', { url: origin + '/dist/index.html' });
+  await waitFor(() => evaluate('document.documentElement.lang === "fr" && !!document.querySelector("[data-language=en]")'), 'French preference restored after navigation');
+  check('French preference survives a new browser tab', true);
+  await click('document.querySelector("[data-language=en]")');
+  check('English restored by a real click', await evaluate(`document.documentElement.lang === 'en'
+    && [...document.querySelectorAll('#toolbar button')].some(b=>b.textContent==='Save')
+    && [...document.querySelectorAll('.palette__tile')].some(b=>b.textContent.includes('Fuel pan'))`));
   check('no uncaught browser exceptions', errors.length===0);
   const result = { browser: executable, passed: checks.length, checks };
   if (process.env.BROWSER_TEST_OUTPUT) {

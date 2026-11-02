@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 /** Session data beside the plan. Loaded bytes and samples never enter undo or Save. */
 import { isNetworkPath } from '../core/linked-files';
 import { beadOffsetsOf } from '../core/plan';
@@ -82,19 +83,19 @@ export class TestDataStore {
         const result: Series[] = [];
         for (const c of channels) {
           if (!Number.isFinite(c.scale ?? 1) || (c.scale ?? 1) === 0 || !Number.isFinite(c.offset ?? 0)
-            || !Number.isFinite(source.timeOffset_s ?? 0)) throw new Error('Invalid test data calibration or time offset.');
+            || !Number.isFinite(source.timeOffset_s ?? 0)) throw new Error(i18n.t("Invalid test data calibration or time offset."));
           const key = seriesKey(c.object, c.bead);
-          if (seen.has(key)) throw new Error(`Source "${source.name}" maps target ${key} more than once.`);
+          if (seen.has(key)) throw new Error(i18n.t("Source \"{p1}\" maps target {p2} more than once.", { p1: source.name, p2: key }));
           seen.add(key);
           const old = original.source.channels.find(m => m.channel === c.channel);
           const series = old && original.series.find(s => seriesKey(s.objectId, s.bead) === seriesKey(old.object, old.bead));
-          if (!old || !series) throw new Error(`Channel "${c.channel}" was not embedded. Pick the original file to load it.`);
+          if (!old || !series) throw new Error(i18n.t("Channel \"{p1}\" was not embedded. Pick the original file to load it.", { p1: c.channel }));
           const sameCalibration = (c.scale ?? 1) === (old.scale ?? 1) && (c.offset ?? 0) === (old.offset ?? 0);
           const shift = (original.source.timeOffset_s ?? 0) - (source.timeOffset_s ?? 0);
           const t = shift === 0 ? series.t : Float64Array.from(series.t, t => t + shift);
           const values = sameCalibration ? series.values : Float64Array.from(series.values,
             v => (v - (old.offset ?? 0)) / (old.scale ?? 1) * (c.scale ?? 1) + (c.offset ?? 0));
-          if (!t.every(Number.isFinite) || !values.every(Number.isFinite)) throw new Error('Test data calibration or time offset overflowed.');
+          if (!t.every(Number.isFinite) || !values.every(Number.isFinite)) throw new Error(i18n.t("Test data calibration or time offset overflowed."));
           result.push({ ...series, sourceId: source.id, sourceName: source.name, role: source.role,
             objectId: c.object, bead: c.bead ?? null, unit: targets.get(c.object)!, t, values });
         }
@@ -145,7 +146,7 @@ export class TestDataStore {
   }
   attachFile(sourceId: string, file: File): Promise<TestDataEntry> {
     return this.read(sourceId, async () => {
-      if (file.size > TEST_DATA_FILE_CAP) throw new Error('Test data exceeds the 64 MiB limit.');
+      if (file.size > TEST_DATA_FILE_CAP) throw new Error(i18n.t("Test data exceeds the 64 MiB limit."));
       return { bytes: new Uint8Array(await file.arrayBuffer()), modified: new Date(file.lastModified).toISOString() };
     }, file.name, true);
   }
@@ -172,11 +173,11 @@ export class TestDataStore {
     entry.pending = (async () => {
       try {
         await yieldToPage();
-        if (!current()) throw new Error('Test data load cancelled.');
+        if (!current()) throw new Error(i18n.t("Test data load cancelled."));
         const data = await read(source);
-        if (!current()) throw new Error('Test data load cancelled.');
+        if (!current()) throw new Error(i18n.t("Test data load cancelled."));
         const parsed = await parseTestData(name ?? source.file.path, data.bytes, source.table);
-        if (!current()) throw new Error('Test data load cancelled.');
+        if (!current()) throw new Error(i18n.t("Test data load cancelled."));
         Object.assign(entry, parsed, { fileInfo: { size: data.bytes.length, modified: data.modified } });
         this.derive(this.store.document.testData!.find(s => s.id === sourceId)!, entry);
         if (entry.error) throw new Error(entry.error);

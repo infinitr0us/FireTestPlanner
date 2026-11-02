@@ -1,3 +1,5 @@
+import { domainLabel } from '../ui/domain-labels';
+import * as i18n from '../ui/i18n';
 import { isNewInstrument, isVelocityProbe, isGasSampling } from '../core/types';
 import { platformCorners } from '../core/instrument-placement';
 /**
@@ -44,7 +46,7 @@ import {
 } from '../core/plan';
 import { printedLensOf } from '../core/lenses';
 import { forwardOf, rangeOf } from '../core/math';
-import { formatLengthWithUnit } from '../core/units';
+import { formatLengthWithUnit } from '../ui/display-units';
 import type { CameraObject, LengthUnit, PlanDocument, Vec3, WallObject, WallOpening } from '../core/types';
 
 export type DrawingView = 'plan' | 'front' | 'side';
@@ -342,10 +344,10 @@ function northAzimuth(doc: PlanDocument): number | null {
 export function elevationHeading(doc: PlanDocument, view: 'front' | 'side'): string {
   const axis = view === 'front' ? '+Y' : '+X';
   const azimuth = northAzimuth(doc);
-  if (azimuth === null) return `looking along ${axis}`;
+  if (azimuth === null) return i18n.t("looking along {axis}", { axis });
   const bearing = azimuth + (view === 'side' ? Math.PI / 2 : 0);
   const index = ((Math.round(bearing / (Math.PI / 4)) % 8) + 8) % 8;
-  return `looking ${COMPASS[index]} (${axis})`;
+  return i18n.t("looking {direction} ({axis})", { direction: domainLabel(COMPASS[index]), axis });
 }
 
 /**
@@ -441,8 +443,8 @@ function wallSegments(wall: WallObject) {
 
 function openingWidth(opening: WallOpening, span: number, unit: LengthUnit): string {
   const width = formatLengthWithUnit(span, unit, { fixed: true });
-  return Math.abs(span - opening.width_m) < 1e-9 ? `width ${width}`
-    : `part ${width} / total ${formatLengthWithUnit(opening.width_m, unit, { fixed: true })}`;
+  return Math.abs(span - opening.width_m) < 1e-9 ? i18n.t("width {p1}", { p1: width })
+    : i18n.t("part {p1} / total {p2}", { p1: width, p2: formatLengthWithUnit(opening.width_m, unit, { fixed: true }) });
 }
 
 // -- views ----------------------------------------------------------------
@@ -577,7 +579,7 @@ function drawNewInstruments(doc: PlanDocument, p: Projector, labels: LabelStacke
           out.push(line(x, y, ex, ey, color, 'stroke-width="0.8" stroke-dasharray="3 2"'));
         } else out.push(`<circle cx="${x}" cy="${y}" r="3" fill="none" stroke="${color}" stroke-width="2"/>`);
       } else {
-        hint = ' (axis unstated)';
+        hint = i18n.t(" (axis unstated)");
         out.push(`<circle cx="${x}" cy="${y}" r="3" fill="${color}"/>`);
       }
     } else if (isGasSampling(obj)) {
@@ -622,7 +624,7 @@ function drawInstrumentsPlan(doc: PlanDocument, p: Projector, labels: LabelStack
     }
 
     out.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4" fill="${color}" stroke="#ffffff" stroke-width="1"/>`);
-    const facing = vertical ? (fwd[2] > 0 ? ' (faces up)' : ' (faces down)') : '';
+    const facing = vertical ? (fwd[2] > 0 ? i18n.t(" (faces up)") : i18n.t(" (faces down)")) : '';
     out.push(labels.label(cx, cy, 9, displayName(s) + facing).svg);
   }
 
@@ -716,7 +718,7 @@ function drawElevation(doc: PlanDocument, p: Projector, unit: LengthUnit, view: 
           const base = at(o.to, 0), sill = at(o.to, o.sill);
           const x = Math.max(a[0], b[0]) + 14;
           openingLabels.push(dimension(x, base[1], x, sill[1],
-            `sill ${formatLengthWithUnit(o.sill, unit, { fixed: true })}`));
+            i18n.t("sill {p1}", { p1: formatLengthWithUnit(o.sill, unit, { fixed: true }) })));
         }
       });
     });

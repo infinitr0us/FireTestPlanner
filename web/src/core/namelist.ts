@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 /**
  * Fortran namelist reader, as FDS writes them. Mirror of python/fireplan/namelist.py.
  *
@@ -404,29 +405,27 @@ export function readNamelist(text: string): NamelistRecord[] {
  */
 export function readOneRecord(text: string): NamelistRecord {
   const stripped = text.trim();
-  if (!stripped) throw new NamelistError('Nothing to read.');
+  if (!stripped) throw new NamelistError(i18n.t("Nothing to read."));
 
   const records = readNamelist(stripped);
   if (records.length === 0) {
     ASSIGNMENT.lastIndex = 0;
     if (ASSIGNMENT.test(maskStrings(stripped))) {
       throw new NamelistError(
-        'No "&" to start the record — FDS reads only lines that begin with &GROUP, '
-        + `so this one is a comment. Try:\n\n&OBST ${stripped} /`,
+        i18n.t("No \"&\" to start the record — FDS reads only lines that begin with &GROUP, so this one is a comment. Try:\n\n&OBST {p1} /", { p1: stripped }),
       );
     }
     throw new NamelistError(
-      'No namelist record found. Expected something like:\n\n&OBST XB=0,1,0,1,0,2 /',
+      i18n.t("No namelist record found. Expected something like:\n\n&OBST XB=0,1,0,1,0,2 /"),
     );
   }
   if (records.length > 1) {
     throw new NamelistError(
-      `${records.length} records here, and this takes one at a time: `
-      + records.slice(0, 4).map((r) => `&${r.group}`).join(', '),
+      i18n.t("{p1} records here, and this takes one at a time: {p2}", { p1: records.length, p2: records.slice(0, 4).map((r) => `&${r.group}`).join(', ') }),
     );
   }
   if (records[0].params.size === 0) {
-    throw new NamelistError(`&${records[0].group} has no parameters.`);
+    throw new NamelistError(i18n.t("&{p1} has no parameters.", { p1: records[0].group }));
   }
   return records[0];
 }

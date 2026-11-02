@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 import { nearestOpening, loadCellUnderFuel, platformCorners } from './instrument-placement';
 import { hrrAt } from './hrr';
 export { hrrAt } from './hrr';
@@ -118,12 +119,12 @@ export function parsePlan(text: string): PlanDocument {
     // did not, and the same file then opened in one path and not the other.
     data = JSON.parse(text.replace(/^﻿/, ''));
   } catch (err) {
-    throw new Error(`Invalid JSON: ${(err as Error).message}`);
+    throw new Error(i18n.t("Invalid JSON: {p1}", { p1: (err as Error).message }));
   }
-  if (typeof data !== 'object' || data === null) throw new Error('Plan data must be a JSON object');
+  if (typeof data !== 'object' || data === null) throw new Error(i18n.t("Plan data must be a JSON object"));
   const doc = data as PlanDocument;
   if (doc.format !== FORMAT) {
-    throw new Error(`Not a fire test plan: expected format "${FORMAT}", got "${String(doc.format)}"`);
+    throw new Error(i18n.t("Not a fire test plan: expected format \"{p1}\", got \"{p2}\"", { p1: FORMAT, p2: String(doc.format) }));
   }
   // Deliberately NOT normalised here. `objects` that is a map rather than a list is
   // a file this format cannot read, and `validateStructure` says so as
@@ -1020,7 +1021,7 @@ const issue = (severity: Issue['severity'], code: string, message: string, objec
 /** ` of "name"` when a plan has more than one fire, so a finding says which; nothing
  *  when there is only the one, as there almost always is. */
 const whichFire = (b: BurnerObject, many: boolean): string =>
-  many ? ` of "${displayName(b)}"` : '';
+  many ? i18n.t(" of \"{p1}\"", { p1: displayName(b) }) : '';
 
 export function hoodChecks(d: PlanDocument): Issue[] {
   const out: Issue[] = [];
@@ -1043,10 +1044,7 @@ export function hoodChecks(d: PlanDocument): Issue[] {
     const nearest = offsets.reduce((a, b) => (b.off.overhang < a.off.overhang ? b : a));
     const of = whichFire(burner, many);
     out.push(issue('error', 'hood-offset',
-      `${allHoods.length > 1 ? 'No hood opening covers' : 'The hood opening does not cover'} ` +
-      `the burner${of} — the burner centre is ${nearest.off.overhang.toFixed(2)} m outside ` +
-      `${allHoods.length > 1 ? 'the nearest opening' : 'the opening'}, so no hood captures ` +
-      `any of its plume.`, nearest.hood.id));
+      i18n.t("{p1} the burner{p2} — the burner centre is {p3} m outside {p4}, so no hood captures any of its plume.", { p1: allHoods.length > 1 ? i18n.t("No hood opening covers") : i18n.t("The hood opening does not cover"), p2: of, p3: i18n.numberText(nearest.off.overhang.toFixed(2)), p4: allHoods.length > 1 ? i18n.t("the nearest opening") : i18n.t("the opening") }), nearest.hood.id));
   }
 
   for (const hood of allHoods) {
@@ -1069,12 +1067,10 @@ export function hoodChecks(d: PlanDocument): Issue[] {
       // 12 cm flame on a 2 m stand is not "close to" a canopy 0.5 m above it.
       if (tip >= intake) {
         out.push(issue('error', 'flame-impingement',
-          `Mean flame tip${of} reaches ${tip.toFixed(2)} m, at or above the hood intake at ` +
-          `${intake.toFixed(2)} m — flame in the canopy, not a free plume.`, hood.id));
+          i18n.t("Mean flame tip{p1} reaches {p2} m, at or above the hood intake at {p3} m — flame in the canopy, not a free plume.", { p1: of, p2: i18n.numberText(tip.toFixed(2)), p3: i18n.numberText(intake.toFixed(2)) }), hood.id));
       } else if (tip - surface > 0.8 * (intake - surface)) {
         out.push(issue('warning', 'flame-clearance',
-          `Mean flame tip${of} at ${tip.toFixed(2)} m leaves only ${(intake - tip).toFixed(2)} m ` +
-          `below the hood intake; an intermittent tip will reach higher.`, hood.id));
+          i18n.t("Mean flame tip{p1} at {p2} m leaves only {p3} m below the hood intake; an intermittent tip will reach higher.", { p1: of, p2: i18n.numberText(tip.toFixed(2)), p3: i18n.numberText((intake - tip).toFixed(2)) }), hood.id));
       }
 
       const radius = plumeRadiusAtZ(burner, intake);
@@ -1088,19 +1084,15 @@ export function hoodChecks(d: PlanDocument): Issue[] {
         ];
         const [need, avail] = axes.reduce((a, b) => (a[1] - a[0] <= b[1] - b[0] ? a : b));
         const eccentric = Math.hypot(off.u, off.v) > 1e-9
-          ? `, ${Math.hypot(off.u, off.v).toFixed(2)} m off the opening centre`
+          ? i18n.t(", {p1} m off the opening centre", { p1: i18n.numberText(Math.hypot(off.u, off.v).toFixed(2)) })
           : '';
 
         if (need > avail) {
           out.push(issue('error', 'plume-spillage',
-            `Plume${of} is ${plumeD.toFixed(2)} m across at the hood intake${eccentric}, needing ` +
-            `${need.toFixed(2)} m of a ${avail.toFixed(2)} m opening — the hood will spill and ` +
-            `HRR by oxygen consumption will read low.`, hood.id));
+            i18n.t("Plume{p1} is {p2} m across at the hood intake{p3}, needing {p4} m of a {p5} m opening — the hood will spill and HRR by oxygen consumption will read low.", { p1: of, p2: i18n.numberText(plumeD.toFixed(2)), p3: eccentric, p4: i18n.numberText(need.toFixed(2)), p5: i18n.numberText(avail.toFixed(2)) }), hood.id));
         } else if (need > 0.8 * avail) {
           out.push(issue('warning', 'plume-margin',
-            `Plume${of} is ${plumeD.toFixed(2)} m across at the hood intake${eccentric}, needing ` +
-            `${need.toFixed(2)} m of a ${avail.toFixed(2)} m opening — little margin for ` +
-            `draught or an off-centre fire.`, hood.id));
+            i18n.t("Plume{p1} is {p2} m across at the hood intake{p3}, needing {p4} m of a {p5} m opening — little margin for draught or an off-centre fire.", { p1: of, p2: i18n.numberText(plumeD.toFixed(2)), p3: eccentric, p4: i18n.numberText(need.toFixed(2)), p5: i18n.numberText(avail.toFixed(2)) }), hood.id));
         }
       }
     }
@@ -1135,16 +1127,12 @@ export function ceilingChecks(d: PlanDocument): Issue[] {
 
       if (tip >= soffit) {
         out.push(issue('error', 'ceiling-impingement',
-          `Mean flame tip${of} reaches ${tip.toFixed(2)} m, at or above the ceiling soffit at ` +
-          `${soffit.toFixed(2)} m — the fire will spread as a ceiling jet and the ` +
-          `free-plume correlations no longer apply.`, slab.id));
+          i18n.t("Mean flame tip{p1} reaches {p2} m, at or above the ceiling soffit at {p3} m — the fire will spread as a ceiling jet and the free-plume correlations no longer apply.", { p1: of, p2: i18n.numberText(tip.toFixed(2)), p3: i18n.numberText(soffit.toFixed(2)) }), slab.id));
       } else if (tip - surface > 0.8 * (soffit - surface)) {
         // From the fuel surface, not the floor: the question is how much of the
         // gap above the fire the flame fills.
         out.push(issue('warning', 'ceiling-clearance',
-          `Mean flame tip${of} at ${tip.toFixed(2)} m leaves only ` +
-          `${(soffit - tip).toFixed(2)} m below the ceiling; an intermittent tip ` +
-          `will reach higher.`, slab.id));
+          i18n.t("Mean flame tip{p1} at {p2} m leaves only {p3} m below the ceiling; an intermittent tip will reach higher.", { p1: of, p2: i18n.numberText(tip.toFixed(2)), p3: i18n.numberText((soffit - tip).toFixed(2)) }), slab.id));
       }
     }
   }
@@ -1199,21 +1187,21 @@ export function gaugeVerdict(d: PlanDocument, s: HeatFluxSensorObject): Instrume
   const frac = e.fractionOfRange;
 
   // Errors first, then warnings, in the order `instrumentChecks` files them.
-  if (!Number.isFinite(e.incidentKwM2)) return { status: 'bad', label: 'in the fire' };
-  if (!e.facesFire) return { status: 'bad', label: 'faces away' };
-  if (e.visibleFraction === 0) return { status: 'bad', label: 'no line of sight' };
-  if (frac !== null && frac > 1) return { status: 'bad', label: 'over range' };
-  if (!e.withinViewAngle) return { status: 'warn', label: 'outside view cone' };
-  if (e.visibleFraction < 1) return { status: 'warn', label: 'partly shadowed' };
-  if (frac !== null && frac < LOW_SIGNAL_FRACTION) return { status: 'warn', label: 'low signal' };
+  if (!Number.isFinite(e.incidentKwM2)) return { status: 'bad', label: i18n.t("in the fire") };
+  if (!e.facesFire) return { status: 'bad', label: i18n.t("faces away") };
+  if (e.visibleFraction === 0) return { status: 'bad', label: i18n.t("no line of sight") };
+  if (frac !== null && frac > 1) return { status: 'bad', label: i18n.t("over range") };
+  if (!e.withinViewAngle) return { status: 'warn', label: i18n.t("outside view cone") };
+  if (e.visibleFraction < 1) return { status: 'warn', label: i18n.t("partly shadowed") };
+  if (frac !== null && frac < LOW_SIGNAL_FRACTION) return { status: 'warn', label: i18n.t("low signal") };
   // The number is still printed, but it is an order of magnitude. Green would say
   // "size the gauge on this", which is the one thing `gauge-near-field` forbids.
-  if (e.nearField) return { status: 'warn', label: 'near field' };
+  if (e.nearField) return { status: 'warn', label: i18n.t("near field") };
   // Without a range there is no over-range or low-signal verdict to have passed --
   // every gauge an FDS import makes is like this, by design. Green "usable" said
   // those checks had been made; neutral says they have not.
-  if (frac === null) return { status: 'muted', label: 'no range set' };
-  return { status: 'ok', label: 'usable' };
+  if (frac === null) return { status: 'muted', label: i18n.t("no range set") };
+  return { status: 'ok', label: i18n.t("usable") };
 }
 
 /** One bead. The flame branch never falls through to the plume wording: a bead in
@@ -1221,17 +1209,17 @@ export function gaugeVerdict(d: PlanDocument, s: HeatFluxSensorObject): Instrume
  *  report described an over-temperature bead as if it were a good one. */
 export function beadVerdict(b: BeadState, limitC: number): InstrumentVerdict {
   if (beadAtFlameTemperature(b)) {
-    const where = b.region === 'flame' ? 'in the flame' : 'below the flame tip';
+    const where = b.region === 'flame' ? i18n.t("in the flame") : i18n.t("below the flame tip");
     return limitC < FLAME_TEMPERATURE_C
-      ? { status: 'bad', label: `${where}, past the ${limitC} °C limit` }
+      ? { status: 'bad', label: i18n.t("{p1}, past the {p2} °C limit", { p1: where, p2: limitC }) }
       : { status: 'warn', label: where };
   }
   if (b.region === 'plume') {
     return b.gasTemperatureC !== null && b.gasTemperatureC > limitC
-      ? { status: 'bad', label: `in the plume, past the ${limitC} °C limit` }
-      : { status: 'ok', label: 'in the plume' };
+      ? { status: 'bad', label: i18n.t("in the plume, past the {p1} °C limit", { p1: limitC }) }
+      : { status: 'ok', label: i18n.t("in the plume") };
   }
-  return { status: 'muted', label: 'outside the plume' };
+  return { status: 'muted', label: i18n.t("outside the plume") };
 }
 
 /** The rake as a whole: its worst bead, which is the one that ends the test. */
@@ -1253,10 +1241,10 @@ export function thermocoupleVerdict(d: PlanDocument, t: ThermocoupleObject): Ins
 export function instrumentChecks(d: PlanDocument): Issue[] {
   const out: Issue[] = [];
   for (const p of d.objects.filter(isVelocityProbe)) if (!nearestOpening(d, positionOf(p), 0.1)) {
-    out.push(issue('info', 'probe-not-in-opening', 'Velocity probes usually measure flow through a doorway or window; this probe is not within 0.1 m of an opening.', p.id));
+    out.push(issue('info', 'probe-not-in-opening', i18n.t("Velocity probes usually measure flow through a doorway or window; this probe is not within 0.1 m of an opening."), p.id));
   }
   for (const c of d.objects.filter(isLoadCell)) if (!loadCellUnderFuel(d, c)) {
-    out.push(issue('info', 'load-cell-not-under-fuel', 'No burner footprint is directly above this load cell.', c.id));
+    out.push(issue('info', 'load-cell-not-under-fuel', i18n.t("No burner footprint is directly above this load cell."), c.id));
   }
 
   for (const s of heatFluxSensors(d)) {
@@ -1267,58 +1255,46 @@ export function instrumentChecks(d: PlanDocument): Issue[] {
     // unbounded flux, and "Infinity kW/m2" in a printed report is not a finding.
     if (!Number.isFinite(e.incidentKwM2)) {
       out.push(issue('error', 'gauge-in-fire',
-        'The gauge sits on the point source the model puts the fire at, so the ' +
-        'predicted flux is unbounded. Move it out of the flame.', s.id));
+        i18n.t("The gauge sits on the point source the model puts the fire at, so the predicted flux is unbounded. Move it out of the flame."), s.id));
       continue;
     }
 
     if (e.visibleFraction === 0) {
       out.push(issue('error', 'gauge-no-line-of-sight',
-        `${displayName(s)} has no line of sight: nothing in the plan lets it see the flame, ` +
-        'so it will read only what reaches it indirectly.', s.id));
+        i18n.t("{p1} has no line of sight: nothing in the plan lets it see the flame, so it will read only what reaches it indirectly.", { p1: displayName(s) }), s.id));
       // Facing, view cone, near field and range all judge radiation this gauge cannot
       // receive. A low-signal "fit a more sensitive gauge" would be the wrong advice.
       continue;
     } else if (e.visibleFraction < 1) {
       const share = (e.visibleFraction * 100).toFixed(0);
       out.push(issue('warning', 'gauge-partly-shadowed',
-        (fireBurners(d).length > 1
-          ? `${displayName(s)} has ${share}% line of sight, weighted by each fire's unshadowed flux; `
-          : `${displayName(s)} sees ${share}% of the flame centreline; `) +
-        'the predicted flux has been scaled by this visible share.', s.id));
+        i18n.t("{p1}the predicted flux has been scaled by this visible share.", { p1: (fireBurners(d).length > 1
+          ? i18n.t("{p1} has {p2}% line of sight, weighted by each fire's unshadowed flux; ", { p1: displayName(s), p2: share })
+          : i18n.t("{p1} sees {p2}% of the flame centreline; ", { p1: displayName(s), p2: share })) }), s.id));
     }
     if (!e.facesFire) {
       out.push(issue('error', 'gauge-facing-away',
-        `The gauge normal is ${e.offAxisDeg.toFixed(0)}° off the line to the fire, so the ` +
-        `sensing face is turned away from it and will see only background radiation.`, s.id));
+        i18n.t("The gauge normal is {p1}° off the line to the fire, so the sensing face is turned away from it and will see only background radiation.", { p1: i18n.numberText(e.offAxisDeg.toFixed(0)) }), s.id));
       continue;
     }
     if (!e.withinViewAngle) {
       out.push(issue('warning', 'gauge-view-restricted',
-        `The fire is ${e.offAxisDeg.toFixed(0)}° off the gauge axis but the view-limiting ` +
-        `tube only accepts ±${(gaugeViewAngleDeg(s) / 2).toFixed(0)}° — the flame is outside ` +
-        `the acceptance cone.`, s.id));
+        i18n.t("The fire is {p1}° off the gauge axis but the view-limiting tube only accepts ±{p2}° — the flame is outside the acceptance cone.", { p1: i18n.numberText(e.offAxisDeg.toFixed(0)), p2: i18n.numberText((gaugeViewAngleDeg(s) / 2).toFixed(0)) }), s.id));
     }
     if (e.nearField) {
       const source = findObject(d, e.sourceId) as BurnerObject;
       out.push(issue('warning', 'gauge-near-field',
-        `The gauge is ${e.distanceM.toFixed(2)} m from a fire of effective diameter ` +
-        `${burnerDiameterM(source).toFixed(2)} m. Closer than ` +
-        `${POINT_SOURCE_MIN_DIAMETERS} diameters the fire is plainly not a point source, so ` +
-        `the predicted flux is an order of magnitude, not a value to size a gauge on.`, s.id));
+        i18n.t("The gauge is {p1} m from a fire of effective diameter {p2} m. Closer than {p3} diameters the fire is plainly not a point source, so the predicted flux is an order of magnitude, not a value to size a gauge on.", { p1: i18n.numberText(e.distanceM.toFixed(2)), p2: i18n.numberText(burnerDiameterM(source).toFixed(2)), p3: POINT_SOURCE_MIN_DIAMETERS }), s.id));
     }
 
     const range = gaugeRangeKwM2(s);
     if (range !== null && e.fractionOfRange !== null) {
       if (e.fractionOfRange > 1) {
         out.push(issue('error', 'gauge-over-range',
-          `Predicted incident flux is ${e.incidentKwM2.toFixed(1)} kW/m² against a ` +
-          `${range} kW/m² gauge — it will pin at full scale and the reading is lost.`, s.id));
+          i18n.t("Predicted incident flux is {p1} kW/m² against a {p2} kW/m² gauge — it will pin at full scale and the reading is lost.", { p1: i18n.numberText(e.incidentKwM2.toFixed(1)), p2: range }), s.id));
       } else if (e.fractionOfRange < LOW_SIGNAL_FRACTION) {
         out.push(issue('warning', 'gauge-low-signal',
-          `Predicted incident flux is ${e.incidentKwM2.toFixed(2)} kW/m², only ` +
-          `${(e.fractionOfRange * 100).toFixed(1)}% of the ${range} kW/m² range — move it in, ` +
-          `or fit a more sensitive gauge.`, s.id));
+          i18n.t("Predicted incident flux is {p1} kW/m², only {p2}% of the {p3} kW/m² range — move it in, or fit a more sensitive gauge.", { p1: i18n.numberText(e.incidentKwM2.toFixed(2)), p2: i18n.numberText((e.fractionOfRange * 100).toFixed(1)), p3: range }), s.id));
       }
     }
   }
@@ -1331,19 +1307,15 @@ export function instrumentChecks(d: PlanDocument): Issue[] {
     const inFlame = beads.filter(beadAtFlameTemperature);
     if (inFlame.length > 0) {
       const which = inFlame.length === beads.length
-        ? 'every bead'
-        : `${inFlame.length} of ${beads.length} beads`;
-      const sits = inFlame.length === beads.length || inFlame.length === 1 ? 'sits' : 'sit';
+        ? i18n.t("every bead")
+        : i18n.t("{p1} of {p2} beads", { p1: inFlame.length, p2: beads.length });
+      const sits = inFlame.length === beads.length || inFlame.length === 1 ? i18n.t("sits") : i18n.t("sit");
       if (limit < FLAME_TEMPERATURE_C) {
         out.push(issue('error', 'tc-over-temperature',
-          `${which} ${sits} in the flame or below its mean tip, where gas is roughly ` +
-          `${FLAME_TEMPERATURE_C} °C — past the ${limit} °C limit of a type ${type} ` +
-          `thermocouple.`, t.id));
+          i18n.t("{p1} {p2} in the flame or below its mean tip, where gas is roughly {p3} °C — past the {p4} °C limit of a type {p5} thermocouple.", { p1: which, p2: sits, p3: FLAME_TEMPERATURE_C, p4: limit, p5: type }), t.id));
       } else {
         out.push(issue('warning', 'tc-in-flame',
-          `${which} ${sits} in the flame or below its mean tip. Expect intermittent flame ` +
-          `temperatures rather than a plume reading, and significant radiation error on a ` +
-          `bare bead.`, t.id));
+          i18n.t("{p1} {p2} in the flame or below its mean tip. Expect intermittent flame temperatures rather than a plume reading, and significant radiation error on a bare bead.", { p1: which, p2: sits }), t.id));
       }
     }
 
@@ -1354,14 +1326,12 @@ export function instrumentChecks(d: PlanDocument): Issue[] {
     );
     if (hottest !== null && hottest > limit) {
       out.push(issue('error', 'tc-over-temperature',
-        `Predicted plume centreline reaches ${hottest.toFixed(0)} °C at the hottest bead, past ` +
-        `the ${limit} °C limit of a type ${type} thermocouple.`, t.id));
+        i18n.t("Predicted plume centreline reaches {p1} °C at the hottest bead, past the {p2} °C limit of a type {p3} thermocouple.", { p1: i18n.numberText(hottest.toFixed(0)), p2: limit, p3: type }), t.id));
     }
 
     if (beads.every((b) => b.region === 'outside') && fireBurners(d).length > 0) {
       out.push(issue('info', 'tc-outside-plume',
-        'No bead falls inside the flame or the plume envelope of any fire, so this rake ' +
-        'will read close to ambient.', t.id));
+        i18n.t("No bead falls inside the flame or the plume envelope of any fire, so this rake will read close to ambient."), t.id));
     }
   }
 
@@ -1376,9 +1346,7 @@ export function cameraChecks(d: PlanDocument): Issue[] {
     const view = cameraLineOfSight(d, c, b);
     if (view.unobstructed !== null && view.unobstructed < 1) {
       out.push(issue('warning', 'camera-view-blocked',
-        `${displayName(c)} frames the flame but ${((1 - view.unobstructed) * 100).toFixed(0)}% ` +
-        'of the centreline it frames is hidden behind ' +
-        view.blockers.slice(0, 2).map(displayName).join(' and ') + '.', c.id));
+        i18n.t("{p1} frames the flame but {p2}% of the centreline it frames is hidden behind {p3}.", { p1: displayName(c), p2: i18n.numberText(((1 - view.unobstructed) * 100).toFixed(0)), p3: view.blockers.slice(0, 2).map(displayName).join(i18n.t(" and ")) }), c.id));
     }
   }
   return out;
@@ -1395,14 +1363,13 @@ export function checkPlan(d: PlanDocument): Issue[] {
   const effective = maxVersion(declared, requiredFormatVersion(d));
   if (declared !== effective) {
     out.push(issue('warning', 'version-understated',
-      `The file declares format ${declared || '(none)'} but uses ${effective} features; ` +
-      'saving will correct it.'));
+      i18n.t("The file declares format {p1} but uses {p2} features; saving will correct it.", { p1: declared || i18n.t("(none)"), p2: effective })));
   }
 
   const seen = new Set<string>();
   for (const o of d.objects) {
     if (seen.has(o.id)) {
-      out.push(issue('error', 'duplicate-id', `Object id "${o.id}" is used more than once.`, o.id));
+      out.push(issue('error', 'duplicate-id', i18n.t("Object id \"{p1}\" is used more than once.", { p1: o.id }), o.id));
     }
     seen.add(o.id);
   }
@@ -1413,7 +1380,7 @@ export function checkPlan(d: PlanDocument): Issue[] {
       const n = Math.hypot(q[0], q[1], q[2], q[3]);
       if (Math.abs(n - 1) > 1e-6) {
         out.push(issue('warning', 'non-unit-quaternion',
-          `rotation_quat has length ${n.toFixed(6)}, expected 1.`, o.id));
+          i18n.t("rotation_quat has length {p1}, expected 1.", { p1: i18n.numberText(n.toFixed(6)) }), o.id));
       }
     }
     // Any object whose orientation records what it is pointed at, which since 1.1
@@ -1424,14 +1391,14 @@ export function checkPlan(d: PlanDocument): Issue[] {
       const delta = sub(target, positionOf(o));
       if (length(delta) < 1e-9) {
         out.push(issue('warning', 'degenerate-aim',
-          "aimTarget_m coincides with the object's own position.", o.id));
+          i18n.t("aimTarget_m coincides with the object's own position."), o.id));
       } else {
         // `quatOf`, not the raw `q`: a zero-length quaternion is reported above and
         // must not also throw out of the check that follows it.
         const off = angleBetweenDeg(delta, forwardOf(quatOf(o)));
         if (off > 0.1) {
           out.push(issue('warning', 'aim-mismatch',
-            `rotation_quat points ${off.toFixed(2)}° away from aimTarget_m; the quaternion is authoritative.`,
+            i18n.t("rotation_quat points {p1}° away from aimTarget_m; the quaternion is authoritative.", { p1: i18n.numberText(off.toFixed(2)) }),
             o.id));
         }
       }
@@ -1441,26 +1408,25 @@ export function checkPlan(d: PlanDocument): Issue[] {
   for (const c of cameras(d)) {
     if (intrinsicsSourceOf(c) === 'nominal') {
       out.push(issue('info', 'nominal-intrinsics',
-        'Intrinsics are a placeholder — fine for framing, not for reconstruction.', c.id));
+        i18n.t("Intrinsics are a placeholder — fine for framing, not for reconstruction."), c.id));
     }
   }
 
   const allBurners = burners(d);
   if (allBurners.length === 0) {
-    out.push(issue('warning', 'no-burner', 'Plan has no burner; flame geometry is undefined.'));
+    out.push(issue('warning', 'no-burner', i18n.t("Plan has no burner; flame geometry is undefined.")));
   } else {
     if (!allBurners.some((b) => Math.hypot(positionOf(b)[0], positionOf(b)[1]) < 1e-6)) {
       out.push(issue('warning', 'burner-off-origin',
-        'No burner sits at the origin, but the coordinate system is defined as burner-centred; ' +
-        'camera standoff will be misleading.'));
+        i18n.t("No burner sits at the origin, but the coordinate system is defined as burner-centred; camera standoff will be misleading.")));
     }
     for (const b of allBurners) {
       if (b.fire?.hrrCurve && b.fire.hrr_kw !== hrrKwOf(b)) {
         out.push(issue('warning', 'hrr-curve-peak',
-          `Stored hrr_kw ${b.fire.hrr_kw ?? 'null'} kW differs from curve peak ${hrrKwOf(b)} kW; the curve peak is used.`, b.id));
+          i18n.t("Stored hrr_kw {p1} kW differs from curve peak {p2} kW; the curve peak is used.", { p1: b.fire.hrr_kw ?? 'null', p2: hrrKwOf(b) }), b.id));
       }
       if (hrrKwOf(b) === null) {
-        out.push(issue('info', 'no-hrr', 'No hrr_kw, so flame and plume geometry cannot be drawn.', b.id));
+        out.push(issue('info', 'no-hrr', i18n.t("No hrr_kw, so flame and plume geometry cannot be drawn."), b.id));
       }
     }
     // The hood, ceiling and instrument checks below take every fire into account.
@@ -1470,9 +1436,7 @@ export function checkPlan(d: PlanDocument): Issue[] {
     // looked at.
     for (const b of secondaryBurners(d)) {
       out.push(issue('warning', 'secondary-burner',
-        `"${displayName(b)}" is a second fire. The hood, ceiling and instrument verdicts ` +
-        'include it, but camera framing and "aim at fire" are judged against the primary ' +
-        'burner at the origin only.', b.id));
+        i18n.t("\"{p1}\" is a second fire. The hood, ceiling and instrument verdicts include it, but camera framing and \"aim at fire\" are judged against the primary burner at the origin only.", { p1: displayName(b) }), b.id));
     }
   }
 
@@ -1497,15 +1461,14 @@ export function flameChecks(d: PlanDocument): Issue[] {
     const corners = flameBoundsCorners(f);
     if (f.burnerId && !(findObject(d, f.burnerId) && isBurner(findObject(d, f.burnerId)!))) {
       out.push(issue('warning', 'flame-burner-unknown',
-        `burnerId "${f.burnerId}" names no burner in this plan; the primary burner is used instead.`, f.id));
+        i18n.t("burnerId \"{p1}\" names no burner in this plan; the primary burner is used instead.", { p1: f.burnerId }), f.id));
     }
     const burner = flameBurner(d, f);
     const floor = burner ? positionOf(burner)[2] : 0;
     const lowest = Math.min(...corners.map((c) => c[2]));
     if (lowest < floor - manifest.grid.pitch_m) {
       out.push(issue('warning', 'flame-below-floor',
-        `The reconstructed hull reaches ${(floor - lowest).toFixed(2)} m below the floor. ` +
-        'The reconstruction frame is probably offset from the plan frame; correct the object\'s position.', f.id));
+        i18n.t("The reconstructed hull reaches {p1} m below the floor. The reconstruction frame is probably offset from the plan frame; correct the object's position.", { p1: i18n.numberText((floor - lowest).toFixed(2)) }), f.id));
     }
     if (burner) {
       const bp = positionOf(burner);
@@ -1515,15 +1478,14 @@ export function flameChecks(d: PlanDocument): Issue[] {
       const allowed = Math.max(burnerDiameterM(burner), 0.25);
       if (offset > allowed) {
         out.push(issue('warning', 'flame-off-burner',
-          `The reconstructed hull is centred ${offset.toFixed(2)} m from "${displayName(burner)}". ` +
-          'The reconstruction frame is probably not the plan frame; correct the object\'s transform.', f.id));
+          i18n.t("The reconstructed hull is centred {p1} m from \"{p2}\". The reconstruction frame is probably not the plan frame; correct the object's transform.", { p1: i18n.numberText(offset.toFixed(2)), p2: displayName(burner) }), f.id));
       }
       for (const link of burner.linkedFiles ?? []) {
         if (!link.plot) continue;
         const mismatch = plotSequenceMismatch(link.plot.samples, manifest);
         if (mismatch) {
           out.push(issue('info', 'flame-csv-mismatch',
-            `"${link.label || link.path}" on "${displayName(burner)}" ${mismatch}, so it is not this reconstruction's volumes.csv.`, f.id));
+            i18n.t("\"{p1}\" on \"{p2}\" {p3}, so it is not this reconstruction's volumes.csv.", { p1: link.label || link.path, p2: displayName(burner), p3: mismatch }), f.id));
         }
       }
     }
@@ -1569,7 +1531,7 @@ export function plotSequenceMismatch(
   samples: readonly [number, number, number][], manifest: VoxelSequenceManifest,
 ): string | null {
   const frames = manifest.frames;
-  if (samples.length !== frames.length) return `has ${samples.length} samples against ${frames.length} frames`;
+  if (samples.length !== frames.length) return i18n.t("has {p1} samples against {p2} frames", { p1: samples.length, p2: frames.length });
   const voxelVolume = manifest.grid.voxelSize_m ** 3;
   // The pipeline writes volumes rounded to a microlitre (1e-6 m3). Below a voxel of
   // about 7.9 mm that rounding alone is more than one voxel, and a tolerance of one
@@ -1579,10 +1541,10 @@ export function plotSequenceMismatch(
     // Frame names carry a tenth of a second (`t_{t:09.1f}s.npz`) while the CSV keeps
     // the full timestamp, so 0.30000000000000004 s is the frame at 0.3 s.
     if (Math.abs(samples[i][0] - frames[i][0]) > FRAME_NAME_TIME_TOLERANCE_S) {
-      return `is sampled at ${samples[i][0]} s where the sequence has a frame at ${frames[i][0]} s`;
+      return i18n.t("is sampled at {p1} s where the sequence has a frame at {p2} s", { p1: samples[i][0], p2: frames[i][0] });
     }
     const count = samples[i][1] / voxelVolume;
-    if (Math.abs(count - frames[i][1]) > countTolerance) return `records ${samples[i][1]} m³ at ${frames[i][0]} s where the frame holds ${frames[i][1]} voxels`;
+    if (Math.abs(count - frames[i][1]) > countTolerance) return i18n.t("records {p1} m³ at {p2} s where the frame holds {p3} voxels", { p1: samples[i][1], p2: frames[i][0], p3: frames[i][1] });
   }
   return null;
 }

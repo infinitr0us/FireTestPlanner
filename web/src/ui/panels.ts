@@ -1,3 +1,6 @@
+import { presetLabel, presetNote } from './preset-labels';
+import { domainLabel } from './domain-labels';
+import * as i18n from './i18n';
 /** Left-hand panels: object palette, outliner, and the checks list. */
 
 import {
@@ -16,7 +19,7 @@ import { fdsFrame } from '../core/fdsview';
 import { NamelistError, readOneRecord } from '../core/namelist';
 import { checkPlan, displayName, hasObjectColor, MODALITY_COLORS, nextId, objectColor } from '../core/plan';
 import { isMounted } from '../core/types';
-import { collapseBodies, lensesOf, lensName, listedLabel } from '../core/lenses';
+import { collapseBodies, lensesOf, lensName } from '../core/lenses';
 import { cameraPresets, isCustomPreset, presetsArePersistent, type CameraPreset } from '../core/presets';
 import { setPosition } from '../core/transform';
 import type { Issue, PlanObject, Vec3 } from '../core/types';
@@ -41,11 +44,9 @@ const TYPE_ICON: Record<string, string> = {
  *  places and where the others are. */
 function paletteTitle(preset: CameraPreset): string {
   const lenses = lensesOf(preset.id);
-  if (lenses.length === 0) return preset.note ?? '';
-  const mm = lenses.map((l) => lensName(l.focalLength_mm).replace(/ mm$/, ''));
-  return `Placed with the ${lensName(preset.focalLength_mm)} lens. Choose `
-    + `${mm.slice(0, -1).join(', ')} or ${mm[mm.length - 1]} mm under Lens in the inspector.`
-    + (preset.note ? `\n\n${preset.note}` : '');
+  if (lenses.length === 0) return presetNote(preset);
+  const mm = lenses.map((l) => lensName(l.focalLength_mm).replace(/[ \u202f]mm$/, ''));
+  return i18n.t("Placed with the {p1} lens. Choose {p2} or {p3} mm under Lens in the inspector.{p4}", { p1: lensName(preset.focalLength_mm), p2: mm.slice(0, -1).join(', '), p3: mm[mm.length - 1], p4: (preset.note ? `\n\n${presetNote(preset)}` : '') });
 }
 
 export class Palette {
@@ -74,32 +75,32 @@ export class Palette {
     }
     clear(this.root);
 
-    this.root.append(h('h3', { class: 'panel__section' }, ['Add']));
+    this.root.append(h('h3', { class: 'panel__section' }, [i18n.t("Add")]));
 
     this.root.append(h('div', { class: 'palette__grid' }, [
-      this.tile('▲', 'Fuel pan', () => createBurner(this.store.document, [0, 0, 0])),
-      this.tile('⌂', 'Hood', () => createHood(this.store.document)),
-      this.tile('▬', 'Wall', () => createWall(this.store.document)),
-      this.tile('▭', 'Ceiling', () => createCeiling(this.store.document)),
-      this.tile('▢', 'Obstruction', () => createObstruction(this.store.document),
-        'A box: furniture, equipment, blockwork. What stands between an instrument and the fire.'),
+      this.tile('▲', i18n.t("Fuel pan"), () => createBurner(this.store.document, [0, 0, 0])),
+      this.tile('⌂', i18n.t("Hood"), () => createHood(this.store.document)),
+      this.tile('▬', i18n.t("Wall"), () => createWall(this.store.document)),
+      this.tile('▭', i18n.t("Ceiling"), () => createCeiling(this.store.document)),
+      this.tile('▢', i18n.t("Obstruction"), () => createObstruction(this.store.document),
+        i18n.t("A box: furniture, equipment, blockwork. What stands between an instrument and the fire.")),
       h('button', {
         class: 'palette__tile', type: 'button',
-        title: 'A flame reconstructed from the test\'s cameras: pick the pipeline\'s voxels/ folder and play it back in the layout.',
+        title: i18n.t("A flame reconstructed from the test's cameras: pick the pipeline's voxels/ folder and play it back in the layout."),
         onclick: () => this.linkFlame?.(),
-      }, [h('span', { class: 'palette__icon' }, ['✶']), h('span', {}, ['3D flame…'])]),
+      }, [h('span', { class: 'palette__icon' }, ['✶']), h('span', {}, [i18n.t("3D flame…")])]),
     ]));
 
-    this.root.append(this.disclosure('instruments', 'Instruments', [h('div', { class: 'palette__grid' }, [
-      this.tile('◉', 'Heat flux', () => createHeatFluxSensor(this.store.document),
-        'Gauge, aimed at the fire on drop. Its inspector predicts what it will read.'),
-      this.tile('⋮', 'Thermocouple', () => createThermocouple(this.store.document),
-        'One bead on drop; add more in the inspector to make it a rake.'),
-      this.tile('▬', 'Velocity probe', () => createVelocityProbe(this.store.document), 'Bi-directional tube. Align its axis with an opening in the inspector.'),
-      this.tile('○', 'Gas sample', () => createGasSampling(this.store.document), 'Sampling point with recorded species.'),
-      this.tile('▱', 'Load cell', () => createLoadCell(this.store.document), 'Mass measurement beneath the fuel.'),
+    this.root.append(this.disclosure('instruments', i18n.t("Instruments"), [h('div', { class: 'palette__grid' }, [
+      this.tile('◉', i18n.t("Heat flux"), () => createHeatFluxSensor(this.store.document),
+        i18n.t("Gauge, aimed at the fire on drop. Its inspector predicts what it will read.")),
+      this.tile('⋮', i18n.t("Thermocouple"), () => createThermocouple(this.store.document),
+        i18n.t("One bead on drop; add more in the inspector to make it a rake.")),
+      this.tile('▬', i18n.t("Velocity probe"), () => createVelocityProbe(this.store.document), i18n.t("Bi-directional tube. Align its axis with an opening in the inspector.")),
+      this.tile('○', i18n.t("Gas sample"), () => createGasSampling(this.store.document), i18n.t("Sampling point with recorded species.")),
+      this.tile('▱', i18n.t("Load cell"), () => createLoadCell(this.store.document), i18n.t("Mass measurement beneath the fuel.")),
     ])]));
-    this.root.append(h('h3', { class: 'panel__section' }, ['Cameras']));
+    this.root.append(h('h3', { class: 'panel__section' }, [i18n.t("Cameras")]));
     this.root.append(
       h('div', { class: 'palette__list' }, collapseBodies(cameraPresets()).map((preset) =>
         h('button', {
@@ -110,12 +111,12 @@ export class Palette {
             createCamera(this.store.document, preset, defaultCameraPosition(this.store.document))),
         }, [
           h('span', { class: 'palette__swatch', style: { background: MODALITY_COLORS[preset.modality] ?? MODALITY_COLORS.other } }),
-          h('span', { class: 'palette__row-label' }, [listedLabel(preset)]),
+          h('span', { class: 'palette__row-label' }, [presetLabel(preset)]),
           isCustomPreset(preset.id)
-            ? h('span', { class: 'palette__badge', title: 'Your own preset. Delete it from a camera that uses it.' }, ['mine'])
+            ? h('span', { class: 'palette__badge', title: i18n.t("Your own preset. Delete it from a camera that uses it.") }, [i18n.t("mine")])
             : null,
           preset.intrinsicsSource === 'nominal'
-            ? h('span', { class: 'palette__badge', title: 'Placeholder intrinsics — not reconstruction-grade' }, ['nom'])
+            ? h('span', { class: 'palette__badge', title: i18n.t("Placeholder intrinsics — not reconstruction-grade") }, ['nom'])
             : null,
         ])),
       ),
@@ -125,22 +126,19 @@ export class Palette {
     // inspector, which is the only place the optics being saved are visible. Folded
     // behind one line: it is read once, and the rail's height belongs to Checks. The
     // failure case is not folded, because it is news about the user's own presets.
-    const howTo = 'Place the nearest camera, correct its optics in the inspector, then '
-      + 'Save as preset. It joins this list';
+    const howTo = i18n.t("Place the nearest camera, correct its optics in the inspector, then Save as preset. It joins this list");
     if (presetsArePersistent()) {
-      this.root.append(this.disclosure('presetHelp', 'Camera not listed?', [
-        h('p', { class: 'panel__hint' }, [`${howTo} and survives a restart.`]),
+      this.root.append(this.disclosure('presetHelp', i18n.t("Camera not listed?"), [
+        h('p', { class: 'panel__hint' }, [i18n.t("{p1} and survives a restart.", { p1: howTo })]),
       ], false, 'hint'));
     } else {
       this.root.append(h('p', { class: 'panel__hint' }, [
-        `A camera this list does not have: ${howTo.charAt(0).toLowerCase()}${howTo.slice(1)} `
-        + 'for this session only. The last attempt to store the library did not land, so '
-        + 'it will not survive a restart.',
+        i18n.t("A camera this list does not have: {p1}{p2} for this session only. The last attempt to store the library did not land, so it will not survive a restart.", { p1: howTo.charAt(0).toLowerCase(), p2: howTo.slice(1) }),
       ]));
     }
 
     this.root.append(h('p', { class: 'panel__hint' }, [
-      'Click an item, then click in the viewport to place it. Press Esc to cancel.',
+      i18n.t("Click an item, then click in the viewport to place it. Press Esc to cancel."),
     ]));
 
     this.renderFdsPaste();
@@ -187,19 +185,17 @@ export class Palette {
     // Folded by default: most plans never paste a record, and the rail's height is
     // what decides whether Checks is on screen. It stays open while it holds a draft
     // or an error, so a repaint never hides what the user is in the middle of.
-    this.root.append(this.disclosure('fds', 'From FDS', [
+    this.root.append(this.disclosure('fds', i18n.t("From FDS"), [
       h('div', { class: 'fdspaste' }, [
         input,
         this.fdsError ? h('p', { class: 'fdspaste__error' }, [this.fdsError]) : null,
         h('div', { class: 'panel__actions' }, [
           h('button', {
             class: 'btn', type: 'button', onclick: () => this.createFromFds(),
-          }, ['Create']),
+          }, [i18n.t("Create")]),
         ]),
         h('p', { class: 'panel__hint' }, [
-          'One record at a time. &OBST becomes a wall, ceiling or box by its shape; '
-          + '&DEVC becomes an instrument by its quantity and species. A &VENT is a '
-          + 'surface on a solid, not a solid: paste the &OBST it sits on.',
+          i18n.t("One record at a time. &OBST becomes a wall, ceiling or box by its shape; &DEVC becomes an instrument by its quantity and species. A &VENT is a surface on a solid, not a solid: paste the &OBST it sits on."),
         ]),
       ].filter(Boolean) as HTMLElement[]),
     ], this.fdsDraft !== '' || this.fdsError !== null));
@@ -219,17 +215,13 @@ export class Palette {
         ?? deviceFromRecord(record, new Map(), offset);
       if (!obj) {
         this.fdsError = record.group === 'VENT'
-          ? 'A &VENT is a boundary condition on the face of a solid, not a solid: it '
-            + 'has no thickness, and this format has no planar object. Paste the &OBST '
-            + 'it sits on instead.'
-          : `&${record.group} has no counterpart in a test plan. `
-            + 'Geometry comes from &OBST with an XB; instruments from &DEVC '
-            + 'with an XYZ and a heat flux or temperature quantity.';
+          ? i18n.t("A &VENT is a boundary condition on the face of a solid, not a solid: it has no thickness, and this format has no planar object. Paste the &OBST it sits on instead.")
+          : i18n.t("&{p1} has no counterpart in a test plan. Geometry comes from &OBST with an XB; instruments from &DEVC with an XYZ and a heat flux or temperature quantity.", { p1: record.group });
       }
     } catch (err) {
       this.fdsError = err instanceof NamelistError
         ? err.message
-        : `Could not read that: ${(err as Error).message}`;
+        : i18n.t("Could not read that: {p1}", { p1: (err as Error).message });
     }
 
     if (obj) {
@@ -241,8 +233,7 @@ export class Palette {
       // refuse to reopen, a long way from the paste that caused it.
       const errors = validateStructure({ ...doc, objects: [...doc.objects, obj] });
       if (errors.length > 0) {
-        this.fdsError = 'That record converts into something this format cannot hold:\n'
-          + describeErrors(errors);
+        this.fdsError = i18n.t("That record converts into something this format cannot hold:\n{p1}", { p1: describeErrors(errors) });
         obj = null;
       }
     }
@@ -299,9 +290,9 @@ export class Outliner {
     clear(this.root);
     const objects = this.store.document.objects;
 
-    this.root.append(h('h3', { class: 'panel__section' }, [`Objects (${objects.length})`]));
+    this.root.append(h('h3', { class: 'panel__section' }, [i18n.t("Objects ({p1})", { p1: objects.length })]));
     if (objects.length === 0) {
-      this.root.append(h('p', { class: 'panel__hint' }, ['Empty plan.']));
+      this.root.append(h('p', { class: 'panel__hint' }, [i18n.t("Empty plan.")]));
       return;
     }
 
@@ -321,8 +312,8 @@ export class Outliner {
             style: { color: hasObjectColor(obj) ? objectColor(obj) : undefined },
           }, [TYPE_ICON[obj.type] ?? '◇']),
           h('span', { class: 'outliner__name' }, [displayName(obj)]),
-          obj.display?.visible === false ? h('span', { class: 'outliner__flag' }, ['hidden']) : null,
-          obj.display?.locked ? h('span', { class: 'outliner__flag' }, ['locked']) : null,
+          obj.display?.visible === false ? h('span', { class: 'outliner__flag' }, [domainLabel('hidden')]) : null,
+          obj.display?.locked ? h('span', { class: 'outliner__flag' }, [domainLabel('locked')]) : null,
         ]),
       ]);
     })));
@@ -345,15 +336,15 @@ export class ChecksPanel {
     const warnings = issues.filter((i) => i.severity === 'warning');
 
     this.root.append(h('h3', { class: 'panel__section' }, [
-      'Checks',
+      i18n.t("Checks"),
       h('span', { class: 'panel__count' }, [
-        errors.length > 0 ? `${errors.length} error${errors.length > 1 ? 's' : ''}` :
-        warnings.length > 0 ? `${warnings.length} warning${warnings.length > 1 ? 's' : ''}` : 'all clear',
+        errors.length > 0 ? i18n.plural('{count} error', '{count} errors', errors.length) :
+        warnings.length > 0 ? i18n.plural('{count} warning', '{count} warnings', warnings.length) : i18n.t("all clear"),
       ]),
     ]));
 
     if (issues.length === 0) {
-      this.root.append(h('p', { class: 'panel__hint' }, ['No issues found.']));
+      this.root.append(h('p', { class: 'panel__hint' }, [i18n.t("No issues found.")]));
       return;
     }
 
@@ -366,7 +357,7 @@ export class ChecksPanel {
           class: 'checks__body',
           type: 'button',
           disabled: !issue.objectId && !(issue.sourceId && this.openTestData),
-          title: issue.sourceId && this.openTestData ? 'Open this source in Test data' : '',
+          title: issue.sourceId && this.openTestData ? i18n.t("Open this source in Test data") : '',
           onclick: () => {
             if (issue.sourceId && this.openTestData) this.openTestData(issue.sourceId);
             else if (issue.objectId) this.store.select([issue.objectId]);

@@ -1,3 +1,4 @@
+import { formatQuantity } from '../ui/i18n';
 /**
  * Lens choice for a camera body that ships with several lenses.
  *
@@ -60,7 +61,7 @@ export const listedLabel = (p: CameraPreset): string =>
 
 /** A lens as it is engraved: "50 mm", or "25.13 mm" for a calibrated value. */
 export const lensName = (focalLengthMm: number): string =>
-  `${Number(focalLengthMm.toFixed(2))} mm`;
+  formatQuantity(Number(focalLengthMm.toFixed(2)), 'mm');
 
 /**
  * The camera's lens among its body's lenses, or null when its focal length is none

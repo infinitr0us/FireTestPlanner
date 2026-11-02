@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 /**
  * What the palette, the inspector and the bar do to a flame's data: link a folder,
  * relink it, refresh its manifest, read its frames. One module, so the three
@@ -52,7 +53,7 @@ async function pickFolder(): Promise<Picked | null> {
 
 export function flameActions(store: Store, flames: FlameStore, host: FlameActionsHost = {}): FlameActions {
   const progress = (done: number, total: number): void =>
-    host.onProgress?.(total ? `Reading frame ${done} of ${total}…` : 'Listing the folder…');
+    host.onProgress?.(total ? i18n.t("Reading frame {p1} of {p2}…", { p1: done, p2: total }) : i18n.t("Listing the folder…"));
 
   const edit = (label: string, flameId: string, fn: (flame: ReconstructedFlameObject, doc: PlanDocument) => void): void => {
     store.edit(label, (doc) => {
@@ -64,7 +65,7 @@ export function flameActions(store: Store, flames: FlameStore, host: FlameAction
 
   const assertSame = (documentId: number, revision: number): void => {
     if (store.documentId !== documentId || store.revision !== revision) {
-      throw new Error('The plan changed while the folder was being linked. Please try again.');
+      throw new Error(i18n.t("The plan changed while the folder was being linked. Please try again."));
     }
   };
 
@@ -77,7 +78,7 @@ export function flameActions(store: Store, flames: FlameStore, host: FlameAction
       const picked = await pickFolder();
       if (!picked) return;
       assertSame(identity.documentId, identity.revision);
-      host.onProgress?.('Listing the folder…');
+      host.onProgress?.(i18n.t("Listing the folder…"));
       let sequence;
       try {
         sequence = await FlameStore.readSource(picked.source, progress);
@@ -104,7 +105,7 @@ export function flameActions(store: Store, flames: FlameStore, host: FlameAction
       const bridge = shell();
       if (!link || !bridge) return;
       const identity = store.identity();
-      host.onProgress?.('Listing the folder…');
+      host.onProgress?.(i18n.t("Listing the folder…"));
       let sequence;
       try {
         sequence = await FlameStore.readSource(shellSource(bridge, link.path), progress);

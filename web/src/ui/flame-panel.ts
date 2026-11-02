@@ -1,3 +1,4 @@
+import * as i18n from './i18n';
 /**
  * The inspector's sections for a reconstructed flame: where its frames come from,
  * what the manifest says about them, whether they are loaded, and how it is drawn.
@@ -45,13 +46,13 @@ export class FlamePanel {
     const run = (fn: () => Promise<void> | void): void => { void this.guard(flame.id, fn); };
     const disabled = (b: HTMLButtonElement): HTMLButtonElement => { b.disabled = this.busy !== null; return b; };
 
-    const source = h('section', { class: 'linked-files', 'aria-label': 'Voxel sequence' }, [sectionTitle('Voxel sequence')]);
+    const source = h('section', { class: 'linked-files', 'aria-label': i18n.t("Voxel sequence") }, [sectionTitle(i18n.t("Voxel sequence"))]);
     if (!link) {
       source.append(
         h('p', { class: 'linked-files__hint' }, [
           'No folder of frames is linked. Link the reconstruction pipeline\'s voxels/ folder: one t_<seconds>s.npz per timestep.',
         ]),
-        disabled(button('Link voxel folder…', () => run(() => this.actions.link(flame)))),
+        disabled(button(i18n.t("Link voxel folder…"), () => run(() => this.actions.link(flame)))),
       );
     } else {
       const card = h('div', { class: 'linked-file' }, [
@@ -60,35 +61,35 @@ export class FlamePanel {
       ]);
       if (manifest) {
         const frames = manifest.frames;
-        const span = `${frames[0][0]} – ${frames[frames.length - 1][0]} s`;
+        const span = `${i18n.numberText(frames[0][0])} – ${i18n.formatQuantity(frames[frames.length - 1][0], 's')}`;
         card.append(h('div', { class: 'readouts' }, [
-          readout('Frames', `${frames.length.toLocaleString()} · ${span}`),
-          readout('Voxel pitch', `${(manifest.grid.pitch_m * 1000).toFixed(2)} mm` + (manifest.grid.resolution ? ` · ${manifest.grid.resolution}³ grid` : '')),
-          readout('Largest frame', `${Math.max(...frames.map((f) => f[1])).toLocaleString()} voxels`),
-          readout('Linked', formatDate(manifest.importedAt)),
+          readout(i18n.t("Frames"), `${frames.length.toLocaleString(i18n.language() === 'fr' ? 'fr-CA' : undefined)} · ${span}`),
+          readout(i18n.t("Voxel pitch"), i18n.t("{p1} mm{p2}", { p1: i18n.numberText((manifest.grid.pitch_m * 1000).toFixed(2)), p2: (manifest.grid.resolution ? i18n.t(" · {p1}³ grid", { p1: manifest.grid.resolution }) : '') })),
+          readout(i18n.t("Largest frame"), i18n.plural("{p1} voxel", "{p1} voxels", Math.max(...frames.map(f => f[1])), { p1: Math.max(...frames.map((f) => f[1])).toLocaleString(i18n.language() === 'fr' ? 'fr-CA' : undefined) })),
+          readout(i18n.t("Linked"), formatDate(manifest.importedAt)),
         ]));
       }
       card.append(this.status(flame));
       const actions = h('div', { class: 'linked-file__actions' });
       if (bridge) {
         actions.append(
-          disabled(button('Show in folder', () => run(async () => { await bridge.linkedFileAction(link.path, 'voxelSequence', 'folder'); }))),
-          disabled(button('Refresh', () => run(() => this.actions.refresh(flame)))),
+          disabled(button(i18n.t("Show in folder"), () => run(async () => { await bridge.linkedFileAction(link.path, 'voxelSequence', 'folder'); }))),
+          disabled(button(i18n.t("Refresh"), () => run(() => this.actions.refresh(flame)))),
         );
       } else if (!this.flames.get(link)?.sequence) {
-        actions.append(disabled(button('Load frames…', () => run(() => this.actions.load(flame)))));
+        actions.append(disabled(button(i18n.t("Load frames…"), () => run(() => this.actions.load(flame)))));
       }
       actions.append(
-        disabled(button('Relink…', () => run(() => this.actions.link(flame)))),
-        disabled(button('Remove', () => this.actions.unlink(flame))),
+        disabled(button(i18n.t("Relink…"), () => run(() => this.actions.link(flame)))),
+        disabled(button(i18n.t("Remove"), () => this.actions.unlink(flame))),
       );
       card.append(actions);
       source.append(card);
     }
     source.append(h('p', { class: 'linked-files__hint' }, [
       bridge
-        ? 'The frames stay in their folder and are read when the plan opens. Refresh after the pipeline is re-run; Relink if the folder moves.'
-        : 'A browser tab keeps the folder name and the manifest. Load frames again after reopening; the desktop app reads them itself.',
+        ? i18n.t("The frames stay in their folder and are read when the plan opens. Refresh after the pipeline is re-run; Relink if the folder moves.")
+        : i18n.t("A browser tab keeps the folder name and the manifest. Load frames again after reopening; the desktop app reads them itself."),
     ]));
     if (this.busy) source.append(h('p', { role: 'status', class: 'linked-files__hint' }, [this.busy]));
     if (this.message?.documentId === this.store.documentId && this.message.objectId === flame.id) {
@@ -97,23 +98,22 @@ export class FlamePanel {
     out.push(source);
 
     // Which fire it is, and how it looks.
-    const burnerOptions = [{ value: '', label: 'Primary burner' },
+    const burnerOptions = [{ value: '', label: i18n.t("Primary burner") },
       ...burners(this.store.document).map((b) => ({ value: b.id, label: displayName(b) }))];
-    out.push(sectionTitle('Reconstruction'));
+    out.push(sectionTitle(i18n.t("Reconstruction")));
     out.push(
-      row('Burner', selectField(flame.burnerId ?? '', burnerOptions, (v) =>
+      row(i18n.t("Burner"), selectField(flame.burnerId ?? '', burnerOptions, (v) =>
         patch('Set flame burner', (f) => { f.burnerId = v || null; })),
-        'The fire this hull was reconstructed from. The placement checks measure against it'),
-      row('Colour', selectField<FlameColorMode>(flame.display?.colorMode ?? 'height', [
-        { value: 'height', label: 'Height ramp (blue base, red tip)' },
-        { value: 'solid', label: 'Solid flame colour' },
+        i18n.t("The fire this hull was reconstructed from. The placement checks measure against it")),
+      row(i18n.t("Colour"), selectField<FlameColorMode>(flame.display?.colorMode ?? 'height', [
+        { value: 'height', label: i18n.t("Height ramp (blue base, red tip)") },
+        { value: 'solid', label: i18n.t("Solid flame colour") },
       ], (v) => patch('Set flame colour', (f) => { f.display = { ...(f.display ?? {}), colorMode: v }; })),
-        'The pipeline\'s own ramp, on a fixed scale over the whole sequence'),
-      row('Opacity', this.opacityField(flame, patch), 'Hashed transparency: grainy on purpose, and honest about overlapping cubes'),
+        i18n.t("The pipeline's own ramp, on a fixed scale over the whole sequence")),
+      row(i18n.t("Opacity"), this.opacityField(flame, patch), i18n.t("Hashed transparency: grainy on purpose, and honest about overlapping cubes")),
     );
     out.push(h('p', { class: 'linked-files__hint' }, [
-      "The predicted Heskestad cone stays under the toolbar's Predicted toggle, so the two can be compared. "
-      + "The transform above maps the reconstruction rig's frame onto the plan: the identity when the rig was set up from this plan; unlock the object to correct one that was not.",
+      i18n.t("The predicted Heskestad cone stays under the toolbar's Predicted toggle, so the two can be compared. The transform above maps the reconstruction rig's frame onto the plan: the identity when the rig was set up from this plan; unlock the object to correct one that was not."),
     ]));
     return out;
   }
@@ -121,7 +121,7 @@ export class FlamePanel {
   private opacityField(flame: ReconstructedFlameObject, patch: (label: string, fn: (f: ReconstructedFlameObject) => void) => void): HTMLElement {
     const value = flame.display?.opacity ?? 1;
     const label = h('span', { class: 'field__static' }, [`${Math.round(value * 100)} %`]);
-    const slider = h('input', { type: 'range', min: 0.1, max: 1, step: 0.05, value, class: 'field__range', 'aria-label': 'Opacity',
+    const slider = h('input', { type: 'range', min: 0.1, max: 1, step: 0.05, value, class: 'field__range', 'aria-label': i18n.t("Opacity"),
       onchange: (e: Event) => {
         const v = Number((e.target as HTMLInputElement).value);
         patch('Set flame opacity', (f) => {
@@ -137,15 +137,15 @@ export class FlamePanel {
   private status(flame: ReconstructedFlameObject): HTMLElement {
     const link = flameSequenceLink(flame)!;
     const entry = this.flames.get(link);
-    if (!entry) return h('p', { class: 'linked-files__hint' }, [shell() ? 'Frames not read yet.' : 'Frames not loaded in this tab.']);
-    if (entry.status === 'loading') return h('p', { class: 'linked-files__hint', role: 'status' }, [`Reading frame ${entry.progress.done} of ${entry.progress.total}…`]);
-    if (entry.status === 'error') return h('p', { class: 'linked-files__message', role: 'status' }, [entry.error ?? 'The folder could not be read.']);
+    if (!entry) return h('p', { class: 'linked-files__hint' }, [shell() ? i18n.t("Frames not read yet.") : i18n.t("Frames not loaded in this tab.")]);
+    if (entry.status === 'loading') return h('p', { class: 'linked-files__hint', role: 'status' }, [i18n.t("Reading frame {p1} of {p2}…", { p1: entry.progress.done, p2: entry.progress.total })]);
+    if (entry.status === 'error') return h('p', { class: 'linked-files__message', role: 'status' }, [entry.error ?? i18n.t("The folder could not be read.")]);
     if (entry.changed) {
       // Refresh exists only on the desktop; in a tab, Relink reads the folder again.
       return h('p', { class: 'linked-files__message', role: 'status' }, [
-        `The folder changed since it was linked: ${entry.changed}. ${shell() ? 'Refresh' : 'Relink'} to adopt it as it is now.`]);
+        i18n.t("The folder changed since it was linked: {p1}. {p2} to adopt it as it is now.", { p1: entry.changed, p2: shell() ? i18n.t("Refresh") : i18n.t("Relink") })]);
     }
-    return h('p', { class: 'linked-files__hint' }, [`${entry.sequence!.frames.length.toLocaleString()} frames loaded.`]);
+    return h('p', { class: 'linked-files__hint' }, [i18n.plural("{p1} frame loaded.", "{p1} frames loaded.", entry.sequence!.frames.length, { p1: entry.sequence!.frames.length.toLocaleString(i18n.language() === 'fr' ? 'fr-CA' : undefined) })]);
   }
 
   private async guard(objectId: string, fn: () => Promise<void> | void): Promise<void> {

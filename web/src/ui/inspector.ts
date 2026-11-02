@@ -1,3 +1,6 @@
+import { presetLabel } from './preset-labels';
+import { domainLabel } from './domain-labels';
+import * as i18n from './i18n';
 import { curvePeak, hrrAt } from '../core/hrr';
 import { nearestOpening } from '../core/instrument-placement';
 import { recordAsBuilt, asBuiltProblem } from '../core/asbuilt';
@@ -83,7 +86,6 @@ import {
   currentLensOf,
   lensesOf,
   lensName,
-  listedLabel,
   withLens,
 } from '../core/lenses';
 import {
@@ -97,7 +99,7 @@ import {
   saveCustomPreset,
   type CameraPreset,
 } from '../core/presets';
-import { formatLength, formatLengthWithUnit } from '../core/units';
+import { formatLength, formatLengthWithUnit } from './display-units';
 import type {
   BurnerObject,
   CameraObject,
@@ -329,7 +331,7 @@ export class Inspector {
     if (selected.length === 0) {
       this.root.append(
         h('p', { class: 'panel__empty' }, [
-          'Nothing selected. Click an object, or add one from the palette.',
+          i18n.t("Nothing selected. Click an object, or add one from the palette."),
         ]),
       );
       this.renderPlanProperties();
@@ -338,19 +340,19 @@ export class Inspector {
 
     if (selected.length > 1) {
       this.root.append(
-        h('p', { class: 'panel__empty' }, [`${selected.length} objects selected.`]),
-        button('Delete selection', () => this.store.removeSelected(), 'btn--danger'),
+        h('p', { class: 'panel__empty' }, [i18n.t("{p1} objects selected.", { p1: selected.length })]),
+        button(i18n.t("Delete selection"), () => this.store.removeSelected(), 'btn--danger'),
       );
       return;
     }
 
     const obj = selected[0];
-    this.root.append(sectionTitle(TYPE_LABEL[obj.type] ?? obj.type));
+    this.root.append(sectionTitle(domainLabel(TYPE_LABEL[obj.type] ?? obj.type)));
     this.root.append(
-      row('Name', textField(obj.name ?? '', (v) =>
+      row(i18n.t("Name"), textField(obj.name ?? '', (v) =>
         this.patch(obj.id, 'Rename', (o) => { o.name = v || null; }))),
       row('ID', h('code', { class: 'field__static' }, [obj.id]),
-        'Stable across revisions so git diffs stay meaningful'),
+        i18n.t("Stable across revisions so git diffs stay meaningful")),
     );
 
     // A flame's one link is a folder with a manifest, and has its own sections.
@@ -376,24 +378,24 @@ export class Inspector {
     else if (isReconstructedFlame(obj)) { /* its sections are above the transform */ }
     else this.renderUnknown(obj);
 
-    this.root.append(sectionTitle('Display'));
+    this.root.append(sectionTitle(i18n.t("Display")));
     this.root.append(
-      row('Visible', checkboxField(obj.display?.visible !== false, (v) =>
+      row(i18n.t("Visible"), checkboxField(obj.display?.visible !== false, (v) =>
         this.patch(obj.id, 'Toggle visibility', (o) => {
           o.display = { ...(o.display ?? {}), visible: v };
         }))),
-      row('Locked', checkboxField(obj.display?.locked === true, (v) =>
+      row(i18n.t("Locked"), checkboxField(obj.display?.locked === true, (v) =>
         this.patch(obj.id, 'Toggle lock', (o) => {
           o.display = { ...(o.display ?? {}), locked: v };
-        })), 'Locked objects cannot be dragged with the gizmo'),
-      row('Notes', textField(obj.notes ?? '', (v) =>
+        })), i18n.t("Locked objects cannot be dragged with the gizmo")),
+      row(i18n.t("Notes"), textField(obj.notes ?? '', (v) =>
         this.patch(obj.id, 'Edit notes', (o) => { o.notes = v || null; }))),
     );
 
     this.root.append(
       h('div', { class: 'panel__actions' }, [
-        button('Duplicate', () => this.store.duplicateSelected()),
-        button('Delete', () => this.store.removeSelected(), 'btn--danger'),
+        button(i18n.t("Duplicate"), () => this.store.duplicateSelected()),
+        button(i18n.t("Delete"), () => this.store.removeSelected(), 'btn--danger'),
       ]),
     );
   }
@@ -401,10 +403,10 @@ export class Inspector {
   // -- shared ------------------------------------------------------------
 
   private renderAsBuilt(obj: PlanObject, unit: LengthUnit): void {
-    const panel = h('div', { class: 'as-built' }, [sectionTitle('As built')]);
+    const panel = h('div', { class: 'as-built' }, [sectionTitle(i18n.t("As built"))]);
     this.root.append(panel);
     if (!obj.asBuilt) {
-      panel.append(button('Record as built', () => this.patch(obj.id, 'Record as built', recordAsBuilt)));
+      panel.append(button(i18n.t("Record as built"), () => this.patch(obj.id, i18n.t("Record as built"), recordAsBuilt)));
       return;
     }
     const t = obj.asBuilt.transform;
@@ -413,17 +415,17 @@ export class Inspector {
       const proxy: PlanObject = { id: o.id, type: o.type, transform: o.asBuilt!.transform };
       fn(proxy);
     });
-    panel.append(row(`Measured position (${unit})`, vecField(t.position_m, unit, ['X', 'Y', 'Z'], (i, value) =>
+    panel.append(row(i18n.t("Measured position ({p1})", { p1: unit }), vecField(t.position_m, unit, ['X', 'Y', 'Z'], (i, value) =>
       edit('Move as built', o => { const p = [...o.transform!.position_m] as Vec3; p[i] = value; setPosition(o, p); }))));
     if (isAimable(obj)) {
       const direction = forwardOf(t.rotation_quat ?? [0, 0, 0, 1]);
       const aim = t.aimTarget_m ?? t.position_m.map((v, i) => v + direction[i]) as Vec3;
-      panel.append(row(`Measured aim (${unit})`, vecField(aim, unit, ['X', 'Y', 'Z'], (i, value) =>
+      panel.append(row(i18n.t("Measured aim ({p1})", { p1: unit }), vecField(aim, unit, ['X', 'Y', 'Z'], (i, value) =>
         edit('Aim as built', o => { const a = [...aim] as Vec3; a[i] = value; setAimTarget(o as AimableObject, a); }))));
     }
     // Quaternion fields also allow roll and objects without an aim target.
     const q = t.rotation_quat ?? [0, 0, 0, 1];
-    panel.append(row('Rotation (XYZW)', h('div', { class: 'field__vec as-built__quaternion' }, q.map((v, i) => {
+    panel.append(row(i18n.t("Rotation (XYZW)"), h('div', { class: 'field__vec as-built__quaternion' }, q.map((v, i) => {
       const input = numberField(v, value => edit('Rotate as built', o => {
         const next = [...q] as Quat; next[i] = value;
         const length = Math.hypot(...next);
@@ -431,7 +433,7 @@ export class Inspector {
         o.transform!.rotation_quat = next.map(n => n / length) as Quat;
         o.transform!.aimTarget_m = null;
       }), { step: 0.01 });
-      input.setAttribute('aria-label', `Measured quaternion ${['X', 'Y', 'Z', 'W'][i]}`);
+      input.setAttribute('aria-label', i18n.t("Measured quaternion {p1}", { p1: ['X', 'Y', 'Z', 'W'][i] }));
       return h('span', { class: 'field__vec-cell' }, [
         h('span', { class: 'field__vec-axis' }, [['X', 'Y', 'Z', 'W'][i]]), input,
       ]);
@@ -441,24 +443,24 @@ export class Inspector {
     const azimuth = this.store.document.coordinateSystem.northAzimuth_rad;
     const x = azimuth == null ? delta[0] : delta[0] * Math.cos(azimuth) + delta[1] * Math.sin(azimuth);
     const y = azimuth == null ? delta[1] : -delta[0] * Math.sin(azimuth) + delta[1] * Math.cos(azimuth);
-    const directions = azimuth == null ? [x < 0 ? 'in -X' : 'in +X', y < 0 ? 'in -Y' : 'in +Y'] : [x < 0 ? 'west' : 'east', y < 0 ? 'south' : 'north'];
+    const directions = azimuth == null ? [x < 0 ? i18n.t("in -X") : i18n.t("in +X"), y < 0 ? i18n.t("in -Y") : i18n.t("in +Y")] : [x < 0 ? 'west' : 'east', y < 0 ? 'south' : 'north'];
     panel.append(h('p', { class: 'panel__hint as-built__offset' }, [
-      `As built is ${fmt(x)} ${directions[0]}, ${fmt(y)} ${directions[1]} and ${fmt(delta[2])} ${delta[2] < 0 ? 'low' : 'high'} of the plan (plan offset ${fmt(Math.hypot(...delta.slice(0, 2)))}).`,
+      i18n.t("As built is {p1} {p2}, {p3} {p4} and {p5} {p6} of the plan (plan offset {p7}).", { p1: fmt(x), p2: directions[0], p3: fmt(y), p4: directions[1], p5: fmt(delta[2]), p6: delta[2] < 0 ? 'low' : 'high', p7: fmt(Math.hypot(...delta.slice(0, 2))) }),
     ]));
     const date = textField(obj.asBuilt.measured ?? '', value => {
       const candidate = { ...obj, asBuilt: { ...obj.asBuilt!, measured: value || null } };
       if (asBuiltProblem(candidate)) { date.setAttribute('aria-invalid', 'true'); return; }
-      this.patch(obj.id, 'Survey date', o => { o.asBuilt!.measured = value || null; });
+      this.patch(obj.id, i18n.t("Survey date"), o => { o.asBuilt!.measured = value || null; });
     });
     date.type = 'date';
-    panel.append(row('Measured date', date), row('Survey note', textField(obj.asBuilt.note ?? '', value =>
-      this.patch(obj.id, 'Survey note', o => { o.asBuilt!.note = value || null; }))),
-      button('Clear', () => this.patch(obj.id, 'Clear as built', o => { delete o.asBuilt; })));
+    panel.append(row(i18n.t("Measured date"), date), row(i18n.t("Survey note"), textField(obj.asBuilt.note ?? '', value =>
+      this.patch(obj.id, i18n.t("Survey note"), o => { o.asBuilt!.note = value || null; }))),
+      button(i18n.t("Clear"), () => this.patch(obj.id, i18n.t("Clear as built"), o => { delete o.asBuilt; })));
   }
 
   private renderTransform(obj: PlanObject, unit: LengthUnit): void {
     const canFds = hasXbView(obj) || hasXyzView(obj);
-    this.root.append(sectionTitle('Position', canFds ? this.coordToggle() : undefined));
+    this.root.append(sectionTitle(i18n.t("Position"), canFds ? this.coordToggle() : undefined));
 
     if (canFds && this.coordMode === 'fds') {
       this.renderFdsCoords(obj, unit);
@@ -468,9 +470,9 @@ export class Inspector {
     const p = positionOf(obj);
     this.root.append(
       row(
-        `Position (${unit})`,
+        i18n.t("Position ({p1})", { p1: unit }),
         vecField(p, unit, ['X', 'Y', 'Z'], (index, metres) =>
-          this.patch(obj.id, 'Move', (o) => {
+          this.patch(obj.id, i18n.t("Move"), (o) => {
             const next = [...(o.transform?.position_m ?? [0, 0, 0])] as Vec3;
             next[index] = metres;
             // Shared with palette drop and both gizmo drags, so a camera ends up
@@ -478,7 +480,7 @@ export class Inspector {
             setPosition(o, next);
           }),
         ),
-        'Measured from the burner centre at floor level',
+        i18n.t("Measured from the burner centre at floor level"),
       ),
     );
   }
@@ -495,8 +497,8 @@ export class Inspector {
       }, [label]);
 
     return h('span', { class: 'seg' }, [
-      pick('fields', 'Fields', 'Position, size and height as this format stores them'),
-      pick('fds', 'FDS', 'The same geometry as FDS spells it: XB for a box, XYZ and IOR for a device'),
+      pick('fields', i18n.t("Fields"), i18n.t("Position, size and height as this format stores them")),
+      pick('fds', 'FDS', i18n.t("The same geometry as FDS spells it: XB for a box, XYZ and IOR for a device")),
     ]);
   }
 
@@ -519,18 +521,15 @@ export class Inspector {
 
     this.root.append(h('p', { class: 'panel__hint' }, [
       frame.fromImport
-        ? `In ${frame.file ?? 'the source file'}'s coordinates — the plan origin sits at `
-          + `(${frame.offset.map((v) => formatLength(v, unit)).join(', ')}) there, `
-          + 'so these are the numbers that file contains.'
-        : 'In plan coordinates. This plan was not imported from FDS, so there is no source '
-          + 'file to match — the numbers are FDS-shaped, not FDS-sourced.',
+        ? i18n.t("In {p1}'s coordinates — the plan origin sits at ({p2}) there, so these are the numbers that file contains.", { p1: frame.file ?? i18n.t("the source file"), p2: frame.offset.map((v) => formatLength(v, unit)).join(', ') })
+        : i18n.t("In plan coordinates. This plan was not imported from FDS, so there is no source file to match — the numbers are FDS-shaped, not FDS-sourced."),
     ]));
   }
 
   private renderFdsBox(obj: PlanObject, unit: LengthUnit, offset: Vec3): void {
     const view = xbOfObject(obj, offset);
     if (!view) {
-      this.root.append(h('p', { class: 'panel__hint' }, ['This object has no XB.']));
+      this.root.append(h('p', { class: 'panel__hint' }, [i18n.t("This object has no XB.")]));
       return;
     }
 
@@ -574,13 +573,13 @@ export class Inspector {
 
     if (this.xbProblem?.id === obj.id) {
       this.root.append(h('p', { class: 'panel__error' }, [
-        `Not applied: ${this.xbProblem.message}.`,
+        i18n.t("Not applied: {p1}.", { p1: this.xbProblem.message }),
       ]));
     }
 
     if (!view.editable) {
       this.root.append(h('p', { class: 'panel__hint' }, [
-        `Read-only: ${view.why}. Edit it in the Fields view, or square it off there first.`,
+        i18n.t("Read-only: {p1}. Edit it in the Fields view, or square it off there first.", { p1: view.why }),
       ]));
     }
   }
@@ -597,20 +596,19 @@ export class Inspector {
           next[index] = metres - offset[index];
           setPosition(o, next);
         })),
-      "A device's position, as &DEVC writes it",
+      i18n.t("A device's position, as &DEVC writes it"),
     ));
 
     if (isVelocityProbe(obj) || isGasSampling(obj)) {
       this.root.append(h('p', { class: 'panel__hint' }, [isVelocityProbe(obj)
-        ? 'Velocity export uses the recorded axis to choose a component; IOR is not needed.'
-        : 'Gas export writes one fraction device per species at this position.']));
+        ? i18n.t("Velocity export uses the recorded axis to choose a component; IOR is not needed.")
+        : i18n.t("Gas export writes one fraction device per species at this position.")]));
       return;
     }
     if (!view.aimable) {
       // A thermocouple bead has no facing, and FDS does not give one an IOR either.
       this.root.append(h('p', { class: 'panel__hint' }, [
-        'A thermocouple has no IOR: a bead has no facing. Its beads run up the rake '
-        + 'from this point.',
+        i18n.t("A thermocouple has no IOR: a bead has no facing. Its beads run up the rake from this point."),
       ]));
       return;
     }
@@ -618,13 +616,13 @@ export class Inspector {
     this.root.append(row(
       'IOR',
       selectField(String(view.ior ?? ''), [
-        { value: '', label: view.ior === null ? 'off-axis (aimed)' : '— none —' },
-        { value: '1', label: '1 — faces +X' },
-        { value: '-1', label: '−1 — faces −X' },
-        { value: '2', label: '2 — faces +Y' },
-        { value: '-2', label: '−2 — faces −Y' },
-        { value: '3', label: '3 — faces +Z (floor-mounted, looking up)' },
-        { value: '-3', label: '−3 — faces −Z (ceiling-mounted, looking down)' },
+        { value: '', label: view.ior === null ? i18n.t("off-axis (aimed)") : i18n.t("— none —") },
+        { value: '1', label: i18n.t("1 — faces +X") },
+        { value: '-1', label: i18n.t("−1 — faces −X") },
+        { value: '2', label: i18n.t("2 — faces +Y") },
+        { value: '-2', label: i18n.t("−2 — faces −Y") },
+        { value: '3', label: i18n.t("3 — faces +Z (floor-mounted, looking up)") },
+        { value: '-3', label: i18n.t("−3 — faces −Z (ceiling-mounted, looking down)") },
       ], (raw) => {
         const ior = Number(raw);
         const normal = raw === '' ? null : normalForIor(ior);
@@ -638,11 +636,11 @@ export class Inspector {
             [p[0] + normal[0], p[1] + normal[1], p[2] + normal[2]]);
         });
       }),
-      'Index of orientation: the axis the gauge\'s mounting surface faces',
+      i18n.t("Index of orientation: the axis the gauge's mounting surface faces"),
     ));
 
     this.root.append(h('div', { class: 'readouts' }, [
-      readout('Facing', iorLabel(view.ior),
+      readout(i18n.t("Facing"), iorLabel(view.ior),
         view.ior === null ? 'muted' : 'good'),
     ]));
   }
@@ -651,36 +649,36 @@ export class Inspector {
     const doc = this.store.document;
     const unit = this.store.displayUnit;
 
-    this.root.append(sectionTitle('Plan'));
+    this.root.append(sectionTitle(i18n.t("Plan")));
     this.root.append(
-      row('Title', textField(doc.meta?.title ?? '', (v) =>
+      row(i18n.t("Title"), textField(doc.meta?.title ?? '', (v) =>
         this.editPlan('Edit title', (d) => { d.meta = { ...(d.meta ?? {}), title: v }; }))),
-      row('Test ID', textField(doc.meta?.testId ?? '', (v) =>
+      row(i18n.t("Test ID"), textField(doc.meta?.testId ?? '', (v) =>
         this.editPlan('Edit test ID', (d) => { d.meta = { ...(d.meta ?? {}), testId: v || null }; }))),
-      row('Series', textField(doc.meta?.series ?? '', (v) =>
+      row(i18n.t("Series"), textField(doc.meta?.series ?? '', (v) =>
         this.editPlan('Edit series', (d) => { d.meta = { ...(d.meta ?? {}), series: v || null }; }))),
-      row('Author', textField(doc.meta?.author ?? '', (v) =>
+      row(i18n.t("Author"), textField(doc.meta?.author ?? '', (v) =>
         this.editPlan('Edit author', (d) => { d.meta = { ...(d.meta ?? {}), author: v || null }; }))),
-      row('Site', textField(doc.meta?.siteName ?? '', (v) =>
+      row(i18n.t("Site"), textField(doc.meta?.siteName ?? '', (v) =>
         this.editPlan('Edit site', (d) => { d.meta = { ...(d.meta ?? {}), siteName: v || null }; }))),
-      row('Revision', textField(doc.meta?.revision ?? '', (v) =>
+      row(i18n.t("Revision"), textField(doc.meta?.revision ?? '', (v) =>
         this.editPlan('Edit revision', (d) => { d.meta = { ...(d.meta ?? {}), revision: v || null }; })),
-        'Plans are revised by saving a new file; this plus git history is the audit trail'),
-      row('Notes', textField(doc.meta?.notes ?? '', (v) =>
+        i18n.t("Plans are revised by saving a new file; this plus git history is the audit trail")),
+      row(i18n.t("Notes"), textField(doc.meta?.notes ?? '', (v) =>
         this.editPlan('Edit plan notes', (d) => { d.meta = { ...(d.meta ?? {}), notes: v || null }; }))),
     );
 
     const env = doc.environment ?? {};
-    this.root.append(sectionTitle('Environment'));
+    this.root.append(sectionTitle(i18n.t("Environment")));
     this.root.append(
-      row(`Floor size (${unit})`,
+      row(i18n.t("Floor size ({p1})", { p1: unit }),
         vecField(env.floorSize_m ?? [20, 20], unit, ['W', 'D'], (index, metres) =>
           this.editPlan('Resize floor', (d) => {
             const size = [...(d.environment?.floorSize_m ?? [20, 20])] as [number, number];
             size[index] = metres;
             d.environment = { ...(d.environment ?? {}), floorSize_m: size };
           }))),
-      row('Ambient (°C)',
+      row(i18n.t("Ambient (°C)"),
         numberField(env.ambientTemperature_C ?? 20, (v) =>
           this.editPlan('Set ambient', (d) => {
             d.environment = { ...(d.environment ?? {}), ambientTemperature_C: v };
@@ -709,7 +707,7 @@ export class Inspector {
     const opening = isVelocityProbe(obj) ? nearestOpening(this.store.document, here, 1) : null;
     const fire: Vec3 = isVelocityProbe(obj)
       ? here.map((v, i) => v + (opening?.normal[i] ?? 0)) as Vec3 : defaultAimTarget(this.store.document);
-    const action = isVelocityProbe(obj) ? 'Align with opening' : 'Aim at fire';
+    const action = isVelocityProbe(obj) ? i18n.t("Align with opening") : i18n.t("Aim at fire");
     const onTheFire =
       Math.hypot(fire[0] - here[0], fire[1] - here[1], fire[2] - here[2]) < 1e-9;
     const aimAtFire = button(action, () =>
@@ -718,20 +716,19 @@ export class Inspector {
       }));
     if (onTheFire) {
       aimAtFire.disabled = true;
-      aimAtFire.title = isVelocityProbe(obj) ? 'No wall opening is within 1 m.' : 'This sits on the point the model puts the fire at, so there is no '
-        + 'direction to aim along. Move it out of the flame first.';
+      aimAtFire.title = isVelocityProbe(obj) ? i18n.t("No wall opening is within 1 m.") : i18n.t("This sits on the point the model puts the fire at, so there is no direction to aim along. Move it out of the flame first.");
     }
 
-    this.root.append(sectionTitle('Aim'));
+    this.root.append(sectionTitle(i18n.t("Aim")));
     this.root.append(
-      row(`Aim target (${unit})`,
+      row(i18n.t("Aim target ({p1})", { p1: unit }),
         vecField(target ?? [0, 0, 0], unit, ['X', 'Y', 'Z'], (index, metres) =>
           this.patch(obj.id, 'Re-aim', (o) => {
             const next = [...(o.transform?.aimTarget_m ?? [0, 0, 0])] as Vec3;
             next[index] = metres;
             setAimTarget(o as AimableObject, next);
           })),
-        target ? 'Advisory; the stored quaternion is authoritative' : handRotatedHint),
+        target ? i18n.t("Advisory; the stored quaternion is authoritative") : handRotatedHint),
       h('div', { class: 'panel__actions' }, [aimAtFire]),
     );
   }
@@ -741,17 +738,17 @@ export class Inspector {
   private renderCamera(cam: CameraObject, unit: LengthUnit): void {
     const spec = cam.camera;
 
-    this.renderAim(cam, unit, 'No target set — this camera was rotated by hand');
+    this.renderAim(cam, unit, i18n.t("No target set — this camera was rotated by hand"));
 
-    this.root.append(sectionTitle('Optics'));
+    this.root.append(sectionTitle(i18n.t("Optics")));
     this.root.append(
       this.presetRow(cam),
-      row('Modality',
+      row(i18n.t("Modality"),
         selectField(spec.modality,
-          (['RGB', 'LWIR', 'MWIR', 'SWIR', 'NIR', 'other'] as Modality[]).map((m) => ({ value: m, label: m })),
+          (['RGB', 'LWIR', 'MWIR', 'SWIR', 'NIR', 'other'] as Modality[]).map((m) => ({ value: m, label: domainLabel(m) })),
           (m) => this.patch(cam.id, 'Set modality', (o) => { (o as CameraObject).camera.modality = m; })),
-        'Drives frustum colour and grouping in the equipment table'),
-      row('Resolution (px)',
+        i18n.t("Drives frustum colour and grouping in the equipment table")),
+      row(i18n.t("Resolution (px)"),
         h('div', { class: 'field__vec' }, [0, 1].map((i) =>
           h('span', { class: 'field__vec-cell' }, [
             h('span', { class: 'field__vec-axis' }, [i === 0 ? 'W' : 'H']),
@@ -762,7 +759,7 @@ export class Inspector {
                 (o as CameraObject).camera.resolution_px = res;
               }), { step: 1, min: 1 }),
           ])))),
-      row('Sensor (mm)',
+      row(i18n.t("Sensor (mm)"),
         h('div', { class: 'field__vec' }, [0, 1].map((i) =>
           h('span', { class: 'field__vec-cell' }, [
             h('span', { class: 'field__vec-axis' }, [i === 0 ? 'W' : 'H']),
@@ -773,14 +770,14 @@ export class Inspector {
                 (o as CameraObject).camera.sensor_mm = s;
               }), { step: 0.1, min: 0.01 }),
           ]))),
-        'With focal length this is the authoritative pair; FOV is derived'),
-      row('Focal length (mm)',
+        i18n.t("With focal length this is the authoritative pair; FOV is derived")),
+      row(i18n.t("Focal length (mm)"),
         numberField(spec.focalLength_mm, (v) =>
           this.patch(cam.id, 'Set focal length', (o) => {
             (o as CameraObject).camera.focalLength_mm = Math.max(0.1, v);
           }), { step: 0.1, min: 0.1 }),
-        'The lens itself. Zoom is separate, so this stays the number on the barrel'),
-      row('Zoom (×)',
+        i18n.t("The lens itself. Zoom is separate, so this stays the number on the barrel")),
+      row(i18n.t("Zoom (×)"),
         numberField(zoomOf(cam), (v) =>
           this.patch(cam.id, 'Set zoom', (o) => {
             const c = (o as CameraObject).camera;
@@ -795,8 +792,8 @@ export class Inspector {
             if (!(v > 0) || Math.abs(v - 1) < 1e-9) delete c.zoomFactor;
             else c.zoomFactor = v;
           }), { step: 0.5, min: 0.01 }),
-        'Multiplies the effective focal length: 2× halves both fields of view'),
-      row('Horizontal FOV (°)',
+        i18n.t("Multiplies the effective focal length: 2× halves both fields of view")),
+      row(i18n.t("Horizontal FOV (°)"),
         numberField(hfovDegOf(cam), (deg) =>
           this.patch(cam.id, 'Set field of view', (o) => {
             const c = (o as CameraObject).camera;
@@ -806,21 +803,21 @@ export class Inspector {
             // leaves the zoom setting where the operator put it.
             c.focalLength_mm = effective / zoomOf(o as CameraObject);
           }), { step: 1, min: 1, max: 179 }),
-        'Typing a field of view back-solves the focal length, which is what gets stored'),
-      row('Frame rate (Hz)',
+        i18n.t("Typing a field of view back-solves the focal length, which is what gets stored")),
+      row(i18n.t("Frame rate (Hz)"),
         numberField(spec.framerate_hz ?? 30, (v) =>
           this.patch(cam.id, 'Set frame rate', (o) => {
             (o as CameraObject).camera.framerate_hz = v > 0 ? v : null;
           }), { step: 1, min: 0 })),
-      row('Intrinsics source',
+      row(i18n.t("Intrinsics source"),
         selectField(spec.intrinsicsSource ?? 'nominal', [
-          { value: 'nominal' as IntrinsicsSource, label: 'nominal — placeholder' },
-          { value: 'datasheet' as IntrinsicsSource, label: 'datasheet — manufacturer' },
-          { value: 'calibrated' as IntrinsicsSource, label: 'calibrated — measured' },
+          { value: 'nominal' as IntrinsicsSource, label: i18n.t("nominal — placeholder") },
+          { value: 'datasheet' as IntrinsicsSource, label: i18n.t("datasheet — manufacturer") },
+          { value: 'calibrated' as IntrinsicsSource, label: i18n.t("calibrated — measured") },
         ], (v) => this.patch(cam.id, 'Set intrinsics source', (o) => {
           (o as CameraObject).camera.intrinsicsSource = v;
         })),
-        'Tells a data scientist whether these numbers can be reconstructed from'),
+        i18n.t("Tells a data scientist whether these numbers can be reconstructed from")),
     );
 
     this.renderCameraCoverage(cam, unit);
@@ -846,21 +843,21 @@ export class Inspector {
 
     const lenses = lensesOf(named);
     const options = [
-      { value: '', label: '— custom —' },
-      ...(foreign ? [{ value: named, label: `${named} — not in your library` }] : []),
+      { value: '', label: i18n.t("— custom —") },
+      ...(foreign ? [{ value: named, label: i18n.t("{p1} — not in your library", { p1: named }) }] : []),
       // A body with several lenses is one entry, and the lens is chosen below it.
       // The entry stands for the camera's own lens when the camera is that body, so
       // it shows as selected; picked from another camera, it applies the lens the
       // palette places.
       ...collapseBodies(library).map((p) => ({
         value: lenses.some((l) => l.id === p.id) ? named : p.id,
-        label: listedLabel(p),
+        label: presetLabel(p),
       })),
     ];
 
     const naming = this.pendingPreset?.cameraId === cam.id;
     const actions: HTMLElement[] = [
-      button(naming ? 'Cancel' : 'Save as preset…', () => {
+      button(naming ? i18n.t("Cancel") : i18n.t("Save as preset…"), () => {
         this.pendingPreset = naming
           ? null
           : { cameraId: cam.id, name: this.suggestedPresetName(cam) };
@@ -869,13 +866,13 @@ export class Inspector {
       }),
     ];
     if (foreign) {
-      actions.push(button('Add to my presets', () => this.adoptPreset(cam, named)));
+      actions.push(button(i18n.t("Add to my presets"), () => this.adoptPreset(cam, named)));
     } else if (named && isCustomPreset(named)) {
-      actions.push(button('Delete preset', () => this.deletePreset(named), 'btn--danger'));
+      actions.push(button(i18n.t("Delete preset"), () => this.deletePreset(named), 'btn--danger'));
     }
 
     return h('div', {}, [
-      row('Preset',
+      row(i18n.t("Preset"),
         selectField(named, options, (id) => {
           const preset = library.find((p) => p.id === id);
           if (!preset) return;
@@ -884,15 +881,13 @@ export class Inspector {
             c.camera = applyPresetToSpec(c.camera, preset);
           });
         }),
-        'Intrinsics are copied inline, so the plan stays self-contained'),
+        i18n.t("Intrinsics are copied inline, so the plan stays self-contained")),
       lenses.length > 0 ? this.lensRow(cam, lenses) : null,
       h('div', { class: 'panel__actions' }, actions),
       naming ? this.presetNameForm(cam) : null,
       foreign
         ? h('p', { class: 'panel__hint' }, [
-          'This plan names a preset your library does not have. The camera is complete '
-          + 'either way — every intrinsic is stored inline — but adding it lets you place '
-          + 'more of the same camera.',
+          i18n.t("This plan names a preset your library does not have. The camera is complete either way — every intrinsic is stored inline — but adding it lets you place more of the same camera."),
         ])
         : null,
     ].filter(Boolean) as HTMLElement[]);
@@ -905,15 +900,15 @@ export class Inspector {
    */
   private lensRow(cam: CameraObject, lenses: CameraPreset[]): HTMLElement {
     const mine = currentLensOf(cam);
-    const fov = (c: CameraObject): string => `${hfovDegOf(c).toFixed(1)}° × ${vfovDegOf(c).toFixed(1)}°`;
+    const fov = (c: CameraObject): string => `${i18n.numberText(hfovDegOf(c).toFixed(1))}° × ${i18n.numberText(vfovDegOf(c).toFixed(1))}°`;
     const options = [
-      ...(mine ? [] : [{ value: '', label: `${lensName(cam.camera.focalLength_mm)} (not a listed lens)` }]),
+      ...(mine ? [] : [{ value: '', label: i18n.t("{p1} (not a listed lens)", { p1: lensName(cam.camera.focalLength_mm) }) }]),
       ...lenses.map((lens) => ({
         value: lens.id,
         label: `${lensName(lens.focalLength_mm)} (${fov(lens === mine ? cam : withLens(cam, lens))})`,
       })),
     ];
-    return row('Lens',
+    return row(i18n.t("Lens"),
       selectField(mine?.id ?? '', options, (id) => {
         const lens = lenses.find((l) => l.id === id);
         if (!lens) return;
@@ -922,8 +917,7 @@ export class Inspector {
           c.camera = applyLensToSpec(c.camera, lens);
         });
       }),
-      'The lenses this body\'s datasheet lists. Changing it keeps the zoom and the body\'s '
-      + 'settings, and drops a calibration made through the old lens');
+      i18n.t("The lenses this body's datasheet lists. Changing it keeps the zoom and the body's settings, and drops a calibration made through the old lens"));
   }
 
   private suggestedPresetName(cam: CameraObject): string {
@@ -950,23 +944,19 @@ export class Inspector {
     });
 
     return h('div', { class: 'preset-name' }, [
-      row('Preset name', input,
-        'Saved to your preset library, not to a file beside the plan'),
+      row(i18n.t("Preset name"), input,
+        i18n.t("Saved to your preset library, not to a file beside the plan")),
       h('div', { class: 'panel__actions' }, [
-        button('Save preset', () => this.commitPreset(cam, input.value)),
+        button(i18n.t("Save preset"), () => this.commitPreset(cam, input.value)),
       ]),
       h('p', { class: 'panel__hint' }, [
-        'Captures the optics above — resolution, sensor, focal length, band and frame '
-        + 'rate — but not the zoom, which belongs to the shot rather than to the camera.',
+        i18n.t("Captures the optics above — resolution, sensor, focal length, band and frame rate — but not the zoom, which belongs to the shot rather than to the camera."),
         cam.camera.intrinsicsSource === 'calibrated'
-          ? ' Nor the calibration: a principal point and distortion belong to this one '
-            + 'physical unit, so the preset is saved as datasheet-grade.'
+          ? i18n.t(" Nor the calibration: a principal point and distortion belong to this one physical unit, so the preset is saved as datasheet-grade.")
           : '',
         presetsArePersistent()
           ? ''
-          : ' The library has nowhere to be stored that outlives this session, so the preset '
-            + 'will last only until the app closes. The plan itself is unaffected: every '
-            + 'intrinsic is written into the camera.',
+          : i18n.t(" The library has nowhere to be stored that outlives this session, so the preset will last only until the app closes. The plan itself is unaffected: every intrinsic is written into the camera."),
       ]),
     ]);
   }
@@ -993,9 +983,7 @@ export class Inspector {
 
   private deletePreset(id: string): void {
     if (!window.confirm(
-      `Remove the preset "${id}" from your library?\n\n`
-      + 'Cameras already placed keep their intrinsics — a preset is only a starting '
-      + 'point, and nothing in any plan depends on it.',
+      i18n.t("Remove the preset \"{p1}\" from your library?\n\nCameras already placed keep their intrinsics — a preset is only a starting point, and nothing in any plan depends on it.", { p1: id }),
     )) return;
     deleteCustomPreset(id);
     this.onPresetLibraryChange?.();
@@ -1007,28 +995,28 @@ export class Inspector {
     const [cx, cy] = principalPointOf(cam);
     const zoom = zoomOf(cam);
     const items: HTMLElement[] = [
-      readout('Field of view', `${hfovDegOf(cam).toFixed(1)}° × ${vfovDegOf(cam).toFixed(1)}°`),
-      readout('Standoff (plan / slant)',
+      readout(i18n.t("Field of view"), `${i18n.numberText(hfovDegOf(cam).toFixed(1))}° × ${i18n.numberText(vfovDegOf(cam).toFixed(1))}°`),
+      readout(i18n.t("Standoff (plan / slant)"),
         `${formatLength(standoffHorizontalM(cam), unit)} / ${formatLengthWithUnit(standoffM(cam), unit)}`),
-      readout('fx, fy', `${fxOf(cam).toFixed(1)}, ${fyOf(cam).toFixed(1)} px`),
-      readout('Principal point', `${cx.toFixed(1)}, ${cy.toFixed(1)} px`),
-      readout('Resolution at the fire', `${(groundSampleDistanceM(cam) * 1000).toFixed(2)} mm/px`),
+      readout('fx, fy', `${i18n.numberText(fxOf(cam).toFixed(1))}, ${i18n.numberText(fyOf(cam).toFixed(1))}${i18n.unitSpace(" ")}px`),
+      readout(i18n.t("Principal point"), `${i18n.numberText(cx.toFixed(1))}, ${i18n.numberText(cy.toFixed(1))}${i18n.unitSpace(" ")}px`),
+      readout(i18n.t("Resolution at the fire"), `${i18n.numberText((groundSampleDistanceM(cam) * 1000).toFixed(2))}${i18n.unitSpace(" ")}mm/px`),
     ];
 
     if (zoom !== 1) {
-      items.splice(1, 0, readout('Effective focal length',
-        `${effectiveFocalLengthMm(cam).toFixed(2)} mm — ${cam.camera.focalLength_mm} mm at ${zoom}×`));
+      items.splice(1, 0, readout(i18n.t("Effective focal length"),
+        i18n.t("{p1} mm — {p2} mm at {p3}×", { p1: i18n.numberText(effectiveFocalLengthMm(cam).toFixed(2)), p2: cam.camera.focalLength_mm, p3: zoom })));
     }
 
     const framing = framingOf(this.store.document, cam);
     if (framing) {
       items.push(
-        readout('Flame base in frame', framing.base ? 'yes' : 'no', framing.base ? 'good' : 'bad'),
-        readout('Flame tip in frame', framing.tip ? 'yes' : 'no', framing.tip ? 'good' : 'bad'),
-        readout('Plume in frame', `${(framing.fraction * 100).toFixed(0)}%`,
+        readout(i18n.t("Flame base in frame"), framing.base ? 'yes' : 'no', framing.base ? 'good' : 'bad'),
+        readout(i18n.t("Flame tip in frame"), framing.tip ? 'yes' : 'no', framing.tip ? 'good' : 'bad'),
+        readout(i18n.t("Plume in frame"), `${i18n.numberText((framing.fraction * 100).toFixed(0))}${i18n.unitSpace("")}%`,
           framing.fraction > 0.999 ? 'good' : 'bad'),
-        readout('Flame unobstructed', framing.unobstructed === null ? 'no centreline in frame'
-          : `${(framing.unobstructed * 100).toFixed(0)}%`,
+        readout(i18n.t("Flame unobstructed"), framing.unobstructed === null ? i18n.t("no centreline in frame")
+          : `${i18n.numberText((framing.unobstructed * 100).toFixed(0))}${i18n.unitSpace("")}%`,
           framing.unobstructed === null ? 'muted' : framing.unobstructed > 0.999 ? 'good' : 'bad'),
       );
       if (!framing.tip || !framing.base) {
@@ -1040,11 +1028,7 @@ export class Inspector {
         // measure of how badly a camera misses, and it comes from the projection.
         const covers = verticalCoverageM(cam);
         items.push(h('p', { class: 'readout__note' }, [
-          `A ${vfovDegOf(cam).toFixed(0)}° vertical field at ` +
-          `${formatLengthWithUnit(standoffM(cam), unit)} covers about ` +
-          `${formatLengthWithUnit(covers, unit)} across the frame. Move back, ` +
-          `${zoom > 1 ? 'zoom out, ' : ''}or fit a wider lens` +
-          `${lensesOf(cam.camera.presetId).length > 0 ? ' (Lens, under Optics)' : ''}.`,
+          i18n.t("A {p1}° vertical field at {p2} covers about {p3} across the frame. Move back, {p4}or fit a wider lens{p5}.", { p1: i18n.numberText(vfovDegOf(cam).toFixed(0)), p2: formatLengthWithUnit(standoffM(cam), unit), p3: formatLengthWithUnit(covers, unit), p4: zoom > 1 ? i18n.t("zoom out, ") : '', p5: lensesOf(cam.camera.presetId).length > 0 ? i18n.t(" (Lens, under Optics)") : '' }),
         ]));
       }
     }
@@ -1054,13 +1038,11 @@ export class Inspector {
     // number someone sizes a reconstruction on.
     if (zoom > 1) {
       items.push(h('p', { class: 'readout__note' }, [
-        `Fields of view above are at ${zoom}× and are correct either way. If this is a `
-        + 'DIGITAL zoom, though, it crops and interpolates: the mm/px figure is what the '
-        + 'output pixels imply, not detail the detector actually resolved.',
+        i18n.t("Fields of view above are at {p1}× and are correct either way. If this is a DIGITAL zoom, though, it crops and interpolates: the mm/px figure is what the output pixels imply, not detail the detector actually resolved.", { p1: zoom }),
       ]));
     }
 
-    this.root.append(sectionTitle('Coverage'));
+    this.root.append(sectionTitle(i18n.t("Coverage")));
     this.root.append(h('div', { class: 'readouts' }, items));
   }
 
@@ -1076,13 +1058,13 @@ export class Inspector {
     const zoom = zoomOf(cam);
     const head = (text: string, title: string): HTMLElement => h('th', { scope: 'col', title }, [text]);
 
-    this.root.append(sectionTitle('Lens comparison'));
+    this.root.append(sectionTitle(i18n.t("Lens comparison")));
     this.root.append(h('div', { class: 'readouts' }, [h('table', { class: 'lens-table' }, [
       h('thead', {}, [h('tr', {}, [
-        head('Lens', 'Focal length. ▶ marks the lens on this camera'),
-        head('FOV', `Horizontal × vertical field of view${zoom === 1 ? '' : ` at ${zoom}×`}`),
-        head('mm/px', 'Resolution at the fire: millimetres per pixel at the slant standoff'),
-        framed ? head('Plume', 'Share of the mean flame envelope in frame; ✓ when all of it is') : null,
+        head(i18n.t("Lens"), i18n.t("Focal length. ▶ marks the lens on this camera")),
+        head(i18n.t("FOV"), i18n.t("Horizontal × vertical field of view{p1}", { p1: zoom === 1 ? '' : ` at ${zoom}×` })),
+        head('mm/px', i18n.t("Resolution at the fire: millimetres per pixel at the slant standoff")),
+        framed ? head(i18n.t("Plume"), i18n.t("Share of the mean flame envelope in frame; ✓ when all of it is")) : null,
       ])]),
       h('tbody', {}, rows.map((r) => {
         const whole = r.framing !== null && r.framing.fraction > 0.999;
@@ -1091,35 +1073,33 @@ export class Inspector {
           'aria-current': r.current ? 'true' : undefined,
         }, [
           h('th', { scope: 'row' }, [r.current ? '▶ ' : '', lensName(r.focalLength_mm)]),
-          h('td', {}, [`${r.hfovDeg.toFixed(1)}° × ${r.vfovDeg.toFixed(1)}°`]),
-          h('td', {}, [r.mmPerPx.toFixed(2)]),
+          h('td', {}, [`${i18n.numberText(r.hfovDeg.toFixed(1))}° × ${i18n.numberText(r.vfovDeg.toFixed(1))}°`]),
+          h('td', {}, [i18n.numberText(r.mmPerPx.toFixed(2))]),
           framed
             ? h('td', { class: r.framing ? (whole ? 'lens-table__good' : 'lens-table__bad') : undefined }, [
-              r.framing ? `${(r.framing.fraction * 100).toFixed(0)}% ${whole ? '✓' : '✗'}` : '—',
+              r.framing ? `${i18n.numberText((r.framing.fraction * 100).toFixed(0))}${i18n.unitSpace("")}% ${whole ? '✓' : '✗'}` : '—',
             ])
             : null,
         ]);
       })),
     ]),
     h('p', { class: 'readout__note' }, [
-      `This camera as placed and aimed, ${formatLengthWithUnit(standoffM(cam), unit)} slant `
-      + `standoff${zoom === 1 ? '' : `, at ${zoom}× zoom`}. mm/px is the detail at the fire; `
-      + (framed
-        ? 'Plume is how much of the mean flame envelope is in frame.'
-        : 'framing needs a burner with a heat release rate.'),
+      i18n.t("This camera as placed and aimed, {p1} slant standoff{p2}. mm/px is the detail at the fire; {p3}", { p1: formatLengthWithUnit(standoffM(cam), unit), p2: zoom === 1 ? '' : i18n.t(", at {p1}× zoom", { p1: zoom }), p3: (framed
+        ? i18n.t("Plume is how much of the mean flame envelope is in frame.")
+        : i18n.t("framing needs a burner with a heat release rate.")) }),
     ])]));
   }
 
   // -- burner ------------------------------------------------------------
 
   private renderBurner(b: BurnerObject, unit: LengthUnit): void {
-    this.root.append(sectionTitle('Fuel pan'));
+    this.root.append(sectionTitle(i18n.t("Fuel pan")));
     this.root.append(
-      row('Shape',
+      row(i18n.t("Shape"),
         selectField(b.footprint.shape, [
-          { value: 'circle' as const, label: 'Circle' },
-          { value: 'square' as const, label: 'Square' },
-          { value: 'rectangle' as const, label: 'Rectangle' },
+          { value: 'circle' as const, label: i18n.t("Circle") },
+          { value: 'square' as const, label: i18n.t("Square") },
+          { value: 'rectangle' as const, label: i18n.t("Rectangle") },
         ], (shape) => this.patch(b.id, 'Set shape', (o) => {
           const burner = o as BurnerObject;
           // Carry the effective diameter across, so changing shape does not
@@ -1132,13 +1112,13 @@ export class Inspector {
     );
 
     if (b.footprint.shape === 'circle') {
-      this.root.append(row(`Diameter (${unit})`,
+      this.root.append(row(i18n.t("Diameter ({p1})", { p1: unit }),
         lengthField(b.footprint.diameter_m ?? 0.3, unit, (m) =>
           this.patch(b.id, 'Resize pan', (o) => {
             (o as BurnerObject).footprint.diameter_m = Math.max(0.01, m);
           }))));
     } else {
-      this.root.append(row(`Size (${unit})`,
+      this.root.append(row(i18n.t("Size ({p1})", { p1: unit }),
         vecField(b.footprint.size_m ?? [0.3, 0.3], unit, ['W', 'D'], (i, m) =>
           this.patch(b.id, 'Resize pan', (o) => {
             const size = [...((o as BurnerObject).footprint.size_m ?? [0.3, 0.3])] as [number, number];
@@ -1148,24 +1128,24 @@ export class Inspector {
     }
 
     this.root.append(
-      row(`Rim height (${unit})`,
+      row(i18n.t("Rim height ({p1})", { p1: unit }),
         lengthField(b.rimHeight_m ?? 0, unit, (m) =>
           this.patch(b.id, 'Set rim height', (o) => {
             (o as BurnerObject).rimHeight_m = Math.max(0, m);
           })),
-        'Fuel surface above the pan base — correlations measure from here'),
-      row('Fuel', textField(b.fire?.fuel ?? '', (v) =>
+        i18n.t("Fuel surface above the pan base — correlations measure from here")),
+      row(i18n.t("Fuel"), textField(b.fire?.fuel ?? '', (v) =>
         this.patch(b.id, 'Set fuel', (o) => {
           const burner = o as BurnerObject;
           burner.fire = { ...(burner.fire ?? {}), fuel: v || null };
         }))),
-      b.fire?.hrrCurve ? readout('Peak HRR (kW)', String(Number(hrrAt(b)!.toFixed(6)))) : row('HRR (kW)',
+      b.fire?.hrrCurve ? readout(i18n.t("Peak HRR (kW)"), i18n.numberText(Number(hrrAt(b)!.toFixed(6)))) : row(i18n.t("HRR (kW)"),
         numberField(b.fire?.hrr_kw ?? 0, (v) =>
           this.patch(b.id, 'Set HRR', (o) => {
             const burner = o as BurnerObject;
             burner.fire = { ...(burner.fire ?? {}), hrr_kw: v > 0 ? v : null };
           }), { step: 10, min: 0 })),
-      row('Radiative fraction',
+      row(i18n.t("Radiative fraction"),
         numberField(radiativeFractionOf(b), (v) =>
           this.patch(b.id, 'Set radiative fraction', (o) => {
             const burner = o as BurnerObject;
@@ -1177,8 +1157,7 @@ export class Inspector {
             else fire.radiativeFraction = f;
             burner.fire = fire;
           }), { step: 0.05, min: 0.01, max: 1 }),
-        'Fraction radiated rather than convected — drives what a heat flux gauge reads. '
-        + '≈0.35 heptane, 0.2 methanol. 0.3 is the default and is not written to the file'),
+        i18n.t("Fraction radiated rather than convected — drives what a heat flux gauge reads. ≈0.35 heptane, 0.2 methanol. 0.3 is the default and is not written to the file")),
     );
 
     // The Curve control: Steady, t² growth, a pasted table or a test data series,
@@ -1186,18 +1165,18 @@ export class Inspector {
     this.root.append(...this.curveEditor.render(b));
     const flame = burnerFlameHeightM(b);
     const tip = flameTipZM(b);
-    this.root.append(sectionTitle('Predicted fire'));
+    this.root.append(sectionTitle(i18n.t("Predicted fire")));
     this.root.append(h('div', { class: 'readouts' }, [
-      readout('Effective diameter', formatLengthWithUnit(burnerDiameterM(b), unit),
+      readout(i18n.t("Effective diameter"), formatLengthWithUnit(burnerDiameterM(b), unit),
         b.footprint.shape === 'circle' ? 'muted' : undefined),
       flame === null
-        ? readout('Mean flame height', 'needs an HRR', 'muted')
-        : readout('Mean flame height', formatLengthWithUnit(flame, unit)),
+        ? readout(i18n.t("Mean flame height"), i18n.t("needs an HRR"), 'muted')
+        : readout(i18n.t("Mean flame height"), formatLengthWithUnit(flame, unit)),
       tip === null
-        ? readout('Flame tip above floor', '—', 'muted')
-        : readout('Flame tip above floor', formatLengthWithUnit(tip, unit)),
+        ? readout(i18n.t("Flame tip above floor"), '—', 'muted')
+        : readout(i18n.t("Flame tip above floor"), formatLengthWithUnit(tip, unit)),
       h('p', { class: 'readout__note' }, [
-        'Heskestad correlation. Mean height — the intermittent tip reaches higher.',
+        i18n.t("Heskestad correlation. Mean height — the intermittent tip reaches higher."),
       ]),
     ]));
   }
@@ -1205,29 +1184,28 @@ export class Inspector {
   // -- hood --------------------------------------------------------------
 
   private renderHood(hood: HoodObject, unit: LengthUnit): void {
-    this.root.append(sectionTitle('Hood'));
+    this.root.append(sectionTitle(i18n.t("Hood")));
     this.root.append(
-      row(`Opening (${unit})`,
+      row(i18n.t("Opening ({p1})", { p1: unit }),
         vecField(hood.opening_m, unit, ['W', 'D'], (i, m) =>
           this.patch(hood.id, 'Resize hood', (o) => {
             const size = [...(o as HoodObject).opening_m] as [number, number];
             size[i] = Math.max(0.1, m);
             (o as HoodObject).opening_m = size;
           }))),
-      row(`Height (${unit})`,
+      row(i18n.t("Height ({p1})", { p1: unit }),
         lengthField(hood.height_m, unit, (m) =>
           this.patch(hood.id, 'Set hood height', (o) => {
             (o as HoodObject).height_m = Math.max(0.1, m);
           })),
-        'Height of the opening plane above the hood\'s origin — the floor, unless the '
-        + 'hood has been moved in Z. The readouts below are above the floor'),
-      row(`Skirt depth (${unit})`,
+        i18n.t("Height of the opening plane above the hood's origin — the floor, unless the hood has been moved in Z. The readouts below are above the floor")),
+      row(i18n.t("Skirt depth ({p1})", { p1: unit }),
         lengthField(hood.skirtDepth_m ?? 0, unit, (m) =>
           this.patch(hood.id, 'Set skirt', (o) => {
             (o as HoodObject).skirtDepth_m = Math.max(0, m);
           })),
-        'Hangs below the opening, lowering the plane the plume must reach'),
-      row(`Duct diameter (${unit})`,
+        i18n.t("Hangs below the opening, lowering the plane the plume must reach")),
+      row(i18n.t("Duct diameter ({p1})", { p1: unit }),
         lengthField(hood.duct?.diameter_m ?? 0.6, unit, (m) =>
           this.patch(hood.id, 'Set duct', (o) => {
             const hd = o as HoodObject;
@@ -1239,23 +1217,23 @@ export class Inspector {
     // World space: the hood's own height plus wherever its transform puts it, which
     // is the plane the 3D view draws and the checks judge.
     const intake = hoodIntakeHeightM(hood);
-    const items: HTMLElement[] = [readout('Intake plane above floor', formatLengthWithUnit(intake, unit))];
+    const items: HTMLElement[] = [readout(i18n.t("Intake plane above floor"), formatLengthWithUnit(intake, unit))];
 
     for (const burner of sources) {
-      if (sources.length > 1) items.push(readout('Burner', displayName(burner), 'muted'));
+      if (sources.length > 1) items.push(readout(i18n.t("Burner"), displayName(burner), 'muted'));
       const bp = positionOf(burner);
       const off = hoodOpeningOffset(hood, [bp[0], bp[1]]);
       const eccentricity = Math.hypot(off.u, off.v);
 
       // Over the fire or not comes first: everything below assumes it is.
-      items.push(readout('Fire under the opening', off.inside ? 'yes' : 'no',
+      items.push(readout(i18n.t("Fire under the opening"), off.inside ? 'yes' : 'no',
         off.inside ? 'good' : 'bad'));
-      items.push(readout('Offset from opening centre', formatLengthWithUnit(eccentricity, unit),
+      items.push(readout(i18n.t("Offset from opening centre"), formatLengthWithUnit(eccentricity, unit),
         eccentricity < 0.1 ? 'muted' : undefined));
 
       const tip = flameTipZM(burner);
       if (tip !== null) {
-        items.push(readout('Flame tip clearance', off.inside ? formatLengthWithUnit(intake - tip, unit) : 'outside opening',
+        items.push(readout(i18n.t("Flame tip clearance"), off.inside ? formatLengthWithUnit(intake - tip, unit) : i18n.t("outside opening"),
           off.inside ? (intake - tip > 0.2 * intake ? 'good' : 'bad') : 'muted'));
       }
       const radius = plumeRadiusAtZ(burner, intake);
@@ -1269,47 +1247,46 @@ export class Inspector {
         ];
         const [need, avail] = axes.reduce((a, b) => (a[1] - a[0] <= b[1] - b[0] ? a : b));
         items.push(
-          readout('Plume width at intake', formatLengthWithUnit(plumeD, unit)),
-          readout('Opening needed / available',
+          readout(i18n.t("Plume width at intake"), formatLengthWithUnit(plumeD, unit)),
+          readout(i18n.t("Opening needed / available"),
             `${formatLength(need, unit)} / ${formatLengthWithUnit(avail, unit)}`,
             off.inside && need < 0.8 * avail ? 'good' : 'bad'),
           h('p', { class: 'readout__note' }, [
-            'A hood that spills plume under-reads HRR by oxygen consumption. What has ' +
-            'to fit is the plume disk where it sits, not just its width.',
+            i18n.t("A hood that spills plume under-reads HRR by oxygen consumption. What has to fit is the plume disk where it sits, not just its width."),
           ]),
         );
       }
     }
 
-    this.root.append(sectionTitle('Capture'));
+    this.root.append(sectionTitle(i18n.t("Capture")));
     this.root.append(h('div', { class: 'readouts' }, items));
   }
 
   // -- wall --------------------------------------------------------------
 
   private renderWall(wall: WallObject, unit: LengthUnit): void {
-    this.root.append(sectionTitle('Wall'));
+    this.root.append(sectionTitle(i18n.t("Wall")));
     this.root.append(
-      row(`Height (${unit})`,
+      row(i18n.t("Height ({p1})", { p1: unit }),
         lengthField(wall.height_m, unit, (m) =>
           this.patch(wall.id, 'Set wall height', (o) => {
             (o as WallObject).height_m = Math.max(0.05, m);
           }))),
-      row(`Thickness (${unit})`,
+      row(i18n.t("Thickness ({p1})", { p1: unit }),
         lengthField(wall.thickness_m ?? 0.1, unit, (m) =>
           this.patch(wall.id, 'Set thickness', (o) => {
             (o as WallObject).thickness_m = Math.max(0.01, m);
           }))),
-      row(`Base height (${unit})`,
+      row(i18n.t("Base height ({p1})", { p1: unit }),
         lengthField(wall.baseHeight_m ?? 0, unit, (m) =>
           this.patch(wall.id, 'Set base height', (o) => {
             (o as WallObject).baseHeight_m = Math.max(0, m);
           }))),
     );
 
-    this.root.append(sectionTitle('Footprint'));
+    this.root.append(sectionTitle(i18n.t("Footprint")));
     wall.polyline_m.forEach((pt, i) => {
-      this.root.append(row(`Point ${i + 1} (${unit})`,
+      this.root.append(row(i18n.t("Point {p1} ({p2})", { p1: i + 1, p2: unit }),
         vecField(pt, unit, ['X', 'Y'], (axis, m) =>
           this.patch(wall.id, 'Move wall point', (o) => {
             const line = (o as WallObject).polyline_m.map((q) => [...q] as [number, number]);
@@ -1319,14 +1296,14 @@ export class Inspector {
     });
 
     const actions: HTMLElement[] = [
-      button('Add point', () => this.patch(wall.id, 'Add wall point', (o) => {
+      button(i18n.t("Add point"), () => this.patch(wall.id, 'Add wall point', (o) => {
         const w = o as WallObject;
         const last = w.polyline_m[w.polyline_m.length - 1];
         w.polyline_m = [...w.polyline_m, [last[0] + 1, last[1]]];
       })),
     ];
     if (wall.polyline_m.length > 2) {
-      actions.push(button('Remove last', () => this.patch(wall.id, 'Remove wall point', (o) => {
+      actions.push(button(i18n.t("Remove last"), () => this.patch(wall.id, 'Remove wall point', (o) => {
         const w = o as WallObject;
         w.polyline_m = w.polyline_m.slice(0, -1);
       })));
@@ -1345,7 +1322,7 @@ export class Inspector {
    * that is the number you are checking when you ask whether a camera sees over it.
    */
   private renderObstruction(box: ObstructionObject, unit: LengthUnit): void {
-    this.root.append(sectionTitle('Obstruction'));
+    this.root.append(sectionTitle(i18n.t("Obstruction")));
 
     const set = (index: number, metres: number): void =>
       this.patch(box.id, 'Resize obstruction', (o) => {
@@ -1355,40 +1332,39 @@ export class Inspector {
       });
 
     this.root.append(
-      row(`Size (${unit})`,
+      row(i18n.t("Size ({p1})", { p1: unit }),
         vecField(box.size_m, unit, ['X', 'Y', 'Z'], set),
-        'Extents along the object\'s own axes. The origin is the centre of the base'),
+        i18n.t("Extents along the object's own axes. The origin is the centre of the base")),
     );
 
     const z = positionOf(box)[2];
     this.root.append(h('div', { class: 'readouts' }, [
-      readout('Top of box', formatLengthWithUnit(z + box.size_m[2], unit)),
-      readout('Footprint', `${(box.size_m[0] * box.size_m[1]).toFixed(2)} m²`),
+      readout(i18n.t("Top of box"), formatLengthWithUnit(z + box.size_m[2], unit)),
+      readout(i18n.t("Footprint"), `${i18n.numberText((box.size_m[0] * box.size_m[1]).toFixed(2))}${i18n.unitSpace(" ")}m²`),
     ]));
   }
 
   // -- ceiling -----------------------------------------------------------
 
   private renderCeiling(slab: CeilingObject, unit: LengthUnit): void {
-    this.root.append(sectionTitle('Ceiling'));
+    this.root.append(sectionTitle(i18n.t("Ceiling")));
     this.root.append(
-      row(`Soffit height (${unit})`,
+      row(i18n.t("Soffit height ({p1})", { p1: unit }),
         lengthField(slab.height_m, unit, (m) =>
           this.patch(slab.id, 'Set ceiling height', (o) => {
             (o as CeilingObject).height_m = Math.max(0.1, m);
           })),
-        'Underside above the slab\'s origin — the floor, unless the slab has been moved '
-        + 'in Z. This is the surface a flame impinges on'),
-      row(`Thickness (${unit})`,
+        i18n.t("Underside above the slab's origin — the floor, unless the slab has been moved in Z. This is the surface a flame impinges on")),
+      row(i18n.t("Thickness ({p1})", { p1: unit }),
         lengthField(slab.thickness_m ?? 0.1, unit, (m) =>
           this.patch(slab.id, 'Set ceiling thickness', (o) => {
             (o as CeilingObject).thickness_m = Math.max(0.01, m);
           }))),
     );
 
-    this.root.append(sectionTitle('Footprint'));
+    this.root.append(sectionTitle(i18n.t("Footprint")));
     slab.polygon_m.forEach((pt, i) => {
-      this.root.append(row(`Point ${i + 1} (${unit})`,
+      this.root.append(row(i18n.t("Point {p1} ({p2})", { p1: i + 1, p2: unit }),
         vecField(pt, unit, ['X', 'Y'], (axis, m) =>
           this.patch(slab.id, 'Move ceiling point', (o) => {
             const poly = (o as CeilingObject).polygon_m.map((q) => [...q] as [number, number]);
@@ -1398,14 +1374,14 @@ export class Inspector {
     });
 
     const actions: HTMLElement[] = [
-      button('Add point', () => this.patch(slab.id, 'Add ceiling point', (o) => {
+      button(i18n.t("Add point"), () => this.patch(slab.id, 'Add ceiling point', (o) => {
         const c = o as CeilingObject;
         const last = c.polygon_m[c.polygon_m.length - 1];
         c.polygon_m = [...c.polygon_m, [last[0] + 1, last[1]]];
       })),
     ];
     if (slab.polygon_m.length > 3) {
-      actions.push(button('Remove last', () => this.patch(slab.id, 'Remove ceiling point', (o) => {
+      actions.push(button(i18n.t("Remove last"), () => this.patch(slab.id, 'Remove ceiling point', (o) => {
         const c = o as CeilingObject;
         c.polygon_m = c.polygon_m.slice(0, -1);
       })));
@@ -1416,25 +1392,24 @@ export class Inspector {
     // World space, as the checks and the drawing judge it.
     const soffit = ceilingSoffitZM(slab);
     const items: HTMLElement[] = [
-      readout('Slab area', `${ceilingAreaM2(slab).toFixed(2)} m²`),
-      readout('Soffit above floor', formatLengthWithUnit(soffit, unit)),
+      readout(i18n.t("Slab area"), `${i18n.numberText(ceilingAreaM2(slab).toFixed(2))}${i18n.unitSpace(" ")}m²`),
+      readout(i18n.t("Soffit above floor"), formatLengthWithUnit(soffit, unit)),
     ];
     for (const burner of sources) {
-      if (sources.length > 1) items.push(readout('Burner', displayName(burner), 'muted'));
+      if (sources.length > 1) items.push(readout(i18n.t("Burner"), displayName(burner), 'muted'));
       const covered = ceilingCoversXY(slab, positionOf(burner)[0], positionOf(burner)[1]);
-      items.push(readout('Covers the fire', covered ? 'yes' : 'no', 'muted'));
+      items.push(readout(i18n.t("Covers the fire"), covered ? 'yes' : 'no', 'muted'));
       const tip = flameTipZM(burner);
       if (tip !== null && covered) {
         const clearance = soffit - tip;
-        items.push(readout('Flame tip clearance', formatLengthWithUnit(clearance, unit),
+        items.push(readout(i18n.t("Flame tip clearance"), formatLengthWithUnit(clearance, unit),
           clearance > 0.2 * soffit ? 'good' : 'bad'));
         items.push(h('p', { class: 'readout__note' }, [
-          'Flame on a ceiling spreads as a ceiling jet, and the free-plume correlations ' +
-          'used elsewhere here stop applying.',
+          i18n.t("Flame on a ceiling spreads as a ceiling jet, and the free-plume correlations used elsewhere here stop applying."),
         ]));
       }
     }
-    this.root.append(sectionTitle('Clearance'));
+    this.root.append(sectionTitle(i18n.t("Clearance")));
     this.root.append(h('div', { class: 'readouts' }, items));
   }
 
@@ -1449,38 +1424,38 @@ export class Inspector {
         fn(sensor.gauge);
       });
 
-    this.renderAim(s, unit, 'No target set — this gauge was rotated by hand');
+    this.renderAim(s, unit, i18n.t("No target set — this gauge was rotated by hand"));
 
-    this.root.append(sectionTitle('Gauge'));
+    this.root.append(sectionTitle(i18n.t("Gauge")));
     this.root.append(
-      row('Kind',
+      row(i18n.t("Kind"),
         selectField(gauge.kind ?? 'schmidt-boelter', [
           { value: 'schmidt-boelter' as GaugeKind, label: 'Schmidt-Boelter' },
-          { value: 'gardon' as GaugeKind, label: 'Gardon (foil)' },
-          { value: 'thermopile' as GaugeKind, label: 'Thermopile' },
-          { value: 'plate-thermometer' as GaugeKind, label: 'Plate thermometer' },
-          { value: 'thin-skin' as GaugeKind, label: 'Thin skin' },
-          { value: 'other' as GaugeKind, label: 'Other' },
+          { value: 'gardon' as GaugeKind, label: i18n.t("Gardon (foil)") },
+          { value: 'thermopile' as GaugeKind, label: i18n.t("Thermopile") },
+          { value: 'plate-thermometer' as GaugeKind, label: i18n.t("Plate thermometer") },
+          { value: 'thin-skin' as GaugeKind, label: i18n.t("Thin skin") },
+          { value: 'other' as GaugeKind, label: i18n.t("Other") },
         ], (v) => patchGauge('Set gauge kind', (g) => { g.kind = v; })),
-        'Recorded for the equipment list; it does not change the predicted flux'),
-      row('Range (kW/m²)',
+        i18n.t("Recorded for the equipment list; it does not change the predicted flux")),
+      row(i18n.t("Range (kW/m²)"),
         numberField(gaugeRangeKwM2(s) ?? 0, (v) =>
           patchGauge('Set gauge range', (g) => { g.range_kw_m2 = v > 0 ? v : null; }),
           { step: 5, min: 0 }),
-        'Full scale. Zero means unrecorded, and the over-range check goes quiet'),
-      row('View angle (°)',
+        i18n.t("Full scale. Zero means unrecorded, and the over-range check goes quiet")),
+      row(i18n.t("View angle (°)"),
         numberField(gaugeViewAngleDeg(s), (v) =>
           patchGauge('Set view angle', (g) => {
             g.viewAngle_deg = Math.min(Math.max(v, 1), 180);
           }), { step: 5, min: 1, max: 180 }),
-        'Full acceptance angle. 180° is an open hemisphere; less means a view tube'),
-      row('Water-cooled',
+        i18n.t("Full acceptance angle. 180° is an open hemisphere; less means a view tube")),
+      row(i18n.t("Water-cooled"),
         checkboxField(gauge.waterCooled === true, (v) =>
           patchGauge('Toggle cooling', (g) => { g.waterCooled = v; }))),
-      row('Serial',
+      row(i18n.t("Serial"),
         textField(gauge.serial ?? '', (v) =>
           patchGauge('Set serial', (g) => { g.serial = v || null; })),
-        'Which physical gauge this is, for the calibration record'),
+        i18n.t("Which physical gauge this is, for the calibration record")),
     );
 
     this.renderHeatFluxExposure(s, unit);
@@ -1494,10 +1469,9 @@ export class Inspector {
 
     if (!estimate) {
       items.push(
-        readout('Predicted incident flux', 'needs a burner with an HRR', 'muted'),
+        readout(i18n.t("Predicted incident flux"), i18n.t("needs a burner with an HRR"), 'muted'),
         h('p', { class: 'readout__note' }, [
-          'The point-source model needs a heat release rate to radiate. Set one on the '
-          + 'fuel pan and this fills in.',
+          i18n.t("The point-source model needs a heat release rate to radiate. Set one on the fuel pan and this fills in."),
         ]),
       );
     } else {
@@ -1506,24 +1480,24 @@ export class Inspector {
       const range = gaugeRangeKwM2(s);
 
       const verdict = gaugeVerdict(doc, s);
-      if (burner) items.push(readout('Geometry relative to', displayName(burner), 'muted'));
+      if (burner) items.push(readout(i18n.t("Geometry relative to"), displayName(burner), 'muted'));
       items.push(
         // The same call the report's exposure table and the Checks list use, so a
         // green readout here can no longer contradict a warning printed there.
-        readout('Verdict', verdict ? verdict.label : '—',
+        readout(i18n.t("Verdict"), verdict ? verdict.label : '—',
           verdict ? TONE[verdict.status] : undefined),
-        readout('Distance to mid-flame', formatLengthWithUnit(estimate.distanceM, unit)),
+        readout(i18n.t("Distance to mid-flame"), formatLengthWithUnit(estimate.distanceM, unit)),
         // A gauge turned away from the fire is an error; a view tube that misses it
         // is a warning. `instrumentChecks` has always said so, and one tone for both
         // was the same disagreement the Verdict line above exists to end.
-        readout('Off the gauge axis', `${estimate.offAxisDeg.toFixed(0)}°`,
+        readout(i18n.t("Off the gauge axis"), `${i18n.numberText(estimate.offAxisDeg.toFixed(0))}°`,
           !estimate.facesFire ? 'bad' : estimate.withinViewAngle ? 'good' : 'warn'),
-        readout(sources.length > 1 ? 'Total incident flux' : 'Predicted incident flux',
+        readout(sources.length > 1 ? i18n.t("Total incident flux") : i18n.t("Predicted incident flux"),
           Number.isFinite(estimate.incidentKwM2)
-            ? `${estimate.incidentKwM2.toFixed(2)} kW/m²`
-            : 'inside the fire',
+            ? `${i18n.numberText(estimate.incidentKwM2.toFixed(2))}${i18n.unitSpace(" ")}kW/m²`
+            : i18n.t("inside the fire"),
           estimate.facesFire ? undefined : 'bad'),
-        readout('Line of sight', `${(estimate.visibleFraction * 100).toFixed(0)}%`,
+        readout(i18n.t("Line of sight"), `${i18n.numberText((estimate.visibleFraction * 100).toFixed(0))}${i18n.unitSpace("")}%`,
           estimate.visibleFraction === 1 ? 'good' : estimate.visibleFraction === 0 ? 'bad' : 'warn'),
       );
 
@@ -1531,75 +1505,68 @@ export class Inspector {
         const frac = estimate.fractionOfRange;
         // Over range is an error -- the reading is lost. Low signal is a warning:
         // the gauge still reads, just badly. Same split as the checks list.
-        items.push(readout('Fraction of range',
-          Number.isFinite(frac) ? `${(frac * 100).toFixed(1)}% of ${range} kW/m²` : 'over range',
+        items.push(readout(i18n.t("Fraction of range"),
+          Number.isFinite(frac) ? i18n.t("{p1}% of {p2} kW/m²", { p1: i18n.numberText((frac * 100).toFixed(1)), p2: range }) : i18n.t("over range"),
           frac > 1 ? 'bad' : frac < LOW_SIGNAL_FRACTION ? 'warn' : 'good'));
       }
 
       for (const source of sources) {
-        items.push(readout(sources.length > 1 ? `Radiative fraction: ${displayName(source)}` : 'Radiative fraction used',
-          radiativeFractionOf(source).toFixed(2), 'muted'));
+        items.push(readout(sources.length > 1 ? i18n.t("Radiative fraction: {p1}", { p1: displayName(source) }) : i18n.t("Radiative fraction used"),
+          i18n.numberText(radiativeFractionOf(source).toFixed(2)), 'muted'));
       }
 
       items.push(h('p', { class: 'readout__note' }, [
-        'Point source at mid-flame height: q″ = χ_r·Q̇·cos θ / (4πr²). A first-order '
-        + 'estimate for sizing and placement, scaled by line of sight to nine flame '
-        + 'centreline samples. Flux sums all fires; distance '
-        + 'and angle refer to the source contributing most.'
-        + (sources.length > 1 ? ' Line of sight is weighted by each fire’s unshadowed flux.' : ''),
+        i18n.t("Point source at mid-flame height: q″ = χ_r·Q̇·cos θ / (4πr²). A first-order estimate for sizing and placement, scaled by line of sight to nine flame centreline samples. Flux sums all fires; distance and angle refer to the source contributing most.{p1}", { p1: (sources.length > 1 ? i18n.t(" Line of sight is weighted by each fire’s unshadowed flux.") : '') }),
       ]));
 
       if (estimate.nearField && burner) {
         items.push(h('p', { class: 'readout__note' }, [
-          `At ${formatLengthWithUnit(estimate.distanceM, unit)} from a `
-          + `${formatLengthWithUnit(burnerDiameterM(burner), unit)} fire this is inside `
-          + `${POINT_SOURCE_MIN_DIAMETERS} diameters, where the fire is plainly not a point. `
-          + 'Treat the figure above as an order of magnitude.',
+          i18n.t("At {p1} from a {p2} fire this is inside {p3} diameters, where the fire is plainly not a point. Treat the figure above as an order of magnitude.", { p1: formatLengthWithUnit(estimate.distanceM, unit), p2: formatLengthWithUnit(burnerDiameterM(burner), unit), p3: POINT_SOURCE_MIN_DIAMETERS }),
         ]));
       }
     }
 
-    this.root.append(sectionTitle('Exposure'));
+    this.root.append(sectionTitle(i18n.t("Exposure")));
     this.root.append(h('div', { class: 'readouts' }, items));
   }
 
   private renderVelocityProbe(p: VelocityProbeObject, unit: LengthUnit): void {
-    this.renderAim(p, unit, p.transform?.rotation_quat ? 'Axis recorded by the quaternion.' : 'Axis unstated; velocity magnitude.');
-    this.root.append(sectionTitle('Velocity probe'),
-      row('Range (m/s)', numberField(p.range_m_s ?? 0, v => this.patch(p.id, 'Set velocity range', o => {
+    this.renderAim(p, unit, p.transform?.rotation_quat ? i18n.t("Axis recorded by the quaternion.") : i18n.t("Axis unstated; velocity magnitude."));
+    this.root.append(sectionTitle(i18n.t("Velocity probe")),
+      row(i18n.t("Range (m/s)"), numberField(p.range_m_s ?? 0, v => this.patch(p.id, 'Set velocity range', o => {
         (o as VelocityProbeObject).range_m_s = v > 0 ? v : null;
-      }), { min: 0, step: 1 }), 'Full scale; zero means unrecorded.'),
-      readout('Prediction', 'No prediction model.', 'muted'));
+      }), { min: 0, step: 1 }), i18n.t("Full scale; zero means unrecorded.")),
+      readout(i18n.t("Prediction"), i18n.t("No prediction model."), 'muted'));
   }
 
   private renderGasSampling(g: GasSamplingObject): void {
-    this.root.append(sectionTitle('Gas sample'));
+    this.root.append(sectionTitle(i18n.t("Gas sample")));
     for (const species of GAS_SPECIES) this.root.append(row(species, checkboxField(g.species.includes(species), checked =>
       this.patch(g.id, 'Set gas species', o => {
         const gas = o as GasSamplingObject;
         gas.species = checked ? [...gas.species, species] : gas.species.filter(s => s !== species);
       }))));
-    this.root.append(row('In duct', checkboxField(g.inDuct, value => this.patch(g.id, 'Set duct sampling', o => {
+    this.root.append(row(i18n.t("In duct"), checkboxField(g.inDuct, value => this.patch(g.id, 'Set duct sampling', o => {
       (o as GasSamplingObject).inDuct = value;
-    }))), readout('Prediction', 'No prediction model.', 'muted'));
+    }))), readout(i18n.t("Prediction"), i18n.t("No prediction model."), 'muted'));
     for (const source of this.store.document.testData ?? []) for (const mapping of source.channels.filter(c => c.object === g.id)) {
       const unit = source.manifest.channels.find(c => c.name === mapping.channel)?.unit;
-      this.root.append(readout(`${source.name}: ${mapping.channel}`, unit ?? 'Unit unstated'));
+      this.root.append(readout(`${source.name}: ${mapping.channel}`, unit ?? i18n.t("Unit unstated")));
     }
   }
 
   private renderLoadCell(c: LoadCellObject, unit: LengthUnit): void {
-    this.root.append(sectionTitle('Load cell'),
-      row('Capacity (kg)', numberField(c.capacity_kg ?? 0, v => this.patch(c.id, 'Set load capacity', o => {
+    this.root.append(sectionTitle(i18n.t("Load cell")),
+      row(i18n.t("Capacity (kg)"), numberField(c.capacity_kg ?? 0, v => this.patch(c.id, 'Set load capacity', o => {
         (o as LoadCellObject).capacity_kg = v > 0 ? v : null;
-      }), { min: 0, step: 10 }), 'Zero means unrecorded.'),
-      row('Platform recorded', checkboxField(c.platform_m != null, value => this.patch(c.id, 'Set load platform', o => {
+      }), { min: 0, step: 10 }), i18n.t("Zero means unrecorded.")),
+      row(i18n.t("Platform recorded"), checkboxField(c.platform_m != null, value => this.patch(c.id, 'Set load platform', o => {
         (o as LoadCellObject).platform_m = value ? [0.5, 0.5] : null;
       }))));
-    if (c.platform_m) this.root.append(row(`Platform (${unit})`, vecField(c.platform_m, unit, ['W', 'D'], (i, value) => {
+    if (c.platform_m) this.root.append(row(i18n.t("Platform ({p1})", { p1: unit }), vecField(c.platform_m, unit, ['W', 'D'], (i, value) => {
       if (value > 0) this.patch(c.id, 'Resize load platform', o => { (o as LoadCellObject).platform_m![i] = value; });
     })));
-    this.root.append(readout('Prediction', 'No prediction model.', 'muted'));
+    this.root.append(readout(i18n.t("Prediction"), i18n.t("No prediction model."), 'muted'));
   }
 
   // -- thermocouple ------------------------------------------------------
@@ -1616,30 +1583,30 @@ export class Inspector {
     const type = tcTypeOf(t);
     // Not "Thermocouple": that is already the panel heading, and a section that
     // repeats its parent tells the reader nothing about what is in it.
-    this.root.append(sectionTitle('Wire and limits'));
+    this.root.append(sectionTitle(i18n.t("Wire and limits")));
     this.root.append(
-      row('Type',
+      row(i18n.t("Type"),
         selectField(type,
           (Object.keys(TC_MAX_TEMPERATURE_C) as TcType[]).map((k) => ({
-            value: k, label: `Type ${k} — to ${TC_MAX_TEMPERATURE_C[k]} °C`,
+            value: k, label: i18n.t("Type {p1} — to {p2} °C", { p1: k, p2: TC_MAX_TEMPERATURE_C[k] }),
           })),
           (v) => patchTc('Set thermocouple type', (x) => { x.tcType = v; })),
-        'Sets the default upper limit, which is what the over-temperature check uses'),
-      row('Bead ⌀ (mm)',
+        i18n.t("Sets the default upper limit, which is what the over-temperature check uses")),
+      row(i18n.t("Bead ⌀ (mm)"),
         numberField(tc.beadDiameter_mm ?? 1.5, (v) =>
           patchTc('Set bead diameter', (x) => { x.beadDiameter_mm = v > 0 ? v : null; }),
           { step: 0.5, min: 0 }),
-        'Recorded, not corrected for: a bigger bead lags more and radiates more'),
-      row('Sheathed',
+        i18n.t("Recorded, not corrected for: a bigger bead lags more and radiates more")),
+      row(i18n.t("Sheathed"),
         checkboxField(tc.sheathed === true, (v) =>
           patchTc('Toggle sheath', (x) => { x.sheathed = v; }))),
-      row('Max temperature (°C)',
+      row(i18n.t("Max temperature (°C)"),
         numberField(tcMaxTemperatureC(t), (v) =>
           patchTc('Set max temperature', (x) => { x.maxTemperature_C = v; }),
           { step: 50, min: 0 }),
-        `Blank in the file means the type ${type} standard limit, ${TC_MAX_TEMPERATURE_C[type]} °C`),
+        i18n.t("Blank in the file means the type {p1} standard limit, {p2} °C", { p1: type, p2: TC_MAX_TEMPERATURE_C[type] })),
       h('div', { class: 'panel__actions' }, [
-        button(`Use type ${type} default`, () =>
+        button(i18n.t("Use type {p1} default", { p1: type }), () =>
           patchTc('Clear max temperature', (x) => { x.maxTemperature_C = null; })),
       ]),
     );
@@ -1652,26 +1619,26 @@ export class Inspector {
   private renderBeads(t: ThermocoupleObject, unit: LengthUnit): void {
     const offsets = beadOffsetsOf(t);
 
-    this.root.append(sectionTitle(offsets.length === 1 ? 'Bead' : `Beads (${offsets.length})`));
+    this.root.append(sectionTitle(offsets.length === 1 ? i18n.t("Bead") : i18n.t("Beads ({p1})", { p1: offsets.length })));
     offsets.forEach((offset, i) => {
-      this.root.append(row(`Bead ${i + 1} (${unit})`,
+      this.root.append(row(i18n.t("Bead {p1} ({p2})", { p1: i + 1, p2: unit }),
         lengthField(offset, unit, (m) =>
           this.patch(t.id, 'Move bead', (o) => {
             const next = [...beadOffsetsOf(o as ThermocoupleObject)];
             next[i] = m;
             (o as ThermocoupleObject).beadOffsets_m = next;
           })),
-        i === 0 ? 'Height above the object origin, along the rake' : undefined));
+        i === 0 ? i18n.t("Height above the object origin, along the rake") : undefined));
     });
 
     const actions: HTMLElement[] = [
-      button('Add bead', () => this.patch(t.id, 'Add bead', (o) => {
+      button(i18n.t("Add bead"), () => this.patch(t.id, i18n.t("Add bead"), (o) => {
         const next = [...beadOffsetsOf(o as ThermocoupleObject)];
         (o as ThermocoupleObject).beadOffsets_m = [...next, next[next.length - 1] + 0.3];
       })),
     ];
     if (offsets.length > 1) {
-      actions.push(button('Remove last', () => this.patch(t.id, 'Remove bead', (o) => {
+      actions.push(button(i18n.t("Remove last"), () => this.patch(t.id, i18n.t("Remove bead"), (o) => {
         (o as ThermocoupleObject).beadOffsets_m = beadOffsetsOf(o as ThermocoupleObject).slice(0, -1);
       })));
     }
@@ -1688,7 +1655,7 @@ export class Inspector {
     const items: HTMLElement[] = [];
 
     if (sources.length === 0) {
-      items.push(readout('Fire region', 'needs a burner with an HRR', 'muted'));
+      items.push(readout(i18n.t("Fire region"), i18n.t("needs a burner with an HRR"), 'muted'));
     } else {
       for (const bead of beads) {
         // `beadVerdict`, not "is there a plume temperature": a bead inside the
@@ -1697,36 +1664,33 @@ export class Inspector {
         const verdict = beadVerdict(bead, limit);
         const temp = bead.gasTemperatureC === null
           ? ''
-          : `, ${bead.gasTemperatureC.toFixed(0)} °C`;
+          : `, ${i18n.numberText(bead.gasTemperatureC.toFixed(0))}${i18n.unitSpace(" ")}°C`;
         items.push(readout(
-          `Bead ${bead.index + 1} at ${formatLengthWithUnit(bead.world[2], unit)}`,
+          i18n.t("Bead {p1} at {p2}", { p1: bead.index + 1, p2: formatLengthWithUnit(bead.world[2], unit) }),
           `${verdict.label}${temp}`,
           TONE[verdict.status],
         ));
       }
 
       for (const burner of sources) {
-        const label = burners(doc).length > 1 ? `Mean flame tip: ${displayName(burner)}` : 'Mean flame tip';
+        const label = burners(doc).length > 1 ? i18n.t("Mean flame tip: {p1}", { p1: displayName(burner) }) : i18n.t("Mean flame tip");
         items.push(readout(label, formatLengthWithUnit(flameTipZM(burner)!, unit), 'muted'));
       }
 
       items.push(h('p', { class: 'readout__note' }, [
-        'Temperatures are the Heskestad PLUME CENTRELINE, quoted only for beads above the '
-        + 'mean flame tip and inside the envelope — the correlation says nothing about the '
-        + 'flame itself, and a bead off the axis reads lower than the figure shown.',
+        i18n.t("Temperatures are the Heskestad PLUME CENTRELINE, quoted only for beads above the mean flame tip and inside the envelope — the correlation says nothing about the flame itself, and a bead off the axis reads lower than the figure shown."),
       ]));
     }
 
-    this.root.append(sectionTitle('Predicted'));
+    this.root.append(sectionTitle(i18n.t("Predicted")));
     this.root.append(h('div', { class: 'readouts' }, items));
   }
 
   private renderUnknown(obj: PlanObject): void {
-    this.root.append(sectionTitle('Unrecognised object'));
+    this.root.append(sectionTitle(i18n.t("Unrecognised object")));
     this.root.append(
       h('p', { class: 'panel__empty' }, [
-        `This build does not know the type "${obj.type}". Its data is preserved exactly ` +
-        'and will be written back unchanged on save.',
+        i18n.t("This build does not know the type \"{p1}\". Its data is preserved exactly and will be written back unchanged on save.", { p1: obj.type }),
       ]),
       h('pre', { class: 'panel__code' }, [JSON.stringify(obj, null, 2)]),
     );

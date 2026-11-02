@@ -1,3 +1,4 @@
+import * as i18n from './i18n';
 /**
  * The plot frame in the viewport's upper right: one panel for the selected object,
  * with a shared header, Collapse/Expand, and a selector when more than one kind of
@@ -28,7 +29,7 @@ export interface PlotView {
 }
 
 export class PlotPanel {
-  private root = h('section', { class: 'plot-panel', hidden: true, 'aria-label': 'Plots for the selected object' });
+  private root = h('section', { class: 'plot-panel', hidden: true, 'aria-label': i18n.t("Plots for the selected object") });
   private collapsed = false;
   /** The view picked for each document/object, so returning to it keeps the choice. */
   private chosen = new Map<string, string>();
@@ -40,6 +41,7 @@ export class PlotPanel {
     container.append(this.root);
     for (const event of ['pointerdown', 'click', 'dblclick', 'wheel']) this.root.addEventListener(event, (e) => e.stopPropagation());
     store.subscribe(() => this.render());
+    i18n.subscribeLanguage(() => { this.signature = ""; this.render(); });
     for (const subscribe of sources) subscribe(() => this.render());
     playhead?.subscribe((event) => {
       if (event === 'time') { if (!this.collapsed) this.current?.follow?.(); } else this.render();
@@ -58,6 +60,7 @@ export class PlotPanel {
     }) : [];
     if (!obj || !available.length) {
       this.root.hidden = true;
+      this.root.setAttribute('aria-label', i18n.t("Plots for the selected object"));
       this.signature = '';
       this.current = null;
       return;
@@ -69,11 +72,11 @@ export class PlotPanel {
     const view = picked.view;
     this.root.hidden = false;
     this.root.setAttribute('aria-label', view.title(obj));
-    const collapse = h('button', { type: 'button', 'aria-expanded': String(!this.collapsed), title: 'Collapse or expand the plot',
-      onclick: () => { this.collapsed = !this.collapsed; this.render(); } }, [this.collapsed ? 'Expand' : 'Collapse']);
+    const collapse = h('button', { type: 'button', 'aria-expanded': String(!this.collapsed), title: i18n.t("Collapse or expand the plot"),
+      onclick: () => { this.collapsed = !this.collapsed; this.render(); } }, [this.collapsed ? i18n.t("Expand") : i18n.t("Collapse")]);
     this.root.replaceChildren(h('div', { class: 'plot-panel__header' }, [h('strong', {}, [view.title(obj)]), collapse]));
     if (available.length > 1) {
-      this.root.append(h('div', { class: 'seg plot-panel__views', role: 'group', 'aria-label': 'Plot' }, available.map((a) =>
+      this.root.append(h('div', { class: 'seg plot-panel__views', role: 'group', 'aria-label': i18n.t("Plot") }, available.map((a) =>
         h('button', { type: 'button', class: `seg__btn${a.view === view ? ' seg__btn--active' : ''}`, 'aria-pressed': String(a.view === view),
           onclick: () => { this.chosen.set(key, a.view.id); this.render(); } }, [a.view.label]))));
     }

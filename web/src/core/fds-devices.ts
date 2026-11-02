@@ -1,13 +1,14 @@
+import * as i18n from '../ui/i18n';
 import { DEVICE_COLORS } from './visual';
 import type { ResultDevice, ResultSeries, XYZ } from './fds-results';
 
 export const DEVICE_KINDS = {
-  thermocouple: { label: 'Gas temperatures / thermocouples', color: DEVICE_COLORS.temperature, symbol: '●' },
-  surface: { label: 'Surface temperatures', color: DEVICE_COLORS.temperature, symbol: '◇' },
-  flux: { label: 'Heat-flux probes', color: DEVICE_COLORS.heatFlux, symbol: '■' },
-  velocity: { label: 'Velocity probes', color: DEVICE_COLORS.velocity, symbol: '▬' },
-  gas: { label: 'Gas sampling', color: DEVICE_COLORS.gas, symbol: '○' },
-  other: { label: 'Other probes', color: DEVICE_COLORS.other, symbol: '○' },
+  thermocouple: { get label() { return i18n.t("Gas temperatures / thermocouples"); }, color: DEVICE_COLORS.temperature, symbol: '●' },
+  surface: { get label() { return i18n.t("Surface temperatures"); }, color: DEVICE_COLORS.temperature, symbol: '◇' },
+  flux: { get label() { return i18n.t("Heat-flux probes"); }, color: DEVICE_COLORS.heatFlux, symbol: '■' },
+  velocity: { get label() { return i18n.t("Velocity probes"); }, color: DEVICE_COLORS.velocity, symbol: '▬' },
+  gas: { get label() { return i18n.t("Gas sampling"); }, color: DEVICE_COLORS.gas, symbol: '○' },
+  other: { get label() { return i18n.t("Other probes"); }, color: DEVICE_COLORS.other, symbol: '○' },
 } as const;
 export type DeviceKind = keyof typeof DEVICE_KINDS;
 export const deviceKinds = Object.keys(DEVICE_KINDS) as DeviceKind[];

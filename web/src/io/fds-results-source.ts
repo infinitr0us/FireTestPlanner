@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 import { MAX_READ, safeResultPath, type ResultSource } from '../core/fds-results';
 import { closeShellResults, readShellResult, type OpenedResults } from './files';
 
@@ -8,17 +9,17 @@ export function browserResultsSource(files: File[], smvPath: string): ResultSour
     const path = file.webkitRelativePath || file.name;
     if (!path.startsWith(prefix)) continue;
     const name = safeResultPath(path.slice(prefix.length));
-    if (selected.has(name)) throw new Error(`Duplicate result path: ${name}`);
+    if (selected.has(name)) throw new Error(i18n.t("Duplicate result path: {p1}", { p1: name }));
     selected.set(name, file);
   }
   return {
     files: new Map([...selected].map(([name, file]) => [name, file.size])),
     async read(name, offset, length) {
       const file = selected.get(name);
-      if (!file) throw new Error(`Missing file: ${name}`);
-      if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length) || offset < 0 || length < 0 || length > MAX_READ || offset + length > file.size) throw new Error(`Invalid byte range: ${name}`);
+      if (!file) throw new Error(i18n.t("Missing file: {p1}", { p1: name }));
+      if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length) || offset < 0 || length < 0 || length > MAX_READ || offset + length > file.size) throw new Error(i18n.t("Invalid byte range: {p1}", { p1: name }));
       const data = new Uint8Array(await file.slice(offset, offset + length).arrayBuffer());
-      if (data.length !== length) throw new Error(`Truncated read: ${name}`);
+      if (data.length !== length) throw new Error(i18n.t("Truncated read: {p1}", { p1: name }));
       return data;
     },
     close: () => selected.clear(),

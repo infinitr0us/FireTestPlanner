@@ -1,3 +1,5 @@
+import * as i18n from './ui/i18n';
+import { adoptShellLanguage, chooseLanguage, restoreBrowserLanguage } from './ui/language-preference';
 /** Application entry point: wires the store, viewport and panels together. */
 
 // The Example is the reference layout with a synthetic 80 kW design fire from
@@ -61,6 +63,8 @@ import './styles.css';
 // Must run before anything mutates the DOM: 'export shareable viewer' hands
 // someone this page with a plan baked in, and it has to be the pristine page.
 captureBootHtml();
+restoreBrowserLanguage();
+document.documentElement.lang = i18n.language();
 
 /** True once an embedded plan has actually been adopted -- which is not the same as
  *  the page carrying one, because it still has to survive validation. */
@@ -214,7 +218,7 @@ async function openRecentPlan(path: string): Promise<void> {
   try {
     result = await bridge.openRecent(path);
   } catch (err) {
-    window.alert(`Could not open ${path}:\n\n${(err as Error).message}`);
+    window.alert(i18n.t("Could not open {p1}:\n\n{p2}", { p1: path, p2: (err as Error).message }));
     refreshRecent();
     return;
   }
@@ -264,7 +268,7 @@ const palette = new Palette(qs('#palette'), store, (armed) => {
 // read is reported the way a plan that cannot be opened is.
 palette.linkFlame = () => {
   flameOps.link(null).catch((err) => {
-    window.alert(`The voxel folder was not linked:\n\n${(err as Error).message}`);
+    window.alert(i18n.t("The voxel folder was not linked:\n\n{p1}", { p1: (err as Error).message }));
   });
 };
 
@@ -283,12 +287,12 @@ viewport.onMeasureChange = (count) => {
 const reportOverlay = new ReportOverlay((html, name) => { void saveHtml(html, name); });
 const fdsImport = new FdsImportDialog();
 const fdsExport = new FdsExportDialog(open => viewport.setSuspended(open));
-const fdsResults = new FdsResultsDialog(open => viewport.setSuspended(open));
+let fdsResults = new FdsResultsDialog(open => viewport.setSuspended(open));
 const testDataDialog = new TestDataDialog(store, testDataStore, open => viewport.setSuspended(open), () => {
   // The toolbar is rebuilt by every edit made in the dialog, so the button that
   // opened it is gone; give the keyboard back to its replacement.
   if (document.activeElement === document.body) {
-    [...toolbar.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Test data…')?.focus();
+    [...toolbar.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === i18n.t('Test data…'))?.focus();
   }
 });
 // From Checks, the dialog opens at the source and scrolls to the flagged mapping.
@@ -299,7 +303,7 @@ async function saveHtml(html: string, name: string): Promise<void> {
   try {
     await saveShareableHtml(html, name);
   } catch (err) {
-    window.alert(`${name} was not saved:\n\n${(err as Error).message}`);
+    window.alert(i18n.t("{p1} was not saved:\n\n{p2}", { p1: name, p2: (err as Error).message }));
   }
 }
 
@@ -386,70 +390,79 @@ function renderToolbar(): void {
 
   toolbar.replaceChildren(
     h('div', { class: 'toolbar__group toolbar__group--title' }, [
-      h('span', { class: 'toolbar__title' }, [store.document.meta?.title ?? 'Untitled']),
+      h('span', { class: 'toolbar__title' }, [store.document.meta?.title ?? i18n.t("Untitled")]),
       h('span', { class: 'toolbar__file' }, [`${store.fileName}${dirtyMark}`]),
     ]),
 
     group([
-      btn('Open', () => { void openPlan(); }),
+      btn(i18n.t("Open"), () => { void openPlan(); }),
       recentPlans.length > 0 ? recentSelect() : null,
-      btn('Save', () => { void savePlan(false); }),
-      btn('Save as…', () => { void savePlan(true); }),
-      btn('Next test…', () => { void saveNextTest(); }, 'Copy the rig for the next test of this series'),
-      btn('Import FDS…', () => { void importFds(); },
-        'Build a plan from an FDS input file — geometry, the burner and the devices'),
-      btn('Export to FDS…', () => { playhead.pause(); fdsExport.open(store.document, store.fileName); },
-        'Write gauges and thermocouple beads as FDS devices'),
-      btn('FDS results…', () => { playhead.pause(); fdsResults.open(); }, 'Visualize and play recorded FDS simulation output'),
-      btn('Test data…', () => openTestData(),
-        'Measured and simulated channels on the instruments: add a logger workbook or FDS output and map its channels'),
-      btn('Example', loadExample, 'Load the reference plan built from the hand sketch'),
+      btn(i18n.t("Save"), () => { void savePlan(false); }),
+      btn(i18n.t("Save as…"), () => { void savePlan(true); }),
+      btn(i18n.t("Next test…"), () => { void saveNextTest(); }, i18n.t("Copy the rig for the next test of this series")),
+      btn(i18n.t("Import FDS…"), () => { void importFds(); },
+        i18n.t("Build a plan from an FDS input file — geometry, the burner and the devices")),
+      btn(i18n.t("Export to FDS…"), () => { playhead.pause(); fdsExport.open(store.document, store.fileName); },
+        i18n.t("Write gauges and thermocouple beads as FDS devices")),
+      btn(i18n.t("FDS results…"), () => { playhead.pause(); fdsResults.open(); }, i18n.t("Visualize and play recorded FDS simulation output")),
+      btn(i18n.t("Test data…"), () => openTestData(),
+        i18n.t("Measured and simulated channels on the instruments: add a logger workbook or FDS output and map its channels")),
+      btn(i18n.t("Example"), loadExample, i18n.t("Load the reference plan built from the hand sketch")),
     ]),
 
     group([
-      btn('Drawing…', openDrawing,
-        'Dimensioned plan and elevations, equipment list and coverage — print to PDF'),
-      btn('Share…', exportShareable,
-        'Export a single self-contained HTML file with this plan baked in'),
+      btn(i18n.t("Drawing…"), openDrawing,
+        i18n.t("Dimensioned plan and elevations, equipment list and coverage — print to PDF")),
+      btn(i18n.t("Share…"), exportShareable,
+        i18n.t("Export a single self-contained HTML file with this plan baked in")),
     ]),
 
     group([
-      toggle('Plan', store.viewMode === 'plan', () => store.setViewMode('plan'), 'Top-down orthographic (1)'),
-      toggle('Front', store.viewMode === 'front', () => store.setViewMode('front'), 'Front elevation, looking +Y north (2)'),
-      toggle('Side', store.viewMode === 'side', () => store.setViewMode('side'), 'Side elevation, looking +X east (3)'),
-      toggle('3D', store.viewMode === '3d', () => store.setViewMode('3d'), 'Perspective orbit (4)'),
+      toggle(i18n.t("Plan"), store.viewMode === 'plan', () => store.setViewMode('plan'), i18n.t("Top-down orthographic (1)")),
+      toggle(i18n.t("Front"), store.viewMode === 'front', () => store.setViewMode('front'), i18n.t("Front elevation, looking +Y north (2)")),
+      toggle(i18n.t("Side"), store.viewMode === 'side', () => store.setViewMode('side'), i18n.t("Side elevation, looking +X east (3)")),
+      toggle('3D', store.viewMode === '3d', () => store.setViewMode('3d'), i18n.t("Perspective orbit (4)")),
     ]),
 
     group([
-      toggle('Move', gizmoMode === 'translate', () => setGizmo('translate'), 'G'),
-      toggle('Rotate', gizmoMode === 'rotate', () => setGizmo('rotate'), 'R'),
-      option('Snap', 'snap', 'Snap gizmo drags to a quarter of the grid step'),
-      toggle('Measure', measuring, toggleMeasure, 'Click two points for a distance (M)'),
-      measurementCount > 0 ? btn('Clear', clearMeasurements, 'Remove all measurements') : null,
+      toggle(i18n.t("Move"), gizmoMode === 'translate', () => setGizmo('translate'), 'G'),
+      toggle(i18n.t("Rotate"), gizmoMode === 'rotate', () => setGizmo('rotate'), 'R'),
+      option(i18n.t("Snap"), 'snap', i18n.t("Snap gizmo drags to a quarter of the grid step")),
+      toggle(i18n.t("Measure"), measuring, toggleMeasure, i18n.t("Click two points for a distance (M)")),
+      measurementCount > 0 ? btn(i18n.t("Clear"), clearMeasurements, i18n.t("Remove all measurements")) : null,
     ].filter(Boolean) as HTMLElement[]),
 
     group([
-      option('Frustums', 'showFrustums', 'Camera field-of-view pyramids'),
-      option('As built', 'showAsBuilt', 'Measured poses and connections to the planned positions'),
-      option('Predicted', 'showFlame', 'Heskestad flame cone and plume envelope — the prediction, drawn beside any reconstructed flame'),
-      option('Dims', 'showDimensions', 'Standoff dimension lines from the fire'),
-      option('Preview', 'showPreview', "Picture-in-picture of the selected camera's view"),
+      option(i18n.t("Frustums"), 'showFrustums', i18n.t("Camera field-of-view pyramids")),
+      option(i18n.t("As built"), 'showAsBuilt', i18n.t("Measured poses and connections to the planned positions")),
+      option(i18n.t("Predicted"), 'showFlame', i18n.t("Heskestad flame cone and plume envelope — the prediction, drawn beside any reconstructed flame")),
+      option(i18n.t("Dims"), 'showDimensions', i18n.t("Standoff dimension lines from the fire")),
+      option(i18n.t("Preview"), 'showPreview', i18n.t("Picture-in-picture of the selected camera's view")),
     ]),
 
     group([
       h('select', {
         class: 'toolbar__select',
-        title: 'Display units. Stored values are always metric.',
+        title: i18n.t("Display units. Stored values are always metric."),
         // setDisplayUnit emits 'document', which rebuilds the viewport already.
         onchange: (e: Event) => store.setDisplayUnit((e.target as HTMLSelectElement).value as LengthUnit),
       }, (['m', 'cm', 'mm', 'ft', 'ft-in', 'in'] as LengthUnit[]).map((u) =>
         h('option', { value: u, selected: u === store.displayUnit }, [u]))),
-      btn('Fit', () => viewport.frameAll(), 'F'),
+      btn(i18n.t("Fit"), () => viewport.frameAll(), 'F'),
     ]),
 
     group([
-      btn('Undo', () => store.undo(), 'Ctrl+Z'),
-      btn('Redo', () => store.redo(), 'Ctrl+Y'),
+      btn(i18n.t("Undo"), () => store.undo(), 'Ctrl+Z'),
+      btn(i18n.t("Redo"), () => store.redo(), 'Ctrl+Y'),
+      h('span', { class: 'language-switch', role: 'group', 'aria-label': i18n.t('Interface language') },
+        (['en', 'fr'] as const).flatMap((value, index) => [
+          ...(index ? [h('span', { 'aria-hidden': 'true' }, ['|'])] : []),
+          h('button', { type: 'button', class: 'toolbar__btn', lang: value,
+            'aria-label': value === 'en' ? 'English' : 'Français',
+            'aria-pressed': String(i18n.language() === value),
+            dataset: { language: value }, onclick: () => chooseLanguage(value),
+          }, [value.toUpperCase()]),
+        ])),
     ]),
   );
 }
@@ -462,7 +475,7 @@ const group = (children: Array<HTMLElement | null>): HTMLElement =>
 function recentSelect(): HTMLElement {
   return h('select', {
     class: 'toolbar__select',
-    title: 'Open a recent plan',
+    title: i18n.t("Open a recent plan"),
     onchange: (e: Event) => {
       const select = e.target as HTMLSelectElement;
       const path = select.value;
@@ -470,7 +483,7 @@ function recentSelect(): HTMLElement {
       if (path) void openRecentPlan(path);
     },
   }, [
-    h('option', { value: '', selected: true }, ['Recent…']),
+    h('option', { value: '', selected: true }, [i18n.t("Recent…")]),
     ...recentPlans.map((path) => h('option', { value: path, title: path }, [path.split(/[\\/]/).pop() ?? path])),
   ]);
 }
@@ -502,7 +515,7 @@ function setGizmo(mode: GizmoMode): void {
 // -- file actions ---------------------------------------------------------
 
 function confirmDiscard(): boolean {
-  return !store.dirty || window.confirm('This plan has unsaved changes. Discard them?');
+  return !store.dirty || window.confirm(i18n.t("This plan has unsaved changes. Discard them?"));
 }
 
 async function openPlan(): Promise<void> {
@@ -514,7 +527,7 @@ async function openPlan(): Promise<void> {
     // The desktop bridge can fail outright -- the shell's server gone, the file
     // unreadable. Left uncaught this is an unhandled rejection and the Open button
     // simply does nothing, which reads as a broken app rather than a failed read.
-    window.alert(`Could not open a plan:\n\n${(err as Error).message}`);
+    window.alert(i18n.t("Could not open a plan:\n\n{p1}", { p1: (err as Error).message }));
     return;
   }
   if (!result) return;
@@ -545,10 +558,7 @@ function adopt(text: string, name: string, token: string | null = null): void {
     if (bridge && token) void bridge.adopted(token).then(refreshRecent, () => {});
   } catch (err) {
     window.alert(
-      `${name} could not be opened as a fire test plan:\n\n${(err as Error).message}\n\n` +
-      'Nothing was loaded. Fix the file, or validate it with ' +
-      '`python -c "from fireplan import Plan; Plan.load(path).validate_schema()"` ' +
-      'for the full schema report.',
+      i18n.t("{p1} could not be opened as a fire test plan:\n\n{p2}\n\nNothing was loaded. Fix the file, or validate it with `python -c \"from fireplan import Plan; Plan.load(path).validate_schema()\"` for the full schema report.", { p1: name, p2: (err as Error).message }),
     );
   }
 }
@@ -567,13 +577,13 @@ async function saveNextTest(): Promise<void> {
     const saved = await saveNextTestText(text, name);
     if (!saved) return;
     if (identity.documentId !== store.documentId || identity.revision !== store.revision) {
-      window.alert('The next test copy was saved; the editor kept the plan changed while saving.');
+      window.alert(i18n.t("The next test copy was saved; the editor kept the plan changed while saving."));
       return;
     }
     adopt(text, saved.path.split(/[\\/]/).pop() ?? name, saved.token);
-    window.alert('Left behind: test data, reconstructed flames, linked files and as-built poses.');
+    window.alert(i18n.t("Left behind: test data, reconstructed flames, linked files and as-built poses."));
   } catch (error) {
-    window.alert(`Next test was not saved: ${(error as Error).message}`);
+    window.alert(i18n.t("Next test was not saved: {p1}", { p1: (error as Error).message }));
   } finally { saveInFlight = false; }
 }
 
@@ -599,8 +609,7 @@ async function savePlan(saveAs = false): Promise<void> {
     }
   } catch (err) {
     window.alert(
-      `${suggested} was not saved:\n\n${(err as Error).message}\n\n` +
-      'The plan is still open and unchanged — try Save as… to a different location.',
+      i18n.t("{p1} was not saved:\n\n{p2}\n\nThe plan is still open and unchanged — try Save as… to a different location.", { p1: suggested, p2: (err as Error).message }),
     );
   } finally {
     saveInFlight = false;
@@ -626,7 +635,7 @@ async function importFds(): Promise<void> {
   try {
     picked = await openFdsText();
   } catch (err) {
-    window.alert(`Could not open an FDS file:\n\n${(err as Error).message}`);
+    window.alert(i18n.t("Could not open an FDS file:\n\n{p1}", { p1: (err as Error).message }));
     return;
   }
   if (!picked) return;
@@ -644,8 +653,7 @@ async function importFds(): Promise<void> {
       const errors = validateStructure(doc);
       if (errors.length > 0) {
         window.alert(
-          `${picked!.name} converted into a plan this editor cannot open:\n\n`
-          + `${describeErrors(errors)}\n\nNothing was imported.`);
+          i18n.t("{p1} converted into a plan this editor cannot open:\n\n{p2}\n\nNothing was imported.", { p1: picked!.name, p2: describeErrors(errors) }));
         return;
       }
       // No token: an import is not a saved file. The plan exists only here until
@@ -657,7 +665,7 @@ async function importFds(): Promise<void> {
     }, { includesResolved: source.resolved, includeIssues: source.issues });
   } catch (err) {
     window.alert(
-      `${picked.name} could not be read as FDS input:\n\n${(err as Error).message}`);
+      i18n.t("{p1} could not be read as FDS input:\n\n{p2}", { p1: picked.name, p2: (err as Error).message }));
   }
 }
 
@@ -681,7 +689,7 @@ function loadExample(): void {
       const link = flameSequenceLink(flame);
       if (link && store.documentId === documentId) flameStore.attach(link, sequence);
     }
-  }).catch((err) => console.warn(`Example flame not loaded: ${(err as Error).message}`));
+  }).catch((err) => console.warn(i18n.t("Example flame not loaded: {p1}", { p1: (err as Error).message })));
 }
 
 function openDrawing(): void {
@@ -695,9 +703,7 @@ function openDrawing(): void {
 async function exportShareable(): Promise<TestDataShareSummary | undefined> {
   if (!isSingleFileBuild() && !shell()) {
     window.alert(
-      'Shareable export only works from the built single-file app.\n\n' +
-      'Run `npm run build` and open dist/index.html — the dev server serves the app ' +
-      'as separate files, so an exported page would not carry its own code.',
+      i18n.t("Shareable export only works from the built single-file app.\n\nRun `npm run build` and open dist/index.html — the dev server serves the app as separate files, so an exported page would not carry its own code."),
     );
     return;
   }
@@ -706,14 +712,14 @@ async function exportShareable(): Promise<TestDataShareSummary | undefined> {
   // yields to the page, and a plan opened or edited meanwhile would otherwise be
   // serialised under the old title with the old plan's frames.
   const identity = store.identity();
-  const title = store.document.meta?.title ?? 'Fire test plan';
+  const title = store.document.meta?.title ?? i18n.t("Fire test plan");
   const name = suggestFileName().replace(/\.ftp\.json$/, '') + '-viewer.html';
   const planJson = store.serialize();
   const testData = embedTestData(store.document, id => testDataStore.get(id));
   const flames = await embeddableFlames(store.document);
   if (flames === null) return;
   if (store.documentId !== identity.documentId || store.revision !== identity.revision) {
-    window.alert('The plan changed while the page was being built. Nothing was exported; please Share again.');
+    window.alert(i18n.t("The plan changed while the page was being built. Nothing was exported; please Share again."));
     return;
   }
   const html = buildShareableHtml(planJson, title, flames, testData.payload);
@@ -753,15 +759,13 @@ async function embeddableFlames(doc: PlanDocument): Promise<EmbeddedFlames | nul
   }
   if (bytes > EMBED_CAP_BYTES) {
     const proceed = window.confirm(
-      `The reconstructed flame frames come to ${(bytes / 1048576).toFixed(0)} MB packed, over the ` +
-      `${EMBED_CAP_BYTES / 1048576} MB a shared page carries. Export the page without them? ` +
-      'The viewer will show the timeline and say the frames are not included.',
+      i18n.t("The reconstructed flame frames come to {p1} MB packed, over the {p2} MB a shared page carries. Export the page without them? The viewer will show the timeline and say the frames are not included.", { p1: i18n.numberText((bytes / 1048576).toFixed(0)), p2: EMBED_CAP_BYTES / 1048576 }),
     );
     return proceed ? new Map() : null;
   }
   if (unloaded.length) {
     const proceed = window.confirm(
-      `The frames for ${unloaded.join(', ')} are not loaded, so the page will not carry them. Export anyway?`,
+      i18n.t("The frames for {p1} are not loaded, so the page will not carry them. Export anyway?", { p1: unloaded.join(', ') }),
     );
     if (!proceed) return null;
   }
@@ -880,6 +884,21 @@ window.addEventListener('beforeunload', (e) => {
 
 // -- boot -----------------------------------------------------------------
 
+i18n.subscribeLanguage(() => {
+  document.documentElement.lang = i18n.language();
+  document.title = i18n.t('Fire Test Plan Editor');
+  fdsResults.close();
+  fdsResults = new FdsResultsDialog(open => viewport.setSuspended(open));
+  palette.render();
+  inspector.render();
+  outliner.render();
+  checks.render();
+  renderToolbar();
+  viewport.rebuild();
+  toolbar.querySelector<HTMLButtonElement>(`[data-language="${i18n.language()}"]`)?.focus();
+});
+document.title = i18n.t('Fire Test Plan Editor');
+
 palette.render();
 inspector.render();
 outliner.render();
@@ -917,6 +936,7 @@ connectShell(() => {
   // lands.
   const bridge = shell();
   if (bridge) {
+    void adoptShellLanguage(() => bridge.loadLanguage(), value => bridge.saveLanguage(value));
     testDataStore.setReader(path => bridge.readTestDataFile(path));
     void bridge.loadPresets().then((stored) => {
       adoptShellPresets(stored, (presets) => bridge.savePresets(presets));

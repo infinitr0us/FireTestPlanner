@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 import * as THREE from 'three';
 import { visualTheme } from '../ui/theme';
 import { FdsDeviceLayer } from './fds-devices';
@@ -28,7 +29,7 @@ export function resultSurface(mesh: ResultMesh, field: ResultField, patches: Res
   for (const p of patches) {
     const b = p.bounds;
     const normal = [0, 1, 2].find((a) => b[2 * a] === b[2 * a + 1]);
-    if (normal === undefined) throw new Error('Expected a planar scalar field.');
+    if (normal === undefined) throw new Error(i18n.t("Expected a planar scalar field."));
     const axes = [0, 1, 2].filter((a) => a !== normal);
     const [a, c] = axes;
     const dims = [0, 1, 2].map((d) => b[2 * d + 1] - b[2 * d] + 1);
@@ -36,14 +37,14 @@ export function resultSurface(mesh: ResultMesh, field: ResultField, patches: Res
     let plane = mesh.coordinates[normal][b[2 * normal]];
     if (field.kind === 'slice' && field.cellCentered) {
       const n = b[2 * normal];
-      if (n === 0) throw new Error('A cell-centered plane has no preceding cell.');
+      if (n === 0) throw new Error(i18n.t("A cell-centered plane has no preceding cell."));
       plane = (plane + mesh.coordinates[normal][n - 1]) / 2;
     }
     if (field.kind === 'boundary') plane += Math.sign(p.orientation) * 0.0002;
     // Patch zero is an external mesh face, not an obstruction surface.
     if (field.kind !== 'boundary' || p.obstruction > 0) {
       if (indices.length + (dims[a] - 1) * (dims[c] - 1) * 6 > 6000000)
-        throw new Error('Surface exceeds the six-million-vertex display limit.');
+        throw new Error(i18n.t("Surface exceeds the six-million-vertex display limit."));
       for (let j = 0; j < dims[c] - 1; j++)
         for (let i = 0; i < dims[a] - 1; i++) {
           const corners: XYZ[] = [];
@@ -74,7 +75,7 @@ export function resultSurface(mesh: ResultMesh, field: ResultField, patches: Res
     }
     offset += p.count;
   }
-  if (positions.length > 18_000_000) throw new Error('Surface exceeds the six-million-vertex display limit.');
+  if (positions.length > 18_000_000) throw new Error(i18n.t("Surface exceeds the six-million-vertex display limit."));
   return { positions: new Float32Array(positions), indices: new Uint32Array(indices) };
 }
 
@@ -172,7 +173,7 @@ export class FdsResultScene {
     this.controls.enableDamping = true;
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.domElement.tabIndex = 0;
-    this.renderer.domElement.setAttribute('aria-label', 'Simulation view; Space to play or pause, comma and period to step, Home and End to jump');
+    this.renderer.domElement.setAttribute('aria-label', i18n.t("Simulation view; Space to play or pause, comma and period to step, Home and End to jump"));
     this.renderer.domElement.addEventListener('pointerdown', this.focusCanvas);
     host.append(this.renderer.domElement);
     this.scene.add(this.geometry, this.fields);
@@ -351,7 +352,7 @@ export class FdsResultScene {
       // A stretched grid misses the ideal by far more than the rounding.
       for (let a = 0; a < 3; a++) {
         if (!uniformSpacing(mesh.coordinates[a]))
-          throw new Error('Smoke volume preview requires uniform spacing within each mesh.');
+          throw new Error(i18n.t("Smoke volume preview requires uniform spacing within each mesh."));
       }
       if (
         Math.max(...dims) >
@@ -359,7 +360,7 @@ export class FdsResultScene {
           .getContext()
           .getParameter((this.renderer.getContext() as WebGL2RenderingContext).MAX_3D_TEXTURE_SIZE)
       )
-        throw new Error('Smoke texture exceeds the GPU limit.');
+        throw new Error(i18n.t("Smoke texture exceeds the GPU limit."));
       const mask = new Uint8Array(frame.values.length);
       let p = 0;
       for (let k = b[4]; k <= b[5]; k++)

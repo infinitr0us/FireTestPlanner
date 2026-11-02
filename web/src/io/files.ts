@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 /**
  * File in, file out.
  *
@@ -70,6 +71,8 @@ export interface ShellBridge {
   loadPresets(): Promise<unknown[]>;
   /** Replace the library. Resolves to true only when the write reached the disk. */
   savePresets(presets: unknown[]): Promise<boolean>;
+  loadLanguage(): Promise<unknown>;
+  saveLanguage(language: 'en' | 'fr'): Promise<boolean>;
   /** Native folder dialog for a voxel sequence. Null when cancelled. */
   pickFolder(): Promise<string | null>;
   /** The frame files a linked voxel folder holds, by name. The shell registers the
@@ -120,7 +123,7 @@ async function call<T>(route: string, body?: unknown): Promise<T | null> {
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  if (!response.ok) throw new Error(`Shell call ${route} failed: ${response.status}`);
+  if (!response.ok) throw new Error(i18n.t("Shell call {p1} failed: {p2}", { p1: route, p2: response.status }));
   return (await response.json()) as T | null;
 }
 
@@ -146,7 +149,7 @@ export function connectShell(onReady: () => void): void {
     linkedFileAction: async (path, kind, action) => {
       const result = await call<{ text?: string; error?: string }>('/api/linked-file', { path, kind, action });
       if (result?.error) throw new Error(result.error);
-      if (!result) throw new Error('Desktop file operation did not complete.');
+      if (!result) throw new Error(i18n.t("Desktop file operation did not complete."));
       return result;
     },
     openPlan: () => call<{ path: string; text: string; token?: unknown } | null>('/api/open', {}).then(withToken),
@@ -173,7 +176,7 @@ export function connectShell(onReady: () => void): void {
       });
       if (!response.ok) {
         const body = await response.json().catch(() => null) as { error?: string } | null;
-        throw new Error(body?.error ?? `Could not read test data: HTTP ${response.status}.`);
+        throw new Error(body?.error ?? i18n.t("Could not read test data: HTTP {p1}.", { p1: response.status }));
       }
       return { bytes: new Uint8Array(await response.arrayBuffer()), modified: response.headers.get('X-File-Modified') };
     },
@@ -189,6 +192,8 @@ export function connectShell(onReady: () => void): void {
     loadPresets: () => call<unknown[]>('/api/presets').then((r) => (Array.isArray(r) ? r : [])),
     savePresets: (presets) =>
       call<{ saved?: boolean }>('/api/presets', { presets }).then((r) => Boolean(r?.saved)),
+    loadLanguage: () => call<{ language?: unknown }>('/api/language').then(r => r?.language),
+    saveLanguage: language => call<{ saved?: boolean }>('/api/language', { language }).then(r => Boolean(r?.saved)),
     pickFolder: async () => {
       const result = await call<{ path?: string; error?: string } | null>('/api/pick-folder', {});
       if (result?.error) throw new Error(result.error);
@@ -204,7 +209,7 @@ export function connectShell(onReady: () => void): void {
         headers: { 'X-Shell-Token': shellToken ?? '' },
       });
       if (!response.ok) {
-        let message = `Shell could not read ${name}: ${response.status}`;
+        let message = i18n.t("Shell could not read {p1}: {p2}", { p1: name, p2: response.status });
         try { message = ((await response.json()) as { error?: string }).error ?? message; } catch { /* not JSON */ }
         throw new Error(message);
       }
@@ -309,7 +314,7 @@ export async function savePlanText(
       try {
         handle = await picker({
           suggestedName,
-          types: [{ description: 'Fire test plan', accept: { 'application/json': ['.json'] } }],
+          types: [{ description: i18n.t("Fire test plan"), accept: { 'application/json': ['.json'] } }],
         });
       } catch (err) {
         if ((err as DOMException)?.name === 'AbortError') return null;
@@ -409,12 +414,10 @@ function asIncluded(child: string, name: string, issues: Issue[]): string {
   const end = stop ? stop.start : child.length;
   if (stop?.group === 'CATF') {
     issues.push(includeIssue('info', 'fds-catf-nested',
-      `${name} includes further files with &CATF; FDS stops copying an included file at `
-      + 'its own &CATF line and never reads nested includes, so neither does this import'));
+      i18n.t("{p1} includes further files with &CATF; FDS stops copying an included file at its own &CATF line and never reads nested includes, so neither does this import", { p1: name })));
   } else if (stop && /^[ \t]*&/m.test(child.slice(stop.end))) {
     issues.push(includeIssue('info', 'fds-catf-tail',
-      `the included file ${name} has records after its &TAIL; FDS copies an included `
-      + 'file only up to its &TAIL, and so does this import'));
+      i18n.t("the included file {p1} has records after its &TAIL; FDS copies an included file only up to its &TAIL, and so does this import", { p1: name })));
   }
   const pieces: string[] = [];
   let pos = 0;
@@ -469,14 +472,14 @@ async function spliceIncludes(
       const key = includeKey(name);
       if (self !== null && key === includeKey(self)) {
         issues.push(includeIssue('warning', 'fds-catf-cycle',
-          `&CATF includes ${name} from inside itself; the repeat was skipped`));
+          i18n.t("&CATF includes {p1} from inside itself; the repeat was skipped", { p1: name })));
         continue;
       }
       if (seen.has(key)) {
         // Two &CATF names for one file, which FDS would splice twice. Once is
         // enough here -- the second copy could only redefine what the first said.
         issues.push(includeIssue('info', 'fds-catf-repeat',
-          `${name} is included more than once; it was read the first time`));
+          i18n.t("{p1} is included more than once; it was read the first time", { p1: name })));
         continue;
       }
       seen.add(key);
@@ -495,10 +498,8 @@ async function spliceIncludes(
       if (child === null) {
         unresolved.push(name);
         issues.push(includeIssue('warning', 'fds-catf-missing', failure === null
-          ? `&CATF names ${name} but it is not beside the input; anything it defined is `
-            + 'missing from this plan'
-          : `&CATF names ${name} but it could not be read (${failure}); anything it `
-            + 'defined is missing from this plan'));
+          ? i18n.t("&CATF names {p1} but it is not beside the input; anything it defined is missing from this plan", { p1: name })
+          : i18n.t("&CATF names {p1} but it could not be read ({p2}); anything it defined is missing from this plan", { p1: name, p2: failure })));
         continue;
       }
       included.push(asIncluded(child, name, issues));
@@ -630,7 +631,7 @@ export function embedPlanInHtml(boot: string, planJson: string, title: string, f
  * its own assets, so the caller warns instead.
  */
 export function buildShareableHtml(planJson: string, title: string, flames?: EmbeddedFlames, testData?: TestDataPayload): string {
-  if (!bootHtml) throw new Error('Boot HTML was never captured');
+  if (!bootHtml) throw new Error(i18n.t("Boot HTML was never captured"));
   return embedPlanInHtml(bootHtml, planJson, title, flames, testData);
 }
 
@@ -696,14 +697,14 @@ export async function readShellResult(token: string, name: string, offset: numbe
     const response = await fetch(url, { headers: { 'X-Shell-Token': shellToken ?? '' }, cache: 'no-store' });
     if (!response.ok) {
       const body = await response.json().catch(() => null) as { error?: string } | null;
-      throw new Error(body?.error ?? `Could not read ${name}: HTTP ${response.status}.`);
+      throw new Error(body?.error ?? i18n.t("Could not read {p1}: HTTP {p2}.", { p1: name, p2: response.status }));
     }
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.length === length) return bytes;
-    console.warn(`Incomplete results response for ${name} at byte ${offset}: expected ${length} bytes, received ${bytes.length} (attempt ${attempt + 1}/2).`);
-    if (attempt === 1) throw new Error(`Incomplete read of ${name} at byte ${offset}: expected ${length} bytes, received ${bytes.length}. Retry the frame.`);
+    console.warn(i18n.t("Incomplete results response for {p1} at byte {p2}: expected {p3} bytes, received {p4} (attempt {p5}/2).", { p1: name, p2: offset, p3: length, p4: bytes.length, p5: attempt + 1 }));
+    if (attempt === 1) throw new Error(i18n.t("Incomplete read of {p1} at byte {p2}: expected {p3} bytes, received {p4}. Retry the frame.", { p1: name, p2: offset, p3: length, p4: bytes.length }));
   }
-  throw new Error(`Could not read ${name}.`);
+  throw new Error(i18n.t("Could not read {p1}.", { p1: name }));
 }
 export function closeShellResults(token: string): void {
   void call('/api/results/close', { token }).catch(err => console.warn('Results session close failed', err));

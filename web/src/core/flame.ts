@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 /**
  * Reconstructed flame sequences: the visual-hull voxel frames a plan links to.
  *
@@ -74,14 +75,14 @@ export function listZip(bytes: Uint8Array): Map<string, ZipEntry> {
   for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65535); i -= 1) {
     if (view.getUint32(i, true) === 0x06054b50 && i + 22 + view.getUint16(i + 20, true) === bytes.length) { eocd = i; break; }
   }
-  if (eocd < 0) throw new Error('not a ZIP archive (no end-of-central-directory record)');
+  if (eocd < 0) throw new Error(i18n.t("not a ZIP archive (no end-of-central-directory record)"));
   const count = view.getUint16(eocd + 10, true);
-  if (view.getUint16(eocd + 4, true) || view.getUint16(eocd + 6, true)) throw new Error('multi-disk ZIP archives are not supported');
+  if (view.getUint16(eocd + 4, true) || view.getUint16(eocd + 6, true)) throw new Error(i18n.t("multi-disk ZIP archives are not supported"));
   let offset = view.getUint32(eocd + 16, true);
-  if (count === 0xffff || offset === 0xffffffff) throw new Error('ZIP64 archives are not supported');
+  if (count === 0xffff || offset === 0xffffffff) throw new Error(i18n.t("ZIP64 archives are not supported"));
   const entries = new Map<string, ZipEntry>();
   for (let n = 0; n < count; n += 1) {
-    if (offset + 46 > eocd || view.getUint32(offset, true) !== 0x02014b50) throw new Error('corrupt ZIP central directory');
+    if (offset + 46 > eocd || view.getUint32(offset, true) !== 0x02014b50) throw new Error(i18n.t("corrupt ZIP central directory"));
     const flags = view.getUint16(offset + 8, true);
     const method = view.getUint16(offset + 10, true);
     const compressed = view.getUint32(offset + 20, true);
@@ -92,16 +93,16 @@ export function listZip(bytes: Uint8Array): Map<string, ZipEntry> {
     const local = view.getUint32(offset + 42, true);
     const name = new TextDecoder().decode(bytes.subarray(offset + 46, offset + 46 + nameLength));
     offset += 46 + nameLength + extraLength + commentLength;
-    if (offset > eocd) throw new Error('corrupt ZIP central directory');
+    if (offset > eocd) throw new Error(i18n.t("corrupt ZIP central directory"));
     entries.set(name, { extract: async () => {
-      if (flags & 1) throw new Error(`ZIP entry ${name} is encrypted`);
-      if (local + 30 > bytes.length || view.getUint32(local, true) !== 0x04034b50) throw new Error(`corrupt ZIP local header for ${name}`);
+      if (flags & 1) throw new Error(i18n.t("ZIP entry {p1} is encrypted", { p1: name }));
+      if (local + 30 > bytes.length || view.getUint32(local, true) !== 0x04034b50) throw new Error(i18n.t("corrupt ZIP local header for {p1}", { p1: name }));
       const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
-      if (start + compressed > bytes.length) throw new Error(`truncated ZIP entry ${name}`);
+      if (start + compressed > bytes.length) throw new Error(i18n.t("truncated ZIP entry {p1}", { p1: name }));
       const raw = bytes.subarray(start, start + compressed);
       const result = method === 0 ? raw : method === 8 ? await inflateRaw(raw) : null;
-      if (!result) throw new Error(`ZIP entry ${name} uses unsupported compression method ${method}`);
-      if (result.length !== expanded) throw new Error(`incorrect ZIP entry size for ${name}`);
+      if (!result) throw new Error(i18n.t("ZIP entry {p1} uses unsupported compression method {p2}", { p1: name, p2: method }));
+      if (result.length !== expanded) throw new Error(i18n.t("incorrect ZIP entry size for {p1}", { p1: name }));
       return result;
     } });
   }
@@ -118,7 +119,7 @@ export async function readZip(bytes: Uint8Array): Promise<Map<string, Uint8Array
 /** The `.npy` container: magic, a Python-literal header, then the raw array. */
 export function parseNpy(bytes: Uint8Array): NpyArray {
   if (bytes.length < 10 || bytes[0] !== 0x93 || new TextDecoder().decode(bytes.subarray(1, 6)) !== 'NUMPY') {
-    throw new Error('not a .npy array');
+    throw new Error(i18n.t("not a .npy array"));
   }
   const major = bytes[6];
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -128,7 +129,7 @@ export function parseNpy(bytes: Uint8Array): NpyArray {
   const dtype = /'descr':\s*'([^']+)'/.exec(header)?.[1];
   const fortran = /'fortran_order':\s*(True|False)/.exec(header)?.[1];
   const shapeText = /'shape':\s*\(([^)]*)\)/.exec(header)?.[1];
-  if (!dtype || !fortran || shapeText === undefined) throw new Error('unreadable .npy header');
+  if (!dtype || !fortran || shapeText === undefined) throw new Error(i18n.t("unreadable .npy header"));
   const shape = shapeText.split(',').map((s) => s.trim()).filter(Boolean).map(Number);
   const data = bytes.slice(headerStart + headerLength);
   return { dtype, shape, fortranOrder: fortran === 'True', data };
@@ -161,9 +162,9 @@ const readFloats = (array: NpyArray, what: string): Float64Array => {
   const view = new DataView(array.data.buffer, array.data.byteOffset, array.data.byteLength);
   const n = array.shape.reduce((a, b) => a * b, 1);
   const read = DTYPE_READERS[array.dtype];
-  if (!read) throw new Error(`${what} has dtype ${array.dtype}; expected a 4- or 8-byte float or integer`);
+  if (!read) throw new Error(i18n.t("{p1} has dtype {p2}; expected a 4- or 8-byte float or integer", { p1: what, p2: array.dtype }));
   const width = Number(array.dtype.slice(2));
-  if (array.data.byteLength < n * width) throw new Error(`${what} is shorter than its shape says`);
+  if (array.data.byteLength < n * width) throw new Error(i18n.t("{p1} is shorter than its shape says", { p1: what }));
   const out = new Float64Array(n);
   for (let i = 0; i < n; i += 1) out[i] = read(view, i);
   return out;
@@ -190,10 +191,10 @@ export async function parseFrameFile(name: string, bytes: Uint8Array): Promise<R
   // With or without `.npy` on the member name, as np.load accepts either.
   const voxelsEntry = entries.get('voxels.npy') ?? entries.get('voxels');
   const sizeEntry = entries.get('voxel_size.npy') ?? entries.get('voxel_size');
-  if (!voxelsEntry || !sizeEntry) throw new Error(`${name}: not a reconstruction frame (needs voxels and voxel_size)`);
+  if (!voxelsEntry || !sizeEntry) throw new Error(i18n.t("{p1}: not a reconstruction frame (needs voxels and voxel_size)", { p1: name }));
   const voxelsArray = parseNpy(voxelsEntry);
   if (voxelsArray.shape.length !== 2 || voxelsArray.shape[1] !== 3) {
-    throw new Error(`${name}: voxels must be an (M, 3) array, got shape (${voxelsArray.shape.join(', ')})`);
+    throw new Error(i18n.t("{p1}: voxels must be an (M, 3) array, got shape ({p2})", { p1: name, p2: voxelsArray.shape.join(', ') }));
   }
   let voxels = readFloats(voxelsArray, `${name}: voxels`);
   if (voxelsArray.fortranOrder) {
@@ -205,11 +206,11 @@ export async function parseFrameFile(name: string, bytes: Uint8Array): Promise<R
     voxels = rows;
   }
   for (let i = 0; i < voxels.length; i += 1) {
-    if (!Number.isFinite(voxels[i])) throw new Error(`${name}: voxel coordinates must be finite`);
+    if (!Number.isFinite(voxels[i])) throw new Error(i18n.t("{p1}: voxel coordinates must be finite", { p1: name }));
   }
   const size = readFloats(parseNpy(sizeEntry), `${name}: voxel_size`);
   if (size.length !== 1 || !(size[0] > 0) || !Number.isFinite(size[0])) {
-    throw new Error(`${name}: voxel_size must be a positive number`);
+    throw new Error(i18n.t("{p1}: voxel_size must be a positive number", { p1: name }));
   }
   return { timestamp_s: timestamp, voxels, voxelSize_m: size[0], name };
 }
@@ -232,7 +233,7 @@ export function inferPitch(voxels: Float64Array): number {
     const gap = xs[i] - xs[i - 1];
     if (gap > 1e-9 && gap < pitch) pitch = gap;
   }
-  if (!Number.isFinite(pitch)) throw new Error('cannot infer the lattice pitch: no two voxels share a row');
+  if (!Number.isFinite(pitch)) throw new Error(i18n.t("cannot infer the lattice pitch: no two voxels share a row"));
   return pitch;
 }
 
@@ -293,8 +294,8 @@ export function packFrame(timestamp_s: number, voxels: Float64Array, originM: Ar
   for (let i = 0; i < n * 3; i += 1) {
     const scaled = (voxels[i] - originM[i % 3]) / pitch;
     const k = Math.round(scaled);
-    if (Math.abs(scaled - k) > LATTICE_TOLERANCE) throw new Error('voxels are not on the sequence lattice');
-    if (k < 0) throw new Error('voxels lie before the lattice origin');
+    if (Math.abs(scaled - k) > LATTICE_TOLERANCE) throw new Error(i18n.t("voxels are not on the sequence lattice"));
+    if (k < 0) throw new Error(i18n.t("voxels lie before the lattice origin"));
     idx[i] = k;
     const axis = i % 3;
     if (k < lo[axis]) lo[axis] = k;
@@ -305,7 +306,7 @@ export function packFrame(timestamp_s: number, voxels: Float64Array, originM: Ar
   // the renderer addresses cells in 16 bits, and a longer axis drew its far cubes
   // at wrapped positions metres from where they are. Same sentence as `pack`.
   if (dims.some((d) => d > MAX_FRAME_DIM)) {
-    throw new Error(`frame at ${timestamp_s} s spans ${Math.max(dims[0], dims[1], dims[2])} cells on one axis; the packed form holds at most ${MAX_FRAME_DIM}`);
+    throw new Error(i18n.t("frame at {p1} s spans {p2} cells on one axis; the packed form holds at most {p3}", { p1: timestamp_s, p2: Math.max(dims[0], dims[1], dims[2]), p3: MAX_FRAME_DIM }));
   }
   const cells = dims[0] * dims[1] * dims[2];
   const bits = new Uint8Array(Math.ceil(cells / 8));
@@ -315,7 +316,7 @@ export function packFrame(timestamp_s: number, voxels: Float64Array, originM: Ar
     const byte = flat >> 3, mask = 0x80 >> (flat & 7);
     if (!(bits[byte] & mask)) { bits[byte] |= mask; count += 1; }
   }
-  if (count !== n) throw new Error(`frame at ${timestamp_s} s holds ${n - count} duplicate voxel(s)`);
+  if (count !== n) throw new Error(i18n.t("frame at {p1} s holds {p2} duplicate voxel(s)", { p1: timestamp_s, p2: n - count }));
   return { timestamp_s, count, origin: [lo[0], lo[1], lo[2]], dims, bits };
 }
 
@@ -338,20 +339,20 @@ const POPCOUNT = Uint8Array.from({ length: 256 }, (_, b) => {
  */
 export function frameProblem(frame: PackedFrame, extent: ArrayLike<number>): string | null {
   const { count, origin, dims, bits } = frame;
-  if (!Number.isFinite(frame.timestamp_s)) return 'has a non-finite timestamp';
+  if (!Number.isFinite(frame.timestamp_s)) return i18n.t("has a non-finite timestamp");
   if (count === 0) {
-    return dims.some((d) => d !== 0) || origin.some((o) => o !== 0) || bits.length !== 0 ? 'is empty but carries a box' : null;
+    return dims.some((d) => d !== 0) || origin.some((o) => o !== 0) || bits.length !== 0 ? i18n.t("is empty but carries a box") : null;
   }
-  if (dims.some((d) => d <= 0)) return `declares ${count} voxels in a box with no cells`;
+  if (dims.some((d) => d <= 0)) return i18n.t("declares {p1} voxels in a box with no cells", { p1: count });
   const cells = dims[0] * dims[1] * dims[2];
-  if (bits.length !== Math.ceil(cells / 8)) return `holds ${bits.length} bytes for a box of ${cells} cells`;
+  if (bits.length !== Math.ceil(cells / 8)) return i18n.t("holds {p1} bytes for a box of {p2} cells", { p1: bits.length, p2: cells });
   const padding = bits.length * 8 - cells;
-  if (padding && (bits[bits.length - 1] & ((1 << padding) - 1))) return 'has bits set past its last cell';
+  if (padding && (bits[bits.length - 1] & ((1 << padding) - 1))) return i18n.t("has bits set past its last cell");
   let set = 0;
   for (let i = 0; i < bits.length; i += 1) set += POPCOUNT[bits[i]];
-  if (set !== count) return `declares ${count} voxels but holds ${set}`;
+  if (set !== count) return i18n.t("declares {p1} voxels but holds {p2}", { p1: count, p2: set });
   for (let a = 0; a < 3; a += 1) {
-    if (origin[a] < 0 || origin[a] + dims[a] - 1 > extent[a]) return 'has a box outside the sequence bounds';
+    if (origin[a] < 0 || origin[a] + dims[a] - 1 > extent[a]) return i18n.t("has a box outside the sequence bounds");
   }
   return null;
 }
@@ -395,16 +396,16 @@ export class FlameSequence {
 
   /** Build from the pipeline's files. Frames may arrive in any order. */
   static fromFrames(raw: RawFrame[]): FlameSequence {
-    if (!raw.length) throw new Error('no t_<seconds>s.npz frames');
+    if (!raw.length) throw new Error(i18n.t("no t_<seconds>s.npz frames"));
     const sorted = [...raw].sort((a, b) => a.timestamp_s - b.timestamp_s);
     for (let i = 1; i < sorted.length; i += 1) {
-      if (sorted[i].timestamp_s === sorted[i - 1].timestamp_s) throw new Error(`two frames carry the timestamp ${sorted[i].timestamp_s} s`);
+      if (sorted[i].timestamp_s === sorted[i - 1].timestamp_s) throw new Error(i18n.t("two frames carry the timestamp {p1} s", { p1: sorted[i].timestamp_s }));
     }
     const sizes = new Set(sorted.map((f) => f.voxelSize_m));
-    if (sizes.size !== 1) throw new Error(`frames disagree about voxel_size: ${[...sizes].sort().join(', ')}`);
+    if (sizes.size !== 1) throw new Error(i18n.t("frames disagree about voxel_size: {p1}", { p1: [...sizes].sort().join(', ') }));
     const voxelSize = sorted[0].voxelSize_m;
     const populated = sorted.filter((f) => f.voxels.length);
-    if (!populated.length) throw new Error('every frame is empty; nothing to reconstruct a grid from');
+    if (!populated.length) throw new Error(i18n.t("every frame is empty; nothing to reconstruct a grid from"));
     const fullest = populated.reduce((a, b) => (b.voxels.length > a.voxels.length ? b : a));
     const lo: [number, number, number] = [Infinity, Infinity, Infinity];
     const hi: [number, number, number] = [-Infinity, -Infinity, -Infinity];
@@ -477,7 +478,7 @@ export class FlameSequence {
     // axis, and Python's struct writer refuses it, so the two would disagree.
     for (const f of this.frames) {
       if (f.dims.some((d) => d > MAX_FRAME_DIM)) {
-        throw new Error(`frame at ${f.timestamp_s} s spans ${Math.max(...f.dims)} cells on one axis; the packed form holds at most ${MAX_FRAME_DIM}`);
+        throw new Error(i18n.t("frame at {p1} s spans {p2} cells on one axis; the packed form holds at most {p3}", { p1: f.timestamp_s, p2: Math.max(...f.dims), p3: MAX_FRAME_DIM }));
       }
     }
     const total = 4 + 5 + 20 + 48 + this.frames.reduce((n, f) => n + FRAME_HEADER_BYTES + f.bits.length, 0);
@@ -517,8 +518,8 @@ export class FlameSequence {
    */
   static unpack(data: Uint8Array): FlameSequence {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-    if (data.length < 77 || PACK_MAGIC.some((b, i) => data[i] !== b)) throw new Error('not a packed flame sequence');
-    if (view.getUint8(4) !== PACK_VERSION) throw new Error(`packed flame sequence version ${view.getUint8(4)} is not supported`);
+    if (data.length < 77 || PACK_MAGIC.some((b, i) => data[i] !== b)) throw new Error(i18n.t("not a packed flame sequence"));
+    if (view.getUint8(4) !== PACK_VERSION) throw new Error(i18n.t("packed flame sequence version {p1} is not supported", { p1: view.getUint8(4) }));
     const count = view.getUint32(5, true);
     const resolution = view.getInt32(25, true);
     const grid: FlameGrid = { voxelSize_m: view.getFloat64(9, true), pitch_m: view.getFloat64(17, true), resolution: resolution < 0 ? null : resolution };
@@ -527,7 +528,7 @@ export class FlameSequence {
     const frames: PackedFrame[] = [];
     let offset = 77;
     for (let n = 0; n < count; n += 1) {
-      if (offset + FRAME_HEADER_BYTES > data.length) throw new Error('packed flame sequence is truncated');
+      if (offset + FRAME_HEADER_BYTES > data.length) throw new Error(i18n.t("packed flame sequence is truncated"));
       const nbytes = view.getUint32(offset + 30, true);
       const frame: PackedFrame = {
         timestamp_s: view.getFloat64(offset, true),
@@ -536,25 +537,25 @@ export class FlameSequence {
         dims: [view.getUint16(offset + 24, true), view.getUint16(offset + 26, true), view.getUint16(offset + 28, true)],
         bits: data.slice(offset + FRAME_HEADER_BYTES, offset + FRAME_HEADER_BYTES + nbytes),
       };
-      if (frame.bits.length !== nbytes) throw new Error('packed flame sequence is truncated');
+      if (frame.bits.length !== nbytes) throw new Error(i18n.t("packed flame sequence is truncated"));
       frames.push(frame);
       offset += FRAME_HEADER_BYTES + nbytes;
     }
-    if (offset !== data.length) throw new Error(`packed flame sequence has ${data.length - offset} trailing byte(s)`);
+    if (offset !== data.length) throw new Error(i18n.t("packed flame sequence has {p1} trailing byte(s)", { p1: data.length - offset }));
     const sequence = new FlameSequence(grid, bounds, frames);
     const problem = voxelSequenceProblem(sequence.manifest('packed'));
-    if (problem) throw new Error(`packed flame sequence is inconsistent: ${problem}`);
+    if (problem) throw new Error(i18n.t("packed flame sequence is inconsistent: {p1}", { p1: problem }));
     // The bounds are voxel centres, so they sit a whole number of pitches apart;
     // rounding a maximum that does not would admit a box whose last cell decodes
     // past it. Real bounds land within 1e-9 of a lattice point, like the frames.
     const extent = [0, 1, 2].map((a) => {
       const cells = (bounds[1][a] - bounds[0][a]) / grid.pitch_m;
-      if (Math.abs(cells - Math.round(cells)) > LATTICE_TOLERANCE) throw new Error('packed flame sequence is inconsistent: its bounds are not on its lattice');
+      if (Math.abs(cells - Math.round(cells)) > LATTICE_TOLERANCE) throw new Error(i18n.t("packed flame sequence is inconsistent: its bounds are not on its lattice"));
       return Math.round(cells);
     });
     for (const frame of frames) {
       const bad = frameProblem(frame, extent);
-      if (bad) throw new Error(`packed flame sequence is inconsistent: the frame at ${frame.timestamp_s} s ${bad}`);
+      if (bad) throw new Error(i18n.t("packed flame sequence is inconsistent: the frame at {p1} s {p2}", { p1: frame.timestamp_s, p2: bad }));
     }
     return sequence;
   }

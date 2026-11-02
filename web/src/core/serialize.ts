@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 /**
  * Canonical JSON writer. Mirror of python/fireplan/serialize.py.
  *
@@ -347,7 +348,7 @@ function collapseNumericArrays(text: string): string {
  */
 function refuseNonFinite(_key: string, value: unknown): unknown {
   if (typeof value === 'number' && !Number.isFinite(value)) {
-    throw new Error(`Out of range float values are not JSON compliant: ${value}`);
+    throw new Error(i18n.t("Out of range float values are not JSON compliant: {p1}", { p1: value }));
   }
   return value;
 }

@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 /**
  * Loaded flame sequences: a session cache beside the document.
  *
@@ -158,7 +159,7 @@ export class FlameStore {
     promise = (async () => {
       try {
         const sequence = await this.read(source, entry, () => cancelled);
-        if (cancelled) throw new Error('cancelled');
+        if (cancelled) throw new Error(i18n.t("cancelled"));
         this.attach(link, sequence);
         return sequence;
       } catch (err) {
@@ -201,12 +202,12 @@ export class FlameStore {
       ? source.files.map((f) => f.name)
       : await source.list();
     const frameNames = names.filter((n) => frameTimestamp(n) !== null);
-    if (!frameNames.length) throw new Error('No t_<seconds>s.npz frames were found in the folder.');
+    if (!frameNames.length) throw new Error(i18n.t("No t_<seconds>s.npz frames were found in the folder."));
     entry.progress = { done: 0, total: frameNames.length };
     this.emit();
     const raw: RawFrame[] = [];
     for (const name of frameNames) {
-      if (cancelled()) throw new Error('cancelled');
+      if (cancelled()) throw new Error(i18n.t("cancelled"));
       const bytes = source.kind === 'files'
         ? new Uint8Array(await source.files.find((f) => f.name === name)!.arrayBuffer())
         : await source.read(name);

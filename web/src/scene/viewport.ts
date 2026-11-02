@@ -29,7 +29,7 @@ import {
   vfovRadOf,
 } from '../core/plan';
 import { setPosition, setRotation } from '../core/transform';
-import { formatLengthWithUnit, gridStep } from '../core/units';
+import { formatLengthWithUnit, gridStep } from '../ui/display-units';
 import { makeLabel } from './labels';
 import type { BurnerObject, CameraObject, PlanObject } from '../core/types';
 import { coneTime } from '../state/fire-clock';

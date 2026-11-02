@@ -1,3 +1,4 @@
+import * as i18n from '../ui/i18n';
 import { delimitedRows } from './delimited';
 import type { LinkedFileKind, PlanObject, ReconstructionPlot, VoxelSequenceManifest } from './types';
 import { isKnownType } from './types';
@@ -30,28 +31,28 @@ export const isNetworkPath = (path: string): boolean => /^[\\/]{2}/.test(path.tr
 
 /** Refuse bad rows rather than connecting across silently dropped measurements. */
 export function parseReconstructionCsv(text: string, importedAt = new Date().toISOString()): ReconstructionPlot {
-  if (new TextEncoder().encode(text).byteLength > MAX_CSV_BYTES) throw new Error('CSV exceeds the 5 MiB plot limit.');
+  if (new TextEncoder().encode(text).byteLength > MAX_CSV_BYTES) throw new Error(i18n.t("CSV exceeds the 5 MiB plot limit."));
   const table = delimitedRows(text, undefined, true, MAX_PLOT_SAMPLES + 1);
   const headers = table.shift()?.map((x) => x.toLowerCase()) ?? [];
   const required = ['timestamp_s', 'volume_m3', 'surface_area_m2'];
   const indices = required.map((name) => {
-    if (headers.filter((h) => h === name).length !== 1) throw new Error(`CSV needs exactly one "${name}" column.`);
+    if (headers.filter((h) => h === name).length !== 1) throw new Error(i18n.t("CSV needs exactly one \"{p1}\" column.", { p1: name }));
     return headers.indexOf(name);
   });
-  if (!table.length) throw new Error('CSV contains no measurements.');
+  if (!table.length) throw new Error(i18n.t("CSV contains no measurements."));
   let previous = -Infinity;
   const samples = table.map((row, index): [number, number, number] => {
-    if (row.length !== headers.length) throw new Error(`CSV row ${index + 2} has ${row.length} fields; expected ${headers.length}.`);
+    if (row.length !== headers.length) throw new Error(i18n.t("CSV row {p1} has {p2} fields; expected {p3}.", { p1: index + 2, p2: row.length, p3: headers.length }));
     const values = indices.map((column, i) => {
       const cell = row[column];
       if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(cell)) {
-        throw new Error(`CSV row ${index + 2}: ${required[i]} is not a number.`);
+        throw new Error(i18n.t("CSV row {p1}: {p2} is not a number.", { p1: index + 2, p2: required[i] }));
       }
       const value = Number(cell);
-      if (!Number.isFinite(value) || (i > 0 && value < 0)) throw new Error(`CSV row ${index + 2}: ${required[i]} must be finite${i > 0 ? ' and non-negative' : ''}.`);
+      if (!Number.isFinite(value) || (i > 0 && value < 0)) throw new Error(i18n.t("CSV row {p1}: {p2} must be finite{p3}.", { p1: index + 2, p2: required[i], p3: i > 0 ? i18n.t(" and non-negative") : '' }));
       return value;
     }) as [number, number, number];
-    if (values[0] <= previous) throw new Error(`CSV row ${index + 2}: timestamps must increase strictly.`);
+    if (values[0] <= previous) throw new Error(i18n.t("CSV row {p1}: timestamps must increase strictly.", { p1: index + 2 }));
     previous = values[0];
     return values;
   });
@@ -67,22 +68,22 @@ const isVec3 = (v: unknown): v is [number, number, number] =>
  * least the voxel size (the grid is endpoint-inclusive, so it cannot be smaller).
  */
 export function voxelSequenceProblem(sequence: VoxelSequenceManifest): string | null {
-  if (!sequence || typeof sequence !== 'object' || typeof sequence.importedAt !== 'string' || !sequence.importedAt) return 'A voxel sequence needs an import date.';
-  if (Object.keys(sequence).some((key) => !['importedAt', 'grid', 'bounds_m', 'frames'].includes(key))) return 'Voxel sequences contain an unsupported field.';
+  if (!sequence || typeof sequence !== 'object' || typeof sequence.importedAt !== 'string' || !sequence.importedAt) return i18n.t("A voxel sequence needs an import date.");
+  if (Object.keys(sequence).some((key) => !['importedAt', 'grid', 'bounds_m', 'frames'].includes(key))) return i18n.t("Voxel sequences contain an unsupported field.");
   const grid = sequence.grid;
-  if (!grid || typeof grid !== 'object' || Object.keys(grid).some((key) => !['voxelSize_m', 'pitch_m', 'resolution'].includes(key))) return 'A voxel sequence needs a grid with voxelSize_m, pitch_m and resolution.';
+  if (!grid || typeof grid !== 'object' || Object.keys(grid).some((key) => !['voxelSize_m', 'pitch_m', 'resolution'].includes(key))) return i18n.t("A voxel sequence needs a grid with voxelSize_m, pitch_m and resolution.");
   const positive = (x: unknown): boolean => typeof x === 'number' && Number.isFinite(x) && x > 0;
   // Within the snap tolerance of the readers (`PITCH_SNAP` in core/flame.ts): a grid
   // whose pitch IS its voxel size, inferred a few ulps short, used to be refused.
-  if (!positive(grid.voxelSize_m) || !positive(grid.pitch_m) || grid.pitch_m < grid.voxelSize_m * (1 - 1e-4)) return 'A voxel sequence needs a positive voxel size and a pitch no smaller than it.';
-  if (grid.resolution !== null && (!Number.isInteger(grid.resolution) || grid.resolution < 2)) return 'A voxel sequence needs an integer grid resolution of at least 2, or null.';
+  if (!positive(grid.voxelSize_m) || !positive(grid.pitch_m) || grid.pitch_m < grid.voxelSize_m * (1 - 1e-4)) return i18n.t("A voxel sequence needs a positive voxel size and a pitch no smaller than it.");
+  if (grid.resolution !== null && (!Number.isInteger(grid.resolution) || grid.resolution < 2)) return i18n.t("A voxel sequence needs an integer grid resolution of at least 2, or null.");
   const bounds = sequence.bounds_m;
-  if (!Array.isArray(bounds) || bounds.length !== 2 || !isVec3(bounds[0]) || !isVec3(bounds[1]) || bounds[0].some((lo, i) => lo > bounds[1][i])) return 'A voxel sequence needs finite bounds with the minimum corner first.';
+  if (!Array.isArray(bounds) || bounds.length !== 2 || !isVec3(bounds[0]) || !isVec3(bounds[1]) || bounds[0].some((lo, i) => lo > bounds[1][i])) return i18n.t("A voxel sequence needs finite bounds with the minimum corner first.");
   const frames = sequence.frames;
-  if (!Array.isArray(frames) || !frames.length || frames.length > MAX_SEQUENCE_FRAMES) return 'A voxel sequence needs 1–20,000 frames.';
+  if (!Array.isArray(frames) || !frames.length || frames.length > MAX_SEQUENCE_FRAMES) return i18n.t("A voxel sequence needs 1–20,000 frames.");
   let previous = -Infinity;
   for (const frame of frames) {
-    if (!Array.isArray(frame) || frame.length !== 2 || typeof frame[0] !== 'number' || !Number.isFinite(frame[0]) || frame[0] <= previous || !Number.isInteger(frame[1]) || frame[1] < 0) return 'Voxel sequence frames need strictly increasing finite times and non-negative integer voxel counts.';
+    if (!Array.isArray(frame) || frame.length !== 2 || typeof frame[0] !== 'number' || !Number.isFinite(frame[0]) || frame[0] <= previous || !Number.isInteger(frame[1]) || frame[1] < 0) return i18n.t("Voxel sequence frames need strictly increasing finite times and non-negative integer voxel counts.");
     previous = frame[0];
   }
   return null;
@@ -92,33 +93,33 @@ export function voxelSequenceProblem(sequence: VoxelSequenceManifest): string | 
 export function linkedFilesProblem(obj: PlanObject): string | null {
   if (!isKnownType(obj.type)) return null;
   if (obj.linkedFiles === undefined) return null;
-  if (!canLinkFiles(obj)) return 'This object type does not support linked files.';
+  if (!canLinkFiles(obj)) return i18n.t("This object type does not support linked files.");
   const maxLinks = maxLinksFor(obj.type);
   if (!Array.isArray(obj.linkedFiles) || obj.linkedFiles.length > maxLinks) {
-    return maxLinks === 1 ? 'A reconstructed flame links one voxel sequence.' : 'linkedFiles must be an array of at most 100 files.';
+    return maxLinks === 1 ? i18n.t("A reconstructed flame links one voxel sequence.") : i18n.t("linkedFiles must be an array of at most 100 files.");
   }
   const ids = new Set<string>();
   for (const link of obj.linkedFiles) {
-    if (!link || typeof link !== 'object' || typeof link.id !== 'string' || !link.id || ids.has(link.id)) return 'Linked file IDs must be non-empty and unique within their object.';
+    if (!link || typeof link !== 'object' || typeof link.id !== 'string' || !link.id || ids.has(link.id)) return i18n.t("Linked file IDs must be non-empty and unique within their object.");
     ids.add(link.id);
-    if (Object.keys(link).some((key) => !['id', 'kind', 'path', 'label', 'timeOffset_s', 'plot', 'sequence'].includes(key))) return 'Linked files contain an unsupported field.';
-    if (typeof link.path !== 'string' || !isLocalPath(link.path)) return 'Linked files need a local file path, not a URL.';
-    if (link.kind !== linkKindFor(obj.type)) return 'Cameras link videos; burners and sensors link spreadsheets; a reconstructed flame links a voxel sequence.';
-    if (link.label !== undefined && typeof link.label !== 'string') return 'Linked file labels must be text.';
-    if (link.timeOffset_s !== undefined && (typeof link.timeOffset_s !== 'number' || !Number.isFinite(link.timeOffset_s))) return 'A linked file time offset must be a finite number of seconds.';
+    if (Object.keys(link).some((key) => !['id', 'kind', 'path', 'label', 'timeOffset_s', 'plot', 'sequence'].includes(key))) return i18n.t("Linked files contain an unsupported field.");
+    if (typeof link.path !== 'string' || !isLocalPath(link.path)) return i18n.t("Linked files need a local file path, not a URL.");
+    if (link.kind !== linkKindFor(obj.type)) return i18n.t("Cameras link videos; burners and sensors link spreadsheets; a reconstructed flame links a voxel sequence.");
+    if (link.label !== undefined && typeof link.label !== 'string') return i18n.t("Linked file labels must be text.");
+    if (link.timeOffset_s !== undefined && (typeof link.timeOffset_s !== 'number' || !Number.isFinite(link.timeOffset_s))) return i18n.t("A linked file time offset must be a finite number of seconds.");
     if (link.sequence !== undefined) {
-      if (obj.type !== 'reconstructedFlame') return 'Only a reconstructed flame link can hold a voxel sequence.';
+      if (obj.type !== 'reconstructedFlame') return i18n.t("Only a reconstructed flame link can hold a voxel sequence.");
       const problem = voxelSequenceProblem(link.sequence);
       if (problem) return problem;
     }
     if (link.plot !== undefined) {
-      if (obj.type !== 'burner' || !link.plot || typeof link.plot.importedAt !== 'string' || !link.plot.importedAt) return 'Only burner spreadsheets can hold reconstruction plots, with an import date.';
-      if (Object.keys(link.plot).some((key) => !['importedAt', 'samples'].includes(key))) return 'Reconstruction plots contain an unsupported field.';
+      if (obj.type !== 'burner' || !link.plot || typeof link.plot.importedAt !== 'string' || !link.plot.importedAt) return i18n.t("Only burner spreadsheets can hold reconstruction plots, with an import date.");
+      if (Object.keys(link.plot).some((key) => !['importedAt', 'samples'].includes(key))) return i18n.t("Reconstruction plots contain an unsupported field.");
       const samples = link.plot.samples;
-      if (!Array.isArray(samples) || !samples.length || samples.length > MAX_PLOT_SAMPLES) return 'A plot needs 1–20,000 samples.';
+      if (!Array.isArray(samples) || !samples.length || samples.length > MAX_PLOT_SAMPLES) return i18n.t("A plot needs 1–20,000 samples.");
       let previous = -Infinity;
       for (const sample of samples) {
-        if (!Array.isArray(sample) || sample.length !== 3 || !sample.every((x, i) => typeof x === 'number' && Number.isFinite(x) && (i === 0 || x >= 0)) || sample[0] <= previous) return 'Plot samples need strictly increasing finite times and finite, non-negative volume and area.';
+        if (!Array.isArray(sample) || sample.length !== 3 || !sample.every((x, i) => typeof x === 'number' && Number.isFinite(x) && (i === 0 || x >= 0)) || sample[0] <= previous) return i18n.t("Plot samples need strictly increasing finite times and finite, non-negative volume and area.");
         previous = sample[0];
       }
     }

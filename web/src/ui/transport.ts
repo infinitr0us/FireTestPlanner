@@ -1,18 +1,19 @@
+import * as i18n from './i18n';
 import { h } from './dom';
 
-const controls = {
-  first: ['⏮\uFE0E', 'First frame (Home)'],
-  previous: ['◀', 'Previous frame (,)'],
-  play: ['▶', 'Play (Space)'],
-  next: ['▶|', 'Next frame (.)'],
-  last: ['⏭\uFE0E', 'Last frame (End)'],
-} as const;
-type TransportAction = keyof typeof controls;
+const controls = () => ({
+  first: ['⏮\uFE0E', i18n.t("First frame (Home)")],
+  previous: ['◀', i18n.t("Previous frame (,)")],
+  play: ['▶', i18n.t("Play (Space)")],
+  next: ['▶|', i18n.t("Next frame (.)")],
+  last: ['⏭\uFE0E', i18n.t("Last frame (End)")],
+} as const);
+type TransportAction = keyof ReturnType<typeof controls>;
 export type TransportCommands = Record<TransportAction, () => void>;
 
 /** Shared affordances; each workspace retains its own clock and loading policy. */
 export function transportButton(action: TransportAction, onclick: () => void): HTMLButtonElement {
-  const [glyph, label] = controls[action];
+  const [glyph, label] = controls()[action];
   return h(
     'button',
     {
@@ -28,7 +29,7 @@ export function transportButton(action: TransportAction, onclick: () => void): H
 
 export function setTransportPlaying(button: HTMLButtonElement, playing: boolean): void {
   button.textContent = playing ? '❚❚' : '▶';
-  const label = playing ? 'Pause (Space)' : 'Play (Space)';
+  const label = playing ? i18n.t("Pause (Space)") : i18n.t("Play (Space)");
   button.title = label;
   button.setAttribute('aria-label', label);
 }
