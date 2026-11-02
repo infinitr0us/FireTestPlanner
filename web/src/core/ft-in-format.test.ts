@@ -13,7 +13,7 @@ describe('format 1.5 feet and inches (mirrored by test_ft_in_format.py)', () => 
     expect(serializePlan(doc)).toBe(text);
     expect(requiredFormatVersion(doc)).toBe('1.5.0');
     expect(FORMAT_VERSIONS).toContain('1.5.0');
-    expect(FORMAT_VERSION_LATEST).toBe('1.5.0');
+    expect(FORMAT_VERSION_LATEST).toBe('1.6.0');
     doc.version = '1.0.0';
     expect(checkPlan(doc).some(i => i.code === 'version-understated')).toBe(true);
     expect(serializePlan(doc)).toBe(text);

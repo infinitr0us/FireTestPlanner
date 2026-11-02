@@ -6,13 +6,14 @@ Clearing and detaching parsed cells/rows avoids retaining the XML tree.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 import io
 import re
 from urllib.parse import unquote
 import xml.etree.ElementTree as ET
 import zipfile
 
-from .tables import Grid, channel_units, numeric_cell
+from .tables import Grid, channel_units, detect_shape, numeric_cell, time_shift_hint
 
 MAX_CELLS = 10_000_000
 
@@ -207,3 +208,31 @@ def workbook_channel_units(raw):
         for sheet in sheets:
             result.update(channel_units(_read_part(archive, sheet, relationships, shared)))
         return result
+
+
+@dataclass(frozen=True)
+class WorkbookTimeShiftHint:
+    seconds: float
+    sheets: list[str]
+
+
+def workbook_time_shift_hint(raw):
+    """Return the agreed non-null sheet hints and their sheet names, or None.
+
+    Only processed sheets count: the shift is written in the header above their data.
+    A logger's metadata sheet has an ``offset`` column of its own (0), which made a real
+    workbook's three agreeing 420 s hints read as ambiguous.
+    """
+    with _archive(raw) as archive:
+        sheets, relationships, shared = _sheets(archive), _relationships(archive), _shared_strings(archive)
+        hints = []
+        for sheet in sheets:
+            grid = _read_part(archive, sheet, relationships, shared)
+            if detect_shape(grid).shape != 'processed':
+                continue
+            hint = time_shift_hint(grid)
+            if hint is not None:
+                hints.append((sheet[0], hint.seconds))
+        if len({seconds for _, seconds in hints}) != 1:
+            return None
+        return WorkbookTimeShiftHint(hints[0][1], [name for name, _ in hints])

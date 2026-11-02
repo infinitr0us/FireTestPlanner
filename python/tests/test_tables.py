@@ -9,7 +9,7 @@ import zipfile
 
 import pytest
 
-from fireplan.xlsx import list_sheets, read_sheet, workbook_channel_units
+from fireplan.xlsx import list_sheets, read_sheet, workbook_channel_units, workbook_time_shift_hint
 from fireplan.tables import Grid, Layout, calibration_hint, channel_units, detect_shape, extract_series, read_delimited, time_shift_hint
 
 FOLDER = Path(__file__).resolve().parents[2] / 'fixtures/test-data'
@@ -59,9 +59,41 @@ def test_shift_hints():
     assert time_shift_hint([[12, 'shift', 13]]) is None
     ambiguous = [row[:] for row in MIXED]
     ambiguous[3][2] = 0.72
-    assert time_shift_hint(ambiguous) is None
+    assert asdict(time_shift_hint(ambiguous)) == dict(seconds=120, row=3, column=1)
+    assert time_shift_hint([[None, 12], ['note', 'shift', 0.72], [None, 13]]) is None
+    assert asdict(time_shift_hint([[None, 12], ['note', 'shift', 0.72], [None, 12]])) == dict(seconds=12, row=1, column=1)
     assert time_shift_hint([['Time', 'offset'], [0, 10], [1, 20]]) is None
     assert time_shift_hint([['Time', 'Value'], [0, 1]]) is None
+
+
+def test_workbook_shift_hints():
+    raw = (FOLDER / 'logger-export.xlsx').read_bytes()
+    assert asdict(workbook_time_shift_hint(raw)) == dict(seconds=120, sheets=['Processed'])
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        entries = {name: z.read(name) for name in z.namelist()}
+    def rezip():
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+            for name, value in entries.items():
+                z.writestr(name, value)
+        return out.getvalue()
+
+    # An `offset` on a sheet that is not a processed table (a logger's metadata sheet
+    # has an offset column) is not a shift and must not make the agreed hint ambiguous.
+    entries['xl/worksheets/constants.xml'] = (f'<worksheet xmlns="{NS}"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>offset</t></is></c><c r="B1"><v>121</v></c></row></sheetData></worksheet>').encode('utf-8')
+    assert asdict(workbook_time_shift_hint(rezip())) == dict(seconds=120, sheets=['Processed'])
+    # Two processed sheets that disagree do make it ambiguous.
+    rows = [['Time', 'ELAPSED TIME', 'Value'], ['From ignition', '[sec]', '[kW]'], [None, 121, None],
+            ['[min]', 'shft time', None], [0, 0, 1], [1 / 60, 1, 2], [2 / 60, 2, 3]]
+
+    def cell(ref, v):
+        return (f'<c r="{ref}"><v>{v!r}</v></c>' if isinstance(v, (int, float))
+                else f'<c r="{ref}" t="inlineStr"><is><t>{v}</t></is></c>')
+    body = ''.join(f'<row r="{i + 1}">' + ''.join(cell(f'{"ABC"[j]}{i + 1}', v) for j, v in enumerate(r) if v is not None)
+                   + '</row>' for i, r in enumerate(rows))
+    entries['xl/worksheets/constants.xml'] = f'<worksheet xmlns="{NS}"><sheetData>{body}</sheetData></worksheet>'.encode('utf-8')
+    assert workbook_time_shift_hint(rezip()) is None
+    assert workbook_time_shift_hint(workbook('')) is None
 
 
 def test_unit_gated_calibration_and_empty_sheets():

@@ -157,19 +157,22 @@ def for_destination(data, source_path, destination):
     process's current drive, so the result depended on where Python was started.
     """
     result = deepcopy(data)
+    links = []
     for obj in result.get('objects', []):
         if not links_allowed(obj):
             continue
-        for link in obj.get('linkedFiles', []):
-            absolute = resolve_path(link['path'], source_path or destination)
-            module = _path_module(absolute, destination)
-            if not _same_root(absolute, module.abspath(str(destination))):
-                link['path'] = absolute.replace('\\', '/')
-                continue
-            try:
-                link['path'] = module.relpath(absolute, module.dirname(module.abspath(str(destination)))).replace('\\', '/')
-            except ValueError:  # different Windows drives
-                link['path'] = absolute.replace('\\', '/')
+        links.extend(obj.get('linkedFiles', []))
+    links.extend(source['file'] for source in result.get('testData', []))
+    for link in links:
+        absolute = resolve_path(link['path'], source_path or destination)
+        module = _path_module(absolute, destination)
+        if not _same_root(absolute, module.abspath(str(destination))):
+            link['path'] = absolute.replace('\\', '/')
+            continue
+        try:
+            link['path'] = module.relpath(absolute, module.dirname(module.abspath(str(destination)))).replace('\\', '/')
+        except ValueError:  # different Windows drives
+            link['path'] = absolute.replace('\\', '/')
     return result
 
 

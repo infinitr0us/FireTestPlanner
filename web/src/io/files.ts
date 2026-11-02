@@ -571,6 +571,9 @@ export function embedPlanInHtml(boot: string, planJson: string, title: string, f
       if (payload) link.embedded = payload;
     }
   }
+  for (const source of Array.isArray(shared.testData) ? shared.testData : []) {
+    if (typeof source?.file?.path === 'string') source.file.path = fileName(source.file.path);
+  }
   const safe = escapeJsonForScript(JSON.stringify(shared));
   let html = boot.replace(
     new RegExp(`(<script[^>]*id="${EMBED_ID}"[^>]*>)([\\s\\S]*?)(</script>)`, 'i'),

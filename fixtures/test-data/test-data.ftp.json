@@ -1,0 +1,244 @@
+{
+  "format": "fire-test-plan",
+  "version": "1.6.0",
+  "meta": {
+    "title": "Synthetic instrument test data",
+    "created": "2026-01-01T00:00:00Z",
+    "modified": "2026-01-01T00:00:00Z"
+  },
+  "units": {
+    "length": "m",
+    "angle": "rad",
+    "power": "kW",
+    "temperature": "C",
+    "display": {
+      "length": "m",
+      "angle": "deg"
+    }
+  },
+  "coordinateSystem": {
+    "convention": "Z-up-right-handed",
+    "origin": "burner-center-floor"
+  },
+  "environment": {
+    "floorSize_m": [20, 20],
+    "ambientTemperature_C": 20
+  },
+  "objects": [
+    {
+      "id": "burner",
+      "type": "burner",
+      "name": "Synthetic burner",
+      "transform": {
+        "position_m": [0, 0, 0]
+      },
+      "footprint": {
+        "shape": "square",
+        "size_m": [1, 1]
+      },
+      "fire": {
+        "hrr_kw": 80
+      }
+    },
+    {
+      "id": "hf-east",
+      "type": "heatFluxSensor",
+      "name": "HF east",
+      "transform": {
+        "position_m": [3, 0, 1.5]
+      },
+      "gauge": {
+        "kind": "schmidt-boelter",
+        "range_kw_m2": 50
+      }
+    },
+    {
+      "id": "hf-west",
+      "type": "heatFluxSensor",
+      "name": "HF west",
+      "transform": {
+        "position_m": [-3, 0, 1.5]
+      },
+      "gauge": {
+        "kind": "schmidt-boelter",
+        "range_kw_m2": 50
+      }
+    },
+    {
+      "id": "tc-tree",
+      "type": "thermocouple",
+      "name": "TC low",
+      "transform": {
+        "position_m": [0, 0, 1]
+      },
+      "beadOffsets_m": [0, 0.5, 1, 1.5, 2]
+    }
+  ],
+  "testData": [
+    {
+      "id": "logger",
+      "name": "Synthetic logger",
+      "role": "measured",
+      "file": {
+        "id": "logger-file",
+        "kind": "spreadsheet",
+        "path": "logger-export.xlsx"
+      },
+      "table": {
+        "sheet": "Log",
+        "shape": "paired-time",
+        "headerRow": 1,
+        "unitsRow": null,
+        "dataRow": 2,
+        "timeColumn": null,
+        "unitsSheet": null
+      },
+      "timeOffset_s": 120,
+      "channels": [
+        {
+          "channel": "HF east_23.17kW/m2permV",
+          "object": "hf-east",
+          "scale": 23170,
+          "offset": 0
+        },
+        {
+          "channel": "HF west_22.10kW/m2permV",
+          "object": "hf-west",
+          "scale": 22100,
+          "offset": 0.123456789012345
+        },
+        {
+          "channel": "TC tree bead 1",
+          "object": "tc-tree",
+          "bead": 0
+        },
+        {
+          "channel": "TC tree bead 2",
+          "object": "tc-tree",
+          "bead": 1
+        },
+        {
+          "channel": "TC tree bead 3",
+          "object": "tc-tree",
+          "bead": 2
+        },
+        {
+          "channel": "TC tree bead 4",
+          "object": "tc-tree",
+          "bead": 3
+        },
+        {
+          "channel": "TC tree bead 5",
+          "object": "tc-tree",
+          "bead": 4
+        }
+      ],
+      "manifest": {
+        "size": 179179,
+        "modified": null,
+        "rows": 601,
+        "channels": [
+          {
+            "name": "HF east_23.17kW/m2permV",
+            "unit": "V",
+            "samples": 598,
+            "t0": 0,
+            "t1": 599
+          },
+          {
+            "name": "HF west_22.10kW/m2permV",
+            "unit": "V",
+            "samples": 600,
+            "t0": 0,
+            "t1": 599
+          },
+          {
+            "name": "TC tree bead 1",
+            "unit": "°C",
+            "samples": 600,
+            "t0": 0,
+            "t1": 599
+          },
+          {
+            "name": "TC tree bead 2",
+            "unit": "°C",
+            "samples": 600,
+            "t0": 0,
+            "t1": 599
+          },
+          {
+            "name": "TC tree bead 3",
+            "unit": "°C",
+            "samples": 600,
+            "t0": 0,
+            "t1": 599
+          },
+          {
+            "name": "TC tree bead 4",
+            "unit": "°C",
+            "samples": 600,
+            "t0": 0,
+            "t1": 599
+          },
+          {
+            "name": "TC tree bead 5",
+            "unit": "°C",
+            "samples": 600,
+            "t0": 0,
+            "t1": 599
+          }
+        ]
+      }
+    },
+    {
+      "id": "fds",
+      "name": "Synthetic FDS",
+      "role": "simulated",
+      "file": {
+        "id": "fds-file",
+        "kind": "spreadsheet",
+        "path": "room-test_devc.csv"
+      },
+      "table": {
+        "sheet": null,
+        "shape": "fds",
+        "headerRow": 2,
+        "unitsRow": 1,
+        "dataRow": 3,
+        "timeColumn": 0
+      },
+      "channels": [
+        {
+          "channel": "HF east",
+          "object": "hf-east"
+        },
+        {
+          "channel": "TC low",
+          "object": "tc-tree",
+          "bead": 0
+        }
+      ],
+      "manifest": {
+        "size": 5547,
+        "modified": null,
+        "rows": 63,
+        "channels": [
+          {
+            "name": "HF east",
+            "unit": "kW/m2",
+            "samples": 61,
+            "t0": 0,
+            "t1": 600
+          },
+          {
+            "name": "TC low",
+            "unit": "°C",
+            "samples": 61,
+            "t0": 0,
+            "t1": 600
+          }
+        ]
+      }
+    }
+  ]
+}

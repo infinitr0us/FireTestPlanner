@@ -5,6 +5,7 @@
  */
 
 import { DEVICE_COLORS } from './visual';
+import { testDataChecks } from './test-data';
 import { firstOccluder, flameCentrelineSamples } from './occlusion';
 import {
   DEFAULT_RADIATIVE_FRACTION,
@@ -1440,7 +1441,7 @@ export function checkPlan(d: PlanDocument): Issue[] {
     }
   }
 
-  return out.concat(hoodChecks(d), ceilingChecks(d), instrumentChecks(d), cameraChecks(d), flameChecks(d));
+  return out.concat(hoodChecks(d), ceilingChecks(d), instrumentChecks(d), cameraChecks(d), flameChecks(d), testDataChecks(d));
 }
 
 /**

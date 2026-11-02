@@ -18,9 +18,9 @@ export const FORMAT = 'fire-test-plan';
  * newest this build can write -- see `requiredFormatVersion`. So `FORMAT_VERSION`
  * is the floor a new plan starts at, and `FORMAT_VERSION_LATEST` is the ceiling.
  */
-export const FORMAT_VERSIONS = ['1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0', '1.5.0'] as const;
+export const FORMAT_VERSIONS = ['1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0', '1.5.0', '1.6.0'] as const;
 export const FORMAT_VERSION = '1.0.0';
-export const FORMAT_VERSION_LATEST = '1.5.0';
+export const FORMAT_VERSION_LATEST = '1.6.0';
 
 export type Vec2 = [number, number];
 export type Vec3 = [number, number, number];
@@ -333,6 +333,41 @@ export interface PlanSource {
   originOffset_m?: Vec3;
 }
 
+export interface TestDataTable {
+  sheet: string | null;
+  shape: 'paired-time' | 'processed' | 'fds' | 'plain';
+  headerRow: number;
+  unitsRow: number | null;
+  dataRow: number;
+  timeColumn: number | null;
+  /** Absent: no metadata fallback. Null: merge the workbook. String: one sheet. */
+  unitsSheet?: string | null;
+}
+export interface TestDataMapping {
+  channel: string;
+  object: string;
+  bead?: number;
+  scale?: number;
+  offset?: number;
+}
+export interface TestDataManifest {
+  size: number;
+  modified: string | null;
+  /** Grid rows, including headers and any trailing formula rows. */
+  rows: number;
+  channels: { name: string; unit: string | null; samples: number; t0: number | null; t1: number | null }[];
+}
+export interface TestDataSource {
+  id: string;
+  name: string;
+  role: 'measured' | 'simulated';
+  file: Omit<LinkedFile, 'kind' | 'plot' | 'sequence'> & { kind: 'spreadsheet' };
+  table: TestDataTable;
+  timeOffset_s?: number;
+  channels: TestDataMapping[];
+  manifest: TestDataManifest;
+}
+
 export interface PlanDocument {
   format: typeof FORMAT;
   version: string;
@@ -356,6 +391,7 @@ export interface PlanDocument {
     notes?: string | null;
   };
   objects: PlanObject[];
+  testData?: TestDataSource[];
 }
 
 export type LengthUnit = 'm' | 'cm' | 'mm' | 'ft' | 'ft-in' | 'in';
@@ -463,6 +499,7 @@ const uses1_4Keys = (o: PlanObject): boolean => {
  * Mirror of `required_version` in python/fireplan/serialize.py.
  */
 export function requiredFormatVersion(doc: PlanDocument): string {
+  if (Array.isArray(doc.testData) && doc.testData.length) return '1.6.0';
   if (doc.units?.display?.length === 'ft-in') return '1.5.0';
   const objects = Array.isArray(doc.objects) ? doc.objects.filter((o) => o && typeof o === 'object') : [];
   if (objects.some((o) => TYPES_1_4.includes(o.type) || uses1_4Keys(o))) return '1.4.0';

@@ -51,7 +51,7 @@ A plan gains a root-level `testData` array. Each entry is a **source**:
     "name": "Logger export",
     "file": { "id": "f-1", "kind": "spreadsheet", "path": "data/test-07.xlsx" },  // a linkedFile
     "table": { "sheet": "Log", "shape": "paired-time", "headerRow": 1, "unitsRow": null,
-               "dataRow": 2, "timeColumn": null },
+               "dataRow": 2, "timeColumn": null, "unitsSheet": null },
     "timeOffset_s": 420,          // the file's own time at ignition; plan time = file time - offset
     "role": "measured",           // "measured" | "simulated"
     "channels": [
@@ -99,7 +99,43 @@ Decisions, and why:
 - **Missing is missing.** No interpolation, no resampling between sources, no
   smoothing: each series is plotted on its own times. The plot reports gaps.
 
-A plan declares 1.6.0 only when it has a non-empty `testData`.
+A plan requires 1.6.0 only when it has a non-empty `testData`; a higher existing
+declaration is retained. Empty arrays are omitted on write.
+
+### Model implementation decisions (part 2)
+
+CONVENTIONS section 12 records the normative source schema and API contract.
+The following details resolve points the initial design left open:
+
+- `table.unitsSheet` is omitted for no metadata fallback, a sheet name for one
+  metadata sheet, or null for merging the workbook. It is absent on delimited
+  sources. The saved layout is authoritative, including overridden rows and columns.
+- Thermocouples require an explicit bead, including 0 for a single bead; other
+  instruments omit it. Duplicate object/bead targets within one source are warnings
+  while editing and errors during extraction. One channel can map to distinct targets.
+- Source files cannot carry `plot` or `sequence`. The inherited link-level offset
+  stays reserved; only the source-level offset is applied, by subtraction.
+- Calibration coefficients, time offsets and manifest values keep recorded precision.
+  Negative non-zero scale is allowed. Output unit spellings are `kW/m2`, `°C`, `kW`.
+- Manifest rows count the dense grid, including headers and trailing formulas.
+  Manifest channels are unique by extracted name and describe raw units/file times.
+  Zero samples require null endpoints, one sample equal endpoints, and multiple
+  samples increasing finite endpoints. No read automatically refreshes the manifest.
+- TS `sourceSeries(source, grid, {channels, targets})` accepts metadata units and
+  target units separately. `targetUnits(plan.objects)` supplies target units; object
+  IDs alone cannot distinguish a calibrated gauge from a burner. A mapping with a
+  bead can infer °C; other mappings require the target map. Keys encode the JSON
+  tuple `[objectId, beadOrNull]`. Python resolves target units from the plan and
+  returns one series per source for the requested object and exact bead.
+- Manifest helpers accept metadata units in `fileInfo.units`; mismatch checks use
+  `fileInfo.table` for the saved layout, falling back to detection if absent.
+- Min/max decimation partitions interior sample indices, preserves endpoints and
+  extrema in time order, and returns `{t, values}` float64 arrays. Budgets below 2
+  or non-integer budgets are errors; odd budgets may leave a slot unused.
+- The model fixture reuses part 1 bytes. Its FDS device names `HF east` and `TC low`
+  equal the mapped object names; `TC low` names the five-bead rake and maps bead 0.
+  The existing CSV has no HRR channel, so the fixture burner has no mapped series.
+  Independent tests exercise burner calibration and kW output.
 
 ## In the editor
 

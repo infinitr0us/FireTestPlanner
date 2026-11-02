@@ -12,6 +12,7 @@
 
 import { HEX_COLOR, parsePlan } from './plan';
 import { linkedFilesProblem } from './linked-files';
+import { testDataProblem } from './test-data';
 import type { Issue, PlanDocument, PlanObject } from './types';
 import { FORMAT } from './types';
 
@@ -83,6 +84,8 @@ export function validateStructure(doc: PlanDocument): Issue[] {
       `Unsupported coordinate convention "${String(doc.coordinateSystem?.convention)}".`);
   }
   validateTopLevel(doc, err);
+  const dataProblem = testDataProblem(doc.testData);
+  if (dataProblem) err('bad-test-data', dataProblem);
   if (!Array.isArray(doc.objects)) {
     err('bad-objects',
       'The "objects" field is missing or is not a list. Nothing in it can be read, '

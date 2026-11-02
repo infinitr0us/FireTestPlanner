@@ -10,7 +10,7 @@
 import { roundMicro } from './math';
 import { maxVersion, requiredFormatVersion, zoomIsDefault, type PlanDocument } from './types';
 
-const TOP = ['format', 'version', 'meta', 'units', 'coordinateSystem', 'environment', 'objects'];
+const TOP = ['format', 'version', 'meta', 'units', 'coordinateSystem', 'environment', 'objects', 'testData'];
 const META = ['title', 'testId', 'author', 'organization', 'siteName', 'created', 'modified', 'revision', 'notes', 'source'];
 const SOURCE = ['tool', 'file', 'chid', 'importedAt', 'originOffset_m'];
 const UNITS = ['length', 'angle', 'power', 'temperature', 'display'];
@@ -36,6 +36,11 @@ const LINK = ['id', 'kind', 'path', 'label', 'timeOffset_s', 'plot', 'sequence']
 const PLOT = ['importedAt', 'samples'];
 const SEQUENCE = ['importedAt', 'grid', 'bounds_m', 'frames'];
 const GRID = ['voxelSize_m', 'pitch_m', 'resolution'];
+const TEST_DATA = ['id', 'name', 'role', 'file', 'table', 'timeOffset_s', 'channels', 'manifest'];
+const TABLE = ['sheet', 'shape', 'headerRow', 'unitsRow', 'dataRow', 'timeColumn', 'unitsSheet'];
+const MAPPING = ['channel', 'object', 'bead', 'scale', 'offset'];
+const DATA_MANIFEST = ['size', 'modified', 'rows', 'channels'];
+const MANIFEST_CHANNEL = ['name', 'unit', 'samples', 't0', 't1'];
 
 const OBJECT_ORDER: Record<string, string[]> = {
   camera: ['id', 'type', 'name', 'transform', 'camera', 'mount', 'recording', 'linkedFiles', 'display', 'notes'],
@@ -249,12 +254,33 @@ export function canonicalize(data: PlanDocument): Obj {
     });
   }
 
-  // Objects have already been through the rounding their own type warrants; the
-  // rest of the document is all format 1.0 and rounds wholesale.
+  if (Array.isArray(d.testData)) {
+    if (!d.testData.length) delete d.testData;
+    else d.testData = d.testData.map(raw => {
+      if (!isPlainObject(raw)) return raw;
+      const source = order(raw, TEST_DATA);
+      if (isPlainObject(source.file)) {
+        const link = order(source.file, LINK);
+        if (link.timeOffset_s === null || link.timeOffset_s === 0) delete link.timeOffset_s;
+        source.file = link;
+      }
+      source.table = orderIfObject(source.table, TABLE);
+      if (Array.isArray(source.channels)) source.channels = source.channels.map(c => orderIfObject(c, MAPPING));
+      if (isPlainObject(source.manifest)) {
+        const manifest = order(source.manifest, DATA_MANIFEST);
+        if (Array.isArray(manifest.channels)) manifest.channels = manifest.channels.map(c => orderIfObject(c, MANIFEST_CHANNEL));
+        source.manifest = manifest;
+      }
+      return source;
+    });
+  }
+
+  // Objects already have their type's rounding. Test data is recorded precision;
+  // the remaining format 1.0 blocks round normally.
   const ordered = order(d, TOP);
   const out: Obj = Object.create(null);
   for (const k of Object.keys(ordered)) {
-    out[k] = k === 'objects' ? ordered[k] : roundFloats(ordered[k]);
+    out[k] = k === 'objects' || k === 'testData' ? ordered[k] : roundFloats(ordered[k]);
   }
   return out;
 }

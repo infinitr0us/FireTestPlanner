@@ -76,7 +76,7 @@ def _uses_1_4_keys(obj: Dict[str, Any]) -> bool:
         return True
     return False
 
-_TOP = ["format", "version", "meta", "units", "coordinateSystem", "environment", "objects"]
+_TOP = ["format", "version", "meta", "units", "coordinateSystem", "environment", "objects", "testData"]
 _META = ["title", "testId", "author", "organization", "siteName", "created", "modified", "revision", "notes", "source"]
 _SOURCE = ["tool", "file", "chid", "importedAt", "originOffset_m"]
 _UNITS = ["length", "angle", "power", "temperature", "display"]
@@ -102,6 +102,11 @@ _LINK = ["id", "kind", "path", "label", "timeOffset_s", "plot", "sequence"]
 _PLOT = ["importedAt", "samples"]
 _SEQUENCE = ["importedAt", "grid", "bounds_m", "frames"]
 _GRID = ["voxelSize_m", "pitch_m", "resolution"]
+_TEST_DATA = ["id", "name", "role", "file", "table", "timeOffset_s", "channels", "manifest"]
+_TABLE = ["sheet", "shape", "headerRow", "unitsRow", "dataRow", "timeColumn", "unitsSheet"]
+_MAPPING = ["channel", "object", "bead", "scale", "offset"]
+_DATA_MANIFEST = ["size", "modified", "rows", "channels"]
+_MANIFEST_CHANNEL = ["name", "unit", "samples", "t0", "t1"]
 
 _OBJECT_ORDER = {
     "camera": ["id", "type", "name", "transform", "camera", "mount", "recording", "linkedFiles", "display", "notes"],
@@ -131,7 +136,7 @@ _TYPES_1_4 = ("reconstructedFlame",)
 #: Baseline, and the highest this build writes. Mirror of FORMAT_VERSIONS in
 #: web/src/core/types.ts.
 _VERSION_MIN = "1.0.0"
-_VERSION_LATEST = "1.5.0"
+_VERSION_LATEST = "1.6.0"
 
 
 _JS_NUMERIC = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
@@ -173,6 +178,8 @@ def required_version(data: Dict[str, Any]) -> str:
     factor, a radiative fraction or a sensor, it says 1.1.0 and means it. Mirror of
     `requiredFormatVersion` in web/src/core/types.ts.
     """
+    if isinstance(data.get("testData"), list) and data["testData"]:
+        return "1.6.0"
     units = data.get("units")
     display = units.get("display") if isinstance(units, dict) else None
     if isinstance(display, dict) and display.get("length") == "ft-in":
@@ -387,11 +394,35 @@ def canonicalize(data: Dict[str, Any]) -> Dict[str, Any]:
             for o in d["objects"]
         ]
 
-    # Objects have already had the rounding their own type warrants; the rest of the
-    # document is all format 1.0 and rounds wholesale.
+    if isinstance(d.get("testData"), list):
+        if not d["testData"]:
+            del d["testData"]
+        else:
+            sources = []
+            for raw in d["testData"]:
+                if not isinstance(raw, dict):
+                    sources.append(raw)
+                    continue
+                source = _order(raw, _TEST_DATA)
+                if "file" in source:
+                    source["file"] = _canon_link(source["file"])
+                if "table" in source:
+                    source["table"] = _canon_sub(source["table"], _TABLE)
+                if isinstance(source.get("channels"), list):
+                    source["channels"] = [_canon_sub(c, _MAPPING) for c in source["channels"]]
+                if isinstance(source.get("manifest"), dict):
+                    manifest = _order(source["manifest"], _DATA_MANIFEST)
+                    if isinstance(manifest.get("channels"), list):
+                        manifest["channels"] = [_canon_sub(c, _MANIFEST_CHANNEL) for c in manifest["channels"]]
+                    source["manifest"] = manifest
+                sources.append(source)
+            d["testData"] = sources
+
+    # Objects already have their type's rounding. Test data is recorded precision;
+    # the remaining format 1.0 blocks round normally.
     ordered = _order(d, _TOP)
     return {
-        k: (v if k == "objects" else _round_floats(v)) for k, v in ordered.items()
+        k: (v if k in ("objects", "testData") else _round_floats(v)) for k, v in ordered.items()
     }
 
 

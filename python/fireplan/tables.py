@@ -255,7 +255,9 @@ def time_shift_hint(grid):
         for c, value in enumerate(grid[r]):
             if not _SHIFT_LABEL.search(_text(value)):
                 continue
-            for rr, cc in [(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)]:
+            vertical = [(rr, c) for rr in (r - 1, r + 1)
+                        if 0 <= rr < end and is_number(_at(grid, rr, c))]
+            for rr, cc in vertical or [(r, c - 1), (r, c + 1)]:
                 if rr < 0 or rr >= end or cc < 0:
                     continue
                 number = _at(grid, rr, cc)

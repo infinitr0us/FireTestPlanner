@@ -2,7 +2,7 @@
  * ZIP listing is lazy: unrelated sheets, styles, images and VBA are never inflated.
  */
 import { listZip, type ZipEntry } from './flame';
-import { channelUnits, makeGrid, numericCell, type Cell, type CellError, type Grid } from './tables';
+import { channelUnits, detectShape, makeGrid, numericCell, timeShiftHint, type Cell, type CellError, type Grid } from './tables';
 
 type Event = { kind: 'start' | 'end' | 'text'; name: string; attrs: Record<string, string>; text: string };
 const localName = (name: string): string => name.slice(name.lastIndexOf(':') + 1);
@@ -202,4 +202,22 @@ export async function workbookChannelUnits(bytes: Uint8Array): Promise<Map<strin
     for (const [name, raw] of channelUnits(await readPart(entries, sheet, rels, shared))) result.set(name, raw);
   }
   return result;
+}
+
+/** Only processed sheets count: the shift is written in the header above their data.
+ *  A logger's metadata sheet has an `offset` column of its own (0), which made a real
+ *  workbook's three agreeing 420 s hints read as ambiguous. Sheets without a hint are
+ *  ignored; the remaining ones must agree. */
+export async function workbookTimeShiftHint(bytes: Uint8Array): Promise<{ seconds: number; sheets: string[] } | null> {
+  const entries = await archive(bytes), ordered = await sheets(entries), rels = await relationships(entries);
+  const shared = entries.has('xl/sharedStrings.xml') ? sharedStrings(await part(entries, 'xl/sharedStrings.xml')) : [];
+  const hints: { seconds: number; sheet: string }[] = [];
+  for (const sheet of ordered) {
+    const grid = await readPart(entries, sheet, rels, shared);
+    if (detectShape(grid).shape !== 'processed') continue;
+    const hint = timeShiftHint(grid);
+    if (hint) hints.push({ seconds: hint.seconds, sheet: sheet.name });
+  }
+  return new Set(hints.map(h => h.seconds)).size === 1
+    ? { seconds: hints[0].seconds, sheets: hints.map(h => h.sheet) } : null;
 }
