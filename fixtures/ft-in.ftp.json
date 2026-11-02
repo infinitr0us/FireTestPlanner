@@ -1,0 +1,44 @@
+{
+  "format": "fire-test-plan",
+  "version": "1.5.0",
+  "meta": {
+    "title": "Feet and inches format parity"
+  },
+  "units": {
+    "length": "m",
+    "angle": "rad",
+    "power": "kW",
+    "temperature": "C",
+    "display": {
+      "length": "ft-in",
+      "angle": "deg"
+    }
+  },
+  "coordinateSystem": {
+    "convention": "Z-up-right-handed",
+    "origin": "burner-center-floor"
+  },
+  "objects": [
+    {
+      "id": "wall-1",
+      "type": "wall",
+      "transform": {
+        "position_m": [-0.7493, 0, 0]
+      },
+      "polyline_m": [
+        [0, 0],
+        [3.6576, 0]
+      ],
+      "height_m": 2.4384,
+      "openings": [
+        {
+          "id": "window-1",
+          "offset_m": 1.6891,
+          "width_m": 0.9144,
+          "height_m": 0.6096,
+          "sillHeight_m": 0.92075
+        }
+      ]
+    }
+  ]
+}

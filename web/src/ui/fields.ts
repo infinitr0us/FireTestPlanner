@@ -60,9 +60,9 @@ export function lengthField(
   const input = h('input', {
     class: 'field__input',
     type: 'text',
-    inputMode: 'decimal',
+    inputMode: unit === 'ft-in' ? 'text' : 'decimal',
     value: formatLength(metres, unit),
-    title: `In ${unit}. An explicit suffix wins: 9ft, 250mm, 5' 6"`,
+    title: `In ${unit === 'ft-in' ? 'feet and inches (bare numbers are feet)' : unit}. An explicit suffix wins: 9ft, 250mm, 5' 6 1/2"`,
   });
   input.addEventListener('change', () => {
     const parsed = parseLength(input.value, unit);

@@ -150,7 +150,7 @@ export function validateStructure(doc: PlanDocument): Issue[] {
 
 type Reporter = (code: string, message: string, objectId?: string) => void;
 
-const LENGTH_UNITS = ['m', 'cm', 'mm', 'ft', 'in'];
+const LENGTH_UNITS = ['m', 'cm', 'mm', 'ft', 'ft-in', 'in'];
 const ANGLE_UNITS = ['deg', 'rad'];
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>

@@ -268,6 +268,54 @@ try {
     await evaluate(fovReadout) === '39.4° × 22.8°'
     && await evaluate('!document.querySelector(".toolbar__file").textContent.includes("•")'));
 
+  phase('feet-and-inches editing and drawing');
+  const unitsSelect = 'document.querySelector("select[title^=\\"Display units\\"]")';
+  check('unit selector offers ft-in immediately after ft',
+    await evaluate('[...(' + unitsSelect + ').options].map(o=>o.value).join("|")') === 'm|cm|mm|ft|ft-in|in');
+  await evaluate('(' + unitsSelect + ').focus()');
+  await key('End', 'End', 35);
+  // A unit change repaints the toolbar and replaces the select, so focus the new
+  // one before the next key.
+  await waitFor(() => evaluate('(' + unitsSelect + ').value==="in"'), 'unit select End');
+  await evaluate('(' + unitsSelect + ').focus()');
+  await key('ArrowUp', 'ArrowUp', 38);
+  const originalX = `-9' 0"`, editedX = `-8' 6 1/2"`;
+  await waitFor(() => evaluate(axis(0) + '.value===' + JSON.stringify(originalX)), 'feet-and-inches camera position');
+  const standoffReadout = '[...document.querySelectorAll("#inspector .readout")].find(r=>r.querySelector(".readout__label").textContent.startsWith("Standoff"))?.querySelector(".readout__value").textContent';
+  const originalStandoff = await evaluate(standoffReadout);
+  await evaluate('(() => { const e=' + axis(0) + '; e.focus(); e.select(); })()');
+  await send('Input.insertText', { text: editedX });
+  check('typing fractional input does not commit before blur', await evaluate(standoffReadout) === originalStandoff);
+  await key('Tab', 'Tab', 9);
+  await waitFor(async () => (await evaluate(standoffReadout)) !== originalStandoff, 'fractional input commits on blur');
+  check('fractional edit retains the text and Tab focus',
+    await evaluate(axis(0) + '.value===' + JSON.stringify(editedX) + ' && document.activeElement===' + axis(1)));
+  const originalY = await evaluate(axis(1) + '.value');
+  await evaluate('(' + axis(1) + ').select()');
+  await send('Input.insertText', { text: '1/0"' });
+  await key('Tab', 'Tab', 9);
+  check('invalid fractional input restores the previous length', await evaluate(axis(1) + '.value') === originalY);
+  await evaluate('document.activeElement?.blur()');
+  await ctrlZ();
+  await waitFor(() => evaluate(axis(0) + '.value===' + JSON.stringify(originalX)), 'undo of fractional edit');
+  check('fractional edit takes one undo and preserves display units', await evaluate('(' + unitsSelect + ').value') === 'ft-in');
+  await click('[...document.querySelectorAll("button")].find(b=>b.textContent.startsWith("Drawing"))');
+  await waitFor(() => evaluate('document.querySelectorAll(".report .set-out tbody tr").length===12'), 'Example set-out table');
+  check('drawing carries fractional set-out coordinates and dimensions', await evaluate(`(() => {
+    const report=document.querySelector('.report');
+    return report.querySelector('[data-object-id="cam-mwir"]').textContent.includes(${JSON.stringify(originalX)})
+      && [...report.querySelectorAll('.drawing .dim-text')].some(t=>t.textContent.includes("'"));
+  })()`));
+  check('set-out print rows stay together and headings repeat', await evaluate(`(() => {
+    const table=document.querySelector('.set-out');
+    return getComputedStyle(table.querySelector('tbody tr')).breakInside==='avoid'
+      && getComputedStyle(table.tHead).display==='table-header-group'
+      && table.scrollWidth<=table.clientWidth+1;
+  })()`));
+  await evaluate('document.querySelector(".set-out").scrollIntoView({block:"center"})');
+  await screenshot('set-out-ft-in');
+  await click('[...document.querySelectorAll(".report-overlay__bar button")].find(b=>b.textContent==="Close")');
+
   phase('left rail on a laptop');
   // The left rail (2026-11-02): on a 1280x720 laptop the Checks used to start below
   // the fold under the Palette and the object list. All three sections must be on

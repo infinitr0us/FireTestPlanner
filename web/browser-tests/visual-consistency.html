@@ -3,6 +3,7 @@
 <body style="display:block;overflow:auto;padding:20px">
 <h1>Visual consistency regression checks</h1><pre id="report">Running…</pre>
 <div id="probe-test" style="width:600px;height:200px;position:relative;background:var(--bg)"></div>
+<details><summary>Door, window and set-out drawing (ft-in)</summary><div id="drawing-test" style="max-width:940px"></div></details>
 <script type="module">
 import * as THREE from 'three';
 import { FdsResultsDialog } from '/src/ui/fds-results.ts';
@@ -12,6 +13,8 @@ import { handleTransportKey, transportButton } from '/src/ui/transport.ts';
 import { visualTheme } from '/src/ui/theme.ts';
 import { DEVICE_COLORS } from '/src/core/visual.ts';
 import { checkOcclusionInspector } from './occlusion.ts';
+import { newPlan } from '/src/core/plan.ts';
+import { buildReportBody, REPORT_CSS } from '/src/export/report.ts';
 const results = [], output = document.querySelector('#report');
 const check = (name, ok) => {
   results.push({name, passed: Boolean(ok)});
@@ -50,6 +53,18 @@ const deviceMetadata = ['TEMPERATURE','THERMOCOUPLE','WALL TEMPERATURE','GAUGE H
 let dialog;
 try {
   await checkOcclusionInspector(check, waitFor);
+  const drawingPlan = newPlan('Door and window set-out');
+  drawingPlan.units.display.length = 'ft-in';
+  drawingPlan.objects.push({id:'wall',type:'wall',name:'Test wall',polyline_m:[[0,0],[4,0]],height_m:3,thickness_m:0.2,
+    openings:[{offset_m:0.5,width_m:1,height_m:2},{offset_m:2,width_m:1,height_m:1,sillHeight_m:1}]});
+  const drawing = document.querySelector('#drawing-test');
+  const printStyle = document.createElement('style'); printStyle.textContent=REPORT_CSS; document.head.append(printStyle);
+  drawing.innerHTML=buildReportBody(drawingPlan,'ft-in');
+  check('plan window has two thin parallel glazing strokes', drawing.querySelectorAll('.wall-window line').length===2);
+  check('both elevations contain the door and window cut-outs', drawing.querySelectorAll('.wall-opening').length===4
+    && drawing.querySelectorAll('polygon[mask]').length===2);
+  check('set-out row carries endpoints in fractional feet and inches', drawing.querySelector('.set-out tbody tr').textContent.includes(`P2: 13' 1 1/2"`));
+
   // Exercise native event targets, not a duplicate of the shortcut decision logic.
   const inputs = ['input','textarea','select','div'].map(tag=>document.createElement(tag));
   inputs.at(-1).contentEditable = 'true';
