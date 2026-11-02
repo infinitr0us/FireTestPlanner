@@ -636,6 +636,12 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
   font-weight: 600;
 }
 
+.fds-export { width: min(960px, calc(100vw - 32px)); max-height: calc(100vh - 32px); color: var(--text); }
+.fds-export::backdrop { background: var(--bg-backdrop); }
+.fds-export__text { display: block; height: min(50vh, 420px); resize: vertical; font-family: var(--mono); }
+.fds-export__status { min-height: 1.45em; color: var(--text-dim); }
+.fds-export__status--error { color: var(--bad); }
+
 /* -- create from FDS text ------------------------------------------------ */
 
 .fdspaste { display: flex; flex-direction: column; gap: 6px; }

@@ -1112,7 +1112,9 @@ def _device_quantity(rec: Record, props: Dict[str, Record]) -> Tuple[Optional[st
     prop = props.get(rec.string("PROP_ID") or "")
     if prop is not None:
         quantity = quantity or prop.string("QUANTITY")
-        diameter = prop.number("DIAMETER")
+        diameter = prop.number("BEAD_DIAMETER")
+        if diameter is None:
+            diameter = prop.number("DIAMETER")
     return quantity, diameter
 
 

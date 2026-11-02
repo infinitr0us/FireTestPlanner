@@ -2,7 +2,7 @@
  * Intersections are intervals, not just entry faces: clipping the endpoints must
  * not let a ray starting inside a thick wall escape through the rest of it.
  */
-import { IDENTITY_QUAT, length, quatToColumns, sub, unrotateVec } from './math';
+import { IDENTITY_QUAT, length, quatToColumns, rotateVec, sub, unrotateVec } from './math';
 import { isCeiling, isHood, isObstruction, isWall, type PlanDocument, type PlanObject, type Vec2, type Vec3 } from './types';
 
 export const OCCLUSION_ENDPOINT_TOLERANCE_M = 0.05;
@@ -11,6 +11,30 @@ export const FLAME_SAMPLE_COUNT = 9;
 export const HOOD_SKIRT_PANEL_THICKNESS_M = 0.01;
 const EPS = 1e-10;
 type Interval = [number, number];
+
+interface SolidHit { object: PlanObject; t: number; normal: Vec3 | null }
+
+/** IOR can describe only a world-axis face. */
+function faceIor(hit: SolidHit | null): number | null {
+  if (!hit?.normal) return null;
+  const n = hit.normal;
+  const axis = n.reduce((best, v, i) => Math.abs(v) > Math.abs(n[best]) ? i : best, 0);
+  return Math.abs(n[axis]) >= 1 - EPS ? Math.sign(n[axis]) * (axis + 1) : null;
+}
+
+/** Outward normal at a box entry (or the inward normal at a hole exit).
+ * A clipped point inside a solid has no entry face. */
+function boxNormal(a: Vec3, b: Vec3, lo: Vec3, hi: Vec3, t: number, hole = false): Vec3 | null {
+  for (let i = 0; i < 3; i += 1) {
+    const delta = b[i] - a[i];
+    const sign = delta > 0 ? -1 : 1;
+    const face = (sign < 0) !== hole ? lo[i] : hi[i];
+    if (Math.abs(delta) > EPS && Math.abs(a[i] + t * delta - face) < 1e-9) {
+      const n: Vec3 = [0, 0, 0]; n[i] = sign; return n;
+    }
+  }
+  return null;
+}
 
 export function flameCentrelineSamples(at: Vec3, base: number, tip: number): Vec3[] {
   return Array.from({ length: FLAME_SAMPLE_COUNT }, (_, i) =>
@@ -57,11 +81,57 @@ export function firstOccluder(d: PlanDocument, from: Vec3, to: Vec3): PlanObject
   const distance = length(sub(to, from));
   if (distance <= 2 * OCCLUSION_ENDPOINT_TOLERANCE_M) return null;
   const trim = OCCLUSION_ENDPOINT_TOLERANCE_M / distance;
-  const clip: Interval = [trim, 1 - trim];
+  return firstSolidHit(d, from, to, [trim, 1 - trim])?.object ?? null;
+}
+
+/** Surface mounting uses the same solids and opening subtraction as visibility,
+ * with no endpoint trimming and no hood skirts. */
+export function mountingIor(d: PlanDocument, position: Vec3, normal: Vec3): number | null {
+  const axis = normal.reduce((best, v, i) => Math.abs(v) > Math.abs(normal[best]) ? i : best, 0);
+  if (Math.abs(normal[axis]) < Math.cos(5 * Math.PI / 180) - EPS) return null;
+  const sign = normal[axis] < 0 ? -1 : 1;
+  // The plan floor is the source floor slab's top after re-origination. Its
+  // mounting face exists even though that slab is not stored as a plan object.
+  if (axis === 2 && sign > 0 && position[2] >= 0 && position[2] <= 0.05 + EPS) return 3;
+  // Start just outside a flush face; include the 50 mm boundary itself.
+  const from = position.map((v, i) => v + normal[i] * 1e-7) as Vec3;
+  const to = position.map((v, i) => v - normal[i] * (0.05 + 1e-7)) as Vec3;
+  const hit = firstSolidHit(d, from, to, [0, 1], true);
+  // IOR describes a world-axis face, not merely the closest axis of a rotated box.
+  return faceIor(hit) === sign * (axis + 1) ? sign * (axis + 1) : null;
+}
+
+/** A surface bead has no facing. Search both sides of each world axis using
+ * the same solid entry faces as gauges, then choose the closest within 50 mm.
+ * Reverse rays also find a face when the bead is just inside a solid. */
+export function nearestMountingIor(d: PlanDocument, position: Vec3): number | null {
+  let nearest = Math.abs(position[2]) <= 0.05 + EPS ? Math.abs(position[2]) : Infinity;
+  let ior: number | null = Number.isFinite(nearest) ? 3 : null;
+  const accept = (hit: SolidHit | null, distance: number): void => {
+    const candidate = faceIor(hit);
+    if (candidate !== null && distance <= 0.05 + EPS && distance < nearest - EPS) {
+      nearest = distance; ior = candidate;
+    }
+  };
+  const reach = 0.05 + 1e-7;
+  for (let axis = 0; axis < 3; axis += 1) for (const sign of [1, -1]) {
+    const start = [...position] as Vec3, end = [...position] as Vec3;
+    start[axis] -= sign * 1e-7;
+    end[axis] += sign * reach;
+    const forward = firstSolidHit(d, start, end, [0, 1], true);
+    if (forward) accept(forward, Math.abs(forward.t * (reach + 1e-7) - 1e-7));
+    const reverse = firstSolidHit(d, end, start, [0, 1], true);
+    if (reverse) accept(reverse, Math.abs(reach - reverse.t * (reach + 1e-7)));
+  }
+  return ior;
+}
+
+function firstSolidHit(d: PlanDocument, from: Vec3, to: Vec3, clip: Interval, mounting = false): SolidHit | null {
   let nearest = Number.POSITIVE_INFINITY;
-  let blocker: PlanObject | null = null;
+  let result: SolidHit | null = null;
   for (const o of d.objects) {
     if (!isWall(o) && !isCeiling(o) && !isObstruction(o) && !isHood(o)) continue;
+    if (mounting && isHood(o)) continue;
     const q = o.transform?.rotation_quat ?? IDENTITY_QUAT;
     const rotation = Math.hypot(...q) > 0 ? q : IDENTITY_QUAT;
     const axis = quatToColumns(rotation)[0];
@@ -73,12 +143,17 @@ export function firstOccluder(d: PlanDocument, from: Vec3, to: Vec3): PlanObject
         : [c * v[0] + s * v[1], -s * v[0] + c * v[1], v[2]];
     };
     const a = local(from), b = local(to);
-    const accept = (t: number): void => {
-      if (t < nearest) { nearest = t; blocker = o; }
+    const accept = (t: number, n: Vec3 | null = null): void => {
+      if (t < nearest) {
+        nearest = t;
+        const normal = n === null ? null : isObstruction(o) ? rotateVec(rotation, n)
+          : [c * n[0] - s * n[1], s * n[0] + c * n[1], n[2]] as Vec3;
+        result = { object: o, t, normal };
+      }
     };
     const box = (lo: Vec3, hi: Vec3): void => {
       const hit = boxInterval(a, b, lo, hi, clip);
-      if (hit) accept(hit[0]);
+      if (hit) accept(hit[0], mounting ? boxNormal(a, b, lo, hi, hit[0]) : null);
     };
     if (isObstruction(o)) {
       const [x, y, z] = o.size_m;
@@ -109,21 +184,25 @@ export function firstOccluder(d: PlanDocument, from: Vec3, to: Vec3): PlanObject
         const sa = segmentLocal(a), sb = segmentLocal(b);
         const solid = boxInterval(sa, sb, [0, -half, base], [span, half, base + o.height_m], clip);
         if (solid) {
-          const holes: Interval[] = [];
+          const holes: Array<{ interval: Interval; normal: Vec3 | null }> = [];
           for (const opening of o.openings ?? []) {
             const start = Math.max(0, opening.offset_m - travelled);
             const end = Math.min(span, opening.offset_m + opening.width_m - travelled);
             const sill = base + (opening.sillHeight_m ?? 0);
             const hit = boxInterval(sa, sb, [start, -half, sill], [end, half, sill + opening.height_m], solid);
-            if (hit) holes.push(hit);
+            if (hit) holes.push({ interval: hit, normal: mounting
+              ? boxNormal(sa, sb, [start, -half, sill], [end, half, sill + opening.height_m], hit[1], true) : null });
           }
-          holes.sort((a, b) => a[0] - b[0]);
+          holes.sort((a, b) => a.interval[0] - b.interval[0]);
           let cursor = solid[0];
-          for (const [enter, leave] of holes) {
+          let n = mounting ? boxNormal(sa, sb, [0, -half, base], [span, half, base + o.height_m], cursor) : null;
+          for (const { interval: [enter, leave], normal } of holes) {
             if (enter > cursor + EPS) break;
+            if (leave > cursor) n = normal;
             cursor = Math.max(cursor, leave);
           }
-          if (cursor < solid[1] - EPS) accept(cursor);
+          if (cursor < solid[1] - EPS) accept(cursor, n
+            ? [(n[0] * dx - n[1] * dy) / span, (n[0] * dy + n[1] * dx) / span, n[2]] : null);
         }
         travelled += span;
       }
@@ -149,10 +228,29 @@ export function firstOccluder(d: PlanDocument, from: Vec3, to: Vec3): PlanObject
       for (let i = 1; i < cuts.length; i += 1) {
         const mid = (cuts[i - 1] + cuts[i]) / 2;
         if (cuts[i] - cuts[i - 1] > EPS && inPolygon(a[0] + dx * mid, a[1] + dy * mid, o.polygon_m)) {
-          accept(cuts[i - 1]); break;
+          const t = cuts[i - 1];
+          let n: Vec3 | null = null;
+          if (mounting) {
+            const z = a[2] + (b[2] - a[2]) * t;
+            if (Math.abs(z - o.height_m) < 1e-9 && b[2] > a[2]) n = [0, 0, -1];
+            else if (Math.abs(z - o.height_m - (o.thickness_m ?? 0.1)) < 1e-9 && b[2] < a[2]) n = [0, 0, 1];
+            else {
+              const x = a[0] + dx * t, y = a[1] + dy * t;
+              for (let j = 0; j < o.polygon_m.length; j += 1) {
+                const p = o.polygon_m[j], q = o.polygon_m[(j + 1) % o.polygon_m.length];
+                const ex = q[0] - p[0], ey = q[1] - p[1], span = Math.hypot(ex, ey);
+                if (span <= EPS || Math.abs((x - p[0]) * ey - (y - p[1]) * ex) > 1e-9 * span
+                  || x < Math.min(p[0], q[0]) - EPS || x > Math.max(p[0], q[0]) + EPS
+                  || y < Math.min(p[1], q[1]) - EPS || y > Math.max(p[1], q[1]) + EPS) continue;
+                const sign = dx * ey - dy * ex > 0 ? -1 : 1;
+                n = [sign * ey / span, -sign * ex / span, 0]; break;
+              }
+            }
+          }
+          accept(t, n); break;
         }
       }
     }
   }
-  return blocker;
+  return result;
 }

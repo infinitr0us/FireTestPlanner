@@ -943,7 +943,7 @@ function deviceQuantity(
   const prop = props.get(rec.string('PROP_ID') ?? '');
   if (prop) {
     quantity = quantity ?? prop.string('QUANTITY');
-    diameter = prop.number('DIAMETER');
+    diameter = prop.number('BEAD_DIAMETER') ?? prop.number('DIAMETER');
   }
   return [quantity, diameter];
 }

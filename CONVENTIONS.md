@@ -775,6 +775,56 @@ diagonal, a wall with three points, a non-rectangular slab, a circular pan and
 anything yawed have no `XB`; those show the bounding box read-only, with the reason,
 rather than being quietly squared off.
 
+### Writing devices back
+
+`devicesToFds(doc)` and `Plan.to_fds_devices()` write reproducible UTF-8 text with
+LF endings: heat flux gauges and one `THERMOCOUPLE` device per bead, with shared
+`DIAMETER` properties when a diameter is recorded. Import accepts both `DIAMETER`
+and the older `BEAD_DIAMETER` spelling. Cameras, geometry and all
+other object types are omitted. This is a device fragment, not a runnable model.
+The header identifies the plan, test and coordinate frame, and says
+"Written by FireTestPlanner" without a version or timestamp.
+
+Wall- or ceiling-mounted thermocouple beads instead write `WALL TEMPERATURE` with
+the nearest mounting face's `IOR` within 0.05 m and no `PROP_ID`; a bead with no
+such face writes `THERMOCOUPLE` with a comment identifying the missing surface.
+
+Coordinates are `plan_xyz + meta.source.originOffset_m`, with a zero offset when
+absent, using section 7's metre rounding. A plan imported from FDS therefore writes
+in its source frame; other plans use the burner-centred plan frame. To import a
+fragment back into that plan frame, supply the same offset as `originM` / `origin_m`:
+a fragment has no burner or mesh from which the importer could infer it.
+
+A gauge gets `GAUGE HEAT FLUX` and the face's `IOR` when an axis-aligned wall,
+ceiling or obstruction face lies behind it within 0.05 m along its normal, and its
+normal is within 5 degrees of that axis. The shared occlusion solids honour wall
+openings and transformed boxes; hood skirts are excluded. The plan floor at z = 0
+is also a mounting face: a gauge from 0 to 0.05 m above it facing up within
+5 degrees gets `IOR=3`. Re-origination puts it on the source floor slab's top.
+A tilted mounted gauge also carries its four-decimal `ORIENTATION`, preserving
+the recorded facing on re-import while IOR identifies the mounting face. All other
+gauges use `RADIATIVE HEAT FLUX GAS` and a four-decimal unit `ORIENTATION`.
+
+Device IDs use names, falling back to object IDs. Apostrophes become underscores
+and control characters become spaces; collisions gain `_2`, `_3`, and so on.
+Multi-bead rakes use every bead's transformed world position. An imported range
+name `<p><a>-<p><b>` with the same prefix, increasing integer indices and exactly
+`b - a + 1` beads recovers the device IDs `<p><a>` through `<p><b>`. Other rakes
+append `_1`, `_2`, and so on to their unique name. Colliding recovered IDs fall
+back to a suffixed rake name. Single beads keep their object's name.
+The existing importer's vertical-run grouping still names a rake from its first
+and last device IDs, and can combine coincident runs. Disable `groupRakes` /
+`group_rakes` when inspecting individual exported names and bead properties.
+Neither export changes the stored plan or its format version.
+
+Run `python tools/check_fds_device_export.py` for an FDS setup check outside pytest.
+It combines the room corner source geometry with the current writer's devices and
+`T_END=0.`, runs in a temporary directory under `local/`, and requires `Set-up only`
+with no `ERROR` line. Set `FDS_BIN` to an executable or bin directory; the default
+is `C:/Program Files/firemodels/FDS6/bin/`. On Windows it calls the adjacent
+`fdsinit.bat` first. A missing default installation is reported as skipped; an
+invalid explicit `FDS_BIN` fails. The tool leaves the source fixtures unchanged.
+
 ### Nothing is guessed that the file does not say
 
 `RADIATIVE_FRACTION` is imported only when `&REAC` states it — never defaulted to

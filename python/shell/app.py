@@ -596,6 +596,15 @@ class Shell:
         error = self._write(path, html)
         return {"error": error} if error else {"path": path}
 
+    def save_fds(self, text: str, suggested_name: str) -> Optional[Dict[str, str]]:
+        path = self._ask_save(suggested_name, FDS_FILTER)
+        if not path:
+            return None
+        if not path.lower().endswith('.fds'):
+            path += '.fds'
+        error = self._write(path, text)
+        return {"error": error} if error else {"path": path}
+
     def save_results_png(self, data_url: Any) -> Optional[Dict[str, str]]:
         if not isinstance(data_url, str) or not data_url.startswith('data:image/png;base64,') or len(data_url) > 48 * 1024 * 1024:
             return {"error": "Invalid or oversized PNG snapshot."}
@@ -801,6 +810,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json(self.shell.linked_file_action(body.get("path"), body.get("kind"), body.get("action")))
             elif route == "/api/save-html":
                 self._send_json(self.shell.save_html(body.get("html", ""), body.get("name", "page.html")))
+            elif route == "/api/save-fds":
+                self._send_json(self.shell.save_fds(body.get("text", ""), body.get("name", "devices.fds")))
             elif route == "/api/presets":
                 self._send_json(self.shell.save_camera_presets(body.get("presets")))
             else:

@@ -1321,6 +1321,11 @@ class Plan:
             for cid, cam in self.cameras.items()
         }
 
+    def to_fds_devices(self) -> str:
+        """Write instruments in the source FDS frame (or the plan frame)."""
+        from .fds_export import devices_to_fds
+        return devices_to_fds(self)
+
     def to_nerfstudio(self, path=None) -> Dict[str, Any]:
         """Emit a nerfstudio `transforms.json` skeleton.
 

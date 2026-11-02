@@ -154,6 +154,15 @@ one for help (**Camera not listed?**). A fold stays open across repaints, and op
 by itself while it holds a draft or an error. A new rail section follows the same
 rule rather than adding to the rail's natural height.
 
+The FDS device export preview uses a native modal dialog with the existing
+`modal__panel`, `field__input` and shared buttons. Its read-only text uses `--mono`;
+the summary names exported quantities and omissions. Copy and Download report
+success, cancellation or failure in a status line using the shared text/error
+tokens. Focus starts in the text, Escape closes the dialog and restores the
+toolbar focus, and the plan's playback and keyboard commands pause while it is
+open. Desktop Download uses the native save bridge; browsers download the same
+UTF-8 text. Browser regressions cover the preview separately from native dialogs.
+
 ## Playback
 
 `ui/transport.ts` supplies the shared five button glyphs, accessible names and

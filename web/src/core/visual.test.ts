@@ -24,7 +24,7 @@ describe('instrument identity across import, plan and results', () => {
 
 // These presentation consumers must use shared identity/theme tokens. Legacy
 // geometry, print and scientific palettes remain outside this focused guard.
-it.each(['../ui/fds-results.ts', '../ui/reconstruction-plot.ts', '../ui/panels.ts',
+it.each(['../ui/fds-results.ts', '../ui/reconstruction-plot.ts', '../ui/panels.ts', '../ui/export-fds.ts',
   '../scene/fds-devices.ts', './fds-devices.ts'])('%s introduces no private color literals', path => {
   const source = readFileSync(new URL(path, import.meta.url), 'utf8');
   expect(source.match(/#[\da-f]{3,8}\b|\b0x[\da-f]{6}\b/gi) ?? []).toEqual([]);
