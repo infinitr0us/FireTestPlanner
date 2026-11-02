@@ -136,19 +136,34 @@ def manifest_for(source, grid, file_info):
 
 
 def manifest_mismatch(manifest, file_info, grid):
+    # Size and the mapped channels themselves, not the modification time: copying a
+    # file to another machine, or handing it to a browser tab, changes or drops the
+    # time with the data untouched. Mirror of manifestMismatch in test-data.ts.
     changes = []
     if manifest['size'] != file_info['size']:
         changes.append('File size changed.')
-    if manifest['modified'] != file_info['modified']:
-        changes.append('File modification time changed.')
     chosen = layout(file_info['table']) if 'table' in file_info else tables.detect_shape(grid)
     channels = {c.name: c for c in tables.extract_series(grid, chosen, file_info.get('units')).channels}
+
+    def num(v):
+        return str(int(v)) if float(v).is_integer() else repr(float(v))
+
+    def span(a, b):
+        return 'no samples' if a is None or b is None else f'{num(a)} to {num(b)} s'
     for old in manifest['channels']:
         c = channels.get(old['name'])
         if c is None:
             changes.append(f'Mapped channel "{old["name"]}" is missing.')
-        elif c.unit != old['unit']:
+            continue
+        if c.unit != old['unit']:
             changes.append(f'Unit of mapped channel "{old["name"]}" changed.')
+        n = len(c.t)
+        t0, t1 = (c.t[0], c.t[-1]) if n else (None, None)
+        if n != old['samples']:
+            changes.append(f'Mapped channel "{old["name"]}" now has {n} samples (was {old["samples"]}).')
+        elif t0 != old['t0'] or t1 != old['t1']:
+            changes.append(f'Mapped channel "{old["name"]}" now covers {span(t0, t1)} '
+                           f'(was {span(old["t0"], old["t1"])}).')
     return changes
 
 

@@ -35,6 +35,22 @@ that the left rail shows Checks and its first card without scrolling, and that
 **From FDS** is folded, opens with a real Space and stays open through a pasted
 record's Create.
 
+For test data it opens `fixtures/test-data/test-data.ftp.json` by answering the Open
+file chooser, opens **Test data…**, and attaches `logger-export.xlsx` and
+`room-test_devc.csv` through each source's file input (`DOM.setFileInputFiles`). It
+checks the sources' statuses, that an unchanged file shows no mismatch although a
+browser File carries its own modification time, the sheet preview's marked rows and
+time columns, the gauge
+constant taken from a channel name, the instrument list with bead heights, a mapping
+made by a real End key on an Instrument select and undone by Ctrl+Z inside the
+dialog, the channel filter, and Escape returning focus to the toolbar. It then selects
+the gauge and reads the plot's legend (both sources, Planned, Range), the labelled
+dashed planned line and the solid/dashed source lines, no warning above the plot for
+unchanged files, the slider's End readout, Collapse and Expand, and the rake's one line per bead
+and source. Deleting a mapped gauge raises `test-data-dangling`; clicking it opens the
+source with the flagged mapping focused, and at 1280 × 720 the dialog and its actions
+fit the window.
+
 For manual inspection, run `npm run dev -- --host 127.0.0.1` and open
 `/browser-tests/visual-consistency.html` at the URL and port Vite prints.
 The page also opens the public `room_corner` subset, selects a directed gauge and

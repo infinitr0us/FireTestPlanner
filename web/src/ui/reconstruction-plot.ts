@@ -1,19 +1,12 @@
 import { fileName } from '../core/linked-files';
 import { flameSequenceLink, plotFollowsFlame } from '../core/plan';
-import { isBurner, type LinkedFile, type ReconstructionPlot } from '../core/types';
+import { isBurner, type LinkedFile, type PlanObject, type ReconstructionPlot } from '../core/types';
 import type { FlameStore } from '../state/flame-store';
 import type { Playhead } from '../state/playhead';
 import type { Store } from '../state/store';
 import { h } from './dom';
-
-const fmt = (v: number): string => Number(v.toPrecision(4)).toString();
-const NS = 'http://www.w3.org/2000/svg';
-function svgElement(tag: string, attrs: Record<string, string | number>, text?: string): SVGElement {
-  const el = document.createElementNS(NS, tag);
-  for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, String(value));
-  if (text !== undefined) el.textContent = text;
-  return el;
-}
+import type { PlotView } from './plot-panel';
+import { fmt, lastIndexAtOrBefore, svgElement } from './plot-svg';
 
 /** Two aligned plots keep volume and area in their own units and scales. */
 function chart(plot: ReconstructionPlot, column: 1 | 2): { svg: SVGElement; select: (index: number) => void } {
@@ -49,42 +42,34 @@ function chart(plot: ReconstructionPlot, column: 1 | 2): { svg: SVGElement; sele
   } };
 }
 
-export class ReconstructionPlotPanel {
-  private root = h('section', { class: 'reconstruction-plot', hidden: true, 'aria-label': 'Burner reconstruction results' });
-  private collapsed = false;
+/**
+ * A burner's reconstruction CSV in the shared plot panel.
+ *
+ * The plot follows the playback clock when it is this reconstruction's own
+ * data: the burner's flame is loaded and the CSV matches its manifest. Then the
+ * cursor sits on the last sample at or before the clock's time, and dragging
+ * the slider seeks the clock. Any other dataset -- another run's, another
+ * burner's, or with no flame loaded at all -- keeps the slider to itself,
+ * exactly as in format 1.3.
+ */
+export class ReconstructionView implements PlotView {
+  readonly id = 'reconstruction';
+  readonly label = 'Reconstruction';
   private selectedLink = '';
   private index = 0;
   private key = '';
-  private signature = '';
   private snapshots = new WeakMap<ReconstructionPlot['samples'], number>();
   private nextSnapshot = 0;
   /** Redraw the cursor for the current index; set while the plot is on screen. */
   private draw: (() => void) | null = null;
   private samples: ReconstructionPlot['samples'] | null = null;
+  private times: number[] = [];
   /** Whether the plot on screen is one the clock drives. */
   private following = false;
 
-  /**
-   * The plot follows the playback clock when it is this reconstruction's own
-   * data: the burner's flame is loaded and the CSV matches its manifest. Then the
-   * cursor sits on the last sample at or before the clock's time, and dragging
-   * the slider seeks the clock. Any other dataset -- another run's, another
-   * burner's, or with no flame loaded at all -- keeps the slider to itself,
-   * exactly as in format 1.3.
-   */
-  constructor(container: HTMLElement, private store: Store, private playhead?: Playhead, private flames?: FlameStore) {
-    container.append(this.root);
-    for (const event of ['pointerdown', 'click', 'dblclick', 'wheel']) this.root.addEventListener(event, (e) => e.stopPropagation());
-    store.subscribe(() => this.render());
-    playhead?.subscribe((event) => {
-      if (event === 'time') this.follow();
-      else this.render();
-    });
-    // A sequence arriving or leaving decides whether this plot's flame is loaded,
-    // and need not move the clock's range (a second run with the same timestamps).
-    flames?.subscribe(() => this.render());
-    this.render();
-  }
+  constructor(private store: Store, private playhead?: Playhead, private flames?: FlameStore) {}
+
+  title(): string { return 'Reconstruction results'; }
 
   /** Whether a flame's frames are in the session, for `plotFollowsFlame`. */
   private loaded = (flame: Parameters<typeof flameSequenceLink>[0]): boolean => {
@@ -92,57 +77,51 @@ export class ReconstructionPlotPanel {
     return Boolean(link && this.flames?.sequenceOf(link));
   };
 
-  /** The clock moved: put the cursor on the sample it is at, if it is on any. */
-  private follow(): void {
-    if (!this.following || !this.playhead?.hasRange || !this.samples || !this.draw) return;
-    const t = this.playhead.time_s;
-    let lo = 0, hi = this.samples.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (this.samples[mid][0] <= t) lo = mid + 1; else hi = mid;
-    }
-    const index = Math.max(lo - 1, 0);
-    if (index === this.index) return;
-    this.index = index;
-    this.draw();
+  private links(obj: PlanObject): LinkedFile[] {
+    return isBurner(obj) ? obj.linkedFiles?.filter((f) => f.plot) ?? [] : [];
   }
 
-  render(): void {
-    const sole = this.store.soleSelected;
-    const obj = sole && isBurner(sole) ? sole : undefined;
-    const links = obj?.linkedFiles?.filter((f) => f.plot) ?? [];
-    this.root.hidden = !links.length;
-    if (!obj || !links.length) { this.signature = ''; this.draw = null; this.samples = null; return; }
-    const key = `${this.store.documentId}/${obj.id}`;
+  signature(obj: PlanObject, key: string): string | null {
+    const links = this.links(obj);
+    if (!isBurner(obj) || !links.length) { this.draw = null; this.samples = null; this.times = []; return null; }
     if (key !== this.key) { this.key = key; this.selectedLink = ''; this.index = 0; }
     const link = links.find((l) => l.id === this.selectedLink) ?? links[0];
     this.selectedLink = link.id;
     const following = Boolean(this.playhead?.hasRange) && plotFollowsFlame(this.store.document, obj, link, this.loaded);
     // Imports replace the sample array; undo/redo also restore new arrays. Identity
     // catches replacements even when timestamps and sample counts are unchanged.
-    const signature = JSON.stringify([key, obj.name, links.map((l) => {
+    return JSON.stringify([obj.name, link.id, links.map((l) => {
       const samples = l.plot!.samples;
       if (!this.snapshots.has(samples)) this.snapshots.set(samples, ++this.nextSnapshot);
       return [l.id, l.label, l.path, l.plot!.importedAt, samples.length, this.snapshots.get(samples)];
-    }), this.collapsed, following]);
-    if (signature === this.signature) return;
-    this.signature = signature;
+    }), following]);
+  }
+
+  /** The clock moved: put the cursor on the sample it is at, if it is on any. */
+  follow(): void {
+    if (!this.following || !this.playhead?.hasRange || !this.samples || !this.draw) return;
+    const index = Math.max(lastIndexAtOrBefore(this.times, this.playhead.time_s), 0);
+    if (index === this.index) return;
+    this.index = index;
+    this.draw();
+  }
+
+  render(obj: PlanObject, root: HTMLElement, rerender: () => void): void {
+    if (!isBurner(obj)) return;
+    const links = this.links(obj);
+    const link = links.find((l) => l.id === this.selectedLink) ?? links[0];
+    const following = Boolean(this.playhead?.hasRange) && plotFollowsFlame(this.store.document, obj, link, this.loaded);
     this.following = following;
     const plot = link.plot!;
     this.index = Math.min(this.index, plot.samples.length - 1);
-    const title = h('strong', {}, ['Reconstruction results']);
-    const collapse = h('button', { type: 'button', 'aria-expanded': String(!this.collapsed), title: 'Collapse or expand results',
-      onclick: () => { this.collapsed = !this.collapsed; this.render(); } }, [this.collapsed ? 'Expand' : 'Collapse']);
-    this.root.replaceChildren(h('div', { class: 'reconstruction-plot__header' }, [title, collapse]));
-    if (this.collapsed) return;
-    this.root.append(h('div', { class: 'reconstruction-plot__source', title: link.path }, [`${obj.name || obj.id} · ${link.label || fileName(link.path)}`]));
-    if (links.length > 1) this.root.append(h('select', { 'aria-label': 'Reconstruction dataset', class: 'field__input',
-      onchange: (e: Event) => { this.selectedLink = (e.target as HTMLSelectElement).value; this.index = 0; this.signature = ''; this.render(); } },
+    root.append(h('div', { class: 'plot-panel__source', title: link.path }, [`${obj.name || obj.id} · ${link.label || fileName(link.path)}`]));
+    if (links.length > 1) root.append(h('select', { 'aria-label': 'Reconstruction dataset', class: 'field__input',
+      onchange: (e: Event) => { this.selectedLink = (e.target as HTMLSelectElement).value; this.index = 0; rerender(); } },
     links.map((l) => h('option', { value: l.id, selected: l.id === link.id }, [l.label || fileName(l.path)]))));
     const charts = h('div');
     const volume = chart(plot, 1), area = chart(plot, 2);
     charts.append(volume.svg, area.svg);
-    const value = h('output', { class: 'reconstruction-plot__values', 'aria-live': 'polite' });
+    const value = h('output', { class: 'plot-panel__values', 'aria-live': 'polite' });
     const slider = h('input', { type: 'range', min: 0, max: plot.samples.length - 1, step: 1, value: this.index,
       'aria-label': 'Measurement sample', disabled: plot.samples.length === 1,
       oninput: (e: Event) => {
@@ -160,9 +139,10 @@ export class ReconstructionPlotPanel {
     };
     this.draw = draw;
     this.samples = plot.samples;
+    this.times = plot.samples.map((s) => s[0]);
     this.follow();
     draw();
-    this.root.append(charts, slider, value, h('p', { class: 'reconstruction-plot__note' }, [this.caption(link, following)]));
+    root.append(charts, slider, value, h('p', { class: 'plot-panel__note' }, [this.caption(link, following)]));
   }
 
   private caption(link: LinkedFile, following: boolean): string {

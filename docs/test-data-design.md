@@ -178,7 +178,7 @@ subscribe(listener: () => void): () => void
 load(sourceId: string): Promise<TestDataEntry>
 attachFile(sourceId: string, file: File): Promise<TestDataEntry>
 attachBytes(sourceId: string, name: string, data: TestDataBytes): Promise<TestDataEntry>
-draftFromFile(name: string, bytes: Uint8Array): Promise<Draft>
+draftFromFile(name: string, bytes: Uint8Array, options?: DraftOptions): Promise<Draft>
 attachEmbedded(sourceId: string, series: Series[]): void
 clear(): void
 dispose(): void
@@ -230,7 +230,76 @@ so the plot can explain why there is no planned line. `instrumentScheduleCsv` in
 `objectId[zeroBasedBead]`; names use one-based suffixes for rakes. Positions and
 aim points use the requested display unit, and facing comes from the authoritative
 quaternion. The Drawing button uses the normal browser download or the desktop
-CSV save route. Sources, mappings and plot UI remain part 3b.
+CSV save route.
+
+### Editor UI (part 3b)
+
+**Test data…** in the toolbar opens a native modal dialog (`ui/test-data.ts`), the
+same frame as the FDS export preview. Opening it pauses playback and suspends the
+viewport; Escape closes it and returns the keyboard to the toolbar. While it is open,
+Ctrl+Z / Ctrl+Y undo and redo plan edits unless a text field has focus.
+
+- **The sources list** shows each source's role, file, sheet and ignition offset, its
+  session status (loaded, needs the file in this browser tab, waits for Load data on a
+  network share, reading, error) and how many of its mappings plot. A loaded file that
+  differs from the manifest lists the reasons, with **Accept the file as read**. The
+  source's own `test-data-dangling` and `test-data-duplicate` findings are repeated on
+  its card. A browser tab offers **Choose file…** (a file input, so a session can
+  attach files without a native dialog); the desktop offers **Reload**, or **Load
+  data** for a network path. Reading a file is never an edit.
+- **Add a source** picks a file (the native picker through the bridge, or a file
+  input), drafts every sheet with a progress bar and Cancel (`DraftOptions` on
+  `draftFromFile`: `onProgress` before each step, `signal` aborting at the next one),
+  and opens the editor on a pending source. Nothing changes in the plan until **Add
+  source**, which adds the source, its mappings and a manifest computed from the read
+  as one edit, then attaches the bytes already read. The default sheet, the detected
+  layout, `unitsSheet: null` for workbooks, the role (simulated for FDS output) and
+  the name (the file name) come from the draft; exact FDS names are pre-selected and
+  marked *suggested*.
+- **The editor** sets name, role and ignition offset (with the workbook's shift hint
+  as one click, naming its sheets), the sheet, shape, names, units and first data rows
+  and time column, against a preview of the sheet that marks the names, units and
+  first data rows and the time columns in text, not colour alone. A draft of the file
+  is kept for the session, so changing the sheet never reads the file again; an
+  existing source without one works on its loaded sheet and offers **Read all
+  sheets…**. Without the file, the mapping table lists the manifest's channels.
+- **Mapping** is a table of channel, unit, samples, file-time span and an instrument
+  select (gauges, every bead labelled with its rake and height in display units,
+  burners for HRR), scale and offset, with a filter. Mapping a gauge pre-fills the
+  constant from the channel name (`23.17 kW/m² per mV, from the channel name`), or 1
+  for a channel already in kW/m²; other targets keep the row's calibration. A row says
+  when the channel's unit is not the target's and nothing converts it, when two
+  channels map one target, and when its target is gone.
+
+Every change to an existing source is one undoable edit, and keeps the manifest
+valid. A mapping edit keeps the recorded entries and describes a newly mapped channel
+from the file as read (`updateManifestChannels`); it does not refresh size or time.
+A layout or sheet change describes a different read, so it records the manifest
+again from that read and drops mappings whose channels the layout does not have,
+saying how many. **Accept the file as read** records the manifest from the loaded
+file (dropping mappings whose channels are gone). Removal is one edit, and an
+emptied list is omitted.
+
+Checks: a test data finding carries the source's `sourceId` (an editor-only field on
+`Issue`, not in Python), and clicking it opens the dialog at that source with the
+first flagged mapping in view and focused.
+
+**Plots** share the viewport panel the reconstruction CSV uses (`ui/plot-panel.ts`):
+one panel for the selected object, with a Reconstruction / Test data selector when a
+burner has both. The test data plot (`ui/instrument-plot.ts`) draws plan time from
+ignition, in minutes when the span passes 30 min. A gauge or burner draws measured
+series solid in `--plot-primary` and simulated dashed in `--plot-secondary`; a rake
+draws one line per bead and source, coloured by height rank on the ordinal
+`--plot-ramp-*` ramp, with the source still told by dash. The planned value is a
+long-dashed line labelled Planned (per bead on a rake, in the bead's colour, the
+highest one labelled); a null planned value is explained under the plot. A gauge's
+range is a dotted line labelled Range while it is at most twice the plotted maximum,
+and otherwise an off-scale label, so it never flattens the data. The legend is also
+the readout: each series' last sample at or before the cursor, and none outside its
+span. A run of samples breaks where the step exceeds three times the series' median
+step, and missing samples are counted under the plot. A loaded flame sequence drives
+the cursor through the shared clock, and the slider seeks it. A source whose file
+differs from its manifest, or that maps the object but is not loaded, says so.
 
 ## In Python
 

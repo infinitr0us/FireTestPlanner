@@ -65,6 +65,8 @@ try {
   await once(socket, 'open');
   let id = 0, sessionId;
   const pending = new Map();
+  // Protocol events other than exceptions, for waits such as a file chooser opening.
+  const eventListeners = new Set();
   socket.addEventListener('message', ({ data }) => {
     const message = JSON.parse(data);
     if (message.id) {
@@ -76,6 +78,8 @@ try {
     } else if (message.method === 'Runtime.exceptionThrown') {
       const detail = message.params.exceptionDetails;
       errors.push(detail.exception?.description ?? detail.text);
+    } else {
+      for (const listener of eventListeners) listener(message);
     }
   });
   send = (method, params = {}, session = sessionId) => new Promise((resolve, reject) => {
@@ -194,7 +198,7 @@ try {
   check('synthetic Example draws the pinned surface count at 55 s',
     /frame 12\/80.*4[,\s]?758 cubes/.test(await evaluate('document.querySelector(".playback-bar__readout").textContent')));
   await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("Heptane pan"))');
-  await waitFor(() => evaluate('document.querySelector(".reconstruction-plot input[aria-label=\\"Measurement sample\\"]")?.value==="11"'), 'synthetic CSV cursor at 55 s');
+  await waitFor(() => evaluate('document.querySelector(".plot-panel input[aria-label=\\"Measurement sample\\"]")?.value==="11"'), 'synthetic CSV cursor at 55 s');
   check('synthetic Example CSV follows the flame frame', true);
   await click('document.querySelector(".playback-bar button[aria-label=\\"Play (Space)\\"]")');
   await waitFor(() => evaluate('Number(' + frameValue + ')>11'), 'synthetic Example playback advances');
@@ -434,6 +438,151 @@ try {
   await new Promise(r => setTimeout(r, 150));
   check('a rebuild into another panel does not move focus into a field',
     await evaluate('!["INPUT","SELECT","TEXTAREA"].includes(document.activeElement?.tagName)'));
+  phase('test data: sources, mapping and instrument plots');
+  // Test data (M16 part 3b). A browser tab cannot read the plan's linked files, so
+  // the plan is opened and its two files attached through real file inputs:
+  // Open answers its file chooser, each source's Choose file… input takes its file.
+  await openTab();
+  await send('Page.navigate', { url: origin + '/dist/index.html' });
+  const button = text => '[...document.querySelectorAll("button")].find(b=>b.textContent===' + JSON.stringify(text) + ')';
+  await waitFor(() => evaluate('!!' + button('Test data…')), 'built editor for test data');
+  const fixture = name => resolve(web, '../fixtures/test-data', name);
+  const setFiles = async (expression, files) => {
+    const { result } = await send('Runtime.evaluate', { expression, returnByValue: false });
+    await send('DOM.setFileInputFiles', { files, objectId: result.objectId });
+  };
+  await send('Page.setInterceptFileChooserDialog', { enabled: true });
+  const chooser = new Promise(resolve => {
+    const listener = message => {
+      if (message.method !== 'Page.fileChooserOpened') return;
+      eventListeners.delete(listener);
+      resolve(message.params);
+    };
+    eventListeners.add(listener);
+  });
+  await click(button('Open'));
+  const { backendNodeId } = await chooser;
+  await send('DOM.setFileInputFiles', { files: [fixture('test-data.ftp.json')], backendNodeId });
+  await send('Page.setInterceptFileChooserDialog', { enabled: false });
+  await waitFor(() => evaluate('document.querySelector(".toolbar__file").textContent.startsWith("test-data.ftp.json")'), 'test data plan opened');
+  await click(button('Test data…'));
+  await waitFor(() => evaluate('!!document.querySelector("dialog.test-data[open]")'), 'Test data dialog');
+  const sourceStatus = id => 'document.querySelector("[data-source-id=\\"' + id + '\\"] .test-data__status")?.textContent ?? ""';
+  check('a browser tab lists both sources as needing their files, each with Choose file…', await evaluate(
+    '[...document.querySelectorAll(".test-data__source")].map(s=>s.querySelector("strong").textContent+"|"+s.querySelector(".test-data__status").textContent.split(" · ")[0]+"|"+[...s.querySelectorAll("button")].some(b=>b.textContent==="Choose file…")).join(";")')
+    === 'Synthetic logger|Needs the file in this browser tab|true;Synthetic FDS|Needs the file in this browser tab|true');
+  await setFiles('document.querySelector("dialog.test-data input[type=file][data-source-id=\\"logger\\"]")', [fixture('logger-export.xlsx')]);
+  await waitFor(async () => (await evaluate(sourceStatus('logger'))).startsWith('Loaded'), 'logger workbook attached');
+  await setFiles('document.querySelector("dialog.test-data input[type=file][data-source-id=\\"fds\\"]")', [fixture('room-test_devc.csv')]);
+  await waitFor(async () => (await evaluate(sourceStatus('fds'))).startsWith('Loaded'), 'FDS CSV attached');
+  // A browser File carries its own modification time; with the same size and the same
+  // mapped channels that is not a changed file, and no mismatch may be shown.
+  check('attached files load every mapping, and an unchanged file shows no mismatch',
+    await evaluate(sourceStatus('logger')) === 'Loaded · 7 of 7 mappings plotting'
+    && await evaluate(sourceStatus('fds')) === 'Loaded · 2 of 2 mappings plotting'
+    && await evaluate('!document.querySelector(".test-data__mismatch")'));
+  await screenshot('test-data-sources');
+
+  await click('[...document.querySelectorAll("[data-source-id=\\"logger\\"] button")].find(b=>b.textContent==="Edit…")');
+  await waitFor(() => evaluate('!!document.querySelector(".test-data__map")'), 'source editor');
+  check('the preview marks the names and first data rows and every paired time column', await evaluate(
+    '[...document.querySelectorAll(".test-data__grid tbody .test-data__mark th")].map(t=>t.textContent).join("|")') === '1names|2data'
+    && await evaluate('document.querySelectorAll(".test-data__grid thead .test-data__time").length') === 13);
+  const instrument = channel => 'document.querySelector("select[aria-label=\\"Instrument for ' + channel + '\\"]")';
+  const rowText = channel => instrument(channel) + '.closest("tr").textContent';
+  check('a gauge channel in volts carries its constant and says where it came from', await evaluate(
+    rowText('HF east_23.17kW/m2permV') + '.includes("23.17 kW/m² per mV, from the channel name")')
+    && await evaluate('document.querySelector("input[aria-label=\\"Scale for HF east_23.17kW/m2permV\\"]").value') === '23170');
+  const targetLabels = await evaluate('[...' + instrument('TC duct lower') + '.options].map(o=>o.textContent).join("|")');
+  check('the Instrument select lists gauges, every bead with its height, and burners (' + targetLabels + ')', targetLabels
+    === 'Not mapped|HF east|HF west|TC low · bead 1 at 1 m|TC low · bead 2 at 1.5 m|TC low · bead 3 at 2 m|TC low · bead 4 at 2.5 m|TC low · bead 5 at 3 m|Synthetic burner (HRR)');
+  await screenshot('test-data-editor');
+  await evaluate('(' + instrument('TC duct lower') + ').focus()');
+  await key('End', 'End', 35);
+  await waitFor(() => evaluate('(' + instrument('TC duct lower') + ').value===\'["burner",null]\''), 'channel mapped by a key');
+  check('a key on a channel\'s Instrument select maps it as one edit, with its unit caveat', await evaluate(
+    rowText('TC duct lower') + '.includes("Recorded in °C; enter the scale that gives kW")')
+    && await evaluate('document.querySelector(".toolbar__file").textContent.includes("•")')
+    && await evaluate('document.querySelector("#test-data-channels").textContent.endsWith("8 mapped")'));
+  await ctrlZ();
+  await waitFor(() => evaluate('(' + instrument('TC duct lower') + ').value===""'), 'undo of the mapping');
+  check('Ctrl+Z in the dialog undoes the mapping and leaves the plan unmodified', await evaluate(
+    '!document.querySelector(".toolbar__file").textContent.includes("•") && document.querySelector("#test-data-channels").textContent.endsWith("7 mapped")'));
+  await evaluate('document.querySelector(".test-data__filter").focus()');
+  await send('Input.insertText', { text: 'tc tree' });
+  await waitFor(() => evaluate('[...document.querySelectorAll(".test-data__map tbody tr")].filter(r=>!r.hidden).length===5'), 'channel filter');
+  check('the channel filter narrows the table to matching channels', true);
+  await evaluate('document.querySelector("select[aria-label=Role]").focus()');
+  await key('Escape', 'Escape', 27);
+  await waitFor(() => evaluate('!document.querySelector("dialog.test-data")'), 'Escape closes the Test data dialog');
+  check('Escape closes the dialog and returns focus to the toolbar', await evaluate('document.activeElement.textContent') === 'Test data…');
+
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("HF east"))');
+  await waitFor(() => evaluate('!!document.querySelector(".plot-panel:not([hidden]) .plot-panel__legend")'), 'gauge plot');
+  const legend = await evaluate('[...document.querySelectorAll(".plot-panel__legend tbody th")].map(t=>t.textContent).join("|")');
+  check('the gauge plot\'s legend names both sources, Planned and Range (' + legend + ')',
+    legend === 'Synthetic logger · measured|Synthetic FDS · simulated|Planned|Range');
+  check('the planned value is a labelled dashed line, measured solid and simulated dashed', await evaluate(`(() => {
+    const svg=document.querySelector('.plot-panel svg[role=img]');
+    const planned=svg.querySelector('.plot-panel__planned');
+    return planned.getAttribute('stroke-dasharray')!==null
+      && [...svg.querySelectorAll('.plot-panel__line-label')].some(t=>t.textContent==='Planned')
+      && !svg.querySelector('path[data-source=logger]').hasAttribute('stroke-dasharray')
+      && svg.querySelector('path[data-source=fds]').hasAttribute('stroke-dasharray');
+  })()`));
+  check('unchanged source files raise no warning above the plot', await evaluate(
+    'document.querySelectorAll(".plot-panel__warning").length===0'));
+  await evaluate('document.querySelector("input[aria-label=\\"Test data time\\"]").focus()');
+  await key('End', 'End', 35);
+  await waitFor(() => evaluate('document.querySelector(".plot-panel__values").textContent==="t = 600 s from ignition"'), 'plot slider End');
+  check('the slider reads every series at one time, and none outside its own span', await evaluate(
+    '[...document.querySelectorAll(".plot-panel__legend tbody td.plot-panel__num")].map(t=>t.textContent).slice(0,2).join("|")') === '–|0 kW/m²');
+  await screenshot('test-data-plot');
+  await click('document.querySelector(".plot-panel__header button")');
+  await waitFor(() => evaluate('document.querySelector(".plot-panel__header button").getAttribute("aria-expanded")==="false"'), 'plot collapsed');
+  check('Collapse hides the plot and keeps its header', await evaluate('!document.querySelector(".plot-panel svg") && document.querySelector(".plot-panel__header button").textContent==="Expand"'));
+  await click('document.querySelector(".plot-panel__header button")');
+  await waitFor(() => evaluate('!!document.querySelector(".plot-panel__legend")'), 'plot expanded');
+  check('Expand brings the plot back', await evaluate('document.querySelector(".plot-panel__header button").getAttribute("aria-expanded")==="true"'));
+
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("TC low"))');
+  await waitFor(() => evaluate('document.querySelector(".plot-panel__source")?.textContent.includes("rake")'), 'rake plot');
+  check('a rake plots one line per bead and source, coloured by height, with a bead table legend', await evaluate(`(() => {
+    const paths=[...document.querySelectorAll('.plot-panel svg[role=img] path[data-bead]')];
+    const logger=paths.filter(p=>p.dataset.source==='logger').map(p=>p.getAttribute('stroke'));
+    return paths.length===6 && new Set(logger).size===5
+      && document.querySelectorAll('.plot-panel__legend tbody tr').length===5
+      && document.querySelectorAll('.plot-panel__planned').length===5;
+  })()`));
+  await screenshot('test-data-rake');
+
+  // A check about a source opens the dialog at it: deleting a mapped gauge leaves
+  // a dangling mapping, and its card in Checks leads to the source's editor.
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("HF west"))');
+  await new Promise(r => setTimeout(r, 150));
+  await key('Delete', 'Delete', 46);
+  const dangling = '[...document.querySelectorAll(".checks__body")].find(c=>c.querySelector(".checks__code").textContent==="test-data-dangling")';
+  await waitFor(() => evaluate('!!' + dangling), 'dangling mapping check');
+  await click(dangling);
+  await waitFor(() => evaluate('!!document.querySelector("dialog.test-data[open] .test-data__map")'), 'dialog opened from Checks');
+  check('clicking a test data check opens that source with the dangling mapping marked', await evaluate(
+    'document.querySelector("#test-data-title").textContent==="Test data · Synthetic logger"')
+    && await evaluate(instrument('HF west_22.10kW/m2permV') + '.selectedOptions[0].textContent==="Missing: hf-west"')
+    && await evaluate('document.activeElement===' + instrument('HF west_22.10kW/m2permV')));
+  await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+  await new Promise(r => setTimeout(r, 200));
+  check('at 1280 x 720 the dialog fits the window with its actions on screen', await evaluate(`(() => {
+    const d=document.querySelector('dialog.test-data').getBoundingClientRect();
+    const close=[...document.querySelectorAll('dialog.test-data button')].find(b=>b.textContent==='Close').getBoundingClientRect();
+    return d.top>=0 && d.bottom<=innerHeight && close.bottom<=innerHeight && d.right<=innerWidth;
+  })()`));
+  await screenshot('test-data-laptop');
+  await click(button('Close'));
+  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await ctrlZ();
+  await waitFor(() => evaluate('!document.querySelector(".toolbar__file").textContent.includes("•")'), 'undo of the gauge deletion');
+  check('undo restores the gauge and clears the dangling check', await evaluate('!' + dangling));
+
   check('no uncaught browser exceptions', errors.length===0);
   const result = { browser: executable, passed: checks.length, checks };
   if (process.env.BROWSER_TEST_OUTPUT) {

@@ -48,7 +48,10 @@ import { Inspector } from './ui/inspector';
 import { ChecksPanel, Outliner, Palette } from './ui/panels';
 import { PlaybackBar } from './ui/playback-bar';
 import { ReportOverlay } from './ui/report-overlay';
-import { ReconstructionPlotPanel } from './ui/reconstruction-plot';
+import { PlotPanel } from './ui/plot-panel';
+import { ReconstructionView } from './ui/reconstruction-plot';
+import { TestDataView } from './ui/instrument-plot';
+import { TestDataDialog } from './ui/test-data';
 import './styles.css';
 
 // Must run before anything mutates the DOM: 'export shareable viewer' hands
@@ -96,7 +99,11 @@ attachTestData(embeddedTestData);
 const playhead = new Playhead();
 const viewport = new Viewport(qs('#viewport'), store, flameStore, playhead);
 const inspector = new Inspector(qs('#inspector'), store);
-new ReconstructionPlotPanel(qs('#viewport'), store, playhead, flameStore);
+// One plot panel in the viewport's upper right: a burner's reconstruction CSV and
+// an instrument's test data share its frame, with a selector when both apply.
+new PlotPanel(qs('#viewport'), store,
+  [new ReconstructionView(store, playhead, flameStore), new TestDataView(store, testDataStore, playhead)],
+  [(fn) => flameStore.subscribe(fn), (fn) => testDataStore.subscribe(fn)], playhead);
 // Linking, relinking, refreshing and reading a flame's frames, shared by the
 // palette, the burner's Linked files section, the flame's inspector and the bar.
 const flameHost: FlameActionsHost = {};
@@ -239,6 +246,7 @@ flameStore.subscribe(() => {
 let flameDocumentId = store.documentId;
 const outliner = new Outliner(qs('#outliner'), store);
 const checks = new ChecksPanel(qs('#checks'), store);
+checks.openTestData = (sourceId) => openTestData(sourceId);
 const palette = new Palette(qs('#palette'), store, (armed) => {
   viewport.placementMode = armed;
   document.body.classList.toggle('is-placing', armed);
@@ -268,6 +276,15 @@ const reportOverlay = new ReportOverlay((html, name) => { void saveHtml(html, na
 const fdsImport = new FdsImportDialog();
 const fdsExport = new FdsExportDialog(open => viewport.setSuspended(open));
 const fdsResults = new FdsResultsDialog(open => viewport.setSuspended(open));
+const testDataDialog = new TestDataDialog(store, testDataStore, open => viewport.setSuspended(open), () => {
+  // The toolbar is rebuilt by every edit made in the dialog, so the button that
+  // opened it is gone; give the keyboard back to its replacement.
+  if (document.activeElement === document.body) {
+    [...toolbar.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Test data…')?.focus();
+  }
+});
+// From Checks, the dialog opens at the source and scrolls to the flagged mapping.
+const openTestData = (sourceId?: string): void => { playhead.pause(); testDataDialog.open(sourceId, sourceId !== undefined); };
 
 /** Write an HTML export, and say so if it fails rather than doing nothing visible. */
 async function saveHtml(html: string, name: string): Promise<void> {
@@ -375,6 +392,8 @@ function renderToolbar(): void {
       btn('Export to FDS…', () => { playhead.pause(); fdsExport.open(store.document, store.fileName); },
         'Write gauges and thermocouple beads as FDS devices'),
       btn('FDS results…', () => { playhead.pause(); fdsResults.open(); }, 'Visualize and play recorded FDS simulation output'),
+      btn('Test data…', () => openTestData(),
+        'Measured and simulated channels on the instruments: add a logger workbook or FDS output and map its channels'),
       btn('Example', loadExample, 'Load the reference plan built from the hand sketch'),
     ]),
 
@@ -747,7 +766,7 @@ window.addEventListener('focusin', noteCommitted);
 window.addEventListener('change', (e) => { if (e.target === committedText?.el) noteCommitted(e); }, true);
 
 window.addEventListener('keydown', (e) => {
-  if (fdsResults.isOpen || fdsExport.isOpen) return;
+  if (fdsResults.isOpen || fdsExport.isOpen || testDataDialog.isOpen) return;
   const target = e.target as HTMLElement | null;
   const control = target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName) ? target : null;
   // Escape cancels what was typed, then hands the keyboard back to the editor.

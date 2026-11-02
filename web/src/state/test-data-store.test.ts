@@ -90,13 +90,13 @@ describe('test data session', () => {
     }
   });
 
-  it('needs a browser file and loads it, including modification time', async () => {
+  it('needs a browser file and loads it; a different modification time alone is not a mismatch', async () => {
     const store = new Store(doc()), data = new TestDataStore(store);
     expect(data.get('fds')?.status).toBe('needs-file');
     const file = new File([fixture('room-test_devc.csv') as Uint8Array<ArrayBuffer>], 'room-test_devc.csv', { lastModified: 0 });
     await data.attachFile('fds', file);
     expect(data.get('fds')?.status).toBe('loaded');
-    expect(data.get('fds')?.mismatches).toContain('File modification time changed.');
+    expect(data.get('fds')?.mismatches).toEqual([]);
     expect(store.document.testData![1].manifest.modified).toBeNull();
     const initialTime = data.seriesFor('hf-east')[0].t[0];
     store.edit('Skip a row', d => { d.testData![1].table.dataRow = 4; });

@@ -27,6 +27,8 @@ the feature:
 | Results scalar colour scale | `scene/fds-results.ts`: the shader's `ramp`, and `resultRampRgb` for anything drawn outside it (the PNG colour bar); `.fds-results__ramp` shows the same five stops |
 | Playback controls and shortcuts | `ui/transport.ts`; speeds from `state/playhead.ts` |
 | Plot series, grid and cursor | `--plot-*` tokens in `styles.css` |
+| Viewport plot frame, collapse and view selector | `ui/plot-panel.ts` |
+| Plot dashes, bead ramp, ticks and time axis | `ui/plot-svg.ts` |
 
 Reuse those definitions rather than copying their current values into a new
 component. When an existing definition cannot express a new meaning,
@@ -119,6 +121,8 @@ changing themes at runtime would require refreshing existing snapshots.
 | `--bg-label`, `--font` | scene-label surface and typography |
 | `--bg-backdrop` | modal backdrop |
 | `--plot-primary`, `--plot-secondary`, `--plot-grid`, `--plot-cursor` | plot series, grid and time cursor |
+| `--plot-planned`, `--plot-limit` | a plot's planned-value line and a gauge's full-scale range |
+| `--plot-ramp-low`, `--plot-ramp-high` | ends of the ordinal ramp a rake's beads take by height |
 
 Current screen values (the CSS definitions remain authoritative):
 
@@ -129,13 +133,15 @@ Current screen values (the CSS definitions remain authoritative):
 | border, text, dim, faint | `#263251`, `#e2e8f0`, `#94a3b8`, `#64748b` |
 | accent, good, warn, bad | `#38bdf8`, `#34d399`, `#fbbf24`, `#f87171` |
 | plot primary, secondary, grid, cursor | `#65caff`, `#ffbe66`, `#405066`, `#cbd5e1` |
+| plot planned, limit, ramp low, ramp high | `#e2e8f0`, `#7b8aa1`, `#7a68e0`, `#e6e0fd` |
 
 The accent is the editor's sky blue, `#38bdf8`. Results selection uses that color
 for the ring, selected label border and direction arrow, with a dark ring halo to
 remain visible over fields. Unselected labels use the device color. Canvas labels
 follow the editor's 11 px pill style and remain composited into results PNGs.
 
-Playback, reconstruction plots, linked-file panels and results reuse these tokens.
+Playback, viewport plots, linked-file panels, dialogs and results reuse these tokens.
+A dialog's primary action (`btn--primary`) carries an accent border.
 Warnings keep explanatory text; color is supplementary. Results failures have an
 error status, loading messages use neutral text, invalid scale inputs receive an
 error border and `aria-invalid`, and disabled controls share a subdued appearance.
@@ -195,6 +201,36 @@ require merging the two playback systems.
 Plot series use `--plot-primary` and `--plot-secondary`; the grid and dashed time
 cursor have separate tokens. The reconstruction plots remain SVG and result
 histories remain canvas. A renderer rewrite is not needed for shared styling.
+
+The viewport's upper right holds one plot panel for the selected object
+(`ui/plot-panel.ts`): a burner's reconstruction CSV and an instrument's test data
+share its frame, header, Collapse/Expand and cursor slider, and a burner with both
+shows a segmented Reconstruction / Test data selector rather than two panels. Scene
+labels sit in their own stacking context below it and below the playback bar.
+
+Instrument plots (test data, `ui/instrument-plot.ts`) encode the source by line
+style first: measured solid, simulated dashed, a second source of the same role the
+next pattern of its family (`seriesDash`). On a gauge or burner, measured is
+`--plot-primary` and simulated `--plot-secondary`. On a rake, colour is the bead's
+height rank on an ordinal one-hue ramp between `--plot-ramp-low` and
+`--plot-ramp-high` (mixed in OKLab; lowest darkest; low end 3.9:1 on the overlay)
+and the dash still names the source, so neither is read from hue alone. Planned
+values are long dashes labelled Planned, neutral `--plot-planned` on one instrument
+and the bead's colour on a rake (only the highest labelled); a gauge's range is a
+dotted `--plot-limit` line labelled Range, or an off-scale label when drawing it
+would flatten the data. Line labels, the axis title and the legend use text
+tokens; colour sits in the line keys. The legend is a table that doubles as the
+readout at the cursor, and no value is shown outside a series' own span. Missing
+samples break the line and are counted in a note; nothing is interpolated.
+
+The Test data dialog is a native modal like the FDS export preview, with
+`modal__panel`, `field__input`, the shared buttons and a status line in the shared
+text, warning and error tokens. Its sheet preview marks the names, units and first
+data rows and the time columns with text tags as well as a raised surface. Invalid
+scale, offset, row and time inputs keep the typed text with an error border and
+`aria-invalid`. Focus survives its repaints; Escape closes it and returns focus to
+the toolbar, and playback and plan keys pause while it is open. Browser
+regressions cover it separately from native dialogs.
 
 The result scene keeps its unlit fields, translucent context geometry, free orbit
 and existing camera fit. FDS coordinates can be negative and are not constrained
@@ -261,6 +297,8 @@ Token reuse alone is not an accessibility or scientific-validation claim.
 | Scientific ramps | Slice, smoke/fire and reconstructed-height palettes retain their own meanings | A data scale is not an interaction accent | Keep |
 | Print | Paper background and dark ink; instrument defaults still shared | Screen surfaces are unsuitable for paper | Keep |
 | Length precision | Fixed decimals on dimensions and set-out coordinates; trimmed decimals in inspector fields | Adjacent construction labels need consistent precision; fields stay compact and editable | Keep; fractional ft-in uses the same reduced sixteenths everywhere |
+| Rake plots | Bead lines take the ordinal `--plot-ramp-*` colours instead of `--plot-primary`/`--plot-secondary` | Colour encodes bead height; the measured/simulated distinction is carried by dash, as on every instrument plot | Keep |
+| Gauge range on plots | Drawn only while within twice the plotted maximum; otherwise an off-scale label | A 50 kW/m² range on a 5 kW/m² reading would flatten the data the plot is for | Keep |
 
 The editor's scene materials and furniture remain in `scene/builders.ts` and
 `scene/viewport.ts`; object defaults and camera modality colors are in
@@ -285,7 +323,8 @@ the print block in `styles.css`; the page is A4 portrait with 14 mm margins.
 
 `npm test` includes imported-device color parity across plan, builders and results,
 transport key policy, and a zero-private-color-literal guard on the migrated device,
-results-dialog, reconstruction-plot and palette consumers. The guard is focused on
+results-dialog, plot-panel, reconstruction and instrument plot, test data dialog and
+palette consumers. The guard is focused on
 these consumers; it does not claim to count shader data colors, print ink or all
 legacy geometry literals. New screen colors belong in `styles.css :root`, and new
 instrument defaults in `core/visual.ts`.

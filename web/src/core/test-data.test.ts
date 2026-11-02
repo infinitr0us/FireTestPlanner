@@ -133,9 +133,15 @@ describe('format 1.6 test data', () => {
     const manifest = manifestFor(s, grid, info);
     expect(manifestMismatch(manifest, info, grid)).toEqual([]);
     grid[2][0] = 'W';
+    // A modification time alone is not a change: a copied or browser-attached file has
+    // another one with the same data.
+    expect(manifestMismatch(manifest, { ...info, modified: '2026-11-02T00:00:00Z' }, grid.map((r, i) => (i === 2 ? ['V', 's'] : [...r])))).toEqual([]);
     expect(manifestMismatch(manifest, { ...info, size: 51, modified: 'changed' }, grid)).toEqual([
-      'File size changed.', 'File modification time changed.', 'Unit of mapped channel "Power" changed.',
+      'File size changed.', 'Unit of mapped channel "Power" changed.',
     ]);
+    grid[2][0] = 'V'; grid[4][0] = 5;
+    expect(manifestMismatch(manifest, info, grid)).toEqual(['Mapped channel "Power" now has 3 samples (was 2).']);
+    grid[4][0] = null;
     s.channels.push({ ...s.channels[0] }); expect(() => sourceSeries(s, grid, units)).toThrow(/more than once/);
     s.channels.pop(); grid[1][0] = 'renamed';
     expect(manifestMismatch(manifest, info, grid)).toEqual(['Mapped channel "Power" is missing.']);

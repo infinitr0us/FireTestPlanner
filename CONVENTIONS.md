@@ -1032,9 +1032,10 @@ per distinct mapped name, in first-mapping order: `name`, `unit` (the reader's
 normalized raw unit, or null), `samples`, `t0`, `t1`. Counts are non-negative integers.
 An empty series has null endpoints; one sample has equal finite endpoints; more
 samples have increasing endpoints. Times and units precede calibration and ignition
-shift. File size, modification time, missing mapped channels and changed units can
-be compared without altering the stored manifest. Reopening or reading does not
-silently refresh it.
+shift. File size, missing mapped channels, changed units, sample counts and time
+spans are compared without altering the stored manifest; the modification time alone
+is not, because a copied or browser-attached file carries another one with the same
+data. Reopening or reading does not silently refresh the manifest.
 
 The pure TypeScript helper takes target quantities through
 `sourceSeries(source, grid, {channels, targets})`: `channels` is the metadata unit
@@ -1071,4 +1072,5 @@ samples at strictly increasing times are accepted. This helper does not change
 stored data. Shared pages carry these decimated series in an HTML-only
 `embeddedTestData` block, removed before document validation and never written to
 a plan. The session and sharing APIs are documented in
-`docs/test-data-design.md` under Editor plumbing; editor plots are deferred.
+`docs/test-data-design.md` under Editor plumbing, and the editor's Test data dialog
+and instrument plots, including what each edit does to the manifest, under Editor UI.

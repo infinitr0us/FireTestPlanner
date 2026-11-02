@@ -52,6 +52,24 @@ describe('source drafts', () => {
     expect(empty.defaultSheetIndex).toBeNull();
   });
 
+  it('reports progress for every sheet and stops at the next step when cancelled', async () => {
+    const bytes = fixture('logger-export.xlsx');
+    const steps: string[] = [];
+    const draft = await draftFromFile('logger-export.xlsx', bytes, doc(), {
+      onProgress: ({ step, steps: total, sheet }) => steps.push(`${step}/${total} ${sheet ?? '-'}`),
+    });
+    const sheets = draft.sheets.map(s => s.name);
+    const total = sheets.length + 2;
+    expect(steps).toEqual([`1/${total} -`, ...sheets.map((name, i) => `${i + 2}/${total} ${name}`), `${total}/${total} -`]);
+    const abort = new AbortController();
+    const seen: number[] = [];
+    const cancelled = draftFromFile('logger-export.xlsx', bytes, doc(), {
+      signal: abort.signal, onProgress: ({ step }) => { seen.push(step); if (step === 2) abort.abort(); },
+    });
+    await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+    expect(seen).toEqual([1, 2]);
+  });
+
   it('suggests the IDs Export to FDS writes, so a run of an imported plan maps back by name', () => {
     const room = parseAndValidatePlan(readFileSync(new URL('../../../fixtures/fds/room_corner.ftp.json', import.meta.url), 'utf8'));
     expect(suggestMappings(['BACK_TC_1', 'BACK_TC_6', 'BACK_WT_3', 'FLOOR_HF', 'NOT_A_DEVICE'], room)).toEqual([

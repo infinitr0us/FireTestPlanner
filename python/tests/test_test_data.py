@@ -159,8 +159,14 @@ def test_layout_calibration_mismatch_and_duplicate_policy():
     manifest = manifest_for(source, grid, info)
     assert manifest_mismatch(manifest, info, grid) == []
     grid[2][0] = 'W'
+    # A modification time alone is not a change: a copied file has another one.
+    assert manifest_mismatch(manifest, dict(info, modified='2026-11-02T00:00:00Z'), deepcopy(before)) == []
     assert manifest_mismatch(manifest, dict(info, size=51, modified='changed'), grid) == [
-        'File size changed.', 'File modification time changed.', 'Unit of mapped channel "Power" changed.']
+        'File size changed.', 'Unit of mapped channel "Power" changed.']
+    grid[2][0] = 'V'
+    grid[4][0] = 5
+    assert manifest_mismatch(manifest, info, grid) == ['Mapped channel "Power" now has 3 samples (was 2).']
+    grid[4][0] = None
     source.channels.append(dict(source.channels[0]))
     with pytest.raises(ValueError, match='more than once'):
         source_series(source, grid, {'burner': 'kW'})

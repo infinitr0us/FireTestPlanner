@@ -4,7 +4,7 @@ import { beadOffsetsOf } from '../core/plan';
 import { manifestMismatch, seriesKey, sourceSeries, targetUnits, type FileInfo, type Series } from '../core/test-data';
 import { isThermocouple, type TestDataMapping, type TestDataSource } from '../core/types';
 import { draftFromFile, parseTestData, TEST_DATA_FILE_CAP, yieldToPage,
-  type Draft, type ParsedTable, type TestDataBytes, type TestDataReader } from '../io/test-data-sources';
+  type Draft, type DraftOptions, type ParsedTable, type TestDataBytes, type TestDataReader } from '../io/test-data-sources';
 import type { Store } from './store';
 
 export type TestDataStatus = 'unloaded' | 'needs-load' | 'needs-file' | 'loading' | 'loaded' | 'embedded' | 'error';
@@ -53,8 +53,8 @@ export class TestDataStore {
   dispose(): void { this.unsubscribe(); this.clear(); this.listeners.clear(); }
   /** Called when the desktop bridge connects; undefined selects browser file input. */
   setReader(reader?: TestDataReader): void { this.reader = reader; this.sync(); }
-  draftFromFile(name: string, bytes: Uint8Array): Promise<Draft> {
-    return draftFromFile(name, bytes, this.store.document);
+  draftFromFile(name: string, bytes: Uint8Array, options?: DraftOptions): Promise<Draft> {
+    return draftFromFile(name, bytes, this.store.document, options);
   }
 
   private valid(c: TestDataMapping): boolean {

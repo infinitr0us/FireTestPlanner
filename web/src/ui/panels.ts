@@ -323,6 +323,9 @@ export class Outliner {
 }
 
 export class ChecksPanel {
+  /** Set by the app: a finding about a test data source opens that source. */
+  openTestData: ((sourceId: string) => void) | null = null;
+
   constructor(
     private root: HTMLElement,
     private store: Store,
@@ -355,8 +358,12 @@ export class ChecksPanel {
         h('button', {
           class: 'checks__body',
           type: 'button',
-          disabled: !issue.objectId,
-          onclick: () => { if (issue.objectId) this.store.select([issue.objectId]); },
+          disabled: !issue.objectId && !(issue.sourceId && this.openTestData),
+          title: issue.sourceId && this.openTestData ? 'Open this source in Test data' : '',
+          onclick: () => {
+            if (issue.sourceId && this.openTestData) this.openTestData(issue.sourceId);
+            else if (issue.objectId) this.store.select([issue.objectId]);
+          },
         }, [
           h('span', { class: 'checks__code' }, [issue.code]),
           h('span', { class: 'checks__message' }, [issue.message]),

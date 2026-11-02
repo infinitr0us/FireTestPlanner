@@ -403,6 +403,8 @@ export interface Issue {
   code: string;
   message: string;
   objectId?: string;
+  /** A test data source the finding is about, so the editor can open it there. */
+  sourceId?: string;
 }
 
 // -- narrowing helpers ---------------------------------------------------

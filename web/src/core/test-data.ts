@@ -100,13 +100,22 @@ export function manifestFor(source: TestDataSource, grid: Grid, fileInfo: FileIn
 
 export function manifestMismatch(manifest: TestDataManifest, fileInfo: FileInfo, grid: Grid): string[] {
   const changes: string[] = [];
+  // Size and the mapped channels themselves, not the modification time: copying a
+  // file to another machine, or handing it to a browser tab, changes or drops the
+  // time with the data untouched, and every browser user saw a mismatch.
   if (manifest.size !== fileInfo.size) changes.push('File size changed.');
-  if (manifest.modified !== fileInfo.modified) changes.push('File modification time changed.');
   const channels = new Map(extractSeries(grid, fileInfo.table ?? detectShape(grid), fileInfo.units).channels.map(c => [c.name, c]));
+  const span = (a: number | null, b: number | null): string => a === null || b === null ? 'no samples' : `${a} to ${b} s`;
   for (const old of manifest.channels) {
     const channel = channels.get(old.name);
-    if (!channel) changes.push(`Mapped channel "${old.name}" is missing.`);
-    else if (channel.unit !== old.unit) changes.push(`Unit of mapped channel "${old.name}" changed.`);
+    if (!channel) { changes.push(`Mapped channel "${old.name}" is missing.`); continue; }
+    if (channel.unit !== old.unit) changes.push(`Unit of mapped channel "${old.name}" changed.`);
+    const n = channel.t.length;
+    const t0 = n ? channel.t[0] : null, t1 = n ? channel.t[n - 1] : null;
+    if (n !== old.samples) changes.push(`Mapped channel "${old.name}" now has ${n} samples (was ${old.samples}).`);
+    else if (t0 !== old.t0 || t1 !== old.t1) {
+      changes.push(`Mapped channel "${old.name}" now covers ${span(t0, t1)} (was ${span(old.t0, old.t1)}).`);
+    }
   }
   return changes;
 }
@@ -169,9 +178,9 @@ export function testDataChecks(plan: PlanDocument): Issue[] {
       const valid = o?.type === 'thermocouple'
         ? integer(c.bead, 0) && c.bead < ((o.beadOffsets_m as number[] | undefined)?.length ?? 1)
         : (o?.type === 'heatFluxSensor' || o?.type === 'burner') && c.bead === undefined;
-      if (!valid) issues.push({ severity: 'warning', code: 'test-data-dangling', objectId: c.object,
+      if (!valid) issues.push({ severity: 'warning', code: 'test-data-dangling', objectId: c.object, sourceId: source.id,
         message: `Source "${source.name}": channel "${c.channel}" targets a missing or incompatible object or bead.` });
-      if (seen.has(key)) issues.push({ severity: 'warning', code: 'test-data-duplicate', objectId: c.object,
+      if (seen.has(key)) issues.push({ severity: 'warning', code: 'test-data-duplicate', objectId: c.object, sourceId: source.id,
         message: `Source "${source.name}" maps object "${c.object}" and bead ${c.bead ?? 'none'} more than once.` });
       seen.add(key);
     }

@@ -93,14 +93,35 @@ export function suggestMappings(names: string[], doc?: PlanDocument): TestDataMa
   return names.flatMap(name => candidates.get(name)?.length === 1 ? candidates.get(name)! : []);
 }
 
-export async function draftFromFile(name: string, bytes: Uint8Array, doc?: PlanDocument): Promise<Draft> {
-  await yieldToPage();
+/** Progress and cancellation for a long draft. Every sheet is read, so a large
+ * workbook takes seconds; the page yields between steps. */
+export interface DraftOptions {
+  /** Called before each step: `step` of `steps`, naming the sheet about to be read. */
+  onProgress?: (progress: { step: number; steps: number; sheet: string | null }) => void;
+  /** Aborting rejects with an `AbortError` at the next step. */
+  signal?: AbortSignal;
+}
+
+export async function draftFromFile(name: string, bytes: Uint8Array, doc?: PlanDocument, options: DraftOptions = {}): Promise<Draft> {
+  const { onProgress, signal } = options;
+  const checkpoint = async (): Promise<void> => {
+    await yieldToPage();
+    if (signal?.aborted) throw new DOMException('Reading the file was cancelled.', 'AbortError');
+  };
+  await checkpoint();
   const isWorkbook = workbook(name, bytes);
   const names: (string | null)[] = isWorkbook ? await listSheets(bytes) : [null];
+  // Metadata units and the shift hint each scan the workbook once more.
+  const steps = names.length + (isWorkbook ? 2 : 0);
+  if (isWorkbook) {
+    onProgress?.({ step: 1, steps, sheet: null });
+    await checkpoint();
+  }
   const units = isWorkbook ? await workbookChannelUnits(bytes) : new Map<string, string>();
   const sheets: DraftSheet[] = [];
-  for (const sheet of names) {
-    await yieldToPage();
+  for (const [index, sheet] of names.entries()) {
+    onProgress?.({ step: index + (isWorkbook ? 2 : 1), steps, sheet });
+    await checkpoint();
     const grid = sheet === null ? readDelimited(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) : await readSheet(bytes, sheet);
     const table: TestDataTable = { sheet, ...detectShape(grid), ...(isWorkbook ? { unitsSheet: null } : {}) };
     const extraction = extractSeries(grid, table, units);
@@ -114,7 +135,12 @@ export async function draftFromFile(name: string, bytes: Uint8Array, doc?: PlanD
   let index = sheets.findIndex(s => s.channelCount > 0 && ['paired-time', 'fds'].includes(s.table.shape));
   if (index < 0) index = sheets.findIndex(s => s.channelCount > 0);
   const selected = sheets[index];
+  if (isWorkbook) {
+    onProgress?.({ step: steps, steps, sheet: null });
+    await checkpoint();
+  }
+  const shiftHint = isWorkbook ? await workbookTimeShiftHint(bytes) : null;
   return { name, size: bytes.length, sheets, defaultSheet: selected?.name ?? null, defaultSheetIndex: index < 0 ? null : index,
     preview: selected?.preview ?? [], channels: selected?.channels ?? [],
-    shiftHint: isWorkbook ? await workbookTimeShiftHint(bytes) : null, suggestedMappings: selected?.suggestedMappings ?? [] };
+    shiftHint, suggestedMappings: selected?.suggestedMappings ?? [] };
 }
