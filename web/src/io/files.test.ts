@@ -20,6 +20,13 @@ const embedded = (html: string): string =>
   /<script type="application\/json" id="embedded-plan">([\s\S]*?)<\/script>/.exec(html)![1].trim();
 
 describe('embedding a plan in the shared viewer', () => {
+  it('shares only testData basenames and leaves the working sources intact', () => {
+    const source = JSON.stringify({ objects: [], testData: [{ id: 'run', file: { path: 'E:/private/run.xlsx' } }] });
+    const html = embedPlanInHtml(BOOT, source, 'Test data');
+    expect(JSON.parse(embedded(html)).testData[0].file.path).toBe('run.xlsx');
+    expect(html).not.toContain('private');
+    expect(JSON.parse(source).testData[0].file.path).toBe('E:/private/run.xlsx');
+  });
   it('shares only linked basenames while preserving labels, snapshots and the source document', () => {
     const paths = ['E:/Users/name/data.csv', '//private-server/share/video.mp4', '../private/run.tsv', 'D:\\secret\\book.xlsx'];
     const links = paths.map((path, i) => ({ id: String(i), kind: 'spreadsheet', path, label: 'Run ' + i,

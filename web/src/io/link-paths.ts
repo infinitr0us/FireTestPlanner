@@ -47,13 +47,16 @@ export function mapLinkedPaths(text: string, planPath: string, mode: 'open' | 's
   try { doc = JSON.parse(text); } catch { return text; } // the normal load gate reports it
   if (!Array.isArray(doc?.objects)) return text;
   let changed = false;
+  const links: { path?: unknown }[] = [];
   for (const obj of doc.objects) {
     if (!LINK_TYPES.includes(obj?.type) || !Array.isArray(obj.linkedFiles)) continue;
-    for (const link of obj.linkedFiles) {
-      if (typeof link?.path !== 'string') continue;
-      const path = mode === 'open' ? absoluteLinkPath(link.path, planPath) : relativeLinkPath(link.path, planPath);
-      if (path !== link.path) { link.path = path; changed = true; }
-    }
+    links.push(...obj.linkedFiles);
+  }
+  if (Array.isArray(doc.testData)) links.push(...doc.testData.map((s: { file?: { path?: unknown } }) => s?.file));
+  for (const link of links) {
+    if (typeof link?.path !== 'string') continue;
+    const path = mode === 'open' ? absoluteLinkPath(link.path, planPath) : relativeLinkPath(link.path, planPath);
+    if (path !== link.path) { link.path = path; changed = true; }
   }
   return changed ? (mode === 'save' ? serializePlan(doc) : JSON.stringify(doc, null, 2) + '\n') : text;
 }

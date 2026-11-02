@@ -12,7 +12,7 @@ from typing import Any, Dict, Iterator, List, Optional
 import numpy as np
 
 from . import correlations, serialize
-from . import linked_files
+from . import linked_files, test_data
 from ._math import normalize
 from .occlusion import first_occluder, flame_centreline_samples
 from .objects import (
@@ -37,7 +37,7 @@ FORMAT = "fire-test-plan"
 VERSION = "1.0.0"
 
 #: Highest format version this build can write.
-VERSION_LATEST = "1.5.0"
+VERSION_LATEST = "1.6.0"
 
 #: One schema per format version, so a 1.0 file is judged by the 1.0 rules. A 1.0
 #: plan holding a camera with a zoomFactor really is invalid, and validating it
@@ -49,6 +49,7 @@ _SCHEMA_FILES = {
     "1.3.0": "fire-test-plan-1.3.0.schema.json",
     "1.4.0": "fire-test-plan-1.4.0.schema.json",
     "1.5.0": "fire-test-plan-1.5.0.schema.json",
+    "1.6.0": "fire-test-plan-1.6.0.schema.json",
 }
 
 #: Where the schemas live INSIDE the package: `fireplan/schemas/`, shipped as
@@ -313,13 +314,46 @@ class Plan:
         for original, written in zip(self.data.get("objects", []), rebased.get("objects", [])):
             if original.get("type") in linked_files.LINK_TYPES and "linkedFiles" in written:
                 original["linkedFiles"] = written["linkedFiles"]
+        for original, written in zip(self.data.get("testData", []), rebased.get("testData", [])):
+            original["file"] = written["file"]
         self.source_path = os.path.abspath(path)
 
     def linked_file_path(self, link: Dict[str, Any]) -> str:
-        """Resolve a linkedFiles entry against this plan without reading/launching it."""
+        """Resolve an object link or testData source file against this plan."""
         return linked_files.resolve_path(link["path"], self.source_path)
 
     # -- access ----------------------------------------------------------
+
+    @property
+    def test_data(self) -> List[test_data.TestDataSource]:
+        return [test_data.TestDataSource(s) for s in self.data.get("testData", [])]
+
+    def series(self, obj, bead=None) -> List[test_data.Series]:
+        """One series per source for this instrument and exact bead (0-based).
+
+        Accept an object wrapper or object ID. Rakes require an explicit bead;
+        burners and gauges require None. Reads are explicit and never cached.
+        """
+        oid = obj if isinstance(obj, str) else obj.id
+        target = next((o for o in self.objects if o.id == oid), None)
+        if target is None or target.type not in test_data.TARGET_UNITS:
+            raise PlanError(f"Test data target is missing or unsupported: {oid}")
+        if isinstance(target, Thermocouple):
+            if (not test_data.tables.is_number(bead) or bead != int(bead)
+                    or not 0 <= bead < len(target.bead_offsets_m)):
+                raise PlanError(f"Test data needs a valid bead index for thermocouple {oid}")
+        elif bead is not None:
+            raise PlanError(f"Only a thermocouple accepts a bead index: {oid}")
+        result = []
+        for source in self.test_data:
+            mappings = [c for c in source.channels if c['object'] == oid and c.get('bead') == bead]
+            if not mappings:
+                continue
+            grid, units = test_data.read_source(source, self.linked_file_path(source.file))
+            selected = dict(source.raw, channels=mappings)
+            result.append(test_data.source_series(selected, grid,
+                {oid: test_data.TARGET_UNITS[target.type]}, units)[(oid, bead)])
+        return result
 
     @property
     def meta(self) -> Dict[str, Any]:
@@ -558,6 +592,9 @@ class Plan:
         link_errors = list(linked_files.problems(self.data))
         if link_errors:
             raise PlanError("plan failed linked file validation:\n" + "\n".join(link_errors[:10]))
+        data_errors = list(test_data.problems(self.data))
+        if data_errors:
+            raise PlanError("plan failed test data validation:\n" + "\n".join(data_errors[:10]))
 
     def check(self) -> List[Issue]:
         """Semantic checks beyond what the schema can express.
@@ -659,6 +696,7 @@ class Plan:
         issues.extend(self.instrument_checks())
         issues.extend(self.camera_checks())
         issues.extend(self.flame_checks())
+        issues.extend(test_data.checks(self.data))
         return issues
 
     def flame_checks(self) -> List[Issue]:

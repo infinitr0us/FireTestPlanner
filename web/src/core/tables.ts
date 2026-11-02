@@ -177,7 +177,8 @@ export function timeShiftHint(grid: Grid): TimeShiftHint | null {
   const candidates: TimeShiftHint[] = [];
   for (let r = 0; r < end; r++) grid[r].forEach((value, c) => {
     if (!/sh(i)?ft|ignition\s+at|offset/i.test(text(value))) return;
-    for (const [rr, cc] of [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]) {
+    const vertical = [[r - 1, c], [r + 1, c]].filter(([rr, cc]) => rr >= 0 && rr < end && isNumber(grid[rr]?.[cc]));
+    for (const [rr, cc] of vertical.length ? vertical : [[r, c - 1], [r, c + 1]]) {
       if (rr < 0 || rr >= end || cc < 0) continue;
       const number = grid[rr]?.[cc];
       if (isNumber(number)) candidates.push({ seconds: number, row: rr + 1, column: cc });

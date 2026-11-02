@@ -10,6 +10,13 @@ describe('portable linked paths', () => {
     expect(absolute).toBe(c.absolute);
     expect(relativeLinkPath(absolute, c.destination)).toBe(c.saved);
   });
+  it.each(cases)('rebases source files like object links: $path from $source', (c) => {
+    const text = JSON.stringify({ objects: [], testData: [{ file: { path: c.path } }] });
+    const opened = mapLinkedPaths(text, c.source, 'open');
+    expect(JSON.parse(opened).testData[0].file.path).toBe(c.absolute);
+    const saved = mapLinkedPaths(opened, c.destination, 'save');
+    expect(JSON.parse(saved).testData[0].file.path).toBe(c.saved);
+  });
   it.each(['fixtures/plan.ftp.json', 'plan.ftp.json'])('does not invent a root from %s', (source) => {
     expect(absoluteLinkPath('volumes.csv', source)).toBe('volumes.csv');
     expect(relativeLinkPath('/data/volumes.csv', source)).toBe('/data/volumes.csv');

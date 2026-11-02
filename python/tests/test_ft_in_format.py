@@ -15,7 +15,8 @@ def test_ft_in_fixture_and_version():
     plan = Plan.loads(text)
     assert plan.dumps() == text
     assert plan.display_length_unit == 'ft-in'
-    assert required_version(plan.data) == VERSION_LATEST == '1.5.0'
+    assert required_version(plan.data) == '1.5.0'
+    assert VERSION_LATEST == '1.6.0'
     plan.validate_schema()
     plan.validate_schema('1.5.0')
     with pytest.raises(PlanError, match='ft-in'):

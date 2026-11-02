@@ -14,6 +14,22 @@ function bridge(responses: unknown[]) {
 }
 
 describe('desktop link/save bridge', () => {
+  it('rebases testData files through the desktop open and Save As path', async () => {
+    const disk = readFileSync(new URL('../../../fixtures/test-data/test-data.ftp.json', import.meta.url), 'utf8');
+    const { api, fetch } = bridge([
+      { path: 'E:/original/plan.json', text: disk, token: 'original' },
+      { path: 'E:/revisions/plan.json', token: 'chosen' },
+      { path: 'E:/revisions/plan.json', token: 'saved' },
+    ]);
+    const opened = (await api.openPlan())!;
+    expect(JSON.parse(opened.text).testData[0].file.path).toBe('E:/original/logger-export.xlsx');
+    await api.savePlan(opened.text, 'plan.json', true, opened.token);
+    const calls = fetch.mock.calls as unknown as [string, { body: string }][];
+    const saved = JSON.parse(JSON.parse(calls[2][1].body).text);
+    expect(saved.testData[0].file.path).toBe('../original/logger-export.xlsx');
+    expect(saved.testData[1].file.path).toBe('../original/room-test_devc.csv');
+    expect(JSON.parse(opened.text).testData[0].file.path).toBe('E:/original/logger-export.xlsx');
+  });
   it('writes canonical geometry and measurements after Save and Save As', async () => {
     const disk = readFileSync(new URL('../../../fixtures/linked-files/linked-test.ftp.json', import.meta.url), 'utf8');
     const { api, fetch } = bridge([

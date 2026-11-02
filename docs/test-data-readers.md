@@ -13,6 +13,7 @@ calibration, or interpolate samples. See [the design](test-data-design.md).
 | Units from a sheet's metadata tables | `tables.channelUnits(grid)` | `tables.channel_units(grid)` |
 | Units merged across a workbook | `await xlsx.workbookChannelUnits(bytes)` | `xlsx.workbook_channel_units(raw)` |
 | Numeric channels and warnings | `tables.extractSeries(grid, layout, unitsMap?)` | `tables.extract_series(grid, layout, units_map=None)` |
+| Agreed workbook ignition shift | `await xlsx.workbookTimeShiftHint(bytes)` | `xlsx.workbook_time_shift_hint(raw)` |
 | Optional ignition shift hint | `tables.timeShiftHint(grid)` | `tables.time_shift_hint(grid)` |
 | Optional calibration hint | `tables.calibrationHint(name, unit)` | `tables.calibration_hint(name, unit)` |
 
@@ -116,13 +117,24 @@ two-number-row heuristic choose a later start, so callers can override `dataRow`
   unit is `kW/m2`. Hints are never applied automatically.
 
 `timeShiftHint` looks only above the detected data start, or throughout a sheet
-with no leading numeric data pair. A finite number directly above/below/beside a
-label matching `sh(i)?ft`, `ignition at`, or `offset` is a candidate. No candidate,
-or two different candidate values, returns null/None. Repeated equal values are
-unambiguous; the first in row/column order supplies the location. The returned
-`{seconds, row, column}` uses a 1-based row and 0-based column. It reports a header
-annotation in seconds without changing the source timestamps. In particular,
-`420` above `shft time` and `0.72` beside it is ambiguous and yields no hint.
+with no leading numeric data pair. A label matching `sh(i)?ft`, `ignition at`, or
+`offset` first considers finite numbers directly above and below. Only if neither
+vertical neighbour is numeric does it consider numbers immediately beside it.
+Different vertical values remain ambiguous, even if a beside value agrees with one.
+No candidates or conflicting candidates across labels returns null/None; equal
+values agree. The first candidate in row/column order supplies the location.
+The returned `{seconds, row, column}` uses a 1-based row and 0-based column.
+Thus `420` above `shft time` with an unrelated `0.72` beside it yields 420.
+Hints report seconds without changing timestamps.
+
+`workbookTimeShiftHint` scans the sheets detected as `processed` (the shift is
+written in the header above their data; a logger's metadata sheet has an `offset`
+column of its own, which on a real workbook made three agreeing 420 s hints read as
+ambiguous), ignores null sheet hints, and returns `{seconds, sheets}` when all
+remaining values agree. Python returns a dataclass
+with the same fields. `sheets` lists contributing sheet names in workbook order.
+No hints or disagreement returns null/None. Scanning reuses workbook metadata and
+shared strings and retains one sheet grid at a time.
 
 ## Reader bounds and fixtures
 
@@ -166,3 +178,13 @@ calibration hint and warning; numeric tolerance is relative 1e-12.
 Unit tests cover independent hand-written XML/table cases, and each suite times
 reading an in-memory 5,000-row by 60-column workbook (3 s TypeScript, 15 s Python).
 No browser or native UI behavior is changed or verified by this reader-only work.
+
+
+## Plan sources (part 2)
+
+The format 1.6 model and series API are specified in CONVENTIONS section 12 and
+[test-data-design.md](test-data-design.md). Part 1 readers remain independent of
+plans and calibration. `python tools/build_test_data_model_fixture.py` builds the
+plan and `series-expected.json` from the existing reader fixtures without changing
+them. This sibling builder uses the installed numpy/jsonschema dependencies of
+fireplan; the original reader-only builder still works with `python -S`.

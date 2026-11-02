@@ -1,0 +1,164 @@
+[
+  {
+    "object": "hf-east",
+    "bead": null,
+    "sourceId": "logger",
+    "source": "Synthetic logger",
+    "role": "measured",
+    "unit": "kW/m2",
+    "samples": 598,
+    "missing": 2,
+    "first": [
+      -120.0,
+      0.0
+    ],
+    "last": [
+      479.0,
+      0.09843234671568639
+    ]
+  },
+  {
+    "object": "hf-east",
+    "bead": null,
+    "sourceId": "fds",
+    "source": "Synthetic FDS",
+    "role": "simulated",
+    "unit": "kW/m2",
+    "samples": 61,
+    "missing": 0,
+    "first": [
+      0.0,
+      0.0
+    ],
+    "last": [
+      600.0,
+      0.0
+    ]
+  },
+  {
+    "object": "hf-west",
+    "bead": null,
+    "sourceId": "logger",
+    "source": "Synthetic logger",
+    "role": "measured",
+    "unit": "kW/m2",
+    "samples": 600,
+    "missing": 0,
+    "first": [
+      -120.0,
+      0.123456789012345
+    ],
+    "last": [
+      479.0,
+      0.200015280902264
+    ]
+  },
+  {
+    "object": "tc-tree",
+    "bead": 0,
+    "sourceId": "logger",
+    "source": "Synthetic logger",
+    "role": "measured",
+    "unit": "°C",
+    "samples": 600,
+    "missing": 0,
+    "first": [
+      -120.0,
+      21.0
+    ],
+    "last": [
+      479.0,
+      23.4516302255
+    ]
+  },
+  {
+    "object": "tc-tree",
+    "bead": 0,
+    "sourceId": "fds",
+    "source": "Synthetic FDS",
+    "role": "simulated",
+    "unit": "°C",
+    "samples": 61,
+    "missing": 0,
+    "first": [
+      0.0,
+      21.0
+    ],
+    "last": [
+      600.0,
+      21.0
+    ]
+  },
+  {
+    "object": "tc-tree",
+    "bead": 1,
+    "sourceId": "logger",
+    "source": "Synthetic logger",
+    "role": "measured",
+    "unit": "°C",
+    "samples": 600,
+    "missing": 0,
+    "first": [
+      -120.0,
+      21.168294197
+    ],
+    "last": [
+      479.0,
+      23.2010765356
+    ]
+  },
+  {
+    "object": "tc-tree",
+    "bead": 2,
+    "sourceId": "logger",
+    "source": "Synthetic logger",
+    "role": "measured",
+    "unit": "°C",
+    "samples": 600,
+    "missing": 0,
+    "first": [
+      -120.0,
+      21.1818594854
+    ],
+    "last": [
+      479.0,
+      23.1139041655
+    ]
+  },
+  {
+    "object": "tc-tree",
+    "bead": 3,
+    "sourceId": "logger",
+    "source": "Synthetic logger",
+    "role": "measured",
+    "unit": "°C",
+    "samples": 600,
+    "missing": 0,
+    "first": [
+      -120.0,
+      21.0282240016
+    ],
+    "last": [
+      479.0,
+      23.0440133764
+    ]
+  },
+  {
+    "object": "tc-tree",
+    "bead": 4,
+    "sourceId": "logger",
+    "source": "Synthetic logger",
+    "role": "measured",
+    "unit": "°C",
+    "samples": 600,
+    "missing": 0,
+    "first": [
+      -120.0,
+      20.8486395009
+    ],
+    "last": [
+      479.0,
+      22.8294158233
+    ]
+  }
+]

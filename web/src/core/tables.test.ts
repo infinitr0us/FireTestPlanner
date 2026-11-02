@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { listSheets, readSheet, workbookChannelUnits } from './xlsx';
+import { listSheets, readSheet, workbookChannelUnits, workbookTimeShiftHint } from './xlsx';
 import { calibrationHint, channelUnits, detectShape, extractSeries, makeGrid, readDelimited, timeShiftHint, type Cell } from './tables';
 import { listZip, readZip } from './flame';
 
@@ -55,6 +55,28 @@ function column(n: number): string {
   for (n++; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s;
   return s;
 }
+
+it('combines agreeing workbook shift hints and reports the contributing sheets', async () => {
+  const raw = readFileSync(folder + '/logger-export.xlsx');
+  expect(await workbookTimeShiftHint(raw)).toEqual({ seconds: 120, sheets: ['Processed'] });
+  const entries = Object.fromEntries([...await readZip(raw)].map(([name, bytes]) => [name, new TextDecoder().decode(bytes)]));
+  const constants = (seconds: number): string => `<worksheet xmlns="${ns}"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>offset</t></is></c><c r="B1"><v>${seconds}</v></c></row></sheetData></worksheet>`;
+  // An `offset` on a sheet that is not a processed table (a logger's metadata sheet
+  // has an offset column) is not a shift and must not make the agreed hint ambiguous.
+  entries['xl/worksheets/constants.xml'] = constants(121);
+  expect(await workbookTimeShiftHint(zip(entries))).toEqual({ seconds: 120, sheets: ['Processed'] });
+  // Two processed sheets that disagree do make it ambiguous.
+  const cell = (ref: string, v: string | number): string => typeof v === 'number'
+    ? `<c r="${ref}"><v>${v}</v></c>` : `<c r="${ref}" t="inlineStr"><is><t>${v}</t></is></c>`;
+  const rows: Array<Array<string | number | null>> = [
+    ['Time', 'ELAPSED TIME', 'Value'], ['From ignition', '[sec]', '[kW]'], [null, 121, null],
+    ['[min]', 'shft time', null], [0, 0, 1], [1 / 60, 1, 2], [2 / 60, 2, 3],
+  ];
+  entries['xl/worksheets/constants.xml'] = `<worksheet xmlns="${ns}"><sheetData>${rows.map((r, i) =>
+    `<row r="${i + 1}">${r.map((v, j) => v === null ? '' : cell(`${'ABC'[j]}${i + 1}`, v)).join('')}</row>`).join('')}</sheetData></worksheet>`;
+  expect(await workbookTimeShiftHint(zip(entries))).toBeNull();
+  expect(await workbookTimeShiftHint(workbook(''))).toBeNull();
+});
 
 function close(actual: unknown, expected: unknown): void {
   if (typeof expected === 'number') {
@@ -173,7 +195,9 @@ describe('delimited tables and extraction', () => {
     expect(timeShiftHint([[12, 'shift', 12]])).toEqual({ seconds: 12, row: 1, column: 0 });
     expect(timeShiftHint([[12, 'shift', 13]])).toBeNull();
     const ambiguous = mixed.map(row => [...row]); ambiguous[3][2] = 0.72;
-    expect(timeShiftHint(ambiguous)).toBeNull();
+    expect(timeShiftHint(ambiguous)).toEqual({ seconds: 120, row: 3, column: 1 });
+    expect(timeShiftHint([[null, 12], ['note', 'shift', 0.72], [null, 13]])).toBeNull();
+    expect(timeShiftHint([[null, 12], ['note', 'shift', 0.72], [null, 12]])).toEqual({ seconds: 12, row: 1, column: 1 });
     expect(timeShiftHint([['Time', 'offset'], [0, 10], [1, 20]])).toBeNull();
     expect(timeShiftHint([['Time', 'Value'], [0, 1]])).toBeNull();
   });

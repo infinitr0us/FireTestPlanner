@@ -1,6 +1,6 @@
 # Conventions
 
-Normative reference for `fire-test-plan` formats 1.0.0 through 1.5.0. If code and
+Normative reference for `fire-test-plan` formats 1.0.0 through 1.6.0. If code and
 this document disagree, this document is wrong and should be fixed — but check the
 tests first, because they encode these rules directly.
 
@@ -583,6 +583,7 @@ version = max(declared, required(contents))
 | 1.3.0 | Any object's `linkedFiles` |
 | 1.4.0 | `reconstructedFlame`, any object's `display.opacity` or `display.colorMode`, or a link's non-zero `timeOffset_s` |
 | 1.5.0 | `units.display.length` is `ft-in` |
+| 1.6.0 | Non-empty root `testData` |
 
 The 1.3 schema closes `linkedFile` and earlier schemas close `display`, which is
 why the 1.4 keys count even on an older object type. Only the `ft-in` preference
@@ -929,3 +930,91 @@ sequence`; sequence `importedAt, grid, bounds_m, frames`; grid `voxelSize_m,
 pitch_m, resolution`; display `color, visible, locked, opacity, colorMode`.
 `timeOffset_s` is reserved for clock synchronisation — the same question the
 reserved `camera.recording` is about — and is dropped by both writers at null or 0.
+
+
+## 12. Test data (1.6)
+
+A root `testData` array links measured or simulated table channels to instruments.
+A source has `id` (unique among sources), `name`, `role` (`measured` or `simulated`),
+`file`, `table`, `channels` and `manifest`, with optional `timeOffset_s`. It has no
+position. Only burners, heat flux sensors and thermocouples can be targets.
+
+**A source file is a linked file.** `file` uses the section 10 `linkedFile` definition,
+with `kind: "spreadsheet"`. It may carry `label` and the reserved link-level
+`timeOffset_s`, but no `plot` or `sequence`: a source stores references and a manifest,
+never samples. Source-level `timeOffset_s` alone controls its clock. Paths resolve
+relative to the plan and rebase on Save As in both engines; shared pages strip
+private directories to a basename. Reading is explicit. A browser needs reselection.
+
+**The saved layout reproduces the read.** `table` has `sheet` (a non-empty workbook
+sheet name, or null for delimited text), `shape` (`paired-time`, `processed`, `fds`
+or `plain`), `headerRow`, `unitsRow`, `dataRow` and `timeColumn`. Rows are 1-based;
+`unitsRow` may be null. Columns are 0-based; `timeColumn` may be null only for
+paired-time, whose time columns come from its header pairs. The reader's processed
+header composition still uses all rows before `dataRow` (see docs/test-data-readers.md).
+Optional `unitsSheet` selects metadata units: a string names one workbook sheet,
+null merges all sheets in workbook order, and omission means no metadata fallback.
+Delimited sources omit it. Local column units take precedence. This records the
+metadata lookup, not a stale copy of its values.
+
+**A mapping** has `channel` (the exact extracted series name) and `object` (an object
+ID), plus optional `bead`, `scale` and `offset`. A thermocouple requires a 0-based
+bead index, including 0 for a point thermocouple; other targets omit `bead`.
+Missing objects, incompatible types, absent or out-of-range rake beads, and beads on
+other types produce `test-data-dangling` warnings. Repeating an object and bead in
+one source produces `test-data-duplicate`; the same target in different sources
+is expected. Duplicate targets remain editable, but series extraction refuses them
+rather than choosing one. A single channel may map to multiple different targets.
+
+**Plan time is seconds from ignition.** `t = file time - timeOffset_s`, with 0 as
+the absent offset. `value = raw * scale + offset`, with defaults 1 and 0. Scale is
+finite and non-zero; negative calibration is allowed. The output quantity is the
+target's: `kW/m2` for a heat flux sensor, `°C` for a thermocouple and `kW` for a
+burner. These are API unit spellings. No automatic conversion is inferred from the
+raw unit, and no resampling or interpolation occurs. Missing samples and time
+cutoffs retain the reader's meaning. Calibration overflow is an error.
+
+**The manifest describes the original read.** `size` is file bytes; `modified` is
+a string timestamp or null when unknown; `rows` is the dense grid row count,
+including headers and trailing formula rows. `channels` contains exactly one entry
+per distinct mapped name, in first-mapping order: `name`, `unit` (the reader's
+normalized raw unit, or null), `samples`, `t0`, `t1`. Counts are non-negative integers.
+An empty series has null endpoints; one sample has equal finite endpoints; more
+samples have increasing endpoints. Times and units precede calibration and ignition
+shift. File size, modification time, missing mapped channels and changed units can
+be compared without altering the stored manifest. Reopening or reading does not
+silently refresh it.
+
+The pure TypeScript helper takes target quantities through
+`sourceSeries(source, grid, {channels, targets})`: `channels` is the metadata unit
+map and `targets` normally comes from `targetUnits(plan.objects)`. A bead identifies
+°C on its own; other object IDs require a target unit. The key is the JSON tuple
+`[objectId, beadOrNull]`, so separators inside IDs cannot collide. `manifestFor`
+receives metadata units in `fileInfo.units`; `manifestMismatch` receives those units
+and the saved layout in `fileInfo.table` (detection is the fallback). Python
+`Plan.series(objectOrId, bead=None)` resolves the target quantity and linked file
+itself, returning one series per matching source in source order. It reads only
+sources mapping that target and raises a missing-file error naming the path tried.
+Neither API caches samples. A rake requires an explicit bead index.
+
+**Writing.** `testData` follows `objects`. Empty arrays are omitted and do not
+require 1.6; a non-empty array requires at least 1.6.0, and a higher declared version
+never decreases. Calibration coefficients, source time offsets and manifest numbers
+retain their supplied precision, as recorded linked-file data does. Section 7's
+number spelling and layout still apply. Existing object and unknown-key behavior
+is unchanged; writers retain unknown source keys, while the 1.6 schema closes the
+new blocks, as it closes linked files.
+
+Writer order: source `id, name, role, file, table, timeOffset_s, channels, manifest`;
+table `sheet, shape, headerRow, unitsRow, dataRow, timeColumn, unitsSheet`; mapping
+`channel, object, bead, scale, offset`; manifest `size, modified, rows, channels`;
+manifest channel `name, unit, samples, t0, t1`. Files use the existing link order.
+Explicit source defaults remain written; no default values are inserted on load.
+
+`decimateMinMax` prepares future shared-page series. It preserves first and last,
+then each interior bucket's minimum and maximum in original time order, within
+`maxPoints` (default 2,000). Its output is `{t, values}` with float64 arrays. Buckets
+partition sample indices equally; ties keep the first occurrence. Budgets must be
+integers of at least 2, and an odd budget may leave one slot unused. Only finite
+samples at strictly increasing times are accepted. This helper does not change
+stored data, and embedded test-data series and editor plots are deferred.
