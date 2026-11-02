@@ -8,6 +8,8 @@
 
 import { REPORT_CSS, buildReportBody, buildReportHtml } from '../export/report';
 import type { LengthUnit, PlanDocument } from '../core/types';
+import { instrumentScheduleCsv } from '../core/instrument-schedule';
+import { saveScheduleCsv } from '../io/files';
 import { h } from './dom';
 
 const STYLE_ID = 'report-styles';
@@ -58,6 +60,11 @@ export class ReportOverlay {
         class: 'btn', type: 'button',
         onclick: () => this.onDownload(buildReportHtml(doc, unit), suggestedName),
       }, ['Download HTML']),
+      h('button', {
+        class: 'btn', type: 'button',
+        onclick: () => { void saveScheduleCsv(instrumentScheduleCsv(doc, unit), suggestedName.replace(/-drawing\.html$/, '-schedule.csv').replace(/\.html$/, '.csv'))
+          .catch(error => window.alert(`Schedule could not be saved: ${(error as Error).message}`)); },
+      }, ['Download schedule (CSV)']),
       h('button', { class: 'btn', type: 'button', onclick: () => this.close() }, ['Close']),
     ]);
 

@@ -35,6 +35,9 @@ import { decodeEmbedded, encodeEmbedded } from './io/flame-sources';
 import { Viewport, type GizmoMode, type ViewportOptions } from './scene/viewport';
 import { flameActions, type FlameActionsHost } from './state/flame-actions';
 import { FlameStore } from './state/flame-store';
+import { TestDataStore } from './state/test-data-store';
+import { embedTestData, splitEmbeddedTestData, type TestDataShareSummary } from './io/test-data-embed';
+import type { Series } from './core/test-data';
 import { Playhead } from './state/playhead';
 import { Store } from './state/store';
 import { h, qs } from './ui/dom';
@@ -56,6 +59,7 @@ captureBootHtml();
 let sharedPlanAdopted = false;
 /** The packed frames a shared page carried for its plan, attached once the app is up. */
 let embeddedFlames: EmbeddedFlames = new Map();
+let embeddedTestData = new Map<string, Series[]>();
 
 /**
  * A shared page's plan, if it survives validation. A broken one opens an empty
@@ -67,10 +71,13 @@ function initialDocument(): PlanDocument {
   const text = embeddedPlanText() ?? '';
   if (!text) return newPlan('Untitled fire test');
   try {
-    const embedded = splitEmbeddedFlames(text);
+    const data = splitEmbeddedTestData(text);
+    const embedded = splitEmbeddedFlames(data.text);
     const doc = parseAndValidatePlan(embedded.text);
     sharedPlanAdopted = true;
     embeddedFlames = embedded.flames;
+    embeddedTestData = data.series;
+    data.warnings.forEach(warning => console.warn(warning));
     return doc;
   } catch (err) {
     console.warn(`Embedded plan rejected:\n${(err as Error).message}`);
@@ -80,6 +87,11 @@ function initialDocument(): PlanDocument {
 
 const store = new Store(initialDocument());
 const flameStore = new FlameStore();
+const testDataStore = new TestDataStore(store);
+function attachTestData(series: Map<string, Series[]>): void {
+  for (const [id, samples] of series) testDataStore.attachEmbedded(id, samples);
+}
+attachTestData(embeddedTestData);
 const playhead = new Playhead();
 const viewport = new Viewport(qs('#viewport'), store, flameStore, playhead);
 const inspector = new Inspector(qs('#inspector'), store);
@@ -488,9 +500,12 @@ async function openPlan(): Promise<void> {
 function adopt(text: string, name: string, token: string | null = null): void {
   try {
     // A plan lifted out of a shared page may still carry its packed flames.
-    const split = splitEmbeddedFlames(text);
+    const data = splitEmbeddedTestData(text);
+    const split = splitEmbeddedFlames(data.text);
     store.replaceDocument(parseAndValidatePlan(split.text), name, token);
     if (split.flames.size) void attachEmbedded(split.flames);
+    attachTestData(data.series);
+    data.warnings.forEach(warning => console.warn(warning));
     viewport.frameAll();
     // Only an adopted file becomes a recent plan and the window's title.
     const bridge = shell();
@@ -623,7 +638,7 @@ function openDrawing(): void {
   );
 }
 
-async function exportShareable(): Promise<void> {
+async function exportShareable(): Promise<TestDataShareSummary | undefined> {
   if (!isSingleFileBuild() && !shell()) {
     window.alert(
       'Shareable export only works from the built single-file app.\n\n' +
@@ -640,14 +655,17 @@ async function exportShareable(): Promise<void> {
   const title = store.document.meta?.title ?? 'Fire test plan';
   const name = suggestFileName().replace(/\.ftp\.json$/, '') + '-viewer.html';
   const planJson = store.serialize();
+  const testData = embedTestData(store.document, id => testDataStore.get(id));
   const flames = await embeddableFlames(store.document);
   if (flames === null) return;
   if (store.documentId !== identity.documentId || store.revision !== identity.revision) {
     window.alert('The plan changed while the page was being built. Nothing was exported; please Share again.');
     return;
   }
-  const html = buildShareableHtml(planJson, title, flames);
+  const html = buildShareableHtml(planJson, title, flames, testData.payload);
+  for (const warning of testData.warnings) console.warn(warning);
   await saveHtml(html, name);
+  return testData;
 }
 
 /** A shared page carries at most this much packed flame data, gzipped. */
@@ -844,6 +862,7 @@ connectShell(() => {
   // lands.
   const bridge = shell();
   if (bridge) {
+    testDataStore.setReader(path => bridge.readTestDataFile(path));
     void bridge.loadPresets().then((stored) => {
       adoptShellPresets(stored, (presets) => bridge.savePresets(presets));
       palette.render();

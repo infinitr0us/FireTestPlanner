@@ -479,6 +479,7 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 
 .report-overlay__bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 9px 14px;

@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 
-SPREADSHEETS = {'.csv', '.tsv', '.xlsx', '.xls', '.ods'}
+SPREADSHEETS = {'.csv', '.tsv', '.txt', '.xlsx', '.xlsm', '.xls', '.ods'}
 VIDEOS = {'.mp4', '.m4v', '.mov', '.avi', '.mkv', '.wmv', '.webm', '.mpg', '.mpeg', '.mts', '.m2ts'}
 MAX_CSV_BYTES = 5 * 1024 * 1024
 #: One reconstructed frame; the fixture's largest is 100 KB, a 200-cubed run's is 50 MB.

@@ -156,6 +156,82 @@ The following details resolve points the initial design left open:
 - **Instrument schedule** (in the drawing, and as a CSV download): every gauge, bead
   and camera with its position, aim, range and the channel each source maps to it.
 
+### Editor plumbing (part 3a)
+
+`main.ts` owns one `TestDataStore` alongside `FlameStore`. The test-data store
+subscribes to the document store itself: mapping, calibration and target edits
+rederive from cached grids; file or table changes invalidate that source. A changed
+`documentId` clears all entries, including pending reads. Local desktop reads are
+queued after a page yield. Network paths use the existing `isNetworkPath` predicate
+and wait for `load`; browser sources wait for `attachFile`. Desktop open already
+resolves paths with `mapLinkedPaths`, including paths relative to a network plan.
+
+The UI should receive the existing instance from `main.ts`, not create a second
+session. Public API (`web/src/state/test-data-store.ts`):
+
+```ts
+new TestDataStore(store: Store, reader?: TestDataReader)
+setReader(reader?: TestDataReader): void
+get(sourceId: string): TestDataEntry | undefined
+seriesFor(objectId: string, bead?: number): Series[]
+subscribe(listener: () => void): () => void
+load(sourceId: string): Promise<TestDataEntry>
+attachFile(sourceId: string, file: File): Promise<TestDataEntry>
+attachBytes(sourceId: string, name: string, data: TestDataBytes): Promise<TestDataEntry>
+draftFromFile(name: string, bytes: Uint8Array): Promise<Draft>
+attachEmbedded(sourceId: string, series: Series[]): void
+clear(): void
+dispose(): void
+```
+
+`TestDataReader` is `(path: string) => Promise<TestDataBytes>`, where the result is
+`{bytes: Uint8Array, modified: string | null}`. The constructor and `setReader`
+enable automatic local loading. Explicit reads reject on failure and expose the
+reason through the entry's `error`. `load` joins a pending read and returns an
+already loaded entry. `attachFile` and `attachBytes` replace the entry's data.
+`clear` cancels adoption of pending reads; `dispose` also unsubscribes.
+Completed entries survive undoable source removal within the same plan. Attached
+browser Files or supplied bytes are retained for table changes, so changing the
+sheet does not require another file selection. Changing the linked path does.
+
+Entries expose `status`, `series`, `mismatches`, optional `grid`, `units`,
+`unitsGrid`, `fileInfo` and `error`. Status is `unloaded`, `needs-load`, `needs-file`,
+`loading`, `loaded`, `embedded` or `error`. `unitsGrid` exists when one metadata
+sheet was selected; workbook-wide metadata retains the merged `units` map.
+`seriesFor` returns sources in document order and uses an exact bead match; pass
+0 for a single thermocouple. Deleted or incompatible targets produce no series.
+Manifests remain unchanged until an explicit document edit by the future UI.
+
+Drafts contain `name`, `size`, `sheets`, `defaultSheet`, `defaultSheetIndex`,
+`preview`, `channels`, `shiftHint` and `suggestedMappings`. Each sheet includes its
+`table`, full `grid`, metadata `units`, first 12 rows as `preview`, `channelCount`,
+channel summaries and reader warnings. Summaries carry `name`, `unit`, `samples`,
+`span: [t0, t1] | null` and `calibration`. Hints are advisory. No-series files have
+a null default index. The standalone `draftFromFile(name, bytes, doc?)` helper is
+in `io/test-data-sources.ts`; the store method supplies the active plan for FDS
+suggestions. Exact instrument names map directly, with a bare thermocouple name
+selecting bead 0 as in the model fixture. Rake names suffixed `_1`, `_2`, etc.
+select the corresponding bead. Ambiguous instrument names produce no suggestion.
+
+`embedTestData(doc, id => testDataStore.get(id))` in `io/test-data-embed.ts` returns
+`{payload, bytes, included, omitted, unloaded, warnings}`. Lists contain source
+IDs. Whole sources are considered in document order; a source that does not fit
+is skipped, and later smaller sources may fit. The cap is 5,000,000 UTF-8 bytes
+of compact, script-escaped JSON, including metadata. Every series has at most
+2,000 points. The HTML-only `embeddedTestData` block is stripped before plan
+validation. Omission counts produce a warning when the shared page opens.
+Embedded samples are already calibrated and decimated: edits can reuse included
+channels, but a channel that was not embedded requires the original file.
+
+`plannedValue` in `core/planned-value.ts` returns null for an unsupported target.
+A valid target with no applicable prediction returns `{value: null, unit, note}`,
+so the plot can explain why there is no planned line. `instrumentScheduleCsv` in
+`core/instrument-schedule.ts` returns a BOM-prefixed, CRLF CSV. Bead IDs use
+`objectId[zeroBasedBead]`; names use one-based suffixes for rakes. Positions and
+aim points use the requested display unit, and facing comes from the authoritative
+quaternion. The Drawing button uses the normal browser download or the desktop
+CSV save route. Sources, mappings and plot UI remain part 3b.
+
 ## In Python
 
 ```python
