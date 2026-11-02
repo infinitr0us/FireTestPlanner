@@ -15,16 +15,70 @@
       "$note": "640x480 microbolometer at 17 um pitch gives the sensor size; the 24.6 mm standard lens gives 24.9° x 18.8°."
     },
     {
-      "id": "flir-a700-24deg",
-      "label": "FLIR A700 — 24° lens",
+      "id": "flir-a700-80deg",
+      "label": "FLIR A700 — 80° lens",
+      "body": "FLIR A700",
       "modality": "LWIR",
       "resolution_px": [640, 480],
       "sensor_mm": [7.68, 5.76],
-      "focalLength_mm": 18.07,
+      "focalLength_mm": 5.0,
       "spectralBand_um": [7.5, 14.0],
       "framerate_hz": 30,
       "intrinsicsSource": "datasheet",
-      "$note": "640x480 uncooled microbolometer at 12 um pitch gives the sensor size (the sheet lists 24/17/12 um as camera dependent and does not say which body takes which). FLIR designates this lens by angle rather than focal length -- 'Included Lenses: 24 deg' -- so the focal length is back-solved from that: 7.68 / (2 tan 12 deg) = 18.07 mm, reproducing 24.0 x 18.1 deg and 0.65 mrad/px. Derived, not printed -- see docs/datasheets/README.md. Other lenses: 6, 14, 42, 80 deg."
+      "$note": "The A700 body (7.68 x 5.76 mm, see the 24 deg lens) with lens T300805, printed as 5 mm and 80 x 63 deg (rev. 93944). Under a pinhole 5 mm gives 75.05 x 59.88 deg, narrower than printed; 80 deg would need 4.58 mm. The printed focal length is kept. The sources do not say whether rounding or distortion accounts for the difference, so calibrate before reconstructing. See docs/datasheets/README.md."
+    },
+    {
+      "id": "flir-a700-42deg",
+      "label": "FLIR A700 — 42° lens",
+      "body": "FLIR A700",
+      "modality": "LWIR",
+      "resolution_px": [640, 480],
+      "sensor_mm": [7.68, 5.76],
+      "focalLength_mm": 10.0,
+      "spectralBand_um": [7.5, 14.0],
+      "framerate_hz": 30,
+      "intrinsicsSource": "datasheet",
+      "$note": "The A700 body (7.68 x 5.76 mm, see the 24 deg lens) with lens T300239, printed as 10 mm and 42 x 32 deg. Under a pinhole 10 mm gives 42.01 x 32.13 deg, which agrees with the printed angles. See docs/datasheets/README.md."
+    },
+    {
+      "id": "flir-a700-24deg",
+      "label": "FLIR A700 — 24° lens",
+      "body": "FLIR A700",
+      "bodyDefault": true,
+      "modality": "LWIR",
+      "resolution_px": [640, 480],
+      "sensor_mm": [7.68, 5.76],
+      "focalLength_mm": 18.0,
+      "spectralBand_um": [7.5, 14.0],
+      "framerate_hz": 30,
+      "intrinsicsSource": "datasheet",
+      "$note": "The A700 24 deg f/1.0 Professional Science Kit sheet (P/N 85903-0102, rev. 98866) prints 640 x 480 at 12 um pitch, which gives the 7.68 x 5.76 mm sensor, and this lens as 18 mm. Derived from those: 24.1 x 18.2 deg and 0.67 mrad/px, against the 24 x 18 deg designation. FLIR also lists a 17 mm f/1.3 lens as 24 deg (25.5 x 19.2 deg here); if that is the lens fitted, type 17 mm. The body's 6, 14, 42 and 80 deg lenses are under Lens. See docs/datasheets/README.md."
+    },
+    {
+      "id": "flir-a700-14deg",
+      "label": "FLIR A700 — 14° lens",
+      "body": "FLIR A700",
+      "modality": "LWIR",
+      "resolution_px": [640, 480],
+      "sensor_mm": [7.68, 5.76],
+      "focalLength_mm": 29.0,
+      "spectralBand_um": [7.5, 14.0],
+      "framerate_hz": 30,
+      "intrinsicsSource": "datasheet",
+      "$note": "The A700 body (7.68 x 5.76 mm, see the 24 deg lens) with lens T300241, printed as 29 mm and 14 x 10 deg (rev. 79639). Under a pinhole 29 mm gives 15.09 x 11.34 deg, wider than printed; 14 deg would need 31.3 mm. The printed focal length is kept; calibrate before reconstructing. See docs/datasheets/README.md."
+    },
+    {
+      "id": "flir-a700-6deg",
+      "label": "FLIR A700 — 6° lens",
+      "body": "FLIR A700",
+      "modality": "LWIR",
+      "resolution_px": [640, 480],
+      "sensor_mm": [7.68, 5.76],
+      "focalLength_mm": 70.0,
+      "spectralBand_um": [7.5, 14.0],
+      "framerate_hz": 30,
+      "intrinsicsSource": "datasheet",
+      "$note": "The A700 body (7.68 x 5.76 mm, see the 24 deg lens) with lens T300095, printed as 70 mm and 6 x 4.5 deg (rev. 79192, which also allows distortion below 4.2%). Under a pinhole 70 mm gives 6.28 x 4.71 deg, wider than printed; 6 deg would need 73.3 mm. The printed focal length is kept; calibrate before reconstructing. See docs/datasheets/README.md."
     },
     {
       "id": "flir-a8303sc-17mm",
@@ -80,6 +134,30 @@
       "$note": "The A8303sc body with its 100 mm lens: 10.2 deg x 5.8 deg, 0.14 mrad per pixel, derived from the 14 um array -- a quarter of the 25 mm lens's field at four times its detail."
     },
     {
+      "id": "flir-k65-9mm",
+      "label": "FLIR K65",
+      "modality": "LWIR",
+      "resolution_px": [320, 240],
+      "sensor_mm": [8.0, 6.0],
+      "focalLength_mm": 9.0,
+      "spectralBand_um": [8.0, 14.0],
+      "framerate_hz": 60,
+      "intrinsicsSource": "datasheet",
+      "$note": "The K65 sheet in FLIR's 2018 Fire Products catalog (P/N 72202-0303, rev. 46856) prints 320 x 240 at 25 um pitch, which gives the 8 x 6 mm sensor, a 9 mm lens, 8-14 um and 60 Hz. Under a pinhole 9 mm gives 47.9 x 36.9 deg, not the printed 51 x 38 deg, and no one focal length reproduces both angles. The current product page lists 7.5-13 um instead. The recorded video is not radiometric; its 2x digital zoom goes in the Zoom field. See docs/datasheets/README.md."
+    },
+    {
+      "id": "flir-one-pro-55deg",
+      "label": "FLIR ONE Pro",
+      "modality": "LWIR",
+      "resolution_px": [160, 120],
+      "sensor_mm": [1.92, 1.44],
+      "focalLength_mm": 1.84414,
+      "spectralBand_um": [8.0, 14.0],
+      "framerate_hz": 8.7,
+      "intrinsicsSource": "datasheet",
+      "$note": "The thermal camera of the 2017 FLIR ONE Pro (sheet 17-1746-OEM-FLIROne_Pro, 2017-06-06): 160 x 120 at 12 um pitch gives 1.92 x 1.44 mm. The sheet prints no focal length; 1.92 / (2 tan 27.5 deg) = 1.84414 mm reproduces its 55 deg horizontal field and gives 42.7 deg vertical, inside the printed 43 +/- 1 deg. The app's 1440 x 1080 video is processed from this 160 x 120 array. The current product page lists 50 x 43 deg, which this sheet contradicts. See docs/datasheets/README.md."
+    },
+    {
       "id": "gopro-hero-wide",
       "label": "GoPro HERO — wide, 1080p",
       "modality": "RGB",
@@ -92,6 +170,18 @@
       "$note": "Approximates the ~122° wide mode as an ideal pinhole. The real lens is strongly non-rectilinear, so this is adequate for framing checks and NOT adequate for reconstruction — calibrate and populate `distortion` first."
     },
     {
+      "id": "canon-vixia-hf-r50-optical-wide",
+      "label": "Canon VIXIA HF R50 — optical wide",
+      "modality": "RGB",
+      "resolution_px": [1920, 1080],
+      "sensor_mm": [2.74255, 1.54269],
+      "focalLength_mm": 2.8,
+      "spectralBand_um": null,
+      "framerate_hz": 30,
+      "intrinsicsSource": "nominal",
+      "$note": "Nominal. Canon's manual (PUB. DIE-0448-000A) prints 2.8 mm at the wide end, 38.5 mm equivalent with Advanced Zoom off, and 1920 x 1080 MP4 at 30P. The sensor is printed only as 1/4.85 inch, so the 16:9 image extent is inferred from the 35 mm equivalent: diagonal hypot(36, 24) x 2.8 / 38.5 = 3.147 mm, which is 2.743 x 1.543 mm and gives 52.2 x 30.8 deg. Advanced Zoom widens the view and stabilisation may crop it; calibrate before reconstructing. See docs/datasheets/README.md."
+    },
+    {
       "id": "iphone-main-26mm",
       "label": "iPhone main camera — 26 mm equiv.",
       "modality": "RGB",
@@ -102,6 +192,18 @@
       "framerate_hz": 30,
       "intrinsicsSource": "nominal",
       "$note": "Tuned to the ~69° horizontal field of a 26 mm-equivalent main camera. Varies by model; verify before relying on it."
+    },
+    {
+      "id": "iphone-x-rear-wide-1080p",
+      "label": "iPhone X — rear wide, 1080p",
+      "modality": "RGB",
+      "resolution_px": [1920, 1080],
+      "sensor_mm": [4.71076, 2.6498],
+      "focalLength_mm": 4.0,
+      "spectralBand_um": null,
+      "framerate_hz": 30,
+      "intrinsicsSource": "nominal",
+      "$note": "Nominal. Apple's iOS Device Compatibility Reference (2017-10-30, table 4-4) prints a 60.983 deg horizontal field for the rear wide camera's 1920 x 1080 video. Apple prints no focal length; the 4 mm is from a review. The image extent is fitted to both: 2 x 4 x tan(60.983 deg / 2) = 4.711 mm wide and 9/16 of that high, giving 60.98 x 36.65 deg, about 8 deg narrower than the generic iPhone preset. Apple says cinematic stabilisation narrows the field further. See docs/datasheets/README.md."
     }
   ]
 }

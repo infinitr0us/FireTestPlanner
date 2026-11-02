@@ -234,7 +234,13 @@ try {
   };
   check('the palette lists the A8303sc body once',
     await evaluate('[...document.querySelectorAll(".palette__row-label")].map(e=>e.textContent).filter(t=>t.includes("A8303")).join("|")') === 'FLIR A8303sc');
-  const field = label => '[...document.querySelectorAll("#inspector label.field")].find(l=>l.querySelector(".field__label")?.textContent==="' + label + '")?.querySelector("select,input")';
+  // The A700 (2026-11-02) is the other body with a lens choice: one row, which places
+  // its 24° lens, printed as 18 mm.
+  const a700Row = '[...document.querySelectorAll(".palette__row")].find(r=>r.querySelector(".palette__row-label").textContent==="FLIR A700")';
+  check('the palette lists the A700 body once, placed with its 24° (18 mm) lens',
+    await evaluate('[...document.querySelectorAll(".palette__row-label")].map(e=>e.textContent).filter(t=>t.includes("A700")).join("|")') === 'FLIR A700'
+    && await evaluate(a700Row + '.title.startsWith("Placed with the 18 mm lens. Choose 5, 10, 18, 29 or 70 mm under Lens")'));
+  const field =label => '[...document.querySelectorAll("#inspector label.field")].find(l=>l.querySelector(".field__label")?.textContent==="' + label + '")?.querySelector("select,input")';
   const lensSelect = field('Lens');
   const currentLens = 'document.querySelector("#inspector .lens-table__row--current th")?.textContent';
   const fovReadout = '[...document.querySelectorAll("#inspector .readout")].find(r=>r.querySelector(".readout__label").textContent==="Field of view")?.querySelector(".readout__value").textContent';
@@ -265,6 +271,25 @@ try {
   await ctrlZ();
   await waitFor(() => evaluate(currentLens + '==="▶ 25 mm"'), 'undo of the lens change');
   check('undo of a lens change restores the 25 mm lens and an unmodified plan',
+    await evaluate(fovReadout) === '39.4° × 22.8°'
+    && await evaluate('!document.querySelector(".toolbar__file").textContent.includes("•")'));
+  // The Example has no A700, so the same camera is switched to one by a real key on
+  // the Preset select (the A700 is the entry above the A8303sc). Picking the body
+  // applies the lens the palette places; undo puts the A8303sc back.
+  const presetName = '(' + field('Preset') + ')?.selectedOptions[0]?.textContent';
+  await evaluate('(' + field('Preset') + ').focus()');
+  await key('ArrowUp', 'ArrowUp', 38);
+  await waitFor(() => evaluate(presetName + '==="FLIR A700" && ' + currentLens + '==="▶ 18 mm"'), 'A700 chosen by a key on the Preset select');
+  const a700Options = await evaluate('[...(' + lensSelect + ').options].map(o=>o.textContent).join("|")');
+  check('the A700 Lens select lists its five lenses with their fields of view, the 24° (18 mm) fitted (' + a700Options + ')',
+    a700Options === '5 mm (75.0° × 59.9°)|10 mm (42.0° × 32.1°)|18 mm (24.1° × 18.2°)|29 mm (15.1° × 11.3°)|70 mm (6.3° × 4.7°)'
+    && await evaluate('(' + lensSelect + ').value') === 'flir-a700-24deg'
+    && await evaluate(fovReadout) === '24.1° × 18.2°'
+    && await evaluate('document.querySelectorAll("#inspector .lens-table tbody tr").length') === 5);
+  await evaluate('document.activeElement?.blur()');
+  await ctrlZ();
+  await waitFor(() => evaluate(presetName + '==="FLIR A8303sc" && ' + currentLens + '==="▶ 25 mm"'), 'undo of the switch to the A700');
+  check('undo of the switch to the A700 restores the A8303sc and an unmodified plan',
     await evaluate(fovReadout) === '39.4° × 22.8°'
     && await evaluate('!document.querySelector(".toolbar__file").textContent.includes("•")'));
 

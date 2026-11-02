@@ -25,7 +25,7 @@ editor; a data scientist reads the same file as a camera rig description with th
   each thermocouple bead's predicted plume temperature, hood capture and ceiling
   clearance, all from standard fire correlations (Heskestad).
 - **Camera presets** derived from manufacturer datasheets, including the FLIR A8303sc
-  with a choice of four lenses and a lens comparison, plus presets of your own.
+  and A700 with a choice of lenses and a lens comparison, plus presets of your own.
 - **Drawings.** A dimensioned plan and elevations with an equipment list and coverage
   table, ready to print to PDF.
 - **Share.** One self-contained HTML file with the plan baked in: a collaborator
@@ -82,11 +82,13 @@ checked against the fire it is pointed at rather than merely placed.
 ### Cameras this build has never heard of
 
 The preset list is seeded from [`presets/cameras.json`](presets/cameras.json), which
-includes the FLIR A700 and A8303sc, derived from the datasheets listed in
-[`docs/datasheets/`](docs/datasheets/README.md). The A8303sc is listed once and placed
-with its 25 mm lens; its **Lens** field in the inspector switches between the four
-lenses on its datasheet (17, 25, 50 and 100 mm), keeping the camera's position, aim
-and zoom. Below Coverage, a **Lens comparison** shows each lens fitted where the camera
+includes the FLIR A700, A8303sc, K65 and ONE Pro, derived from the documents listed in
+[`docs/datasheets/`](docs/datasheets/README.md), and nominal presets for a Canon VIXIA
+HF R50 and an iPhone X whose derivations are written out there too. The A8303sc and
+the A700 are each listed once, placed with the 25 mm and the 24° lens; the **Lens**
+field in the inspector switches between the lenses FLIR prints for the body (17, 25,
+50 and 100 mm for the A8303sc; 6°, 14°, 24°, 42° and 80° for the A700), keeping the
+camera's position, aim and zoom. Below Coverage, a **Lens comparison** shows each lens fitted where the camera
 stands: its field of view, the detail at the fire in mm/px, and how much of the flame
 envelope stays in frame.
 

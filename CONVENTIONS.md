@@ -252,7 +252,8 @@ real calibration if the plan will feed a reconstruction.
 ### Lenses of one body
 
 A seeded preset may name a `body`. Presets that share one are the lenses of one
-camera (the A8303sc's 17, 25, 50 and 100 mm) and differ in focal length only. This is
+camera (the A8303sc's 17, 25, 50 and 100 mm; the A700's 5 to 70 mm, which FLIR
+designates 80° to 6°) and differ in focal length only. This is
 a property of the preset library, not of the file. A camera placed with one of them
 stores its intrinsics inline like any other, and its `presetId` names the lens
 (`flir-a8303sc-50mm`), so a plan still records which lens it was planned with. The

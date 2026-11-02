@@ -977,15 +977,16 @@ describe('the camera preset library', () => {
   beforeEach(() => resetCustomPresets());
 
   it('ships the two FLIR presets with their datasheet intrinsics', () => {
-    // The A-series sheet designates this lens by angle -- "Included Lenses: 24 deg"
-    // -- and prints no focal length, so the preset back-solves one from the 640 x
-    // 480 array at 12 um pitch. 24.0 x 18.1 deg is what that reproduces; both are
-    // derived rather than printed. See docs/datasheets/README.md.
+    // The A700's own science-kit sheet (P/N 85903-0102) prints the 640 x 480 array
+    // at 12 um pitch and this 24 deg lens as 18 mm, so nothing is back-solved: the
+    // field of view is the derived half, 2 atan(7.68 / 36) = 24.09 deg by
+    // 2 atan(5.76 / 36) = 18.18 deg. See docs/datasheets/README.md.
     const a700 = findPreset('flir-a700-24deg')!;
     expect(a700.resolution_px).toEqual([640, 480]);
     expect(a700.sensor_mm[0]).toBeCloseTo(640 * 0.012, 6);
-    expect(hfovDegOf({ camera: specFromPreset(a700) } as CameraObject)).toBeCloseTo(24, 1);
-    expect(vfovDegOf({ camera: specFromPreset(a700) } as CameraObject)).toBeCloseTo(18.1, 1);
+    expect(a700.focalLength_mm).toBe(18);
+    expect(hfovDegOf({ camera: specFromPreset(a700) } as CameraObject)).toBeCloseTo(24.09, 1);
+    expect(vfovDegOf({ camera: specFromPreset(a700) } as CameraObject)).toBeCloseTo(18.18, 1);
     expect(a700.intrinsicsSource).toBe('datasheet');
 
     // 1280 x 720 at 14 um, straight off the datasheet, and the 25 mm lens is used

@@ -1,7 +1,9 @@
 /**
  * Lens choice for a body with several lenses: the A8303sc's four, from the bundled
- * datasheet. The fields of view are pinned from the arithmetic in the comments,
- * not from the code under test -- 1280 x 720 at 14 um is a 17.92 x 10.08 mm array.
+ * datasheet, and the A700's five, at the focal lengths FLIR prints for them. The
+ * fields of view are pinned from the arithmetic in the comments, not from the code
+ * under test -- 1280 x 720 at 14 um is a 17.92 x 10.08 mm array, and 640 x 480 at
+ * 12 um is 7.68 x 5.76 mm.
  */
 
 import { readFileSync } from 'node:fs';
@@ -37,7 +39,7 @@ describe('the A8303sc lenses', () => {
     for (const mm of [17, 25, 50, 100]) {
       expect(focals(lensesOf(`flir-a8303sc-${mm}mm`))).toEqual([17, 25, 50, 100]);
     }
-    expect(lensesOf('flir-a700-24deg')).toEqual([]);
+    expect(lensesOf('flir-t650sc-25deg')).toEqual([]);
     expect(lensesOf('gopro-hero-wide')).toEqual([]);
     expect(lensesOf(null)).toEqual([]);
     expect(lensesOf('not-a-preset')).toEqual([]);
@@ -76,7 +78,55 @@ describe('the A8303sc lenses', () => {
         expect(p.intrinsicsSource).toBe(first.intrinsicsSource);
       }
     }
+    expect([...bodies].sort()).toEqual(['FLIR A700', 'FLIR A8303sc']);
     expect(lens(25).bodyDefault).toBe(true);
+    expect(findPreset('flir-a700-24deg')!.bodyDefault).toBe(true);
+  });
+});
+
+describe('the A700 lenses', () => {
+  const a700 = (deg: number): CameraPreset => findPreset(`flir-a700-${deg}deg`)!;
+
+  it('offers the five FLIR prints, by focal length, whichever lens a camera has', () => {
+    // 80 deg T300805 5 mm, 42 deg T300239 10 mm, 24 deg (science kit) 18 mm,
+    // 14 deg T300241 29 mm, 6 deg T300095 70 mm: docs/datasheets/README.md.
+    for (const deg of [6, 14, 24, 42, 80]) {
+      expect(lensesOf(`flir-a700-${deg}deg`).map((p) => p.id)).toEqual([
+        'flir-a700-80deg', 'flir-a700-42deg', 'flir-a700-24deg', 'flir-a700-14deg', 'flir-a700-6deg',
+      ]);
+      expect(focals(lensesOf(`flir-a700-${deg}deg`))).toEqual([5, 10, 18, 29, 70]);
+    }
+  });
+
+  it('gives each lens the field of view of its printed focal length, as the Lens field lists it', () => {
+    // Placed with the 24 deg lens, then each lens fitted: 2 atan(7.68 / 2f) by
+    // 2 atan(5.76 / 2f). The 6, 14 and 80 deg lenses do not reproduce their printed
+    // angles (6 x 4.5, 14 x 10, 80 x 63), and the editor shows the pinhole value.
+    const placed = { camera: specFromPreset(a700(24)) } as CameraObject;
+    const listed = lensesOf(placed.camera.presetId).map((l) => {
+      const fitted = withLens(placed, l);
+      return `${lensName(l.focalLength_mm)} (${hfovDegOf(fitted).toFixed(1)}° × ${vfovDegOf(fitted).toFixed(1)}°)`;
+    });
+    expect(listed).toEqual([
+      '5 mm (75.0° × 59.9°)',
+      '10 mm (42.0° × 32.1°)',
+      '18 mm (24.1° × 18.2°)',
+      '29 mm (15.1° × 11.3°)',
+      '70 mm (6.3° × 4.7°)',
+    ]);
+    expect(currentLensOf(placed)?.id).toBe('flir-a700-24deg');
+    // The other 24 deg lens FLIR lists, 17 mm f/1.3, is not one of these: typed in,
+    // it reads as not a listed lens rather than as the 18 mm.
+    expect(currentLensOf({ camera: { ...placed.camera, focalLength_mm: 17 } } as CameraObject)).toBeNull();
+  });
+
+  it('is listed once, by its body, and placed with the 24 deg lens', () => {
+    const listed = collapseBodies(BUILTIN_CAMERA_PRESETS);
+    const ids = listed.map((p) => p.id);
+    expect(ids.filter((id) => id.startsWith('flir-a700-'))).toEqual(['flir-a700-24deg']);
+    expect(ids.indexOf('flir-a700-24deg')).toBe(ids.indexOf('flir-t650sc-25deg') + 1);
+    expect(listed.map(listedLabel).filter((l) => l.includes('A700'))).toEqual(['FLIR A700']);
+    expect(a700(24).focalLength_mm).toBe(18);
   });
 });
 
@@ -86,14 +136,21 @@ describe('listing a body once', () => {
     const listed = collapseBodies([...BUILTIN_CAMERA_PRESETS, custom]);
     const ids = listed.map((p) => p.id);
     expect(ids.filter((id) => id.startsWith('flir-a8303sc-'))).toEqual(['flir-a8303sc-25mm']);
-    const firstLens = BUILTIN_CAMERA_PRESETS.findIndex((p) => p.body === 'FLIR A8303sc');
-    expect(ids.indexOf('flir-a8303sc-25mm')).toBe(firstLens);
+    expect(ids.filter((id) => id.startsWith('flir-a700-'))).toEqual(['flir-a700-24deg']);
+    // Where its first lens was: after every entry listed before that lens, which
+    // for another body is only its default.
+    const listedBefore = (body: string): number => BUILTIN_CAMERA_PRESETS
+      .slice(0, BUILTIN_CAMERA_PRESETS.findIndex((p) => p.body === body))
+      .filter((p) => !p.body || p.bodyDefault).length;
+    expect(ids.indexOf('flir-a8303sc-25mm')).toBe(listedBefore('FLIR A8303sc'));
+    expect(ids.indexOf('flir-a700-24deg')).toBe(listedBefore('FLIR A700'));
     // Every other preset is listed as it was, the user's own last.
     expect(ids).toEqual([
       ...BUILTIN_CAMERA_PRESETS.filter((p) => !p.body || p.bodyDefault).map((p) => p.id),
       'my-a8303-50',
     ]);
     expect(listed.map(listedLabel)).toContain('FLIR A8303sc');
+    expect(listed.map(listedLabel)).toContain('FLIR A700');
     expect(listedLabel(custom)).toBe('My A8303');
     expect(listedLabel(findPreset('gopro-hero-wide')!)).toBe(findPreset('gopro-hero-wide')!.label);
   });

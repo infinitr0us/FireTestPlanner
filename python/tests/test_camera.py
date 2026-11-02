@@ -164,20 +164,87 @@ def test_every_preset_has_a_sensor_and_a_positive_focal_length():
         assert p["intrinsicsSource"] in ("nominal", "datasheet", "calibrated")
 
 
-def test_the_a700_preset_reproduces_its_datasheet_field_of_view():
-    # FLIR publishes 24 x 18 deg and 0.66 mrad/pixel for the 24 deg lens. The
-    # sensor is 640 x 480 at the 12 um pitch the datasheet gives; the focal length
-    # is back-solved from the FOV, because the lens's nominal "17 mm" designation
-    # does not close against a 7.68 mm array. See docs/datasheets/README.md.
+def test_the_a700_24_degree_preset_uses_the_printed_18_mm_lens():
+    # The A700 24 deg f/1.0 science-kit sheet (P/N 85903-0102, rev. 98866) prints
+    # 640 x 480 at 12 um pitch and the lens as 18 mm. Under a pinhole that is
+    # 2 atan(7.68 / 36) = 24.09 x 2 atan(5.76 / 36) = 18.18 deg, against the 24 deg
+    # designation, and 0.012 / 18 = 0.667 mrad/px. Until 2026-11-02 the preset
+    # stored 18.07 mm, back-solved from the angle. See docs/datasheets/README.md.
     preset = _preset("flir-a700-24deg")
     assert preset["resolution_px"] == [640, 480]
     assert preset["sensor_mm"] == pytest.approx([640 * 0.012, 480 * 0.012])
+    assert preset["focalLength_mm"] == pytest.approx(18.0)
     h, v = _fov_deg(preset)
-    assert h == pytest.approx(24.0, abs=0.05)
-    assert v == pytest.approx(18.1, abs=0.05)
+    assert h == pytest.approx(24.09, abs=0.01)
+    assert v == pytest.approx(18.18, abs=0.01)
+    assert h == pytest.approx(24.0, abs=0.1)
     ifov_mrad = 0.012 / preset["focalLength_mm"] * 1000
-    assert ifov_mrad == pytest.approx(0.66, abs=0.01)
+    assert ifov_mrad == pytest.approx(0.667, abs=0.001)
     assert preset["intrinsicsSource"] == "datasheet"
+
+
+def test_the_a700_body_carries_the_five_lenses_flir_prints():
+    # Each lens's printed focal length, and the pinhole field of view it gives on
+    # the 7.68 x 5.76 mm array: 2 atan(7.68 / 2f) x 2 atan(5.76 / 2f). For the 6,
+    # 14 and 80 deg lenses that is not the printed angle (6 x 4.5, 14 x 10 and
+    # 80 x 63 deg); the presets keep the printed focal length and the README shows
+    # the mismatch. The palette places the 24 deg lens.
+    base = _preset("flir-a700-24deg")
+    expected = {
+        6: (70.0, 6.28, 4.71),
+        14: (29.0, 15.09, 11.34),
+        24: (18.0, 24.09, 18.18),
+        42: (10.0, 42.01, 32.13),
+        80: (5.0, 75.05, 59.88),
+    }
+    for deg, (mm, h_deg, v_deg) in expected.items():
+        preset = _preset("flir-a700-{}deg".format(deg))
+        assert preset["body"] == "FLIR A700"
+        assert preset["focalLength_mm"] == pytest.approx(mm)
+        for key in ("modality", "resolution_px", "sensor_mm", "spectralBand_um",
+                    "framerate_hz", "intrinsicsSource"):
+            assert preset[key] == base[key], key
+        h, v = _fov_deg(preset)
+        assert h == pytest.approx(h_deg, abs=0.01)
+        assert v == pytest.approx(v_deg, abs=0.01)
+        assert bool(preset.get("bodyDefault")) == (deg == 24)
+
+
+@pytest.mark.parametrize("preset_id, source, mm, fov", [
+    # 320 x 240 at 25 um, the printed 9 mm: 2 atan(8 / 18) x 2 atan(6 / 18). The
+    # sheet prints 51 x 38 deg, which no single focal length reproduces.
+    ("flir-k65-9mm", "datasheet", 9.0, (47.92, 36.87)),
+    # 160 x 120 at 12 um; f = 1.92 / (2 tan 27.5 deg) is back-solved from the
+    # printed 55 deg, and gives 2 atan(1.44 / 2f) = 42.65 deg against 43 +/- 1.
+    ("flir-one-pro-55deg", "datasheet", 1.84414, (55.00, 42.65)),
+    # 2.8 mm and an extent inferred from 38.5 mm equivalent on the 36 x 24 mm
+    # diagonal: D = 43.2666 x 2.8 / 38.5, W = 16 D / sqrt(337), H = 9 D / sqrt(337).
+    ("canon-vixia-hf-r50-optical-wide", "nominal", 2.8, (52.19, 30.80)),
+    # A review's 4 mm, the extent fitted to Apple's printed 60.983 deg horizontal
+    # field for 1920 x 1080: W = 8 tan(30.4915 deg), H = 9 W / 16.
+    ("iphone-x-rear-wide-1080p", "nominal", 4.0, (60.98, 36.65)),
+])
+def test_the_single_lens_presets_reproduce_their_documented_derivations(preset_id, source, mm, fov):
+    preset = _preset(preset_id)
+    assert "body" not in preset
+    assert preset["intrinsicsSource"] == source
+    assert preset["focalLength_mm"] == pytest.approx(mm)
+    h, v = _fov_deg(preset)
+    assert h == pytest.approx(fov[0], abs=0.01)
+    assert v == pytest.approx(fov[1], abs=0.01)
+    if preset["modality"] == "RGB":
+        assert preset["spectralBand_um"] is None
+
+
+def test_the_k65_and_one_pro_sensors_are_their_printed_arrays_at_the_printed_pitch():
+    k65 = _preset("flir-k65-9mm")
+    assert k65["resolution_px"] == [320, 240]
+    assert k65["sensor_mm"] == pytest.approx([320 * 0.025, 240 * 0.025])
+    assert k65["spectralBand_um"] == [8.0, 14.0]
+    one = _preset("flir-one-pro-55deg")
+    assert one["resolution_px"] == [160, 120]
+    assert one["sensor_mm"] == pytest.approx([160 * 0.012, 120 * 0.012])
+    assert one["focalLength_mm"] == pytest.approx(1.92 / (2 * math.tan(math.radians(27.5))), abs=1e-5)
 
 
 def test_the_a8303sc_preset_derives_its_sensor_from_the_detector_pitch():

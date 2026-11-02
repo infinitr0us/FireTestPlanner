@@ -13,12 +13,20 @@ and a plan written by any release opens in every later one.
   much of the flame it can see, with a check when it sees none or only part; a
   camera's coverage shows how much of the flame it frames is unobstructed, and a
   check names what is in the way.
+- Camera presets: the FLIR A700 gains a lens choice like the A8303sc's (6°, 14°, 24°,
+  42° and 80°, at the focal lengths FLIR prints), and there are new presets for the
+  FLIR K65, the FLIR ONE Pro, a Canon VIXIA HF R50 at its optical wide end and the
+  iPhone X's rear wide camera in 1080p. `docs/datasheets/README.md` maps each to its source,
+  including where a printed focal length and a printed field of view disagree.
 
 ### Changed
 - The editor's left rail keeps **Checks** on screen on a laptop (1280 × 720): the
   palette, the object list and the checks share the height and each scrolls its own
   contents. **From FDS** and the help for adding a camera preset fold away until
   needed.
+- The FLIR A700 24° preset stores the 18 mm focal length FLIR prints for that lens
+  instead of 18.07 mm back-solved from the angle, so it now frames 24.1° × 18.2°.
+  Cameras already in a plan keep their own stored focal length.
 
 ## [0.7.0] - 2026-10-18
 

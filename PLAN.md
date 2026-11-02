@@ -13,7 +13,7 @@ Complements `ideas.md`, the original brief.
 |---|---|
 | Architecture | Shared TypeScript/Three.js core; two shells (single-file HTML, pywebview+PyInstaller exe) |
 | Visual language | New UI, scenes and exports follow [docs/visual-language.md](docs/visual-language.md) during feature development; extend shared definitions, document intentional exceptions and verify affected states in the same change |
-| Units | SI internal (metres, kW, °C, radians in file / degrees in UI), imperial display toggle |
+| Units | SI internal (metres, kW, °C, radians in file / degrees in UI), imperial display toggle; feet and inches to 1/16" since format 1.5 |
 | v1 objects | Cameras, burner + hood + duct, walls, ceilings |
 | v1.1 objects | Heat flux gauges, thermocouples (single bead or rake) |
 | v1.2 objects | Obstructions — the box that is neither wall nor slab |
@@ -246,7 +246,7 @@ Phase 1 is complete and Phase 2 has landed (v0.7.0). M15 onwards are in
 | Ask | How it landed |
 |---|---|
 | A zoom factor per camera | `camera.zoomFactor`, multiplying the effective focal length. Everything derived goes through it — frustum, preview, coverage, drawing. The lens stays the lens |
-| FLIR A8303sc and A700 presets | Seeded from the datasheets now in `docs/datasheets/`, both `intrinsicsSource: "datasheet"`. The A700's focal length is back-solved from the 24° lens designation, because the A-series sheet names lenses by angle and prints no focal length — `docs/datasheets/README.md` maps every stored field to a printed value or to its derivation |
+| FLIR A8303sc and A700 presets | Seeded from the datasheets now in `docs/datasheets/`, both `intrinsicsSource: "datasheet"`. The A700's focal length was first back-solved from the 24° lens designation (M15 replaced it with the 18 mm FLIR prints on the f/1.0 kit sheet), because the A-series sheet names lenses by angle and prints no focal length — `docs/datasheets/README.md` maps every stored field to a printed value or to its derivation |
 | Heat flux and thermocouple components | New object types, with predicted exposure rather than bare placement: incident flux by point source, bead-by-bead plume temperature, and checks for an over-range gauge, a starved one, one facing the wrong way, and a bead its wire cannot survive |
 | Walls and sensors in the example plan | The reference plan gained an L of walls, two gauges and two rakes. It now makes a second argument alongside the camera-framing one: the 50 kW/m² gauge everyone owns reads 3% of scale at 1.5 m from a 130 kW fire |
 | Add camera presets from the GUI, without a save file | **Yes, and no sidecar file was needed.** The desktop shell keeps the library in its own per-profile `settings.json`; a browser tab uses `localStorage`. (`localStorage` alone did not work for the desktop build: the shell binds a fresh loopback port on every launch, and browser storage is scoped to the origin, so each launch saw an empty library.) Plans were already self-contained — every intrinsic is copied inline and `presetId` is a hint — so a preset can also be lifted straight back out of a plan someone sends you |
@@ -374,11 +374,10 @@ is invisible until someone works the arithmetic — or opens the plan.
   machine rather than the plan, and clearing site data clears a browser's copy. Plans
   are unaffected either way: every intrinsic is written into the camera itself, and the
   inspector says so when the library has nowhere durable to be stored.
-- **Wall openings do not appear in the exported elevations.** The 3D view cuts doors
-  and windows out of a wall, and the plan view breaks a wall at each doorway (an
-  opening from the wall's base up); the elevations render every wall as a solid
-  rectangle, and a window is not marked in plan. Worth knowing before a drawing is
-  handed to someone who will build from it.
+- **An opening is dimensioned only where its wall faces the view.** Since M15 the
+  elevations cut every door and window out of its wall and dimension its width and
+  sill, and the plan marks windows; a wall seen edge-on keeps its openings' outlines
+  but not their dimensions, which the facing elevation and the plan already give.
 - **The FDS import classifies by shape, not by intent.** A box is a wall, a slab or an
   obstruction by aspect ratio (CONVENTIONS §9). A 0.4 m kerb reads as a low wall and a
   deep beam reads as a slab; both are defensible and neither is what the author meant.
@@ -577,9 +576,10 @@ together. A label now also moves up its stack until its text clears every label
 already on that line; labels that do not collide stay where they were.
 
 The mechanism is generic: another body's lenses are a data change in
-`presets/cameras.json`. The A700's optional lenses (6°, 14°, 42°, 80°) are not
-added; its sheet designates lenses by angle, so each focal length would be
-back-solved like the 24° one.
+`presets/cameras.json`. The A700's optional lenses (6°, 14°, 42°, 80°) were left out
+at the time because its sheet designates lenses by angle; in M15 FLIR's lens sheets
+turned up with printed focal lengths, and the A700 became the second body with a
+lens choice (`docs/datasheets/README.md`).
 
 ## 9. Next round (2026-11)
 
