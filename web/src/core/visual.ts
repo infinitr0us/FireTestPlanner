@@ -8,3 +8,6 @@ export const DEVICE_COLORS = {
   mass: '#f59e0b',
   other: '#e2e8f0',
 } as const;
+
+/** Survey overlay uses object identity; translucency distinguishes measured pose. */
+export const AS_BUILT_STYLE = { opacity: 0.25, lineOpacity: 0.55 } as const;

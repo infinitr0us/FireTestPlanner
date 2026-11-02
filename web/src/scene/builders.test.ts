@@ -12,7 +12,7 @@ import { lookAtQuat } from '../core/math';
 import { burnerFlameHeightM, reconstructedFlames, standoffM } from '../core/plan';
 import type { BurnerObject, CameraObject, PlanDocument, ReconstructedFlameObject, WallObject } from '../core/types';
 import { shownHits } from './camera-model';
-import { buildBurner, buildCamera, buildFlameProxy, buildWall, labelPoint, buildNewInstrument } from './builders';
+import { buildBurner, buildCamera, buildFlameProxy, buildWall, labelPoint, buildNewInstrument, buildAsBuiltGhost, LAYER_EDITOR } from './builders';
 import { createVelocityProbe, createGasSampling, createLoadCell } from '../core/factory';
 import { newPlan, objectColor } from '../core/plan';
 
@@ -25,6 +25,46 @@ const PLAN = fileURLToPath(new URL('../../../fixtures/flame/flame-test.ftp.json'
 const doc = JSON.parse(readFileSync(PLAN, 'utf8')) as PlanDocument;
 const linked = (): ReconstructedFlameObject => reconstructedFlames(doc)[0];
 const unlinked = (): ReconstructedFlameObject => ({ ...linked(), linkedFiles: [] });
+
+it('draws measured camera outlines and an identity-colored connection on the editor layer only', () => {
+  const c = structuredClone(doc.objects.find(o => o.id === 'cam-mwir')) as CameraObject;
+  c.display = { color: '#123456' };
+  c.asBuilt = { transform: { position_m: [3, 4, 5], rotation_quat: [0, 1, 0, 0] }, measured: null, note: null };
+  const ghost = buildAsBuiltGhost(c, () => { throw new Error('Camera ghosts must not build hardware'); });
+  expect(ghost.children[0].position.toArray()).toEqual([3, 4, 5]);
+  const lines: THREE.Line[] = [];
+  ghost.traverse(o => {
+    expect(o.layers.mask).toBe(1 << LAYER_EDITOR);
+    expect(o.userData.planId).toBeUndefined();
+    expect(o instanceof THREE.Mesh).toBe(false);
+    if (o instanceof THREE.Line) lines.push(o);
+  });
+  expect(lines).toHaveLength(2);
+  for (const line of lines) {
+    const m = line.material as THREE.LineBasicMaterial;
+    expect(m.color.getHexString()).toBe('123456'); expect(m.transparent).toBe(true); expect(m.depthWrite).toBe(false);
+  }
+  const positions = lines[1].geometry.getAttribute('position');
+  expect([positions.getX(1), positions.getY(1), positions.getZ(1)]).toEqual([3, 4, 5]);
+});
+
+it('draws surveyed hardware with explicit identity and no shadows or picking', () => {
+  const wall: WallObject = { id: 'wall', type: 'wall', polyline_m: [[0, 0], [1, 0]], height_m: 2,
+    transform: { position_m: [0, 0, 0] }, display: { color: '#123456' },
+    asBuilt: { transform: { position_m: [1, 2, 3] }, measured: null, note: null } };
+  const before = structuredClone(wall);
+  const ghost = buildAsBuiltGhost(wall, o => buildWall(o as WallObject));
+  expect(ghost.children[0].position.toArray()).toEqual([1, 2, 3]);
+  ghost.traverse(o => {
+    expect(o.userData.planId).toBeUndefined(); expect(o.castShadow).toBe(false);
+    if (o instanceof THREE.Mesh) {
+      const material = o.material as THREE.MeshStandardMaterial;
+      expect(material.color.getHexString()).toBe('123456');
+      expect(material.opacity).toBe(0.25); expect(material.depthWrite).toBe(false);
+    }
+  });
+  expect(wall).toEqual(before);
+});
 
 it('builds distinct instrument glyphs with recorded transforms and explicit colors', () => {
   const plan = newPlan(), probe = createVelocityProbe(plan), gas = createGasSampling(plan), cell = createLoadCell(plan);

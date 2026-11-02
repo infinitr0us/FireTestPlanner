@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { connectShell, shell } from './files';
+import { connectShell, shell, saveNextTestText } from './files';
 import { readFileSync } from 'node:fs';
 import { serializePlan } from '../core/serialize';
 
@@ -14,6 +14,18 @@ function bridge(responses: unknown[]) {
 }
 
 describe('desktop link/save bridge', () => {
+  it('next test chooses a new native destination, handles cancel and propagates failures', async () => {
+    const { fetch } = bridge([{ path: 'E:/T-008.ftp.json', token: 'next' }, { path: 'E:/T-008.ftp.json', token: 'written' }]);
+    const text = readFileSync(new URL('../../../fixtures/asbuilt-series.ftp.json', import.meta.url), 'utf8');
+    expect(await saveNextTestText(text, 'T-008.ftp.json')).toEqual({ path: 'E:/T-008.ftp.json', token: 'written' });
+    const calls = fetch.mock.calls as unknown as [string, { body: string }][];
+    expect(JSON.parse(calls[0][1].body)).toEqual({ name: 'T-008.ftp.json', saveAs: true, token: null });
+    const cancelled = bridge([null]);
+    expect(await saveNextTestText(text, 'T-008.ftp.json')).toBeNull();
+    expect(cancelled.fetch).toHaveBeenCalledTimes(1);
+    bridge([{ path: 'E:/T-008.ftp.json', token: 'next' }, { error: 'disk full' }]);
+    await expect(saveNextTestText(text, 'T-008.ftp.json')).rejects.toThrow('disk full');
+  });
   it('rebases testData files through the desktop open and Save As path', async () => {
     const disk = readFileSync(new URL('../../../fixtures/test-data/test-data.ftp.json', import.meta.url), 'utf8');
     const { api, fetch } = bridge([

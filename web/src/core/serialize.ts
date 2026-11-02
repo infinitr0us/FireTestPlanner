@@ -13,7 +13,7 @@ import { roundMicro } from './math';
 import { maxVersion, requiredFormatVersion, zoomIsDefault, type PlanDocument } from './types';
 
 const TOP = ['format', 'version', 'meta', 'units', 'coordinateSystem', 'environment', 'objects', 'testData'];
-const META = ['title', 'testId', 'author', 'organization', 'siteName', 'created', 'modified', 'revision', 'notes', 'source'];
+const META = ['title', 'testId', 'series', 'author', 'organization', 'siteName', 'created', 'modified', 'revision', 'notes', 'source'];
 const SOURCE = ['tool', 'file', 'chid', 'importedAt', 'originOffset_m'];
 const UNITS = ['length', 'angle', 'power', 'temperature', 'display'];
 const UNITS_DISPLAY = ['length', 'angle'];
@@ -45,18 +45,18 @@ const DATA_MANIFEST = ['size', 'modified', 'rows', 'channels'];
 const MANIFEST_CHANNEL = ['name', 'unit', 'samples', 't0', 't1'];
 
 const OBJECT_ORDER: Record<string, string[]> = {
-  camera: ['id', 'type', 'name', 'transform', 'camera', 'mount', 'recording', 'linkedFiles', 'display', 'notes'],
-  burner: ['id', 'type', 'name', 'transform', 'footprint', 'rimHeight_m', 'fire', 'linkedFiles', 'display', 'notes'],
-  hood: ['id', 'type', 'name', 'transform', 'opening_m', 'height_m', 'skirtDepth_m', 'duct', 'display', 'notes'],
-  wall: ['id', 'type', 'name', 'transform', 'polyline_m', 'height_m', 'thickness_m', 'baseHeight_m', 'openings', 'display', 'notes'],
-  ceiling: ['id', 'type', 'name', 'transform', 'polygon_m', 'height_m', 'thickness_m', 'display', 'notes'],
-  heatFluxSensor: ['id', 'type', 'name', 'transform', 'gauge', 'mount', 'linkedFiles', 'display', 'notes'],
-  velocityProbe: ['id', 'type', 'name', 'transform', 'range_m_s', 'linkedFiles', 'display', 'notes'],
-  gasSampling: ['id', 'type', 'name', 'transform', 'species', 'inDuct', 'linkedFiles', 'display', 'notes'],
-  loadCell: ['id', 'type', 'name', 'transform', 'capacity_kg', 'platform_m', 'linkedFiles', 'display', 'notes'],
-  thermocouple: ['id', 'type', 'name', 'transform', 'beadOffsets_m', 'thermocouple', 'mount', 'linkedFiles', 'display', 'notes'],
-  obstruction: ['id', 'type', 'name', 'transform', 'size_m', 'display', 'notes'],
-  reconstructedFlame: ['id', 'type', 'name', 'transform', 'burnerId', 'representation', 'linkedFiles', 'display', 'notes'],
+  camera: ['id', 'type', 'name', 'transform', 'asBuilt', 'camera', 'mount', 'recording', 'linkedFiles', 'display', 'notes'],
+  burner: ['id', 'type', 'name', 'transform', 'asBuilt', 'footprint', 'rimHeight_m', 'fire', 'linkedFiles', 'display', 'notes'],
+  hood: ['id', 'type', 'name', 'transform', 'asBuilt', 'opening_m', 'height_m', 'skirtDepth_m', 'duct', 'display', 'notes'],
+  wall: ['id', 'type', 'name', 'transform', 'asBuilt', 'polyline_m', 'height_m', 'thickness_m', 'baseHeight_m', 'openings', 'display', 'notes'],
+  ceiling: ['id', 'type', 'name', 'transform', 'asBuilt', 'polygon_m', 'height_m', 'thickness_m', 'display', 'notes'],
+  heatFluxSensor: ['id', 'type', 'name', 'transform', 'asBuilt', 'gauge', 'mount', 'linkedFiles', 'display', 'notes'],
+  velocityProbe: ['id', 'type', 'name', 'transform', 'asBuilt', 'range_m_s', 'linkedFiles', 'display', 'notes'],
+  gasSampling: ['id', 'type', 'name', 'transform', 'asBuilt', 'species', 'inDuct', 'linkedFiles', 'display', 'notes'],
+  loadCell: ['id', 'type', 'name', 'transform', 'asBuilt', 'capacity_kg', 'platform_m', 'linkedFiles', 'display', 'notes'],
+  thermocouple: ['id', 'type', 'name', 'transform', 'asBuilt', 'beadOffsets_m', 'thermocouple', 'mount', 'linkedFiles', 'display', 'notes'],
+  obstruction: ['id', 'type', 'name', 'transform', 'asBuilt', 'size_m', 'display', 'notes'],
+  reconstructedFlame: ['id', 'type', 'name', 'transform', 'asBuilt', 'burnerId', 'representation', 'linkedFiles', 'display', 'notes'],
 };
 
 type Json = unknown;
@@ -131,6 +131,10 @@ function canonObject(raw: Obj): Obj {
   const o: Obj = { ...raw };
 
   if (hasOwn(o, 'transform')) o.transform = orderIfObject(o.transform, TRANSFORM);
+  if (isPlainObject(o.asBuilt)) {
+    o.asBuilt = order(o.asBuilt, ['transform', 'measured', 'note']);
+    (o.asBuilt as Obj).transform = orderIfObject((o.asBuilt as Obj).transform, TRANSFORM);
+  }
   if (hasOwn(o, 'display')) o.display = orderIfObject(o.display, DISPLAY);
 
   switch (o.type) {
@@ -222,7 +226,7 @@ const isKnownObjectType = (type: unknown): boolean =>
 /**
  * An object whose `type` this version does not recognise.
  *
- * Only the two blocks this version genuinely owns are canonicalised: `transform`,
+ * Only the blocks this version owns are canonicalised: `transform`, `asBuilt`,
  * because the editor can drag an unknown object and would otherwise write float
  * noise into it, and `display`, because it can be hidden or locked. Everything else
  * -- key order, unknown keys, and full numeric precision -- is re-emitted exactly as
@@ -237,6 +241,15 @@ function canonUnknownObject(raw: Obj): Obj {
   const out: Obj = { ...raw };
   if (isPlainObject(out.transform)) out.transform = roundFloats(order(out.transform, TRANSFORM));
   if (isPlainObject(out.display)) out.display = roundFloats(order(out.display, DISPLAY));
+  if (isPlainObject(out.asBuilt)) {
+    const a = order(out.asBuilt, ['transform', 'measured', 'note']);
+    a.transform = orderIfObject(a.transform, TRANSFORM);
+    out.asBuilt = roundFloats(a);
+    // Move only the block this format owns; preserve all unknown field order.
+    const keys = Object.keys(out).filter(k => k !== 'asBuilt');
+    keys.splice(keys.indexOf('transform') + 1, 0, 'asBuilt');
+    return order(out, keys);
+  }
   return out;
 }
 

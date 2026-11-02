@@ -446,6 +446,17 @@
       }
     },
 
+    "asBuilt": {
+      "type": "object",
+      "required": ["transform", "measured", "note"],
+      "additionalProperties": false,
+      "properties": {
+        "transform": { "$ref": "#/$defs/transform" },
+        "measured": { "type": ["string", "null"], "format": "date", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "note": { "type": ["string", "null"] }
+      }
+    },
+
     "display": {
       "type": "object",
       "additionalProperties": false,
@@ -477,6 +488,7 @@
         "type": { "type": "string" },
         "name": { "type": ["string", "null"] },
         "transform": { "$ref": "#/$defs/transform" },
+        "asBuilt": { "$ref": "#/$defs/asBuilt" },
         "display": { "$ref": "#/$defs/display" },
         "notes": { "type": ["string", "null"] }
       }
@@ -616,7 +628,7 @@
       "properties": {
         "id": true, "type": { "const": "camera" }, "name": true,
         "linkedFiles": {"type": "array", "maxItems": 100, "items": {"allOf": [{"$ref": "#/$defs/linkedFile"}, {"properties": {"kind": {"const": "video"}}}, {"not": {"required": ["plot"]}}, {"not": {"required": ["sequence"]}}]}},
-        "transform": true, "display": true, "notes": true,
+        "transform": true, "asBuilt": true, "display": true, "notes": true,
 
         "camera": {
           "type": "object",
@@ -713,7 +725,7 @@
       "properties": {
         "id": true, "type": { "const": "burner" }, "name": true,
         "linkedFiles": {"type": "array", "maxItems": 100, "items": {"allOf": [{"$ref": "#/$defs/linkedFile"}, {"properties": {"kind": {"const": "spreadsheet"}}}, {"not": {"required": ["sequence"]}}]}},
-        "transform": true, "display": true, "notes": true,
+        "transform": true, "asBuilt": true, "display": true, "notes": true,
 
         "footprint": { "$ref": "#/$defs/footprint" },
         "rimHeight_m": {
@@ -771,7 +783,7 @@
       "additionalProperties": false,
       "properties": {
         "id": true, "type": { "const": "hood" }, "name": true,
-        "transform": true, "display": true, "notes": true,
+        "transform": true, "asBuilt": true, "display": true, "notes": true,
 
         "opening_m": {
           "$ref": "#/$defs/positiveVec2",
@@ -812,7 +824,7 @@
       "additionalProperties": false,
       "properties": {
         "id": true, "type": { "const": "wall" }, "name": true,
-        "transform": true, "display": true, "notes": true,
+        "transform": true, "asBuilt": true, "display": true, "notes": true,
 
         "polyline_m": {
           "type": "array",
@@ -853,7 +865,7 @@
       "description": "A horizontal slab. Together with walls this covers the building geometry a fire test needs: the tool targets open bays and simple enclosures, not detailed room layouts.",
       "properties": {
         "id": true, "type": { "const": "ceiling" }, "name": true,
-        "transform": true, "display": true, "notes": true,
+        "transform": true, "asBuilt": true, "display": true, "notes": true,
 
         "polygon_m": {
           "type": "array",
@@ -893,7 +905,7 @@
       "properties": {
         "id": true, "type": { "const": "heatFluxSensor" }, "name": true,
         "linkedFiles": {"type": "array", "maxItems": 100, "items": {"allOf": [{"$ref": "#/$defs/linkedFile"}, {"properties": {"kind": {"const": "spreadsheet"}}}, {"not": {"required": ["plot"]}}, {"not": {"required": ["sequence"]}}]}},
-        "transform": true, "display": true, "notes": true,
+        "transform": true, "asBuilt": true, "display": true, "notes": true,
 
         "gauge": {
           "type": "object",
@@ -933,7 +945,7 @@
       "properties": {
         "id": true, "type": { "const": "thermocouple" }, "name": true,
         "linkedFiles": {"type": "array", "maxItems": 100, "items": {"allOf": [{"$ref": "#/$defs/linkedFile"}, {"properties": {"kind": {"const": "spreadsheet"}}}, {"not": {"required": ["plot"]}}, {"not": {"required": ["sequence"]}}]}},
-        "transform": true, "display": true, "notes": true,
+        "transform": true, "asBuilt": true, "display": true, "notes": true,
 
         "beadOffsets_m": {
           "type": "array",
@@ -1016,7 +1028,7 @@
             ]
           }
         },
-        "transform": true,
+        "transform": true, "asBuilt": true,
         "display": true,
         "notes": true,
         "range_m_s": {
@@ -1081,7 +1093,7 @@
             ]
           }
         },
-        "transform": true,
+        "transform": true, "asBuilt": true,
         "display": true,
         "notes": true,
         "species": {
@@ -1155,7 +1167,7 @@
             ]
           }
         },
-        "transform": true,
+        "transform": true, "asBuilt": true,
         "display": true,
         "notes": true,
         "capacity_kg": {
@@ -1186,7 +1198,7 @@
       "description": "NEW IN 1.2. A rectangular solid: the furniture, equipment and blockwork that is neither a wall nor a slab. Deliberately a box and nothing more -- this format targets open bays and simple enclosures, and an obstruction exists so that what stands between a camera or a gauge and the fire is visible in the plan, not so that the room can be modelled in detail.",
       "properties": {
         "id": true, "type": { "const": "obstruction" }, "name": true,
-        "transform": true, "display": true, "notes": true,
+        "transform": true, "asBuilt": true, "display": true, "notes": true,
 
         "size_m": {
           "$ref": "#/$defs/positiveVec3",
@@ -1203,7 +1215,7 @@
       "description": "NEW IN 1.4. A measured flame: the visual hull reconstructed from the test's cameras, one voxel frame per timestep, played back in the layout. The voxels stay in their folder; the link's sequence block is a manifest of them. The object's transform maps the reconstruction rig's frame onto the plan frame and is the identity when the rig was set up from this plan. Recorded data: it changes no planned HRR, predicted flame geometry, hood check or instrument verdict.",
       "properties": {
         "id": true, "type": { "const": "reconstructedFlame" }, "name": true,
-        "transform": true, "display": true, "notes": true,
+        "transform": true, "asBuilt": true, "display": true, "notes": true,
 
         "burnerId": {
           "type": ["string", "null"],
@@ -1233,6 +1245,13 @@
     "object": {
       "type": "object",
       "required": ["id", "type"],
+      "properties": { "asBuilt": { "$ref": "#/$defs/asBuilt" } },
+      "dependentSchemas": {
+        "asBuilt": {
+          "required": ["transform"],
+          "properties": { "transform": { "$ref": "#/$defs/transform" } }
+        }
+      },
       "allOf": [
         {
           "if": { "properties": { "type": { "const": "camera" } }, "required": ["type"] },

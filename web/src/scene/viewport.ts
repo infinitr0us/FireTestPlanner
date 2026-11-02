@@ -39,6 +39,7 @@ import {
   LAYER_EDITOR,
   buildBurner,
   buildCamera,
+  buildAsBuiltGhost,
   buildCeiling,
   buildFlameProxy,
   buildHeatFluxSensor,
@@ -55,6 +56,7 @@ export type GizmoMode = 'translate' | 'rotate';
 
 export interface ViewportOptions {
   showFrustums: boolean;
+  showAsBuilt: boolean;
   showDimensions: boolean;
   showFlame: boolean;
   showPreview: boolean;
@@ -70,6 +72,7 @@ const LINE_PICK_PX = 5;
 
 const DEFAULT_OPTIONS: ViewportOptions = {
   showFrustums: true,
+  showAsBuilt: true,
   showDimensions: true,
   showFlame: true,
   showPreview: true,
@@ -95,6 +98,7 @@ export class Viewport {
   /** Groups built from plan objects, keyed by object id. */
   private objectGroups = new Map<string, THREE.Group>();
   private contentRoot = new THREE.Group();
+  private asBuiltRoot = new THREE.Group();
   private furnitureRoot = new THREE.Group();
   private dimensionRoot = new THREE.Group();
   private selectionBox: THREE.BoxHelper | null = null;
@@ -163,7 +167,7 @@ export class Viewport {
     container.appendChild(this.previewFrame);
 
     this.scene.background = new THREE.Color(visualTheme().background);
-    this.scene.add(this.contentRoot, this.furnitureRoot, this.dimensionRoot, this.measureRoot, this.flames.root);
+    this.scene.add(this.contentRoot, this.asBuiltRoot, this.furnitureRoot, this.dimensionRoot, this.measureRoot, this.flames.root);
     this.scene.add(this.pivot);
 
     this.perspective = new THREE.PerspectiveCamera(50, 1, 0.05, 500);
@@ -635,6 +639,7 @@ export class Viewport {
 
     this.gizmo.detach();
     this.disposeTree(this.contentRoot);
+    this.disposeTree(this.asBuiltRoot);
     this.disposeTree(this.dimensionRoot);
     this.objectGroups.clear();
 
@@ -645,6 +650,9 @@ export class Viewport {
       if (!group) continue;
       this.objectGroups.set(obj.id, group);
       this.contentRoot.add(group);
+      if (this.options.showAsBuilt && obj.asBuilt) {
+        this.asBuiltRoot.add(buildAsBuiltGhost(obj, measured => this.buildObject(measured)));
+      }
     }
 
     if (this.options.showDimensions) {
@@ -1084,6 +1092,7 @@ export class Viewport {
     this.resizeObserver?.disconnect();
     this.renderer.domElement.removeEventListener('pointerdown', this.onPointerDown);
     this.disposeTree(this.contentRoot);
+    this.disposeTree(this.asBuiltRoot);
     this.disposeTree(this.dimensionRoot);
     this.disposeTree(this.furnitureRoot);
     this.disposeTree(this.measureRoot);

@@ -7,6 +7,8 @@ import examplePlan from '../../fixtures/flame/flame-test.ftp.json';
 import exampleFlameUrl from '../../fixtures/flame/flame-test.fvs?url';
 
 import { handleTransportKey } from './ui/transport';
+import { nextTest } from './core/asbuilt';
+import { serializePlan } from './core/serialize';
 import type { FlameSequence } from './core/flame';
 import { flameSequenceLink, newPlan, reconstructedFlames } from './core/plan';
 import { adoptShellPresets, keepPresetsForSession } from './core/presets';
@@ -24,6 +26,7 @@ import {
   resolveFdsIncludes,
   openPlanText,
   savePlanText,
+  saveNextTestText,
   saveShareableHtml,
   shell,
   splitEmbeddedFlames,
@@ -370,6 +373,7 @@ function renderToolbar(): void {
       recentPlans.length > 0 ? recentSelect() : null,
       btn('Save', () => { void savePlan(false); }),
       btn('Save as…', () => { void savePlan(true); }),
+      btn('Next test…', () => { void saveNextTest(); }, 'Copy the rig for the next test of this series'),
       btn('Import FDS…', () => { void importFds(); },
         'Build a plan from an FDS input file — geometry, the burner and the devices'),
       btn('Export to FDS…', () => { playhead.pause(); fdsExport.open(store.document, store.fileName); },
@@ -402,6 +406,7 @@ function renderToolbar(): void {
 
     group([
       option('Frustums', 'showFrustums', 'Camera field-of-view pyramids'),
+      option('As built', 'showAsBuilt', 'Measured poses and connections to the planned positions'),
       option('Predicted', 'showFlame', 'Heskestad flame cone and plume envelope — the prediction, drawn beside any reconstructed flame'),
       option('Dims', 'showDimensions', 'Standoff dimension lines from the fire'),
       option('Preview', 'showPreview', "Picture-in-picture of the selected camera's view"),
@@ -526,6 +531,27 @@ function adopt(text: string, name: string, token: string | null = null): void {
 
 /** True while a save is waiting on the shell, so a second Ctrl+S does not race it. */
 let saveInFlight = false;
+
+async function saveNextTest(): Promise<void> {
+  if (saveInFlight || !confirmDiscard()) return;
+  saveInFlight = true;
+  const identity = store.identity();
+  try {
+    const next = nextTest(store.document);
+    const text = serializePlan(next);
+    const name = `${(next.meta?.testId || 'next-test').replace(/[^a-zA-Z0-9_-]+/g, '-')}.ftp.json`;
+    const saved = await saveNextTestText(text, name);
+    if (!saved) return;
+    if (identity.documentId !== store.documentId || identity.revision !== store.revision) {
+      window.alert('The next test copy was saved; the editor kept the plan changed while saving.');
+      return;
+    }
+    adopt(text, saved.path.split(/[\\/]/).pop() ?? name, saved.token);
+    window.alert('Left behind: test data, reconstructed flames, linked files and as-built poses.');
+  } catch (error) {
+    window.alert(`Next test was not saved: ${(error as Error).message}`);
+  } finally { saveInFlight = false; }
+}
 
 async function savePlan(saveAs = false): Promise<void> {
   // Two saves in flight would write two snapshots to one file in whichever order the

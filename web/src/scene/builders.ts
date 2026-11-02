@@ -11,7 +11,7 @@
  */
 
 import * as THREE from 'three';
-import { DEVICE_COLORS } from '../core/visual';
+import { DEVICE_COLORS, AS_BUILT_STYLE } from '../core/visual';
 
 import {
   beadOffsetsOf,
@@ -854,7 +854,7 @@ export function buildCamera(c: CameraObject, showFrustum: boolean): THREE.Group 
   return group;
 }
 
-function buildFrustum(c: CameraObject, color: THREE.Color): THREE.Object3D {
+function buildFrustum(c: CameraObject, color: THREE.Color, outlineOnly = false): THREE.Object3D {
   // Reach far enough to pass the fire without cluttering the scene: a third past
   // it, but no more than 3 m past. A flat 12 m cap stopped the frustum short of the
   // fire for any camera standing further back than that.
@@ -888,6 +888,7 @@ function buildFrustum(c: CameraObject, color: THREE.Color): THREE.Object3D {
     new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.85 }),
   ));
 
+  if (outlineOnly) return group;
   // Faint image plane, so overlapping fields of view are legible at a glance.
   const plane = new THREE.Mesh(
     new THREE.PlaneGeometry(right - left, top - bottom),
@@ -906,6 +907,47 @@ function buildFrustum(c: CameraObject, color: THREE.Color): THREE.Object3D {
 }
 
 // -- dimensions -----------------------------------------------------------
+
+/** Editor-only annotation, kept outside pickable geometry and camera previews. */
+export function buildAsBuiltGhost(obj: PlanObject, build: (o: PlanObject) => THREE.Group | null): THREE.Group {
+  const root = new THREE.Group();
+  root.name = 'as-built';
+  root.visible = obj.display?.visible !== false;
+  if (!obj.asBuilt) return root;
+  const measured = { ...obj, transform: obj.asBuilt.transform };
+  const color = new THREE.Color(objectColor(obj));
+  let ghost: THREE.Group | null;
+  if (obj.type === 'camera') {
+    ghost = new THREE.Group();
+    applyTransform(ghost, measured);
+    ghost.add(buildFrustum(measured as CameraObject, color, true));
+  } else if (obj.type === 'burner') ghost = buildBurner(measured as BurnerObject, false);
+  else ghost = build(measured);
+  if (ghost) root.add(ghost);
+  const labels: THREE.Object3D[] = [];
+  root.traverse(node => {
+    delete node.userData.planId;
+    node.castShadow = false;
+    node.receiveShadow = false;
+    const element = (node as unknown as { element?: HTMLElement }).element;
+    if (element) { element.remove(); labels.push(node); }
+    const drawable = node as THREE.Mesh;
+    const materials = drawable.material ? (Array.isArray(drawable.material) ? drawable.material : [drawable.material]) : [];
+    for (const m of materials) {
+      const tint = m as THREE.MeshStandardMaterial;
+      tint.color?.copy(color); m.transparent = true; m.depthWrite = false;
+      // A flame's invisible selection proxy becomes its surveyed envelope.
+      m.colorWrite = true;
+      m.opacity = node instanceof THREE.Line ? AS_BUILT_STYLE.lineOpacity : AS_BUILT_STYLE.opacity;
+    }
+  });
+  labels.forEach(label => label.removeFromParent());
+  root.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(...positionOf(obj)), new THREE.Vector3(...obj.asBuilt.transform.position_m),
+  ]), new THREE.LineBasicMaterial({ color, transparent: true, opacity: AS_BUILT_STYLE.lineOpacity, depthWrite: false })));
+  setEditorLayer(root);
+  return root;
+}
 
 /**
  * Ground dimension line from the fire to a camera, with its standoff labelled.

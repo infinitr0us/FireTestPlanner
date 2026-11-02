@@ -362,6 +362,55 @@ try {
     await evaluate(fovReadout) === '39.4° × 22.8°'
     && await evaluate('!document.querySelector(".toolbar__file").textContent.includes("•")'));
 
+  phase('as-built camera survey');
+  const surveyUnits = '[...document.querySelectorAll("select")].find(s=>s.title.startsWith("Display units"))';
+  await evaluate('(' + surveyUnits + ').focus()'); await key('Home', 'Home', 36);
+  await waitFor(() => evaluate('(' + surveyUnits + ').value==="m"'), 'survey units');
+  const recordSurvey = '[...document.querySelectorAll("#inspector .as-built button")].find(b=>b.textContent==="Record as built")';
+  await click(recordSurvey);
+  const measuredAxis = i => 'document.querySelectorAll("#inspector .as-built .field__vec input")[' + i + ']';
+  await waitFor(() => evaluate('!!' + measuredAxis(0)), 'recorded camera survey');
+  const plannedX = await evaluate(axis(0) + '.value');
+  const measuredX = String(Number(plannedX) + 0.21);
+  await click(measuredAxis(0)); await evaluate(measuredAxis(0) + '.select()');
+  await send('Input.insertText', { text: measuredX }); await key('Tab', 'Tab', 9);
+  await waitFor(() => evaluate('document.querySelector(".as-built__offset").textContent.includes("0.21 m")'), 'survey offset after typing X');
+  const measuredZ = String(Number(await evaluate(measuredAxis(2) + '.value')) - 0.04);
+  await click(measuredAxis(2)); await evaluate(measuredAxis(2) + '.select()');
+  await send('Input.insertText', { text: measuredZ }); await key('Tab', 'Tab', 9);
+  await waitFor(() => evaluate('document.querySelector(".as-built__offset").textContent.includes("0.04 m low")'), 'survey height offset');
+  check('typed survey shows plan and height offsets while planned X is unchanged', await evaluate(axis(0) + '.value') === plannedX);
+  const surveyToggle = '[...document.querySelectorAll("#toolbar button")].find(b=>b.textContent==="As built")';
+  await screenshot('as-built-visible');
+  await click(surveyToggle);
+  check('As built view toggle hides ghosts', await evaluate('!(' + surveyToggle + ').classList.contains("toolbar__btn--active")'));
+  await screenshot('as-built-hidden');
+  await click(surveyToggle);
+  check('As built view toggle restores ghosts', await evaluate('(' + surveyToggle + ').classList.contains("toolbar__btn--active")'));
+  await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+  await evaluate('document.querySelector(".as-built").scrollIntoView({block:"center"})');
+  check('survey fields fit the laptop inspector', await evaluate('document.querySelector("#inspector").scrollWidth <= document.querySelector("#inspector").clientWidth + 1'));
+  await screenshot('as-built-laptop');
+  await click('[...document.querySelectorAll("button")].find(b=>b.textContent.startsWith("Drawing"))');
+  await waitFor(() => evaluate('!!document.querySelector(".set-out-check")'), 'survey drawing table');
+  check('drawing reads the measured camera row and signed survey differences', await evaluate(`(() => {
+    const cells=[...document.querySelector('.set-out-check [data-object-id="cam-mwir"]').cells].map(c=>c.textContent);
+    return cells[2].includes(Number(${JSON.stringify(measuredX)}).toFixed(3)) && cells[3]==='0.210' && cells[4]==='-0.040'
+      && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(cells[6]);
+  })()`));
+  await evaluate('document.querySelector(".set-out-check").scrollIntoView({block:"center"})');
+  await screenshot('as-built-drawing');
+  await click('[...document.querySelectorAll(".report-overlay__bar button")].find(b=>b.textContent==="Close")');
+  await click('[...document.querySelectorAll("#inspector .as-built button")].find(b=>b.textContent==="Clear")');
+  await waitFor(() => evaluate('!!(' + recordSurvey + ')'), 'Clear survey');
+  await evaluate('document.activeElement?.blur()'); await ctrlZ();
+  await waitFor(() => evaluate('document.querySelector(".as-built__offset")?.textContent.includes("0.04 m low")'), 'undo Clear survey');
+  check('Clear and its undo preserve the recorded survey values', true);
+  for (let i = 0; i < 3; i++) { await evaluate('document.activeElement?.blur()'); await ctrlZ(); }
+  await waitFor(() => evaluate('!!(' + recordSurvey + ')'), 'undo survey fields and recording');
+  check('record survey is one undoable edit and undo removes its fields', await evaluate('!document.querySelector(".as-built__offset")'));
+  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+
   phase('feet-and-inches editing and drawing');
   const unitsSelect = 'document.querySelector("select[title^=\\"Display units\\"]")';
   check('unit selector offers ft-in immediately after ft',
@@ -530,6 +579,31 @@ try {
   await new Promise(r => setTimeout(r, 150));
   check('a rebuild into another panel does not move focus into a field',
     await evaluate('!["INPUT","SELECT","TEXTAREA"].includes(document.activeElement?.tagName)'));
+  phase('next test browser download and adoption');
+  await openTab();
+  await send('Page.navigate', { url: origin + '/dist/index.html' });
+  await waitFor(() => evaluate('[...document.querySelectorAll("button")].some(b=>b.textContent==="Example")'), 'next-test editor');
+  await click('[...document.querySelectorAll("button")].find(b=>b.textContent==="Example")');
+  await waitFor(() => evaluate('!!(' + field('Series') + ')'), 'series field');
+  await click(field('Series')); await send('Input.insertText', { text: 'Room fire series' }); await key('Tab', 'Tab', 9);
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("FLIR A8303sc MWIR"))');
+  await waitFor(() => evaluate('!!(' + recordSurvey + ')'), 'next-test survey camera');
+  await click(recordSurvey);
+  await waitFor(() => evaluate('!!document.querySelector(".as-built__offset")'), 'next-test measured pose');
+  await evaluate(`(() => {
+    window.__nextNotices=[]; window.confirm=()=>true; window.alert=message=>window.__nextNotices.push(message);
+    const create=URL.createObjectURL;
+    URL.createObjectURL=function(blob) { if(blob.type==='application/json') window.__nextBlob=blob; return create.call(URL,blob); };
+  })()`);
+  await click('[...document.querySelectorAll("#toolbar button")].find(b=>b.textContent==="Next test…")');
+  await waitFor(() => evaluate('document.querySelector(".toolbar__file").textContent==="EX-002.ftp.json"'), 'next test adopted');
+  const nextDownloaded = await evaluate('(async()=>JSON.parse(await window.__nextBlob.text()))()');
+  check('next test downloads the new ID, preserves series and removes test-specific records',
+    nextDownloaded.meta.testId === 'EX-002' && nextDownloaded.meta.series === 'Room fire series'
+    && nextDownloaded.meta.revision === null && !('testData' in nextDownloaded)
+    && nextDownloaded.objects.every(o => o.type !== 'reconstructedFlame' && !('asBuilt' in o) && !('linkedFiles' in o)));
+  check('next test opens the new plan and explains what was left behind', await evaluate('(' + field('Test ID') + ').value==="EX-002" && window.__nextNotices.some(s=>s.includes("Left behind:"))'));
+  await screenshot('next-test');
   check('no uncaught browser exceptions', errors.length===0);
   const result = { browser: executable, passed: checks.length, checks };
   if (process.env.BROWSER_TEST_OUTPUT) {

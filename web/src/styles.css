@@ -409,6 +409,10 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .field__vec-cell { display: flex; align-items: center; gap: 3px; min-width: 0; flex: 1; }
 .field__vec-axis { font: 10px var(--mono); color: var(--text-faint); flex: none; }
 
+.as-built .field:has(.field__vec) { grid-template-columns: 1fr; gap: 3px; }
+.as-built__quaternion { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.as-built input[aria-invalid="true"] { border-color: var(--bad); }
+
 /* -- readouts ----------------------------------------------------------- */
 
 .readouts {

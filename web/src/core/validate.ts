@@ -1,4 +1,5 @@
 import { curveProblem } from './hrr';
+import { asBuiltProblem } from './asbuilt';
 /**
  * Structural validation at load time.
  *
@@ -144,6 +145,8 @@ export function validateStructure(doc: PlanDocument): Issue[] {
       }
     }
 
+    const surveyProblem = asBuiltProblem(obj);
+    if (surveyProblem) err('bad-as-built', `Object "${obj.id}": ${surveyProblem}`, obj.id);
     const linkProblem = linkedFilesProblem(obj);
     if (linkProblem) err('bad-linked-files', `Object "${obj.id}": ${linkProblem}`, obj.id);
     validateByType(obj, err);

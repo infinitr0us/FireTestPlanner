@@ -329,6 +329,14 @@ export async function savePlanText(
   return { path: suggestedName, token: null };
 }
 
+/** Next test is always a new destination: native save on desktop, download in a browser. */
+export async function saveNextTestText(text: string, suggestedName: string): Promise<SavedPlan | null> {
+  const bridge = shell();
+  if (bridge) return bridge.savePlan(text, suggestedName, true, null);
+  download(new Blob([text], { type: 'application/json' }), suggestedName);
+  return { path: suggestedName, token: null };
+}
+
 /** A file picked by the user: its basename, its text, and the shell's handle on it
  *  when there is a shell (null in a browser tab, where there is no write-back). */
 export interface PickedText {

@@ -77,7 +77,7 @@ def _uses_1_4_keys(obj: Dict[str, Any]) -> bool:
     return False
 
 _TOP = ["format", "version", "meta", "units", "coordinateSystem", "environment", "objects", "testData"]
-_META = ["title", "testId", "author", "organization", "siteName", "created", "modified", "revision", "notes", "source"]
+_META = ["title", "testId", "series", "author", "organization", "siteName", "created", "modified", "revision", "notes", "source"]
 _SOURCE = ["tool", "file", "chid", "importedAt", "originOffset_m"]
 _UNITS = ["length", "angle", "power", "temperature", "display"]
 _UNITS_DISPLAY = ["length", "angle"]
@@ -109,18 +109,18 @@ _DATA_MANIFEST = ["size", "modified", "rows", "channels"]
 _MANIFEST_CHANNEL = ["name", "unit", "samples", "t0", "t1"]
 
 _OBJECT_ORDER = {
-    "camera": ["id", "type", "name", "transform", "camera", "mount", "recording", "linkedFiles", "display", "notes"],
-    "burner": ["id", "type", "name", "transform", "footprint", "rimHeight_m", "fire", "linkedFiles", "display", "notes"],
-    "hood": ["id", "type", "name", "transform", "opening_m", "height_m", "skirtDepth_m", "duct", "display", "notes"],
-    "wall": ["id", "type", "name", "transform", "polyline_m", "height_m", "thickness_m", "baseHeight_m", "openings", "display", "notes"],
-    "ceiling": ["id", "type", "name", "transform", "polygon_m", "height_m", "thickness_m", "display", "notes"],
-    "heatFluxSensor": ["id", "type", "name", "transform", "gauge", "mount", "linkedFiles", "display", "notes"],
-    "velocityProbe": ["id", "type", "name", "transform", "range_m_s", "linkedFiles", "display", "notes"],
-    "gasSampling": ["id", "type", "name", "transform", "species", "inDuct", "linkedFiles", "display", "notes"],
-    "loadCell": ["id", "type", "name", "transform", "capacity_kg", "platform_m", "linkedFiles", "display", "notes"],
-    "thermocouple": ["id", "type", "name", "transform", "beadOffsets_m", "thermocouple", "mount", "linkedFiles", "display", "notes"],
-    "obstruction": ["id", "type", "name", "transform", "size_m", "display", "notes"],
-    "reconstructedFlame": ["id", "type", "name", "transform", "burnerId", "representation", "linkedFiles", "display", "notes"],
+    "camera": ["id", "type", "name", "transform", "asBuilt", "camera", "mount", "recording", "linkedFiles", "display", "notes"],
+    "burner": ["id", "type", "name", "transform", "asBuilt", "footprint", "rimHeight_m", "fire", "linkedFiles", "display", "notes"],
+    "hood": ["id", "type", "name", "transform", "asBuilt", "opening_m", "height_m", "skirtDepth_m", "duct", "display", "notes"],
+    "wall": ["id", "type", "name", "transform", "asBuilt", "polyline_m", "height_m", "thickness_m", "baseHeight_m", "openings", "display", "notes"],
+    "ceiling": ["id", "type", "name", "transform", "asBuilt", "polygon_m", "height_m", "thickness_m", "display", "notes"],
+    "heatFluxSensor": ["id", "type", "name", "transform", "asBuilt", "gauge", "mount", "linkedFiles", "display", "notes"],
+    "velocityProbe": ["id", "type", "name", "transform", "asBuilt", "range_m_s", "linkedFiles", "display", "notes"],
+    "gasSampling": ["id", "type", "name", "transform", "asBuilt", "species", "inDuct", "linkedFiles", "display", "notes"],
+    "loadCell": ["id", "type", "name", "transform", "asBuilt", "capacity_kg", "platform_m", "linkedFiles", "display", "notes"],
+    "thermocouple": ["id", "type", "name", "transform", "asBuilt", "beadOffsets_m", "thermocouple", "mount", "linkedFiles", "display", "notes"],
+    "obstruction": ["id", "type", "name", "transform", "asBuilt", "size_m", "display", "notes"],
+    "reconstructedFlame": ["id", "type", "name", "transform", "asBuilt", "burnerId", "representation", "linkedFiles", "display", "notes"],
 }
 
 #: Object types introduced after format 1.0, and therefore version-bumping.
@@ -181,6 +181,8 @@ def required_version(data: Dict[str, Any]) -> str:
     factor, a radiative fraction or a sensor, it says 1.1.0 and means it. Mirror of
     `requiredFormatVersion` in web/src/core/types.ts.
     """
+    if any(isinstance(o, dict) and "asBuilt" in o for o in data.get("objects", [])):
+        return "1.7.0"
     if any(isinstance(o, dict) and o.get("type") == "burner" and (o.get("fire") or {}).get("hrrCurve") is not None for o in data.get("objects", [])):
         return "1.7.0"
     if any(isinstance(o, dict) and (o.get("type") in ("velocityProbe", "gasSampling", "loadCell")
@@ -308,6 +310,10 @@ def _canon_object(obj: Dict[str, Any]) -> Dict[str, Any]:
 
     if "transform" in o:
         o["transform"] = _canon_sub(o["transform"], _TRANSFORM)
+    if isinstance(o.get("asBuilt"), dict):
+        a = _order(o["asBuilt"], ["transform", "measured", "note"])
+        a["transform"] = _canon_sub(a.get("transform"), _TRANSFORM)
+        o["asBuilt"] = a
     if "display" in o:
         o["display"] = _canon_sub(o["display"], _DISPLAY)
 
@@ -369,7 +375,7 @@ def _canon_object(obj: Dict[str, Any]) -> Dict[str, Any]:
 def _canon_unknown_object(obj: Dict[str, Any]) -> Dict[str, Any]:
     """An object whose `type` this version does not recognise.
 
-    Only the two blocks this version genuinely owns are canonicalised: `transform`,
+    Only the blocks this version owns are canonicalised: `transform`, `asBuilt`,
     because the editor can drag an unknown object and would otherwise write float
     noise into it, and `display`, because it can be hidden or locked. Everything else
     -- key order, unknown keys, and full numeric precision -- is re-emitted exactly as
@@ -382,6 +388,13 @@ def _canon_unknown_object(obj: Dict[str, Any]) -> Dict[str, Any]:
         o["transform"] = _round_floats(_order(o["transform"], _TRANSFORM))
     if isinstance(o.get("display"), dict):
         o["display"] = _round_floats(_order(o["display"], _DISPLAY))
+    if isinstance(o.get("asBuilt"), dict):
+        a = _order(o["asBuilt"], ["transform", "measured", "note"])
+        a["transform"] = _canon_sub(a.get("transform"), _TRANSFORM)
+        o["asBuilt"] = _round_floats(a)
+        keys = [k for k in o if k != "asBuilt"]
+        keys.insert(keys.index("transform") + 1 if "transform" in keys else 0, "asBuilt")
+        return _order(o, keys)
     return o
 
 

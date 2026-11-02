@@ -44,6 +44,12 @@ export interface Transform {
   aimTarget_m?: Vec3 | null;
 }
 
+export interface AsBuilt {
+  transform: Transform;
+  measured: string | null;
+  note: string | null;
+}
+
 export type FlameColorMode = 'height' | 'solid';
 
 export interface Display {
@@ -61,6 +67,8 @@ export interface BaseObject {
   type: string;
   name?: string | null;
   transform?: Transform;
+  /** Format 1.7. Survey pose; never replaces the planned transform. */
+  asBuilt?: AsBuilt;
   display?: Display;
   notes?: string | null;
   /** Format 1.3. External test files; paths are relative to the saved plan when possible. */
@@ -323,6 +331,7 @@ export type PlanObject =
 export interface PlanMeta {
   title?: string;
   testId?: string | null;
+  series?: string | null;
   author?: string | null;
   organization?: string | null;
   siteName?: string | null;
@@ -528,6 +537,7 @@ const uses1_4Keys = (o: PlanObject): boolean => {
  * Mirror of `required_version` in python/fireplan/serialize.py.
  */
 export function requiredFormatVersion(doc: PlanDocument): string {
+  if (doc.objects.some(o => 'asBuilt' in o)) return '1.7.0';
   if (Array.isArray(doc.objects) && doc.objects.some(o => o && isBurner(o) && o.fire?.hrrCurve != null)) return '1.7.0';
   if (Array.isArray(doc.objects) && doc.objects.some(o => o && (isNewInstrument(o) || (isHeatFluxSensor(o) && ['plate-thermometer', 'thin-skin'].includes(o.gauge?.kind ?? ''))))) return '1.7.0';
   if (Array.isArray(doc.testData) && doc.testData.length) return '1.6.0';

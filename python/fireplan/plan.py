@@ -330,6 +330,27 @@ class Plan:
         """Resolve an object link or testData source file against this plan."""
         return linked_files.resolve_path(link["path"], self.source_path)
 
+    def next_test(self) -> "Plan":
+        """Independent rig copy with a new test ID and no previous test's data."""
+        from copy import deepcopy
+        from .asbuilt import next_test_id
+        data = deepcopy(self.data)
+        meta = data.setdefault("meta", {})
+        now = _utc_now_iso()
+        meta.update(testId=next_test_id(meta.get("testId")), revision=None,
+                    created=now, modified=now)
+        data.pop("testData", None)
+        data["objects"] = [o for o in data.get("objects", []) if o.get("type") != "reconstructedFlame"]
+        for o in data["objects"]:
+            o.pop("linkedFiles", None)
+            o.pop("asBuilt", None)
+        return Plan(data)
+
+    def set_out_check(self) -> List[Dict[str, Any]]:
+        """Survey origins and deviations in metres/degrees, in object order."""
+        from .asbuilt import set_out_check
+        return set_out_check(self)
+
     # -- access ----------------------------------------------------------
 
     @property
@@ -612,6 +633,11 @@ class Plan:
                 lines.append("  ... and {} more".format(len(errors) - 10))
             raise PlanError("plan failed schema validation:\n" + "\n".join(lines))
         from .hrr import curve_problem
+        from .asbuilt import problem as asbuilt_problem
+        for obj in self.data.get("objects", []):
+            problem = asbuilt_problem(obj)
+            if problem:
+                raise PlanError(f"Object {obj.get('id')}: {problem}")
         for burner in self.burners:
             problem = curve_problem(burner.fire.get("hrrCurve"))
             if problem:
@@ -1394,7 +1420,7 @@ class Plan:
                 "cy": cy + 0.5,
                 # nerfstudio expects OpenGL-convention camera-to-world, which is
                 # exactly what the file stores -- no flip.
-                "transform_matrix": cam.extrinsics("opengl").tolist(),
+                "transform_matrix": cam.extrinsics("opengl", pose="best").tolist(),
             }
             d = cam.distortion
             if d is not None:
@@ -1402,7 +1428,10 @@ class Plan:
                     frame[key] = float(value)
             frames.append(frame)
 
-        out = {"camera_model": "OPENCV", "frames": frames}
+        out = {"camera_model": "OPENCV", "frames": frames, "metadata": {"poses": {
+            cid: {"pose": cam.pose_used(), "measured": (cam.raw.get("asBuilt") or {}).get("measured")}
+            for cid, cam in self.cameras.items()
+        }}}
         if path is not None:
             with open(path, "w", encoding="utf-8", newline="\n") as fh:
                 json.dump(out, fh, indent=2)
