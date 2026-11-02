@@ -11,6 +11,7 @@ import posixpath
 import re
 
 from ._text import js_trim
+from .delimited import delimited_rows
 
 LINK_TYPES = {'burner', 'camera', 'heatFluxSensor', 'thermocouple', 'reconstructedFlame'}
 MAX_CSV_BYTES = 5 * 1024 * 1024
@@ -68,57 +69,6 @@ def sequence_problem(sequence):
     return None
 
 
-def _csv_rows(text, separator):
-    """Mirror the web reader, including strict quoting and blank-row handling."""
-    result, row, cell = [], [], ''
-    quoted = closed = False
-
-    def push_cell():
-        nonlocal cell, closed
-        row.append(js_trim(cell))
-        cell, closed = '', False
-
-    def push_row():
-        nonlocal row
-        push_cell()
-        if any(row):
-            result.append(row)
-        row = []
-        if len(result) > MAX_PLOT_SAMPLES + 1:
-            raise ValueError('CSV exceeds 20,000 samples.')
-
-    i = 0
-    while i < len(text):
-        ch = text[i]
-        if quoted:
-            if ch == '"':
-                if text[i + 1:i + 2] == '"':
-                    cell += '"'
-                    i += 1
-                else:
-                    quoted, closed = False, True
-            else:
-                cell += ch
-        elif ch == separator:
-            push_cell()
-        elif ch in '\r\n':
-            if ch == '\r' and text[i + 1:i + 2] == '\n':
-                i += 1
-            push_row()
-        elif ch == '"' and not js_trim(cell) and not closed:
-            cell, quoted = '', True
-        elif ch == '"' or (closed and js_trim(ch)):
-            raise ValueError('Malformed CSV quoting.')
-        else:
-            cell += ch
-        i += 1
-    if quoted:
-        raise ValueError('CSV has an unclosed quoted field.')
-    if cell or row or closed:
-        push_row()
-    return result
-
-
 def parse_reconstruction_csv(text, imported_at=None):
     """Import a UTF-8 CSV string as a snapshot, with the same rules as the editor.
 
@@ -126,10 +76,7 @@ def parse_reconstruction_csv(text, imported_at=None):
     """
     if len(text.encode('utf-8')) > MAX_CSV_BYTES:
         raise ValueError('CSV exceeds the 5 MiB plot limit.')
-    text = text.removeprefix('\ufeff')
-    header_line = next((line for line in re.split(r'\r?\n', text) if js_trim(line)), '')
-    separator = '\t' if '\t' in header_line else ';' if ';' in header_line and ',' not in header_line else ','
-    table = _csv_rows(text, separator)
+    table = delimited_rows(text, skip_blank=True, max_rows=MAX_PLOT_SAMPLES + 1)
     headers = [cell.lower() for cell in table.pop(0)] if table else []
     required = ['timestamp_s', 'volume_m3', 'surface_area_m2']
     indices = []

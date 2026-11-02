@@ -63,34 +63,55 @@ async function inflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
  * of the local headers and fills them into the directory instead. numpy's writer
  * seeks back and fills both, but the directory is right either way.
  */
-export async function readZip(bytes: Uint8Array): Promise<Map<string, Uint8Array>> {
+export interface ZipEntry {
+  /** Inflates only this member; does not cache its expanded bytes. */
+  extract(): Promise<Uint8Array>;
+}
+
+export function listZip(bytes: Uint8Array): Map<string, ZipEntry> {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let eocd = -1;
   for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65535); i -= 1) {
-    if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    if (view.getUint32(i, true) === 0x06054b50 && i + 22 + view.getUint16(i + 20, true) === bytes.length) { eocd = i; break; }
   }
   if (eocd < 0) throw new Error('not a ZIP archive (no end-of-central-directory record)');
   const count = view.getUint16(eocd + 10, true);
+  if (view.getUint16(eocd + 4, true) || view.getUint16(eocd + 6, true)) throw new Error('multi-disk ZIP archives are not supported');
   let offset = view.getUint32(eocd + 16, true);
   if (count === 0xffff || offset === 0xffffffff) throw new Error('ZIP64 archives are not supported');
-  const entries = new Map<string, Uint8Array>();
+  const entries = new Map<string, ZipEntry>();
   for (let n = 0; n < count; n += 1) {
-    if (view.getUint32(offset, true) !== 0x02014b50) throw new Error('corrupt ZIP central directory');
+    if (offset + 46 > eocd || view.getUint32(offset, true) !== 0x02014b50) throw new Error('corrupt ZIP central directory');
+    const flags = view.getUint16(offset + 8, true);
     const method = view.getUint16(offset + 10, true);
     const compressed = view.getUint32(offset + 20, true);
+    const expanded = view.getUint32(offset + 24, true);
     const nameLength = view.getUint16(offset + 28, true);
     const extraLength = view.getUint16(offset + 30, true);
     const commentLength = view.getUint16(offset + 32, true);
     const local = view.getUint32(offset + 42, true);
     const name = new TextDecoder().decode(bytes.subarray(offset + 46, offset + 46 + nameLength));
     offset += 46 + nameLength + extraLength + commentLength;
-    if (view.getUint32(local, true) !== 0x04034b50) throw new Error(`corrupt ZIP local header for ${name}`);
-    const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
-    const raw = bytes.subarray(start, start + compressed);
-    if (method === 0) entries.set(name, raw);
-    else if (method === 8) entries.set(name, await inflateRaw(raw));
-    else throw new Error(`ZIP entry ${name} uses unsupported compression method ${method}`);
+    if (offset > eocd) throw new Error('corrupt ZIP central directory');
+    entries.set(name, { extract: async () => {
+      if (flags & 1) throw new Error(`ZIP entry ${name} is encrypted`);
+      if (local + 30 > bytes.length || view.getUint32(local, true) !== 0x04034b50) throw new Error(`corrupt ZIP local header for ${name}`);
+      const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+      if (start + compressed > bytes.length) throw new Error(`truncated ZIP entry ${name}`);
+      const raw = bytes.subarray(start, start + compressed);
+      const result = method === 0 ? raw : method === 8 ? await inflateRaw(raw) : null;
+      if (!result) throw new Error(`ZIP entry ${name} uses unsupported compression method ${method}`);
+      if (result.length !== expanded) throw new Error(`incorrect ZIP entry size for ${name}`);
+      return result;
+    } });
   }
+  return entries;
+}
+
+/** Backwards-compatible eager wrapper for NPZ callers. Workbooks use listZip. */
+export async function readZip(bytes: Uint8Array): Promise<Map<string, Uint8Array>> {
+  const entries = new Map<string, Uint8Array>();
+  for (const [name, entry] of listZip(bytes)) entries.set(name, await entry.extract());
   return entries;
 }
 
