@@ -1,0 +1,148 @@
+# Measured test data on the instruments: design (M16, format 1.6)
+
+Status: design, 2026-11-02. Phase B of [PLAN.md section 9](../PLAN.md#9-next-round-2026-11).
+
+## What it is for
+
+A plan predicts what each instrument will read: a gauge's incident flux, a bead's plume
+temperature, the burner's heat release rate. After the test the same instruments have
+recorded what they did read, and often an FDS run has predicted it a second way. Today
+the plan can link a spreadsheet to a gauge or a rake, but only to open it in another
+program; only a burner's reconstruction CSV is plotted. This milestone puts the three
+answers to one question side by side, on the instrument they belong to:
+
+- **planned** (the plan's own correlation, CONVENTIONS section 5b),
+- **simulated** (an FDS device of the same instrument),
+- **measured** (a data-acquisition channel).
+
+It also gives the crew an instrument schedule to wire the logger from.
+
+## What the data looks like
+
+A test's data arrives in one of four shapes. The reader detects the shape and shows
+its guess; every guess can be overridden.
+
+| Shape | Recognised by | Header | Time |
+|---|---|---|---|
+| **Logger export, paired time** | header cells `<name>_Time` (optionally with a trailing `*`) beside `<name>` | one row of names | a time column per channel, seconds from the start of logging |
+| **Processed sheet** | several header rows above the first row whose leading cells are numbers | names in one of them, units in another (`[kW/m2]`, `[C]`) | one time column for the sheet, often already shifted to ignition |
+| **FDS output** (`_devc.csv`, `_hrr.csv`) | first row of units starting `s`, second row starting `Time` | names in row 2, units in row 1 | the first column, seconds from the start of the simulation |
+| **Plain table** | one header row | names in row 1; a units row if row 2 is all text | a column the user names, default the first |
+
+A workbook holds several sheets, typically a raw logger sheet and hand-processed ones.
+A source names the sheet it reads. Cells hold cached values: formulas are never
+evaluated, and an error value (`#NUM!`, `#DIV/0!`) or an empty cell is a missing
+sample, not zero. A time column that stops increasing (formula rows filled past the
+end of the data are common) ends the series there, and the reader says at which row.
+
+Supported files: `.xlsx` and `.xlsm` (Office Open XML), `.csv`, `.tsv` and `.txt`.
+Not `.xls` (the binary format) or `.ods`: the reader says so and asks for one of the
+others. Neither engine gains a dependency: an `.xlsx` is a ZIP of XML, the editor
+already reads ZIP for flame frames, and Python has `zipfile` and `xml.etree`.
+
+## The model (format 1.6)
+
+A plan gains a root-level `testData` array. Each entry is a **source**:
+
+```jsonc
+"testData": [
+  {
+    "id": "td-1",
+    "name": "Logger export",
+    "file": { "id": "f-1", "kind": "spreadsheet", "path": "data/test-07.xlsx" },  // a linkedFile
+    "table": { "sheet": "Log", "shape": "paired-time", "headerRow": 1, "unitsRow": null,
+               "dataRow": 2, "timeColumn": null },
+    "timeOffset_s": 420,          // the file's own time at ignition; plan time = file time - offset
+    "role": "measured",           // "measured" | "simulated"
+    "channels": [
+      { "channel": "HF east 1.5 m", "object": "hf-east",
+        "scale": 23170, "offset": 0 },               // V -> kW/m2 through the gauge's constant
+      { "channel": "TC tree 1.5 m", "object": "tc-tree", "bead": 1 }
+    ],
+    "manifest": { "size": 16476599, "modified": "2026-09-03T15:02:11Z",
+                  "rows": 5225, "channels": [ { "name": "HF east 1.5 m", "unit": "V",
+                  "samples": 5225, "t0": 0, "t1": 5224 } ] }
+  }
+]
+```
+
+Decisions, and why:
+
+- **A root-level list, not an object.** A data file is not anywhere in the room. As an
+  object it would need a transform it does not have, a place in the scene graph and
+  the outliner, and every spatial code path would learn to skip it. Its `file` is the
+  existing `linkedFile` definition, so Save As rebases it like every other link
+  (CONVENTIONS section 10); the rebasing in both engines learns one more location.
+- **The mapping lives on the source, not on the instrument.** One instrument is
+  usually recorded by one logger channel and simulated by one FDS device: two sources,
+  each saying which of its columns is which instrument. Linking a second run of the
+  same test is then one more source with its own mapping, and removing a source
+  removes everything it brought.
+- **A channel maps to an object, and to a bead of a rake.** The quantity is the
+  object's: kW/m² for a gauge, °C for a bead, kW for a burner. `scale` and `offset`
+  turn the column's own unit into it (`value = raw × scale + offset`), so a gauge
+  logged in volts plots in kW/m² once its calibration constant is entered. A channel
+  name carrying a constant in a recognisable form (`23.17kW/m2permV`) pre-fills it.
+- **The plan stores the reference, the mapping and a manifest, never the samples.**
+  The same rule as voxel sequences (CONVENTIONS section 11), for the same reason: a
+  test's data is megabytes, and the plan is a diffable file. The manifest records what
+  was read (size, modification time, rows, each mapped channel's unit, count and time
+  span), so reopening a plan whose file has changed says so instead of silently
+  plotting something else. **Share** embeds the mapped series, decimated to at most
+  2,000 points each with the extremes of every interval kept, so a collaborator sees
+  the plots with nothing installed.
+- **Plan time is seconds from ignition.** Each source's `timeOffset_s` (the key
+  CONVENTIONS section 10 reserved on links) is its own time at ignition. A processed
+  sheet already shifted to ignition has 0; a logger sheet that started seven minutes
+  early has 420. The flame playback clock, the burner's reconstruction plot and these
+  series share that axis, so a cursor in one is a cursor in all.
+- **Missing is missing.** No interpolation, no resampling between sources, no
+  smoothing: each series is plotted on its own times. The plot reports gaps.
+
+A plan declares 1.6.0 only when it has a non-empty `testData`.
+
+## In the editor
+
+- **Test data…** in the toolbar opens the sources: add a file, pick the sheet, check the
+  detected shape against a preview of the first rows, set the ignition offset, and map
+  channels to instruments in a table (channel, unit, span → instrument, bead, scale).
+  FDS device IDs that equal an instrument's name (an imported plan keeps them) map
+  themselves; nothing else is guessed.
+- **Selecting an instrument** with mapped series shows its plot in the viewport's
+  upper right, the place the burner's reconstruction plot already uses: measured and
+  simulated series, the planned value as a dashed line labelled as such, and for a
+  gauge its full-scale range. A rake plots one line per bead, coloured by height on a
+  sequential ramp, with the source told apart by dash, never by hue alone. A burner
+  plots measured and simulated heat release rate against its design value.
+- The desktop app reads a linked source as the plan opens, except from a network
+  share, where it waits for **Load data** (the flame rule). A browser tab asks for the
+  file again, as it does for linked CSVs and flame folders.
+- **Instrument schedule** (in the drawing, and as a CSV download): every gauge, bead
+  and camera with its position, aim, range and the channel each source maps to it.
+
+## In Python
+
+```python
+p = Plan.load("test-07.ftp.json")
+for s in p.series(p.heat_flux_sensors[0]):     # one per source that maps it
+    s.source, s.role, s.unit                     # 'Logger export', 'measured', 'kW/m2'
+    s.t, s.values                                # numpy arrays, plan time (s from ignition)
+fireplan.tables.read("test-07.xlsx", sheet="Log")   # the reader on its own
+```
+
+## Parity
+
+Both engines read the same synthetic fixtures (`fixtures/test-data/`: a workbook with a
+paired-time logger sheet and a processed sheet with several header rows, error cells
+and rows filled past the data, an FDS `_devc.csv`, a plain CSV), and an
+`expected.json` pins names, units, counts, first and last samples and warnings for
+both suites. The fixtures are generated by `tools/build_test_data_fixture.py` from
+made-up channels; no real test's data is in the repository.
+
+## Deferred
+
+- `.xls` and `.ods`.
+- A time-of-day time column (absolute clock times rather than seconds).
+- Derived channels (a gauge computed from two thermocouples, an HRR computed from gas
+  analysis). The processed sheet that computed them is the place they come from.
+- Video synchronisation: the clock takes a video follower without change.
