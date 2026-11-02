@@ -357,8 +357,8 @@ describe('obstructions', () => {
 
   it('makes the plan declare format 1.2', () => {
     expect(requiredFormatVersion(withCouch().doc)).toBe('1.2.0');
-    // ...and nothing in the sample does, so that stays 1.1.
-    expect(requiredFormatVersion(sample().doc)).toBe('1.1.0');
+    // The room-corner sample now carries its two-stage HRR curve.
+    expect(requiredFormatVersion(sample().doc)).toBe('1.7.0');
   });
 
   it('rejects a degenerate box at load time', () => {

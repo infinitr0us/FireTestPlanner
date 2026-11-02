@@ -82,7 +82,7 @@ def test_reference_bytes_and_example_numbers():
     for path, digest in [
         ('pool-fire-camera-row.ftp.json', 'a1451e00a36c10e893237c54cc30cb402c9345aacf010b4d2135f76dc32aff19'),
         ('flame/flame-test.ftp.json', '7206263f12fa9da063f3ced9b91129314b9b1c8db9cf5f8f9ea423e477605dae'),
-        ('fds/room_corner.ftp.json', '01686fb2bbf7dd882ccc18b83ab2661693bc80950d8473772233c7d0457bb15b'),
+        ('fds/room_corner.ftp.json', '43106615c10afbdab8dd4ede6aff5ae37e101d6f7b32c9745f7c94f0e421dce4'),
     ]:
         assert hashlib.sha256((FIXTURES / path).read_bytes()).hexdigest() == digest
     plan = Plan.load(FIXTURES / 'flame/flame-test.ftp.json')

@@ -1,3 +1,4 @@
+import { curveSummary, hrrAt } from '../core/hrr';
 /**
  * Property inspector for the selected object.
  *
@@ -1034,7 +1035,7 @@ export class Inspector {
           const burner = o as BurnerObject;
           burner.fire = { ...(burner.fire ?? {}), fuel: v || null };
         }))),
-      row('HRR (kW)',
+      b.fire?.hrrCurve ? readout('Peak HRR (kW)', String(hrrAt(b))) : row('HRR (kW)',
         numberField(b.fire?.hrr_kw ?? 0, (v) =>
           this.patch(b.id, 'Set HRR', (o) => {
             const burner = o as BurnerObject;
@@ -1056,6 +1057,16 @@ export class Inspector {
         + '≈0.35 heptane, 0.2 methanol. 0.3 is the default and is not written to the file'),
     );
 
+    if (b.fire?.hrrCurve) {
+      this.root.append(
+        h('p', { class: 'readout__note hrr-curve', style: { overflowWrap: 'anywhere' } }, [curveSummary(b.fire.hrrCurve)]),
+        button('Remove curve', () => this.patch(b.id, 'Remove curve', o => {
+          const burner = o as BurnerObject;
+          const peak = hrrAt(burner);
+          burner.fire = { ...burner.fire, hrr_kw: peak === 0 ? null : peak, hrrCurve: null };
+        })),
+      );
+    }
     const flame = burnerFlameHeightM(b);
     const tip = flameTipZM(b);
     this.root.append(sectionTitle('Predicted fire'));

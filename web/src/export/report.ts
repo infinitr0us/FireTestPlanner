@@ -1,3 +1,4 @@
+import { curveSummary, hrrAt } from '../core/hrr';
 /**
  * The printable deliverable: dimensioned plan, elevations, equipment list and
  * camera coverage, in a layout you can staple to a test protocol.
@@ -158,8 +159,9 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
 
   for (const b of burners(doc)) {
     const tip = flameTipZM(b);
-    const fire = b.fire?.hrr_kw ? `${formatKw(b.fire.hrr_kw)} kW ${b.fire.fuel ?? ''}`.trim() : null;
-    const notes = [fire, tip === null ? null : `mean flame tip ${formatLengthWithUnit(tip, unit)}`]
+    const q = hrrAt(b);
+    const fire = q !== null ? `${formatKw(q)} kW ${b.fire?.fuel ?? ''}`.trim() : null;
+    const notes = [fire, b.fire?.hrrCurve ? curveSummary(b.fire.hrrCurve) : null, tip === null ? null : `mean flame tip ${formatLengthWithUnit(tip, unit)}`]
       .filter((n): n is string => n !== null).join(', ');
     rows.push('<tr>' + [
       `<td>${esc(displayName(b))}</td>`,

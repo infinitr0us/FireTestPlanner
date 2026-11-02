@@ -124,6 +124,39 @@ try {
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
   };
+  phase('HRR curve inspector and drawing');
+  await send('Page.navigate', { url: origin + '/browser-tests/hrr.html' });
+  const hrrReport = await waitFor(async () => {
+    const text = await evaluate('document.querySelector("#report")?.textContent');
+    try { const r = JSON.parse(text); if (r.error) throw new Error(r.error); return r.passed ? r : false; } catch (e) { if (text?.includes('"error"')) throw e; return false; }
+  }, 'HRR fixture checks');
+  for (const item of hrrReport.results) check(item.name, item.passed);
+  await evaluate(`Array.from(document.querySelectorAll('#inspector button')).find(b => b.textContent === 'Remove curve').focus()`);
+  check('Remove curve is keyboard focusable', await evaluate(`document.activeElement.textContent === 'Remove curve'`));
+  await screenshot('hrr');
+  await key(' ', 'Space', 32);
+  await waitFor(() => evaluate(`!document.querySelector('.hrr-curve') && Array.from(document.querySelectorAll('#inspector label')).some(l => l.textContent.includes('HRR (kW)'))`), 'remove curve');
+  check('Space removes the curve and restores the steady HRR field', true);
+  await click('document.querySelector("#undo")');
+  await waitFor(() => evaluate(`!!document.querySelector('.hrr-curve')`), 'undo curve removal');
+  check('undo restores the curve', true);
+  await click('document.querySelector("#redo")');
+  await waitFor(() => evaluate(`!document.querySelector('.hrr-curve')`), 'redo curve removal');
+  check('redo removes the curve', true);
+  await click('document.querySelector("#undo")');
+  await waitFor(() => evaluate(`!!document.querySelector('.hrr-curve')`), 'restore before saving');
+  await click('document.querySelector("#save")');
+  await waitFor(() => evaluate(`document.querySelector('.hrr-curve')?.textContent.includes('peak 300 kW at 26 s')`), 'saved curve reload');
+  check('save and reopen retain the HRR readout', true);
+  await evaluate(`document.querySelector('#inspector').style.width = '260px'`);
+  await screenshot('hrr-narrow');
+  await evaluate(`Array.from(document.querySelectorAll('#drawing tr')).find(r => r.textContent.includes('Curve: 5 points')).scrollIntoView({block:'center'})`);
+  await screenshot('hrr-equipment');
+  await click('document.querySelector("#preview")');
+  await waitFor(() => evaluate(`Array.from(document.querySelectorAll('.import__issue')).some(e => e.textContent.includes('Curve: 5 points, peak 300 kW at 26 s, source fds-ramp:burner_steps'))`), 'curve import preview');
+  check('FDS import preview reports the curve', true);
+  await screenshot('hrr-import');
+  await openTab();
   phase('DOM/WebGL regression page');
   await send('Page.navigate', { url: origin + '/browser-tests/visual-consistency.html?interactive=1' });
   const report = await waitFor(async () => {

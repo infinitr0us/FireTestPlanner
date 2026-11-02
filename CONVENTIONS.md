@@ -1,6 +1,6 @@
 # Conventions
 
-Normative reference for `fire-test-plan` formats 1.0.0 through 1.6.0. If code and
+Normative reference for `fire-test-plan` formats 1.0.0 through 1.7.0. If code and
 this document disagree, this document is wrong and should be fixed — but check the
 tests first, because they encode these rules directly.
 
@@ -319,6 +319,61 @@ opening size and a **position**, but not an accurate shape:
   one side spills exactly as badly as a small one centred. This is a
   measurement-validity problem, not a cosmetic one.
 
+### A heat release rate that changes
+
+Format 1.7 makes `fire.hrrCurve` either null or `{points: [[t_s, kW], ...],
+source?: string}`. There are 2 to 10,000 finite, non-negative pairs, with strictly
+increasing times. The optional source describes provenance, not a curve type.
+The readers check ordering as well as the schema's shape and bounds.
+
+`hrr_kw` equals the maximum curve value. Writers set it to that maximum with the
+usual six-place number formatting, also applied to the curve's kW values. Times
+retain their supplied precision so distinct knots cannot collapse on save. Curve
+keys are ordered `points, source`. A reader reports `hrr-curve-peak` with both
+values when they disagree; calculations always believe the curve's peak. A curve
+may have a zero peak, so the 1.7 schema permits `hrr_kw: 0`.
+
+`hrrAt(burner, t)` / `burner.hrr_at(t)` interpolates linearly, holding the first
+value before the first time and the last value after the last time. Without a
+curve it returns `hrr_kw`. Negative query times are allowed; non-finite times are
+rejected. Checks and the editor's 3D cone use the peak. Optional `t` arguments on
+flame height/tip, heat-flux estimates and thermocouple beads evaluate each burner's
+own Q(t), including its source height, plume envelope and gauge line of sight.
+Omitting time preserves the existing peak predictions. At zero HRR the flame
+height is zero, radiation is zero, and no plume-temperature correlation applies.
+
+`plannedValue(doc, id, bead?, t?)` uses the same predictions. `plannedSeries`
+samples the union of relevant curve times, with up to 20 subdivisions per segment
+and a 2,000-sample budget. A burner target uses its own curve; instruments use all
+burners. It returns null without a relevant curve. All original knots fit when
+there are at most 2,000; larger unions are thinned by interval min/max of summed
+HRR before prediction. Unavailable temperatures remain null gaps.
+
+`t2Curve` / `t2_curve` makes Q = alpha t² up to `peak_kW`, holds for `hold_s`, then
+decays linearly to zero over `decay_s`. It samples every `step_s` (default 10 s)
+and includes the exact growth, hold and decay corners. Alpha, peak, decay and step
+must be positive; hold may be zero. Oversized or unrepresentable curves are
+rejected. The shared `GROWTH_RATES` constants in kW/s² are:
+
+| Name | alpha |
+|---|---|
+| slow | 0.00293 |
+| medium | 0.01172 |
+| fast | 0.0469 |
+| ultra-fast | 0.1876 |
+
+These are the NFPA 72 Annex B / SFPE Handbook t² design-fire rates (nominal times
+600, 300, 150 and 75 s to 1,055 kW, with the tabulated coefficients rounded).
+See [NFPA 72](https://www.nfpa.org/codes-and-standards/nfpa-72-standard-development/72)
+and the [SFPE Handbook](https://doi.org/10.1007/978-1-4939-2565-0).
+
+`curveFromSeries(t, values, maxPoints=200)` / `curve_from_series(t, values,
+max_points=200)` returns `{curve, notes}`. It requires finite samples at increasing,
+non-negative times, keeps endpoints and each interior interval's minimum and
+maximum in time order, and clamps negative HRR to zero with a counted note. An
+odd budget can leave one slot unused; a budget of two keeps only the endpoints.
+These helpers produce ordinary curves for later editor workflows.
+
 ## 5a. Object frames
 
 `transform.rotation_quat` applies to every object, not just cameras. Vertex lists
@@ -540,9 +595,9 @@ one.
   integer beyond 2^53 in an unknown object reaches the web writer already rounded to
   its nearest double; `fireplan` spells such an integer the same way (`12345678901234567890`
   is written `12345678901234567000`) rather than writing bytes the other engine cannot.
-- **`recording` and `hrrCurve` are reserved and must be `null` throughout 1.x.**
-  Reserving the keys means the post-test-record design can land later without a format
-  version bump, and `cam.recording is None` already works.
+- **`recording` remains reserved and must be `null` throughout 1.x.**
+  `hrrCurve` is null-only through 1.6; format 1.7 defines its non-null form in
+  section 5. `cam.recording is None` continues to work.
 - **`display` is advisory.** Ignoring the whole block must never change the meaning of a
   plan. Anything that changes meaning belongs outside it.
 
@@ -566,12 +621,16 @@ in one file. Git history is the audit trail, so the writer optimises for readabl
 ## 8. Declaring a version
 
 **The version a file declares is derived from its contents, not chosen.** A writer
-emits the lowest version that describes what is actually in the file, and never lower
-than the file already said:
+emits the lowest version that describes what is actually in the file, normally never
+lower than the file already said:
 
 ```
 version = max(declared, required(contents))
 ```
+
+Format 1.7 is the explicit exception: it is declared only while a burner has a
+non-null curve. Removing the last curve from a 1.7 plan writes the version required
+by the remaining contents. Unknown higher declarations remain untouched.
 
 `required` is the highest applicable row:
 
@@ -584,6 +643,7 @@ version = max(declared, required(contents))
 | 1.4.0 | `reconstructedFlame`, any object's `display.opacity` or `display.colorMode`, or a link's non-zero `timeOffset_s` |
 | 1.5.0 | `units.display.length` is `ft-in` |
 | 1.6.0 | Non-empty root `testData` |
+| 1.7.0 | A burner with non-null `fire.hrrCurve` |
 
 The 1.3 schema closes `linkedFile` and earlier schemas close `display`, which is
 why the 1.4 keys count even on an older object type. Only the `ft-in` preference
@@ -605,8 +665,8 @@ Three consequences, and all three are the point:
 - The claim is checkable. There is one schema per version, and
   `Plan.validate_schema("1.0.0")` is how you ask "would this still open in a 1.0
   tool?" and get a reason when the answer is no.
-- The version never goes down, and a version this build does not recognise is left
-  alone rather than downgraded. A 2.0 file re-saved here still says 2.0.
+- Apart from removing 1.7 with the last curve, the version never goes down. A
+  version this build does not recognise is left alone. A 2.0 file still says 2.0.
 
 A file whose label understates its contents is a hand edit or a broken writer.
 `check()` reports it as `version-understated` rather than refusing the file, and
@@ -636,6 +696,32 @@ file.
 **fdsreader is not usable for this.** The library reads simulation *output*, driven
 by the `.smv` file FDS writes after a run; it cannot open a `.fds` input at all.
 Everything an import needs is in the input, before any simulation runs.
+
+### HRR time histories (1.7)
+
+A time-based `RAMP_Q` becomes `F * steady rate * exposed area` at each `T`.
+The existing peak includes `max(F)` already; that factor is divided out before
+applying each F, so it is never applied twice. `MLRPUA * HEAT_OF_COMBUSTION` uses
+the same mapping. Source is `fds-ramp:<RAMP ID>`. A non-time or controlled ramp
+(`TMP`, `CTRL`, `DEVC`, external or spatial input), missing pairs, negative values
+or duplicate times retains the existing peak conversion and reports
+`fds-hrr-curve-skipped`. No time history is invented for an unstated ramp.
+
+Explicit negative `TAU_Q` gives `Q0 * min((t/abs(TAU_Q))², 1)`: 20 samples from
+zero through abs(TAU_Q), then the endpoint is held. Explicit positive `TAU_Q`
+gives `Q0 * tanh(t/TAU_Q)`: 20 samples at quarter-tau intervals through 4.75 tau,
+plus the endpoint at 20 tau where tanh rounds to one in binary64, then held.
+This finite piecewise-linear representation approximates the function between
+samples; positive tau does not mean full power at one tau. Source is `fds-tau_q`.
+The equations follow the [FDS 6.9.1 User's Guide, User-Specified Functions, Time-Dependent Functions](https://github.com/firemodels/fds/blob/FDS-6.9.1/Manuals/FDS_User_Guide/FDS_User_Guide.tex#L3834-L3847)
+and [EVALUATE_RAMP](https://github.com/firemodels/fds/blob/FDS-6.9.1/Source/func.f90#L3240-L3261).
+
+Exposed side-face contributions are summed at the union of their curve knots,
+with steady faces held constant. The source names the first contributing curve.
+The resulting peak is the sum's actual maximum. The preview's `fds-hrr-curve`
+note reports the point count, peak, first peak time and source. The room-corner
+burner imports as `[[0,0],[1,100],[25,100],[26,300],[60,300]]`, peak 300 kW at 26 s,
+source `fds-ramp:burner_steps`.
 
 ### The syntax rules that matter
 

@@ -1,3 +1,5 @@
+import { curveAt, curvePeak, curveProblem, curveSummary } from './hrr';
+import type { HrrCurve } from './types';
 /**
  * Convert an FDS input file into a fire test plan. Mirror of python/fireplan/fds.py.
  *
@@ -428,6 +430,7 @@ interface FireFace {
   face: string;
   horizontal: boolean;
   fromVent: boolean;
+  controlled: boolean;
 }
 
 /**
@@ -447,6 +450,41 @@ function peakRamps(records: NamelistRecord[]): Map<string, number> {
     if (id !== null && f !== null) peaks.set(id, Math.max(peaks.get(id) ?? 0, f));
   }
   return peaks;
+}
+
+/** Keep the old peak conversion when an FDS function is not a usable time history. */
+function faceCurve(face: FireFace, surfs: Map<string, NamelistRecord>, records: NamelistRecord[], peaks: Map<string, number>, issues: Issue[]): HrrCurve | null {
+  const surf = surfs.get(face.surf);
+  if (!surf || face.hrrKw === null) return null;
+  const id = surf.string('RAMP_Q'), tau = surf.number('TAU_Q');
+  if (id === null && tau === null) return null;
+  const rows = id === null ? [] : records.filter(r => r.group === 'RAMP' && r.string('ID') === id);
+  const unsupported = [surf, ...rows].some(r => [...r.params.keys()].some(k => /CTRL|DEVC|EXTERNAL|^TMP$|^TEMPERATURE$/.test(k)))
+    || rows.some(r => ['X', 'Y', 'Z'].some(k => r.has(k)));
+  const skipped = () => {
+    issues.push(issue('info', 'fds-hrr-curve-skipped',
+      `Surface '${face.surf}': RAMP_Q/TAU_Q is not a supported finite time history; the existing peak HRR is retained.`));
+    return null;
+  };
+  if (unsupported || face.controlled) return skipped();
+  let curve: HrrCurve;
+  if (id !== null) {
+    if (rows.some(r => r.number('T') === null || r.number('F') === null) || !peaks.get(id)) return skipped();
+    // face.hrrKw already includes max(F). Divide it out once, never multiply it twice.
+    const steady = face.hrrKw / peaks.get(id)!;
+    curve = { points: rows.map(r => [r.number('T')!, r.number('F')! * steady] as [number, number]).sort((a, b) => a[0] - b[0]), source: `fds-ramp:${id}` };
+  } else {
+    if (tau === 0) return skipped();
+    const scale = Math.abs(tau!);
+    const points: [number, number][] = Array.from({ length: 20 }, (_, i) => {
+      const u = tau! < 0 ? i / 19 : i / 4;
+      return [scale * u, face.hrrKw! * (tau! < 0 ? u * u : Math.tanh(u))];
+    });
+    // tanh(20) rounds to 1 in binary64; no false plateau at t=tau.
+    if (tau! > 0) points.push([20 * scale, face.hrrKw]);
+    curve = { points, source: 'fds-tau_q' };
+  }
+  return curveProblem(curve) ? skipped() : curve;
 }
 
 /**
@@ -635,6 +673,7 @@ function fireFaces(
         surf: String(surfId), xb: box.xb, areaM2: area,
         hrrKw: perArea !== 'unknown' && area > 0 ? perArea * area : null,
         face, horizontal: face === '-z' || face === '+z', fromVent,
+        controlled: [...box.rec.params.keys()].some(k => /CTRL|DEVC/.test(k)),
       });
     });
   }
@@ -1584,7 +1623,19 @@ export function fdsToPlan(
     const extra = sides.reduce((sum, f) => sum + f.hrrKw!, 0);
     sidesKw += extra;
     const whole = extra > 0 && face.hrrKw !== null ? { ...face, hrrKw: face.hrrKw + extra } : face;
-    objects.push(burnerObject(ids, whole, origin, floorZ, reac, surfs));
+    const object = burnerObject(ids, whole, origin, floorZ, reac, surfs);
+    const components = [face, ...sides].map(f => ({ face: f, curve: faceCurve(f, surfs, records, peaks, issues) }));
+    const curves = components.flatMap(c => c.curve ? [c.curve] : []);
+    if (curves.length && face.hrrKw !== null) {
+      const times = [...new Set(curves.flatMap(c => c.points.map(p => p[0])))].sort((a, b) => a - b);
+      const curve: HrrCurve = { points: times.map(t => [t, components.reduce((sum, c) => sum + (c.curve ? curveAt(c.curve, t) : c.face.hrrKw ?? 0), 0)]), source: curves[0].source };
+      if (!curveProblem(curve)) {
+        object.fire!.hrrCurve = curve;
+        object.fire!.hrr_kw = curvePeak(curve);
+        issues.push(issue('info', 'fds-hrr-curve', `${object.name}: ${curveSummary(curve)}`));
+      } else issues.push(issue('info', 'fds-hrr-curve-skipped', `Surface '${face.surf}': combined curve exceeds the point limit; the existing peak HRR is retained.`));
+    }
+    objects.push(object);
   }
   if (sidesKw > 0) {
     issues.push(issue('info', 'fds-burner-sides',

@@ -24,7 +24,8 @@ def load():
 def test_fixture_version_and_schema():
     p = load()
     assert p.dumps() == TEXT
-    assert required_version(p.data) == VERSION_LATEST == '1.6.0'
+    assert required_version(p.data) == '1.6.0'
+    assert VERSION_LATEST == '1.7.0'
     p.validate_schema()
     with pytest.raises(PlanError, match='testData'):
         p.validate_schema('1.5.0')

@@ -24,6 +24,7 @@ reader returns OpenCV by default because that is what reconstruction tooling wan
 """
 
 from . import correlations, fds, namelist
+from .hrr import GROWTH_RATES, t2_curve, curve_from_series
 from ._math import look_at_quat, matrix_to_quat, quat_to_matrix
 from .objects import (
     Burner,
@@ -57,6 +58,9 @@ __all__ = [
     "PlanObject",
     "UnknownObject",
     "correlations",
+    "GROWTH_RATES",
+    "t2_curve",
+    "curve_from_series",
     "fds",
     "namelist",
     "quat_to_matrix",

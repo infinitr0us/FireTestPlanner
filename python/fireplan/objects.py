@@ -14,6 +14,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import numpy as np
 
 from . import correlations
+from .hrr import curve_at, curve_peak
 from ._math import look_at_quat, quat_to_matrix
 
 IDENTITY_QUAT = [0.0, 0.0, 0.0, 1.0]
@@ -470,34 +471,42 @@ class Burner(PlanObject):
 
     @property
     def hrr_kw(self) -> Optional[float]:
-        q = self.fire.get("hrr_kw")
+        curve = self.fire.get("hrrCurve")
+        q = curve_peak(curve) if curve is not None else self.fire.get("hrr_kw")
         return None if q is None else float(q)
 
-    def _require_hrr(self) -> float:
-        q = self.hrr_kw
+    def hrr_at(self, t: float) -> Optional[float]:
+        if not math.isfinite(t):
+            raise ValueError("HRR time must be finite.")
+        curve = self.fire.get("hrrCurve")
+        return curve_at(curve, t) if curve is not None else self.hrr_kw
+
+    def _require_hrr(self, t=None) -> float:
+        q = self.hrr_kw if t is None else self.hrr_at(t)
         if q is None:
             raise ValueError(
                 "burner {!r} has no hrr_kw; flame and plume geometry are undefined".format(self.id)
             )
         return q
 
-    def flame_height_m(self) -> float:
+    def flame_height_m(self, t=None) -> float:
         """Mean flame height above the fuel surface."""
-        return correlations.flame_height_m(self._require_hrr(), self.diameter_m)
+        q = self._require_hrr(t)
+        return 0.0 if q == 0 else correlations.flame_height_m(q, self.diameter_m)
 
-    def flame_tip_z_m(self) -> float:
+    def flame_tip_z_m(self, t=None) -> float:
         """Absolute height of the mean flame tip above the floor."""
-        return self.fuel_surface_z_m + self.flame_height_m()
+        return self.fuel_surface_z_m + self.flame_height_m(t)
 
-    def virtual_origin_m(self) -> float:
-        return correlations.virtual_origin_m(self._require_hrr(), self.diameter_m)
+    def virtual_origin_m(self, t=None) -> float:
+        return correlations.virtual_origin_m(self._require_hrr(t), self.diameter_m)
 
-    def plume_radius_m(self, z_above_floor_m: float, half_angle_rad: Optional[float] = None) -> float:
+    def plume_radius_m(self, z_above_floor_m: float, half_angle_rad: Optional[float] = None, t=None) -> float:
         """Plume radius at an absolute height above the floor."""
         kwargs = {} if half_angle_rad is None else {"half_angle_rad": half_angle_rad}
         return correlations.plume_radius_m(
             z_above_floor_m - self.fuel_surface_z_m,
-            self._require_hrr(),
+            self._require_hrr(t),
             self.diameter_m,
             **kwargs
         )
@@ -518,7 +527,7 @@ class Burner(PlanObject):
             return correlations.DEFAULT_RADIATIVE_FRACTION
         return f
 
-    def flame_radius_m(self, z_above_floor_m: float) -> Optional[float]:
+    def flame_radius_m(self, z_above_floor_m: float, t=None) -> Optional[float]:
         """Radius of the mean flame cone at an absolute height above the floor.
 
         Tapers from the effective diameter at the fuel surface to a point at the
@@ -532,17 +541,17 @@ class Burner(PlanObject):
         `flameRadiusAtZ` in web/src/core/plan.ts.
         """
         base = self.fuel_surface_z_m
-        tip = self.flame_tip_z_m()
+        tip = self.flame_tip_z_m(t)
         if tip <= base:
             return None
         if z_above_floor_m < base or z_above_floor_m > tip:
             return 0.0
         return (self.diameter_m / 2.0) * (1.0 - (z_above_floor_m - base) / (tip - base))
 
-    def point_source_z_m(self) -> float:
+    def point_source_z_m(self, t=None) -> float:
         """Mid-flame height: where the point-source radiation model puts the fire,
         and what a camera or a gauge means by "aim at the fire"."""
-        return (self.fuel_surface_z_m + self.flame_tip_z_m()) / 2.0
+        return (self.fuel_surface_z_m + self.flame_tip_z_m(t)) / 2.0
 
 
 class Hood(PlanObject):

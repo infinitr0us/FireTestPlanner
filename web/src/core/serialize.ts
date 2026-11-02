@@ -7,6 +7,8 @@
  * shared fixtures, including the display-only format 1.5 preference.
  */
 
+import { curvePeak, curveProblem } from './hrr';
+import type { HrrCurve } from './types';
 import { roundMicro } from './math';
 import { maxVersion, requiredFormatVersion, zoomIsDefault, type PlanDocument } from './types';
 
@@ -146,8 +148,15 @@ function canonObject(raw: Obj): Obj {
       if (hasOwn(o, 'footprint')) o.footprint = orderIfObject(o.footprint, FOOTPRINT);
       if (hasOwn(o, 'fire')) {
         const fire = orderIfObject(o.fire, FIRE);
-        if (isPlainObject(fire)) dropNull1_1(fire, 'radiativeFraction');
-        o.fire = fire;
+        if (isPlainObject(fire)) {
+          dropNull1_1(fire, 'radiativeFraction');
+          const problem = curveProblem(fire.hrrCurve); if (problem) throw new Error(problem);
+          if (fire.hrrCurve != null) {
+            fire.hrr_kw = curvePeak(fire.hrrCurve as HrrCurve);
+            fire.hrrCurve = order(fire.hrrCurve as unknown as Obj, ['points', 'source']);
+          }
+        }
+        o.fire = isPlainObject(fire) ? order(fire, FIRE) : fire;
       }
       break;
     }
@@ -194,6 +203,11 @@ function canonObject(raw: Obj): Obj {
   const result = roundFloats(order(o, OBJECT_ORDER[String(o.type)])) as Obj;
   // Recorded measurements are not geometry: preserve their supplied precision.
   if (Array.isArray(o.linkedFiles)) result.linkedFiles = o.linkedFiles;
+  // Keep time precision so nearby knots cannot collapse when saving.
+  if (o.type === 'burner' && isPlainObject(o.fire) && o.fire.hrrCurve != null) {
+    const curve = o.fire.hrrCurve as HrrCurve;
+    ((result.fire as Obj).hrrCurve as HrrCurve).points = curve.points.map(([t, q]) => [t, roundMicro(q)]);
+  }
   return result;
 }
 
@@ -226,12 +240,15 @@ function canonUnknownObject(raw: Obj): Obj {
 export function canonicalize(data: PlanDocument): Obj {
   const d: Obj = { ...(data as unknown as Obj) };
 
-  // The declared version tracks what the file actually contains, and only ever
-  // upward. A plan that uses nothing past 1.0 keeps saying 1.0.0, so it still
+  // The declared version tracks what the file actually contains. A plan that
+  // uses nothing past 1.0 keeps saying 1.0.0, so it still
   // opens in a build that predates 1.1; the moment it grows a sensor or a zoom
   // factor it says so, rather than claiming a compatibility it no longer has.
   // A version this build does not recognise is left alone, not downgraded.
-  d.version = maxVersion(String(d.version ?? ''), requiredFormatVersion(data));
+  const required = requiredFormatVersion(data);
+  // Format 1.7 is declared only while a curve is present, including after removal.
+  d.version = d.version === '1.7.0' && required !== '1.7.0'
+    ? required : maxVersion(String(d.version ?? ''), required);
 
   if (hasOwn(d, 'meta')) {
     const meta = orderIfObject(d.meta, META);
