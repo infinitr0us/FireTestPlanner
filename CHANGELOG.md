@@ -64,8 +64,21 @@ Plan formats 1.5.0, 1.6.0 and 1.7.0.
   The choice is a per-user setting, never part of a plan, and every file the tool
   writes is unchanged. `docs/french-review.md` lists the terms for a francophone
   engineer to confirm.
+- **Accessibility.** The editor and every dialog pass automated WCAG 2.1 AA checks
+  (axe-core) in both languages. Dialogs take keyboard focus and give it back, the
+  object list and the checks work from the keyboard, status messages are announced
+  to screen readers, and Windows contrast themes keep selected and pressed states
+  visible without relying on colour.
 
 ### Changed
+- **Import FDS…**, **Export to FDS…** and **FDS results…** are now in an **FDS** menu
+  in the toolbar, which fits in two rows on a laptop screen in English and French.
+- The palette shows two columns of tiles with the icon beside the label, so no word
+  is split and every instrument is in view without scrolling.
+- Export to FDS treats a gauge on a wall, ceiling or obstruction as a surface gauge
+  (`GAUGE HEAT FLUX` with the face's `IOR`) when it faces within 45° of the face's
+  normal, and notes in the file when it is tilted more than 5°. Two wall gauges aimed
+  a few degrees toward the fire used to export as different quantities.
 - The editor's left rail keeps **Checks** on screen on a laptop (1280 × 720): the
   palette, the object list and the checks share the height and each scrolls its own
   contents. **From FDS** and the help for adding a camera preset fold away until
@@ -75,6 +88,14 @@ Plan formats 1.5.0, 1.6.0 and 1.7.0.
 - The FLIR A700 24° preset stores the 18 mm focal length FLIR prints for that lens
   instead of 18.07 mm back-solved from the angle, so it now frames 24.1° × 18.2°.
   Cameras already in a plan keep their own stored focal length.
+
+### Fixed
+- **Print / Save as PDF** in the drawing preview printed only the first page of the
+  drawing. It now prints every page, on white margins.
+- Optional numbers left unset (a load cell's capacity, a gauge's or probe's range)
+  show an empty field instead of 0.
+- The drawing's north arrow no longer overlaps objects placed at the plan's far
+  top-right corner.
 
 ## [0.7.0] - 2026-10-18
 

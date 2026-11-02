@@ -127,7 +127,7 @@ of the single-file editor with the current plan baked in.
 
 ### Starting from an FDS model
 
-**Import FDS…** builds a plan from a `.fds` input: walls, ceilings, boxes, the burner
+**FDS ▾ › Import FDS…** in the toolbar builds a plan from a `.fds` input: walls, ceilings, boxes, the burner
 and its heat release, doorways from `&HOLE`, and the `&DEVC`s that correspond to
 instruments someone has to mount. It previews what it will make and what it will skip
 before anything is adopted, and it will not adopt a conversion the editor could not
@@ -159,7 +159,7 @@ through the `.smv` file and cannot open a `.fds` input. The reader is ours, and 
 
 ### Playing back FDS simulation output
 
-**FDS results…** opens a separate results workspace. In the desktop app, select the
+**FDS ▾ › FDS results…** opens a separate results workspace. In the desktop app, select the
 simulation's `.smv` file; in the browser, choose its output folder. The viewer reads
 individual frames locally, including multi-gigabyte simulations, without importing
 those results into the editable plan.
@@ -218,7 +218,7 @@ flame through it, and the instrument plots draw the prediction as a curve.
 
 ### Writing the instruments back to FDS
 
-**Export to FDS…** writes the plan's gauges, thermocouple beads, velocity probes and gas
+**FDS ▾ › Export to FDS…** writes the plan's gauges, thermocouple beads, velocity probes and gas
 sampling points as `&DEVC` lines, in the source FDS file's frame and under its device
 IDs when the plan came from an import. Wall-mounted gauges and surface thermocouples
 get their `IOR`. Geometry is not written: a model needs a mesh and surfaces the plan does
