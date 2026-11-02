@@ -603,4 +603,7 @@ about walls. The engineers' answers and their data settled the rest.
 | **C** (M17) | A heat release rate curve on the burner (a table, t² growth, an FDS `RAMP` or a measured HRR), checks at its peak and a cone that follows the clock. Velocity probes, gas sampling points, load cells, and plate thermometer and thin-skin gauge kinds. As-built positions beside planned ones. `&DEVC` export of the instruments. Test series | 1.7 |
 | **D** (M18) | More camera presets from datasheets (handheld, consumer and phone cameras the lab uses), a French interface and an accessibility pass | none |
 
-Phase A is in progress.
+Progress (2026-11-02): **Phase A is done** (format 1.5), with the camera presets of
+phase D. **Phase B** has its readers and its format (1.6) in both engines, checked on
+the engineers' own workbooks; the editor's loading, plots and mapping are next. Of
+**phase C**, the `&DEVC` export is under way; the rest follows phase B.
