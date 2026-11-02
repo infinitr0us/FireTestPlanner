@@ -1,0 +1,754 @@
+{
+  "note": "Synthetic data only. Written by tools/build_test_data_fixture.py using the Python reader; both engines assert these layouts, summaries and warnings.",
+  "files": [
+    {
+      "file": "logger-export.xlsx",
+      "channelUnits": {
+        "HF east_23.17kW/m2permV": "V",
+        "HF west_22.10kW/m2permV": "V",
+        "HF north_19.75kW/m2permV": "V",
+        "TC tree bead 1": "°C",
+        "TC tree bead 2": "°C",
+        "TC tree bead 3": "°C",
+        "TC tree bead 4": "°C",
+        "TC tree bead 5": "°C",
+        "TC duct lower": "°C",
+        "TC duct upper": "°C",
+        "O2 analyser": "Volts",
+        "CO2 analyser": "V",
+        "Pressure": "mA"
+      },
+      "sheets": [
+        {
+          "sheet": "Metadata",
+          "layout": {
+            "shape": "plain",
+            "headerRow": 1,
+            "unitsRow": 2,
+            "dataRow": 3,
+            "timeColumn": 0
+          },
+          "channelUnits": {
+            "HF east_23.17kW/m2permV": "V",
+            "HF west_22.10kW/m2permV": "V",
+            "HF north_19.75kW/m2permV": "V",
+            "TC tree bead 1": "°C",
+            "TC tree bead 2": "°C",
+            "TC tree bead 3": "°C",
+            "TC tree bead 4": "°C",
+            "TC tree bead 5": "°C",
+            "TC duct lower": "°C",
+            "TC duct upper": "°C",
+            "O2 analyser": "V",
+            "CO2 analyser": "V",
+            "Pressure": "mA"
+          },
+          "timeShiftHint": null,
+          "channels": [],
+          "warnings": [
+            "No time series on this sheet."
+          ]
+        },
+        {
+          "sheet": "Log",
+          "layout": {
+            "shape": "paired-time",
+            "headerRow": 1,
+            "unitsRow": null,
+            "dataRow": 2,
+            "timeColumn": null
+          },
+          "channelUnits": {},
+          "timeShiftHint": null,
+          "channels": [
+            {
+              "name": "HF east_23.17kW/m2permV",
+              "unit": "V",
+              "rawUnit": "V",
+              "column": 1,
+              "samples": 598,
+              "missing": 2,
+              "first": [
+                0.0,
+                0.0
+              ],
+              "last": [
+                599.0,
+                4.24826701406e-06
+              ],
+              "calibrationHint": {
+                "scale": 23170.0,
+                "unit": "kW/m2",
+                "inputUnit": "V"
+              }
+            },
+            {
+              "name": "HF west_22.10kW/m2permV",
+              "unit": "V",
+              "rawUnit": "V",
+              "column": 3,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                0.0,
+                0.0
+              ],
+              "last": [
+                599.0,
+                3.46418515339e-06
+              ],
+              "calibrationHint": {
+                "scale": 22100.0,
+                "unit": "kW/m2",
+                "inputUnit": "V"
+              }
+            },
+            {
+              "name": "HF north_19.75kW/m2permV",
+              "unit": "V",
+              "rawUnit": "V",
+              "column": 5,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                0.0,
+                0.0
+              ],
+              "last": [
+                599.0,
+                3.0457266213e-06
+              ],
+              "calibrationHint": {
+                "scale": 19750.0,
+                "unit": "kW/m2",
+                "inputUnit": "V"
+              }
+            },
+            {
+              "name": "TC tree bead 1",
+              "unit": "°C",
+              "rawUnit": "°C",
+              "column": 7,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                0.0,
+                21.0
+              ],
+              "last": [
+                599.0,
+                23.4516302255
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "TC tree bead 2",
+              "unit": "°C",
+              "rawUnit": "°C",
+              "column": 9,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                0.0,
+                21.168294197
+              ],
+              "last": [
+                599.0,
+                23.2010765356
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "TC tree bead 3",
+              "unit": "°C",
+              "rawUnit": "°C",
+              "column": 11,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                0.0,
+                21.1818594854
+              ],
+              "last": [
+                599.0,
+                23.1139041655
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "TC tree bead 4",
+              "unit": "°C",
+              "rawUnit": "°C",
+              "column": 13,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                0.0,
+                21.0282240016
+              ],
+              "last": [
+                599.0,
+                23.0440133764
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "TC tree bead 5",
+              "unit": "°C",
+              "rawUnit": "°C",
+              "column": 15,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                0.0,
+                20.8486395009
+              ],
+              "last": [
+                599.0,
+                22.8294158233
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "TC duct lower",
+              "unit": "°C",
+              "rawUnit": "°C",
+              "column": 17,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                0.0,
+                21.0
+              ],
+              "last": [
+                599.0,
+                21.7655849189
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "TC duct upper",
+              "unit": "°C",
+              "rawUnit": "°C",
+              "column": 19,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                0.0,
+                21.0
+              ],
+              "last": [
+                599.0,
+                21.5195040521
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "O2 analyser",
+              "unit": "V",
+              "rawUnit": "Volts",
+              "column": 21,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                0.0,
+                2.09
+              ],
+              "last": [
+                599.0,
+                2.08879693798
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "CO2 analyser",
+              "unit": "V",
+              "rawUnit": "V",
+              "column": 23,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                0.0,
+                0.04
+              ],
+              "last": [
+                599.0,
+                0.040820269556
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "Pressure",
+              "unit": "mA",
+              "rawUnit": "mA",
+              "column": 25,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                0.0,
+                4.0
+              ],
+              "last": [
+                599.0,
+                4.03827924594
+              ],
+              "calibrationHint": null
+            }
+          ],
+          "warnings": []
+        },
+        {
+          "sheet": "Processed",
+          "layout": {
+            "shape": "processed",
+            "headerRow": 1,
+            "unitsRow": 3,
+            "dataRow": 5,
+            "timeColumn": 1
+          },
+          "channelUnits": {},
+          "timeShiftHint": {
+            "seconds": 120.0,
+            "row": 3,
+            "column": 1
+          },
+          "channels": [
+            {
+              "name": "Time",
+              "unit": "mim",
+              "rawUnit": "[mim]",
+              "column": 0,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                -120.0,
+                -2.0
+              ],
+              "last": [
+                479.0,
+                7.98333333333
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "Duct oxygen",
+              "unit": "V",
+              "rawUnit": "Volt",
+              "column": 2,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                -120.0,
+                2.09
+              ],
+              "last": [
+                479.0,
+                2.08879693798
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "Duct pressure",
+              "unit": "A",
+              "rawUnit": "A",
+              "column": 3,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                -120.0,
+                0.004
+              ],
+              "last": [
+                479.0,
+                0.00403827924594
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "HF east_23.17kW/m2permV [V]",
+              "unit": "V",
+              "rawUnit": "[V]",
+              "column": 4,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                -120.0,
+                0.0
+              ],
+              "last": [
+                479.0,
+                4.24826701406e-06
+              ],
+              "calibrationHint": {
+                "scale": 23170.0,
+                "unit": "kW/m2",
+                "inputUnit": "V"
+              }
+            },
+            {
+              "name": "HF east_23.17kW/m2permV [kW/m2]",
+              "unit": "kW/m2",
+              "rawUnit": "[kW/m2]",
+              "column": 5,
+              "samples": 597,
+              "missing": 3,
+              "first": [
+                -120.0,
+                0.0
+              ],
+              "last": [
+                479.0,
+                0.0984323467157
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "Duct temp",
+              "unit": "°C",
+              "rawUnit": "[ºC]",
+              "column": 6,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                -120.0,
+                21.0
+              ],
+              "last": [
+                479.0,
+                23.6248625791
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "Air velocity",
+              "unit": "m/s",
+              "rawUnit": "[m/s]",
+              "column": 7,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                -120.0,
+                1.0
+              ],
+              "last": [
+                479.0,
+                1.01093692741
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "Duct temp#2",
+              "unit": "°C",
+              "rawUnit": "[C]",
+              "column": 8,
+              "samples": 599,
+              "missing": 1,
+              "first": [
+                -120.0,
+                21.0
+              ],
+              "last": [
+                479.0,
+                23.3787817123
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "Heat released",
+              "unit": "MJ",
+              "rawUnit": "[MJ]",
+              "column": 10,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                -120.0,
+                0.0
+              ],
+              "last": [
+                479.0,
+                5.99
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "Gas volume",
+              "unit": "m^3/s",
+              "rawUnit": "[m^3/s]",
+              "column": 11,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                -120.0,
+                0.4
+              ],
+              "last": [
+                479.0,
+                0.401640539112
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "Column M",
+              "unit": "kg/s",
+              "rawUnit": "[kg/s]",
+              "column": 12,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                -120.0,
+                0.5
+              ],
+              "last": [
+                479.0,
+                0.502187385483
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "HF west_22.10kW/m2permV",
+              "unit": "mV",
+              "rawUnit": "[mV]",
+              "column": 13,
+              "samples": 600,
+              "missing": 0,
+              "first": [
+                -120.0,
+                0.0
+              ],
+              "last": [
+                479.0,
+                0.00346418515339
+              ],
+              "calibrationHint": {
+                "scale": 22.1,
+                "unit": "kW/m2",
+                "inputUnit": "mV"
+              }
+            }
+          ],
+          "warnings": [
+            "Cell F23: #NUM! treated as missing.",
+            "Cell F24: #NUM! treated as missing.",
+            "Cell F280: #NUM! treated as missing.",
+            "Time column B stops increasing at sheet row 605; series ended.",
+            "Duplicate channel name \"HF east_23.17kW/m2permV\" renamed to \"HF east_23.17kW/m2permV [V]\".",
+            "Duplicate channel name \"HF east_23.17kW/m2permV\" renamed to \"HF east_23.17kW/m2permV [kW/m2]\".",
+            "Duplicate channel name \"Duct temp\" renamed to \"Duct temp#2\".",
+            "Channel \"Empty channel\" has no numeric samples and was dropped."
+          ]
+        },
+        {
+          "sheet": "Strings",
+          "layout": {
+            "shape": "plain",
+            "headerRow": 1,
+            "unitsRow": null,
+            "dataRow": 2,
+            "timeColumn": 0
+          },
+          "channelUnits": {},
+          "timeShiftHint": null,
+          "channels": [],
+          "warnings": [
+            "No time series on this sheet."
+          ]
+        },
+        {
+          "sheet": "Supplement",
+          "layout": {
+            "shape": "plain",
+            "headerRow": 1,
+            "unitsRow": null,
+            "dataRow": 2,
+            "timeColumn": 0
+          },
+          "channelUnits": {
+            "O2 analyser": "Volts"
+          },
+          "timeShiftHint": null,
+          "channels": [],
+          "warnings": [
+            "No time series on this sheet."
+          ]
+        },
+        {
+          "sheet": "Constants",
+          "layout": {
+            "shape": "plain",
+            "headerRow": 1,
+            "unitsRow": 2,
+            "dataRow": 3,
+            "timeColumn": 0
+          },
+          "channelUnits": {},
+          "timeShiftHint": null,
+          "channels": [],
+          "warnings": [
+            "No time series on this sheet."
+          ]
+        }
+      ]
+    },
+    {
+      "file": "room-test_devc.csv",
+      "channelUnits": {},
+      "sheets": [
+        {
+          "sheet": null,
+          "layout": {
+            "shape": "fds",
+            "headerRow": 2,
+            "unitsRow": 1,
+            "dataRow": 3,
+            "timeColumn": 0
+          },
+          "channelUnits": {},
+          "timeShiftHint": null,
+          "channels": [
+            {
+              "name": "HF east",
+              "unit": "kW/m2",
+              "rawUnit": "kW/m2",
+              "column": 1,
+              "samples": 61,
+              "missing": 0,
+              "first": [
+                0.0,
+                0.0
+              ],
+              "last": [
+                600.0,
+                0.0
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "TC low",
+              "unit": "°C",
+              "rawUnit": "C",
+              "column": 2,
+              "samples": 61,
+              "missing": 0,
+              "first": [
+                0.0,
+                21.0
+              ],
+              "last": [
+                600.0,
+                21.0
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "TC high",
+              "unit": "°C",
+              "rawUnit": "C",
+              "column": 3,
+              "samples": 61,
+              "missing": 0,
+              "first": [
+                0.0,
+                21.0
+              ],
+              "last": [
+                600.0,
+                21.0
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "O2",
+              "unit": "V",
+              "rawUnit": "V",
+              "column": 4,
+              "samples": 61,
+              "missing": 0,
+              "first": [
+                0.0,
+                2.09
+              ],
+              "last": [
+                600.0,
+                2.09
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "Pressure",
+              "unit": "Pa",
+              "rawUnit": "Pa",
+              "column": 5,
+              "samples": 61,
+              "missing": 0,
+              "first": [
+                0.0,
+                0.0
+              ],
+              "last": [
+                600.0,
+                0.0
+              ],
+              "calibrationHint": null
+            }
+          ],
+          "warnings": []
+        }
+      ]
+    },
+    {
+      "file": "plain.csv",
+      "channelUnits": {},
+      "sheets": [
+        {
+          "sheet": null,
+          "layout": {
+            "shape": "plain",
+            "headerRow": 1,
+            "unitsRow": null,
+            "dataRow": 2,
+            "timeColumn": 0
+          },
+          "channelUnits": {},
+          "timeShiftHint": null,
+          "channels": [
+            {
+              "name": "Temperature; east",
+              "unit": null,
+              "rawUnit": null,
+              "column": 1,
+              "samples": 4,
+              "missing": 0,
+              "first": [
+                -1.0,
+                21.0
+              ],
+              "last": [
+                2.0,
+                23.0
+              ],
+              "calibrationHint": null
+            },
+            {
+              "name": "Heat flux",
+              "unit": null,
+              "rawUnit": null,
+              "column": 2,
+              "samples": 3,
+              "missing": 1,
+              "first": [
+                -1.0,
+                0.0
+              ],
+              "last": [
+                2.0,
+                0.5
+              ],
+              "calibrationHint": null
+            }
+          ],
+          "warnings": []
+        }
+      ]
+    }
+  ]
+}

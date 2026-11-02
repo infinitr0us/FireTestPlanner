@@ -1,3 +1,4 @@
+import { delimitedRows } from './delimited';
 import type { LinkedFileKind, PlanObject, ReconstructionPlot, VoxelSequenceManifest } from './types';
 import { isKnownType } from './types';
 
@@ -27,44 +28,10 @@ export const isLocalPath = (path: string): boolean =>
  */
 export const isNetworkPath = (path: string): boolean => /^[\\/]{2}/.test(path.trim());
 
-/** Small strict CSV/TSV reader: quoted delimiters, escaped quotes, CRLF and BOM. */
-function rows(text: string, separator: string): string[][] {
-  const result: string[][] = [];
-  let row: string[] = [], cell = '', quoted = false, closed = false;
-  const pushCell = (): void => { row.push(cell.trim()); cell = ''; closed = false; };
-  const pushRow = (): void => {
-    pushCell();
-    if (row.some((x) => x !== '')) result.push(row);
-    row = [];
-    if (result.length > MAX_PLOT_SAMPLES + 1) throw new Error(`CSV exceeds ${MAX_PLOT_SAMPLES.toLocaleString()} samples.`);
-  };
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (quoted) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') { cell += '"'; i++; }
-        else { quoted = false; closed = true; }
-      } else cell += ch;
-    } else if (ch === separator) pushCell();
-    else if (ch === '\n' || ch === '\r') {
-      if (ch === '\r' && text[i + 1] === '\n') i++;
-      pushRow();
-    } else if (ch === '"' && !cell.trim() && !closed) { cell = ''; quoted = true; }
-    else if (ch === '"' || (closed && ch.trim())) throw new Error('Malformed CSV quoting.');
-    else cell += ch;
-  }
-  if (quoted) throw new Error('CSV has an unclosed quoted field.');
-  if (cell || row.length || closed) pushRow();
-  return result;
-}
-
 /** Refuse bad rows rather than connecting across silently dropped measurements. */
 export function parseReconstructionCsv(text: string, importedAt = new Date().toISOString()): ReconstructionPlot {
   if (new TextEncoder().encode(text).byteLength > MAX_CSV_BYTES) throw new Error('CSV exceeds the 5 MiB plot limit.');
-  text = text.replace(/^\uFEFF/, '');
-  const headerLine = text.split(/\r?\n/).find((line) => line.trim()) ?? '';
-  const separator = headerLine.includes('\t') ? '\t' : headerLine.includes(';') && !headerLine.includes(',') ? ';' : ',';
-  const table = rows(text, separator);
+  const table = delimitedRows(text, undefined, true, MAX_PLOT_SAMPLES + 1);
   const headers = table.shift()?.map((x) => x.toLowerCase()) ?? [];
   const required = ['timestamp_s', 'volume_m3', 'surface_area_m2'];
   const indices = required.map((name) => {
