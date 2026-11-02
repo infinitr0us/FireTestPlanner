@@ -395,9 +395,58 @@ Valid in the far field only. Inside `POINT_SOURCE_MIN_DIAMETERS` (2) effective
 diameters the fire is plainly not a point, and the figure is an order of magnitude
 rather than a number to size a gauge on; `gauge-near-field` says so.
 
-It assumes an **unobstructed view**. The model knows nothing about walls in the plan,
-so a gauge behind one still reads a full flux. Shape factors and shadowing are out of
-scope for a planning tool.
+The point-source figure is scaled by the line of sight below. Shape factors,
+reflections and indirect radiation remain outside this placement estimate.
+
+### Line of sight
+
+A wall between an instrument and a fire matters even when it is hidden in the
+editor: `display.visible` is a view preference, not a hole in the room. Walls,
+ceiling slabs, obstructions and hood skirts are opaque. Burners, reconstructed
+flames, cameras and instruments never block a view.
+
+Each wall segment is a box centred on its polyline, with the recorded thickness,
+base and height. Openings cut through its full thickness, measured by distance
+along the polyline from its start, including across corners. Overlapping openings
+form a single hole; sill height is above the wall's base. A ceiling is its polygon
+extruded from its soffit through its thickness. An obstruction is its base-centred
+box (section 5a), using the full object transform. Line-of-sight checks use only
+yaw for walls, hoods and ceilings; pitch and roll are ignored.
+
+The hood skirt is four panels around the opening, from `height_m - skirtDepth_m`
+to `height_m`, translated by the hood's origin. The drawn collar has no thickness,
+so these checks use **0.01 m** panels centred on its edges
+(`HOOD_SKIRT_PANEL_THICKNESS_M`). The opening stays open; the canopy and duct do
+not block these rays.
+
+Both engines use **9** evenly spaced points on each lit burner's centreline, from
+`fuelSurfaceZM` to `flameTipZM` inclusive (`FLAME_SAMPLE_COUNT`). A straight segment
+from the instrument to each sample finds the first blocking object. Intersections
+within **0.05 m** of either endpoint, measured along the segment, are ignored
+(`OCCLUSION_ENDPOINT_TOLERANCE_M`). This lets a flush-mounted gauge see out from its
+wall and a flame sample sit on a supporting surface without shadowing itself.
+Material beyond that distance still blocks, including when an endpoint is inside
+a thick object.
+
+For a gauge, `visibleFraction` (`visible_fraction` in Python) is the clear share
+of those nine samples. Multiply each admitted burner's existing point-source flux
+by its own share before summing. For several fires the returned aggregate share is
+weighted by their unshadowed contributions, so it states how much of the original
+total remains. If all contributions are zero, use the mean share of the admitted
+fires (all lit fires when none is admitted). A single fire retains the exact k/9
+value; a fully clear view leaves the existing flux unchanged. Low-signal and
+over-range checks use the scaled result.
+
+For a camera, `unobstructed` is the clear share of the primary burner's centreline
+samples that are **inside its frame**, or null when none are in frame. The existing
+base, tip and plume framing numbers do not change. This separates a lens that
+misses the flame from a wall that hides a correctly framed flame.
+
+| Code | Severity | Means |
+|---|---|---|
+| `gauge-no-line-of-sight` | error | No direct view of the flame; only indirect radiation can reach the gauge |
+| `gauge-partly-shadowed` | warning | Part of the flame is hidden; the visible percentage scales the prediction |
+| `camera-view-blocked` | warning | At least one in-frame centreline sample is hidden; the message names the first one or two blocking objects |
 
 ### Gas temperature — Heskestad plume centreline
 

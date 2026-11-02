@@ -5,6 +5,7 @@
  */
 
 import { DEVICE_COLORS } from './visual';
+import { firstOccluder, flameCentrelineSamples } from './occlusion';
 import {
   DEFAULT_RADIATIVE_FRACTION,
   POINT_SOURCE_MIN_DIAMETERS,
@@ -476,6 +477,18 @@ export interface Framing {
   base: boolean;
   tip: boolean;
   fraction: number;
+  /** Clear share of in-frame centreline samples; null when none is in frame. */
+  unobstructed: number | null;
+}
+
+function cameraLineOfSight(d: PlanDocument, c: CameraObject, b: BurnerObject): {
+  unobstructed: number | null; blockers: PlanObject[];
+} {
+  const samples = flameCentrelineSamples(positionOf(b), fuelSurfaceZM(b), flameTipZM(b)!)
+    .filter(p => isPointVisible(c, p));
+  const hits = samples.map(p => firstOccluder(d, positionOf(c), p));
+  const blockers = [...new Map(hits.filter((o): o is PlanObject => o !== null).map(o => [o.id, o])).values()];
+  return { unobstructed: samples.length ? hits.filter(o => o === null).length / samples.length : null, blockers };
 }
 
 /**
@@ -518,6 +531,7 @@ export function framingOf(d: PlanDocument, c: CameraObject, rings = 24): Framing
     base: isPointVisible(c, [bp[0], bp[1], baseZ]),
     tip: isPointVisible(c, [bp[0], bp[1], tipZ]),
     fraction: samples.filter((s) => isPointVisible(c, s)).length / samples.length,
+    unobstructed: cameraLineOfSight(d, c, burner).unobstructed,
   };
 }
 
@@ -626,6 +640,8 @@ export interface HeatFluxEstimate {
    *  acceptance cone. Zero when it faces away from all of them, or its view tube
    *  admits none. */
   incidentKwM2: number;
+  /** Visible centreline share; flux-weighted across admitted fires. */
+  visibleFraction: number;
   /** True when at least one fire is in front of the sensing face. */
   facesFire: boolean;
   /** False when no fire falls inside a view-limiting tube's acceptance cone. */
@@ -677,12 +693,15 @@ export function heatFluxEstimate(
 
   interface Part {
     burner: BurnerObject; distanceM: number; cosTheta: number; offAxisDeg: number; incident: number;
+    visibleFraction: number; unshadowed: number;
   }
   const parts: Part[] = [];
   for (const burner of fires) {
     const source = burnerPointSourceM(burner)!;
     const delta = sub(source, at);
     const distanceM = length(delta);
+    const samples = flameCentrelineSamples(positionOf(burner), fuelSurfaceZM(burner), flameTipZM(burner)!);
+    const visibleFraction = samples.filter(p => firstOccluder(d, at, p) === null).length / samples.length;
     if (distanceM < 1e-9) {
       // Sitting in the fire. There is no direction to the source, so there is no
       // cosine either; say so rather than dividing by zero.
@@ -691,13 +710,15 @@ export function heatFluxEstimate(
         facesFire: true, withinViewAngle: true, nearField: true,
         fractionOfRange: range === null ? null : Number.POSITIVE_INFINITY,
         sourceId: burner.id,
+        visibleFraction,
       };
     }
     const cosTheta = dot(normal, normalize(delta));
+    const unshadowed = pointSourceFluxKwM2(hrrKwOf(burner)!, distanceM, cosTheta, radiativeFractionOf(burner));
     parts.push({
       burner, distanceM, cosTheta,
       offAxisDeg: angleBetweenDeg(normal, delta),
-      incident: pointSourceFluxKwM2(hrrKwOf(burner)!, distanceM, cosTheta, radiativeFractionOf(burner)),
+      incident: unshadowed * visibleFraction, unshadowed, visibleFraction,
     });
   }
 
@@ -713,11 +734,19 @@ export function heatFluxEstimate(
   const pool = admitted.length > 0 ? admitted : parts;
   const dominant = pool.reduce((best, p) => (p.incident > best.incident ? p : best), pool[0]);
   const incidentKwM2 = admitted.reduce((sum, p) => sum + p.incident, 0);
+  const unshadowed = pool.reduce((sum, p) => sum + p.unshadowed, 0);
+  // Keep an exact k/9 for one fire (and exactly 1 when all fires are clear).
+  // With different shadows, the aggregate is the fraction of flux retained.
+  const visibleFraction = pool.every(p => p.visibleFraction === pool[0].visibleFraction)
+    ? pool[0].visibleFraction
+    : unshadowed > 0 ? pool.reduce((sum, p) => sum + p.incident, 0) / unshadowed
+      : pool.reduce((sum, p) => sum + p.visibleFraction, 0) / pool.length;
 
   return {
     distanceM: dominant.distanceM,
     offAxisDeg: dominant.offAxisDeg,
     incidentKwM2,
+    visibleFraction,
     facesFire: parts.some((p) => p.cosTheta > 0),
     withinViewAngle: admitted.length > 0,
     nearField: dominant.distanceM < POINT_SOURCE_MIN_DIAMETERS * burnerDiameterM(dominant.burner),
@@ -1146,8 +1175,10 @@ export function gaugeVerdict(d: PlanDocument, s: HeatFluxSensorObject): Instrume
   // Errors first, then warnings, in the order `instrumentChecks` files them.
   if (!Number.isFinite(e.incidentKwM2)) return { status: 'bad', label: 'in the fire' };
   if (!e.facesFire) return { status: 'bad', label: 'faces away' };
+  if (e.visibleFraction === 0) return { status: 'bad', label: 'no line of sight' };
   if (frac !== null && frac > 1) return { status: 'bad', label: 'over range' };
   if (!e.withinViewAngle) return { status: 'warn', label: 'outside view cone' };
+  if (e.visibleFraction < 1) return { status: 'warn', label: 'partly shadowed' };
   if (frac !== null && frac < LOW_SIGNAL_FRACTION) return { status: 'warn', label: 'low signal' };
   // The number is still printed, but it is an order of magnitude. Green would say
   // "size the gauge on this", which is the one thing `gauge-near-field` forbids.
@@ -1209,6 +1240,21 @@ export function instrumentChecks(d: PlanDocument): Issue[] {
       continue;
     }
 
+    if (e.visibleFraction === 0) {
+      out.push(issue('error', 'gauge-no-line-of-sight',
+        `${displayName(s)} has no line of sight: nothing in the plan lets it see the flame, ` +
+        'so it will read only what reaches it indirectly.', s.id));
+      // Facing, view cone, near field and range all judge radiation this gauge cannot
+      // receive. A low-signal "fit a more sensitive gauge" would be the wrong advice.
+      continue;
+    } else if (e.visibleFraction < 1) {
+      const share = (e.visibleFraction * 100).toFixed(0);
+      out.push(issue('warning', 'gauge-partly-shadowed',
+        (fireBurners(d).length > 1
+          ? `${displayName(s)} has ${share}% line of sight, weighted by each fire's unshadowed flux; `
+          : `${displayName(s)} sees ${share}% of the flame centreline; `) +
+        'the predicted flux has been scaled by this visible share.', s.id));
+    }
     if (!e.facesFire) {
       out.push(issue('error', 'gauge-facing-away',
         `The gauge normal is ${e.offAxisDeg.toFixed(0)}° off the line to the fire, so the ` +
@@ -1287,6 +1333,22 @@ export function instrumentChecks(d: PlanDocument): Issue[] {
     }
   }
 
+  return out;
+}
+
+export function cameraChecks(d: PlanDocument): Issue[] {
+  const b = primaryBurner(d);
+  if (!b || flameTipZM(b) === null) return [];
+  const out: Issue[] = [];
+  for (const c of cameras(d)) {
+    const view = cameraLineOfSight(d, c, b);
+    if (view.unobstructed !== null && view.unobstructed < 1) {
+      out.push(issue('warning', 'camera-view-blocked',
+        `${displayName(c)} frames the flame but ${((1 - view.unobstructed) * 100).toFixed(0)}% ` +
+        'of the centreline it frames is hidden behind ' +
+        view.blockers.slice(0, 2).map(displayName).join(' and ') + '.', c.id));
+    }
+  }
   return out;
 }
 
@@ -1378,7 +1440,7 @@ export function checkPlan(d: PlanDocument): Issue[] {
     }
   }
 
-  return out.concat(hoodChecks(d), ceilingChecks(d), instrumentChecks(d), flameChecks(d));
+  return out.concat(hoodChecks(d), ceilingChecks(d), instrumentChecks(d), cameraChecks(d), flameChecks(d));
 }
 
 /**

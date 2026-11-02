@@ -191,6 +191,10 @@ try {
   await screenshot('editor');
 
   phase('inspector editing');
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("East wall gauge"))');
+  const losReadout = label => '[...document.querySelectorAll("#inspector .readout")].find(r=>r.querySelector(".readout__label").textContent==="' + label + '")';
+  await waitFor(() => evaluate(losReadout('Line of sight') + '?.querySelector(".readout__value").textContent==="100%"'), 'Example gauge line of sight');
+  check('Example wall-mounted gauge has an unobstructed view', await evaluate(losReadout('Line of sight') + '.classList.contains("readout--good")'));
   // Inspector editing (review 2026-09-22): Tab after a committed edit keeps focus in
   // the panel instead of dropping it to the page, where the next Backspace deleted
   // the object (UI-1); a decimal comma is read as one (UI-4); Escape cancels what was
@@ -236,6 +240,7 @@ try {
   const fovReadout = '[...document.querySelectorAll("#inspector .readout")].find(r=>r.querySelector(".readout__label").textContent==="Field of view")?.querySelector(".readout__value").textContent';
   await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("FLIR A8303sc MWIR"))');
   await waitFor(() => evaluate('!!' + lensSelect + ' && !!document.querySelector("#inspector .lens-table")'), 'A8303sc lens select and comparison');
+  check('selected camera exposes flame line of sight', await evaluate('!!' + losReadout('Flame unobstructed')));
   const lensOptions = await evaluate('[...(' + lensSelect + ').options].map(o=>o.textContent).join("|")');
   check('the Lens select lists the datasheet lenses with their fields of view (' + lensOptions + ')',
     lensOptions === '17 mm (55.6° × 33.0°)|25 mm (39.4° × 22.8°)|50 mm (20.3° × 11.5°)|100 mm (10.2° × 5.8°)'
