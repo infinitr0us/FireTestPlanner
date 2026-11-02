@@ -261,18 +261,21 @@ function coverageTable(doc: PlanDocument, unit: LengthUnit): string {
     ].join('')
       + (c ? yesNo(c.base) + yesNo(c.tip)
         + `<td class="num ${c.fraction > 0.999 ? 'ok' : 'bad'}">${(c.fraction * 100).toFixed(0)}%</td>`
-        : '<td>—</td><td>—</td><td>—</td>')
+        + (c.unobstructed === null ? '<td>—</td>'
+          : `<td class="num ${c.unobstructed > 0.999 ? 'ok' : 'bad'}">${(c.unobstructed * 100).toFixed(0)}%</td>`)
+        : '<td>—</td><td>—</td><td>—</td><td>—</td>')
       + '</tr>';
   });
 
   return `<table>
     <thead><tr>${[
-      'Camera', `Slant range (${unit})`, 'mm/px at fire', 'Flame base', 'Flame tip', 'Plume',
+      'Camera', `Slant range (${unit})`, 'mm/px at fire', 'Flame base', 'Flame tip', 'Plume', 'Unobstructed',
     ].map(head).join('')}</tr></thead>
     <tbody>${rows.join('')}</tbody>
   </table>
   <p class="note">Coverage is computed against the Heskestad mean flame height and a 15° plume
-  envelope. The intermittent flame tip reaches higher than the mean.</p>${
+  envelope. Unobstructed is the clear share of centreline samples inside the frame.
+  The intermittent flame tip reaches higher than the mean.</p>${
   list.some((cam) => zoomOf(cam) !== 1) ? `
   <p class="note">mm/px for a zoomed camera is what its output pixels imply. A digital zoom
   crops and interpolates: it does not resolve finer detail than the unzoomed detector.</p>` : ''}`;
@@ -309,7 +312,8 @@ function instrumentTable(doc: PlanDocument, unit: LengthUnit): string {
     rows.push('<tr>' + swatch + [
       cell('heat flux'),
       cell(`${formatLength(e.distanceM, unit)} to ${displayName(findObject(doc, e.sourceId)!)}`, 'num'),
-      cell(finite ? `${e.incidentKwM2.toFixed(2)} kW/m²` : 'unbounded', 'num'),
+      cell((finite ? `${e.incidentKwM2.toFixed(2)} kW/m²` : 'unbounded')
+        + ` (${(e.visibleFraction * 100).toFixed(0)}% line of sight)`, 'num'),
       cell(frac === null || !Number.isFinite(frac) ? '—' : `${(frac * 100).toFixed(0)}%`, 'num'),
     ].join('')
       + `<td class="${verdict.status}">${esc(verdict.label)}</td></tr>`);
@@ -348,8 +352,9 @@ function instrumentTable(doc: PlanDocument, unit: LengthUnit): string {
   </table>
   <p class="note">Heat flux is a point-source estimate at mid-flame height,
   q″ = χ_r·Q̇·cos θ / (4πr²), summed over all fires. Gauge distances refer to the dominant source.
-  It assumes an unobstructed view — it does not account for the
-  walls in this plan. Thermocouple temperatures are the Heskestad plume centreline, quoted only
+  Each fire's flux is scaled by its visible share of nine flame centreline samples;
+  the total line of sight is weighted by the unshadowed flux. Indirect radiation is not estimated.
+  Thermocouple temperatures are the Heskestad plume centreline, quoted only
   for beads above the mean flame tip and inside the plume envelope; a bead off the axis reads
   lower. Both are for sizing and placement, not for calibration.</p>`;
 }

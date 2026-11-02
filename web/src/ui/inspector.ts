@@ -902,6 +902,9 @@ export class Inspector {
         readout('Flame tip in frame', framing.tip ? 'yes' : 'no', framing.tip ? 'good' : 'bad'),
         readout('Plume in frame', `${(framing.fraction * 100).toFixed(0)}%`,
           framing.fraction > 0.999 ? 'good' : 'bad'),
+        readout('Flame unobstructed', framing.unobstructed === null ? 'no centreline in frame'
+          : `${(framing.unobstructed * 100).toFixed(0)}%`,
+          framing.unobstructed === null ? 'muted' : framing.unobstructed > 0.999 ? 'good' : 'bad'),
       );
       if (!framing.tip || !framing.base) {
         // Deliberately NOT compared against the flame height to decide whether the
@@ -1390,6 +1393,8 @@ export class Inspector {
             ? `${estimate.incidentKwM2.toFixed(2)} kW/m²`
             : 'inside the fire',
           estimate.facesFire ? undefined : 'bad'),
+        readout('Line of sight', `${(estimate.visibleFraction * 100).toFixed(0)}%`,
+          estimate.visibleFraction === 1 ? 'good' : estimate.visibleFraction === 0 ? 'bad' : 'warn'),
       );
 
       if (range !== null && estimate.fractionOfRange !== null) {
@@ -1408,9 +1413,10 @@ export class Inspector {
 
       items.push(h('p', { class: 'readout__note' }, [
         'Point source at mid-flame height: q″ = χ_r·Q̇·cos θ / (4πr²). A first-order '
-        + 'estimate for sizing and placement, and it assumes an unobstructed view — it '
-        + 'knows nothing about the walls in this plan. Flux sums all fires; distance '
-        + 'and angle refer to the source contributing most.',
+        + 'estimate for sizing and placement, scaled by line of sight to nine flame '
+        + 'centreline samples. Flux sums all fires; distance '
+        + 'and angle refer to the source contributing most.'
+        + (sources.length > 1 ? ' Line of sight is weighted by each fire’s unshadowed flux.' : ''),
       ]));
 
       if (estimate.nearField && burner) {

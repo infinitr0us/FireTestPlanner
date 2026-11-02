@@ -11,6 +11,7 @@ import { browserResultsSource } from '/src/io/fds-results-source.ts';
 import { handleTransportKey, transportButton } from '/src/ui/transport.ts';
 import { visualTheme } from '/src/ui/theme.ts';
 import { DEVICE_COLORS } from '/src/core/visual.ts';
+import { checkOcclusionInspector } from './occlusion.ts';
 const results = [], output = document.querySelector('#report');
 const check = (name, ok) => {
   results.push({name, passed: Boolean(ok)});
@@ -48,6 +49,7 @@ const deviceMetadata = ['TEMPERATURE','THERMOCOUPLE','WALL TEMPERATURE','GAUGE H
   .map((quantity,i) => `DEVICE\nprobe-${i} % ${quantity}\n0.5 ${0.1+i*0.18} 0.5 0 0 1\n`).join('');
 let dialog;
 try {
+  await checkOcclusionInspector(check, waitFor);
   // Exercise native event targets, not a duplicate of the shortcut decision logic.
   const inputs = ['input','textarea','select','div'].map(tag=>document.createElement(tag));
   inputs.at(-1).contentEditable = 'true';

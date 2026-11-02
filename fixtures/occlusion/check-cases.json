@@ -1,0 +1,982 @@
+{
+  "note": "Cases add objects to a fire with mean tip at 2 m. Default instruments at [-4,0,1], aimed at [0,0,1]. visible is an independently pinned count out of nine.",
+  "burner": {
+    "id": "fire",
+    "type": "burner",
+    "name": "Test fire",
+    "footprint": {
+      "shape": "circle",
+      "diameter_m": 1
+    },
+    "rimHeight_m": 0,
+    "fire": {
+      "hrr_kw": 592.0354356218091
+    }
+  },
+  "cases": [
+    {
+      "name": "clear",
+      "objects": [],
+      "visible": 9
+    },
+    {
+      "name": "solid wall",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2
+        }
+      ],
+      "visible": 0,
+      "blocker": "Room wall"
+    },
+    {
+      "name": "doorway",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2,
+          "openings": [
+            {
+              "offset_m": 1,
+              "width_m": 2,
+              "sillHeight_m": 0,
+              "height_m": 2.5
+            }
+          ]
+        }
+      ],
+      "visible": 9
+    },
+    {
+      "name": "lower four samples hidden",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 0.91,
+          "thickness_m": 0.2
+        }
+      ],
+      "visible": 5,
+      "blocker": "Room wall"
+    },
+    {
+      "name": "flush wall face",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -4.1,
+              -2
+            ],
+            [
+              -4.1,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2
+        }
+      ],
+      "visible": 9
+    },
+    {
+      "name": "within endpoint tolerance",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -4.08,
+              -2
+            ],
+            [
+              -4.08,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2
+        }
+      ],
+      "visible": 9
+    },
+    {
+      "name": "past endpoint tolerance",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -4.03,
+              -2
+            ],
+            [
+              -4.03,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2
+        }
+      ],
+      "visible": 0,
+      "blocker": "Room wall"
+    },
+    {
+      "name": "hidden wall still blocks",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2,
+          "display": {
+            "visible": false
+          }
+        }
+      ],
+      "visible": 0,
+      "blocker": "Room wall"
+    },
+    {
+      "name": "obstruction",
+      "objects": [
+        {
+          "id": "box",
+          "type": "obstruction",
+          "name": "Equipment box",
+          "size_m": [
+            0.2,
+            3,
+            3
+          ],
+          "transform": {
+            "position_m": [
+              -2,
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "visible": 0,
+      "blocker": "Equipment box"
+    },
+    {
+      "name": "slab viewed from above",
+      "objects": [
+        {
+          "id": "slab",
+          "type": "ceiling",
+          "name": "Ceiling slab",
+          "polygon_m": [
+            [
+              -3,
+              -3
+            ],
+            [
+              3,
+              -3
+            ],
+            [
+              3,
+              3
+            ],
+            [
+              -3,
+              3
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2
+        }
+      ],
+      "visible": 0,
+      "at": [
+        0,
+        0,
+        5
+      ],
+      "blocker": "Ceiling slab"
+    },
+    {
+      "name": "hood skirt hides upper two samples",
+      "objects": [
+        {
+          "id": "hood",
+          "type": "hood",
+          "name": "Hood skirt",
+          "opening_m": [
+            2,
+            2
+          ],
+          "height_m": 2.5,
+          "skirtDepth_m": 1.1
+        }
+      ],
+      "visible": 7,
+      "blocker": "Hood skirt"
+    },
+    {
+      "name": "hood opening stays open",
+      "objects": [
+        {
+          "id": "hood",
+          "type": "hood",
+          "name": "Hood skirt",
+          "opening_m": [
+            2,
+            2
+          ],
+          "height_m": 2.5,
+          "skirtDepth_m": 1.1
+        }
+      ],
+      "visible": 9,
+      "at": [
+        0,
+        0,
+        5
+      ]
+    },
+    {
+      "name": "canopy and duct do not block",
+      "objects": [
+        {
+          "id": "hood",
+          "type": "hood",
+          "name": "Hood skirt",
+          "opening_m": [
+            2,
+            2
+          ],
+          "height_m": 2.5,
+          "skirtDepth_m": 0
+        }
+      ],
+      "visible": 9
+    },
+    {
+      "name": "yawed wall",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              0
+            ],
+            [
+              2,
+              0
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2,
+          "transform": {
+            "position_m": [
+              -2,
+              0,
+              0
+            ],
+            "rotation_quat": [
+              0,
+              0,
+              0.7071067811865476,
+              0.7071067811865476
+            ]
+          }
+        }
+      ],
+      "visible": 0,
+      "blocker": "Room wall"
+    },
+    {
+      "name": "wall pitch ignored",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2,
+          "transform": {
+            "position_m": [
+              0,
+              0,
+              0
+            ],
+            "rotation_quat": [
+              0.7071067811865476,
+              0,
+              0,
+              0.7071067811865476
+            ]
+          }
+        }
+      ],
+      "visible": 0,
+      "blocker": "Room wall"
+    },
+    {
+      "name": "translated wall base clears flame",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2,
+          "transform": {
+            "position_m": [
+              0,
+              0,
+              2
+            ]
+          }
+        }
+      ],
+      "visible": 9
+    },
+    {
+      "name": "window sill and lintel",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2,
+          "openings": [
+            {
+              "offset_m": 1,
+              "width_m": 2,
+              "sillHeight_m": 0.8,
+              "height_m": 0.4
+            }
+          ]
+        }
+      ],
+      "visible": 3,
+      "blocker": "Room wall"
+    },
+    {
+      "name": "overlapping openings form a union",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2,
+          "openings": [
+            {
+              "offset_m": 1,
+              "width_m": 2,
+              "sillHeight_m": 0,
+              "height_m": 1.1
+            },
+            {
+              "offset_m": 1,
+              "width_m": 2,
+              "sillHeight_m": 0.9,
+              "height_m": 1.6
+            }
+          ]
+        }
+      ],
+      "visible": 9
+    },
+    {
+      "name": "doorway spans a corner",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              0
+            ],
+            [
+              0,
+              0
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2,
+          "openings": [
+            {
+              "offset_m": 1,
+              "width_m": 3,
+              "sillHeight_m": 0,
+              "height_m": 2.5
+            }
+          ]
+        }
+      ],
+      "visible": 9
+    },
+    {
+      "name": "nearest blocker regardless of object order",
+      "objects": [
+        {
+          "id": "far",
+          "name": "Far wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -1,
+              -2
+            ],
+            [
+              -1,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2
+        },
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2
+        }
+      ],
+      "visible": 0,
+      "blocker": "Room wall"
+    },
+    {
+      "name": "camera looks away",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2
+        }
+      ],
+      "visible": 0,
+      "blocker": "Room wall",
+      "cameraAim": [
+        -8,
+        0,
+        1
+      ],
+      "inFrame": 0
+    },
+    {
+      "name": "burners and instruments never block",
+      "objects": [
+        {
+          "id": "unlit",
+          "type": "burner",
+          "footprint": {
+            "shape": "square",
+            "size_m": [
+              2,
+              2
+            ]
+          },
+          "rimHeight_m": 3,
+          "transform": {
+            "position_m": [
+              -2,
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "visible": 9
+    },
+    {
+      "name": "camera frames seven of nine samples",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 0.91,
+          "thickness_m": 0.2
+        }
+      ],
+      "visible": 5,
+      "blocker": "Room wall",
+      "cameraFocal": 60,
+      "inFrame": 7,
+      "visibleInFrame": 4
+    },
+    {
+      "name": "camera frames only clear upper samples",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 1.4,
+          "thickness_m": 0.2
+        }
+      ],
+      "visible": 5,
+      "blocker": "Room wall",
+      "at": [
+        -4,
+        0,
+        2
+      ],
+      "cameraAim": [
+        0,
+        0,
+        2
+      ],
+      "cameraFocal": 60,
+      "inFrame": 4,
+      "visibleInFrame": 4
+    },
+    {
+      "name": "camera names two first blockers",
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 0.91,
+          "thickness_m": 0.2
+        },
+        {
+          "id": "upper",
+          "type": "wall",
+          "name": "Upper screen",
+          "polyline_m": [
+            [
+              -1,
+              -2
+            ],
+            [
+              -1,
+              2
+            ]
+          ],
+          "baseHeight_m": 1.1,
+          "height_m": 2,
+          "thickness_m": 0.2
+        }
+      ],
+      "visible": 1,
+      "blocker": "Room wall",
+      "blockers": [
+        "Room wall",
+        "Upper screen"
+      ]
+    }
+  ],
+  "segments": [
+    {
+      "name": "short segment within endpoint tolerances",
+      "a": [
+        -2.01,
+        0,
+        1
+      ],
+      "b": [
+        -1.99,
+        0,
+        1
+      ],
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2
+        }
+      ],
+      "blocker": null
+    },
+    {
+      "name": "flame endpoint surface ignored",
+      "a": [
+        -4,
+        0,
+        1
+      ],
+      "b": [
+        0,
+        0,
+        1
+      ],
+      "objects": [
+        {
+          "id": "box",
+          "type": "obstruction",
+          "name": "Equipment box",
+          "size_m": [
+            0.2,
+            3,
+            3
+          ],
+          "transform": {
+            "position_m": [
+              0.08,
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "blocker": null
+    },
+    {
+      "name": "parallel ray within wall",
+      "a": [
+        -2,
+        -1,
+        1
+      ],
+      "b": [
+        -2,
+        1,
+        1
+      ],
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2
+        }
+      ],
+      "blocker": "wall"
+    },
+    {
+      "name": "parallel ray outside wall",
+      "a": [
+        -3,
+        -1,
+        1
+      ],
+      "b": [
+        -3,
+        1,
+        1
+      ],
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2
+        }
+      ],
+      "blocker": null
+    },
+    {
+      "name": "oblique ray clips doorway jamb",
+      "a": [
+        -4,
+        0,
+        1
+      ],
+      "b": [
+        0,
+        1.8,
+        1
+      ],
+      "objects": [
+        {
+          "id": "wall",
+          "name": "Room wall",
+          "type": "wall",
+          "polyline_m": [
+            [
+              -2,
+              -2
+            ],
+            [
+              -2,
+              2
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2,
+          "openings": [
+            {
+              "offset_m": 2,
+              "width_m": 0.9,
+              "sillHeight_m": 0,
+              "height_m": 2.5
+            }
+          ]
+        }
+      ],
+      "blocker": "wall"
+    },
+    {
+      "name": "tilted obstruction uses full rotation",
+      "a": [
+        -4,
+        0,
+        1
+      ],
+      "b": [
+        0,
+        0,
+        1
+      ],
+      "objects": [
+        {
+          "id": "box",
+          "type": "obstruction",
+          "name": "Equipment box",
+          "size_m": [
+            0.2,
+            0.2,
+            3
+          ],
+          "transform": {
+            "position_m": [
+              -2,
+              0,
+              0
+            ],
+            "rotation_quat": [
+              0,
+              0.7071067811865476,
+              0,
+              0.7071067811865476
+            ]
+          }
+        }
+      ],
+      "blocker": null
+    },
+    {
+      "name": "polygon slab does not fill its bounding box",
+      "a": [
+        2,
+        2,
+        5
+      ],
+      "b": [
+        2,
+        2,
+        0
+      ],
+      "objects": [
+        {
+          "id": "slab",
+          "type": "ceiling",
+          "name": "Ceiling slab",
+          "polygon_m": [
+            [
+              -3,
+              -3
+            ],
+            [
+              3,
+              -3
+            ],
+            [
+              -3,
+              3
+            ]
+          ],
+          "height_m": 3,
+          "thickness_m": 0.2
+        }
+      ],
+      "blocker": null
+    }
+  ]
+}

@@ -14,6 +14,7 @@ import numpy as np
 from . import correlations, serialize
 from . import linked_files
 from ._math import normalize
+from .occlusion import first_occluder, flame_centreline_samples
 from .objects import (
     Burner,
     Camera,
@@ -655,6 +656,7 @@ class Plan:
         issues.extend(self.hood_checks())
         issues.extend(self.ceiling_checks())
         issues.extend(self.instrument_checks())
+        issues.extend(self.camera_checks())
         issues.extend(self.flame_checks())
         return issues
 
@@ -918,6 +920,8 @@ class Plan:
             source = np.array([bp[0], bp[1], burner.point_source_z_m()])
             delta = source - at
             distance = float(np.linalg.norm(delta))
+            samples = flame_centreline_samples(burner)
+            visible_fraction = sum(first_occluder(self.objects, at, p) is None for p in samples) / len(samples)
             if distance < 1e-9:
                 # Sitting in the fire. There is no direction to the source, so there
                 # is no cosine either; say so rather than dividing by zero.
@@ -931,13 +935,15 @@ class Plan:
                     "near_field": True,
                     "fraction_of_range": None if rng is None else float("inf"),
                     "source_id": burner.id,
+                    "visible_fraction": visible_fraction,
                 }
             cos_theta = float(np.dot(normal, delta / distance))
             off_axis = math.degrees(math.acos(float(np.clip(cos_theta, -1.0, 1.0))))
             incident = correlations.point_source_flux_kw_m2(
                 burner.hrr_kw, distance, cos_theta, burner.radiative_fraction
             )
-            parts.append((burner, distance, cos_theta, off_axis, incident))
+            parts.append((burner, distance, cos_theta, off_axis, incident * visible_fraction,
+                          visible_fraction, incident))
 
         # A view-limiting tube admits only the fires inside its acceptance cone, and
         # the sum is over those alone; with no fire inside it the figures describe
@@ -950,14 +956,22 @@ class Plan:
         for part in pool[1:]:
             if part[4] > dominant[4]:
                 dominant = part
-        burner, distance, _, off_axis, _ = dominant
+        burner, distance, _, off_axis, _, _, _ = dominant
         incident = float(sum(part[4] for part in admitted))
+        unshadowed = sum(part[6] for part in pool)
+        if all(p[5] == pool[0][5] for p in pool):
+            visible_fraction = pool[0][5]
+        elif unshadowed > 0:
+            visible_fraction = sum(p[4] for p in pool) / unshadowed
+        else:
+            visible_fraction = sum(p[5] for p in pool) / len(pool)
 
         return {
             "sensor_id": sensor.id,
             "distance_m": distance,
             "off_axis_deg": off_axis,
             "incident_kw_m2": incident,
+            "visible_fraction": visible_fraction,
             "faces_fire": any(part[2] > 0.0 for part in parts),
             "within_view_angle": bool(admitted),
             "near_field": distance < correlations.POINT_SOURCE_MIN_DIAMETERS * burner.diameter_m,
@@ -1072,6 +1086,24 @@ class Plan:
                     "is unbounded; move it out of the flame", sensor.id))
                 continue
 
+            if est["visible_fraction"] == 0:
+                issues.append(Issue(
+                    "error", "gauge-no-line-of-sight",
+                    "{} has no line of sight: nothing in the plan lets it see the flame, "
+                    "so it will read only what reaches it indirectly.".format(sensor.name), sensor.id))
+                # Facing, view cone, near field and range all judge radiation this gauge
+                # cannot receive; "fit a more sensitive gauge" would be the wrong advice.
+                continue
+            elif est["visible_fraction"] < 1:
+                share = est["visible_fraction"] * 100
+                description = (
+                    "{} has {:.0f}% line of sight, weighted by each fire's unshadowed flux; "
+                    if len(self.fire_burners) > 1 else "{} sees {:.0f}% of the flame centreline; "
+                ).format(sensor.name, share)
+                issues.append(Issue(
+                    "warning", "gauge-partly-shadowed",
+                    description + "the predicted flux has been scaled by this visible share.", sensor.id))
+
             if not est["faces_fire"]:
                 issues.append(Issue(
                     "error", "gauge-facing-away",
@@ -1154,6 +1186,31 @@ class Plan:
 
     # -- camera framing --------------------------------------------------
 
+    def _camera_line_of_sight(self, camera, burner):
+        points = flame_centreline_samples(burner)
+        _, visible = camera.project(np.asarray(points))
+        hits = [first_occluder(self.objects, camera.position, p)
+                for p, in_frame in zip(points, visible) if in_frame]
+        blockers = {o.id: o for o in hits if o is not None}
+        return (sum(o is None for o in hits) / len(hits) if hits else None), list(blockers.values())
+
+    def camera_checks(self) -> List[Issue]:
+        try:
+            burner = self.burner
+        except PlanError:
+            return []
+        if not any(lit.raw is burner.raw for lit in self.fire_burners):
+            return []
+        issues = []
+        for camera in self.cameras.values():
+            fraction, blockers = self._camera_line_of_sight(camera, burner)
+            if fraction is not None and fraction < 1:
+                issues.append(Issue(
+                    "warning", "camera-view-blocked",
+                    "{} frames the flame but {:.0f}% of the centreline it frames is hidden behind {}."
+                    .format(camera.name, (1 - fraction) * 100, ' and '.join(o.name for o in blockers[:2])), camera.id))
+        return issues
+
     def framing(self, camera: Camera, samples: int = 24) -> Dict[str, Any]:
         """Does this camera actually frame the fire?
 
@@ -1168,6 +1225,7 @@ class Plan:
             "ground_sample_distance_mm": camera.ground_sample_distance_m() * 1000.0,
             "hfov_deg": camera.hfov_deg,
             "vfov_deg": camera.vfov_deg,
+            "unobstructed": None,
         }
         try:
             burner = self.burner
@@ -1212,6 +1270,7 @@ class Plan:
                 pts.append([bx + r * math.cos(ang), by + r * math.sin(ang), z])
         _, vis = camera.project(np.asarray(pts))
         result["plume_fraction_visible"] = float(np.mean(vis))
+        result["unobstructed"] = self._camera_line_of_sight(camera, burner)[0]
         return result
 
     # -- export ----------------------------------------------------------
