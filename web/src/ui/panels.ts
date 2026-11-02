@@ -88,7 +88,7 @@ export class Palette {
         class: 'palette__tile', type: 'button',
         title: i18n.t("A flame reconstructed from the test's cameras: pick the pipeline's voxels/ folder and play it back in the layout."),
         onclick: () => this.linkFlame?.(),
-      }, [h('span', { class: 'palette__icon' }, ['✶']), h('span', {}, [i18n.t("3D flame…")])]),
+      }, [h('span', { class: 'palette__icon', 'aria-hidden': 'true' }, ['✶']), h('span', {}, [i18n.t("3D flame…")])]),
     ]));
 
     this.root.append(this.disclosure('instruments', i18n.t("Instruments"), [h('div', { class: 'palette__grid' }, [
@@ -175,7 +175,7 @@ export class Palette {
    */
   private renderFdsPaste(): void {
     const input = h('textarea', {
-      class: 'fdspaste__input',
+      class: 'fdspaste__input', 'aria-label': i18n.t('FDS record'),
       spellcheck: false,
       placeholder: "&OBST XB=0,2.4,0,0.1,0,2.5, SURF_ID='WALL' /",
       value: this.fdsDraft,
@@ -252,7 +252,7 @@ export class Palette {
       type: 'button',
       title: title ?? '',
       onclick: () => this.arm(make),
-    }, [h('span', { class: 'palette__icon' }, [icon]), h('span', {}, [label])]);
+    }, [h('span', { class: 'palette__icon', 'aria-hidden': 'true' }, [icon]), h('span', {}, [label])]);
   }
 
   private arm(make: () => PlanObject): void {
@@ -287,6 +287,7 @@ export class Outliner {
   ) {}
 
   render(): void {
+    const focusedId = (document.activeElement as HTMLElement)?.dataset.objectId;
     clear(this.root);
     const objects = this.store.document.objects;
 
@@ -301,14 +302,21 @@ export class Outliner {
       return h('li', {}, [
         h('button', {
           class: `outliner__row${selected ? ' outliner__row--selected' : ''}`,
-          type: 'button',
+          type: 'button', 'aria-pressed': String(selected), dataset: { objectId: obj.id },
+          onkeydown: (e: KeyboardEvent) => {
+            if (!['ArrowUp', 'ArrowDown'].includes(e.key) || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+            e.preventDefault(); e.stopPropagation();
+            const rows = [...this.root.querySelectorAll<HTMLButtonElement>('.outliner__row')];
+            const index = rows.indexOf(e.currentTarget as HTMLButtonElement);
+            rows[(index + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length].focus();
+          },
           onclick: (e: MouseEvent) => {
             if (e.shiftKey || e.ctrlKey || e.metaKey) this.store.toggleSelect(obj.id);
             else this.store.select([obj.id]);
           },
         }, [
           h('span', {
-            class: 'outliner__icon',
+            class: 'outliner__icon', 'aria-hidden': 'true',
             style: { color: hasObjectColor(obj) ? objectColor(obj) : undefined },
           }, [TYPE_ICON[obj.type] ?? '◇']),
           h('span', { class: 'outliner__name' }, [displayName(obj)]),
@@ -317,10 +325,14 @@ export class Outliner {
         ]),
       ]);
     })));
+    if (focusedId) [...this.root.querySelectorAll<HTMLElement>('[data-object-id]')].find(e => e.dataset.objectId === focusedId)?.focus();
   }
 }
 
 export class ChecksPanel {
+  private heading = h('h3', { class: 'panel__section' });
+  private headingText = h('span');
+  private count = h('span', { class: 'panel__count', role: 'status', 'aria-live': 'polite' });
   /** Set by the app: a finding about a test data source opens that source. */
   openTestData: ((sourceId: string) => void) | null = null;
 
@@ -330,18 +342,19 @@ export class ChecksPanel {
   ) {}
 
   render(): void {
-    clear(this.root);
+    if (!this.heading.isConnected) {
+      this.heading.append(this.headingText, this.count);
+      this.root.append(this.heading);
+    }
+    for (const child of [...this.root.children]) if (child !== this.heading) child.remove();
     const issues = checkPlan(this.store.document);
     const errors = issues.filter((i) => i.severity === 'error');
     const warnings = issues.filter((i) => i.severity === 'warning');
 
-    this.root.append(h('h3', { class: 'panel__section' }, [
-      i18n.t("Checks"),
-      h('span', { class: 'panel__count' }, [
-        errors.length > 0 ? i18n.plural('{count} error', '{count} errors', errors.length) :
-        warnings.length > 0 ? i18n.plural('{count} warning', '{count} warnings', warnings.length) : i18n.t("all clear"),
-      ]),
-    ]));
+    const countText = errors.length > 0 ? i18n.plural('{count} error', '{count} errors', errors.length) :
+        warnings.length > 0 ? i18n.plural('{count} warning', '{count} warnings', warnings.length) : i18n.t("all clear");
+    this.headingText.textContent = i18n.t('Checks');
+    if (this.count.textContent !== countText) this.count.textContent = countText;
 
     if (issues.length === 0) {
       this.root.append(h('p', { class: 'panel__hint' }, [i18n.t("No issues found.")]));
@@ -354,7 +367,7 @@ export class ChecksPanel {
     this.root.append(h('ul', { class: 'checks' }, sorted.map((issue) =>
       h('li', { class: `checks__item checks__item--${issue.severity}` }, [
         h('button', {
-          class: 'checks__body',
+          class: 'checks__body', dataset: { objectId: issue.objectId ?? '' },
           type: 'button',
           disabled: !issue.objectId && !(issue.sourceId && this.openTestData),
           title: issue.sourceId && this.openTestData ? i18n.t("Open this source in Test data") : '',
@@ -364,6 +377,7 @@ export class ChecksPanel {
           },
         }, [
           h('span', { class: 'checks__code' }, [issue.code]),
+          h('span', { class: 'sr-only' }, [issue.severity === 'error' ? i18n.t('Error') : issue.severity === 'warning' ? i18n.t('Warning') : i18n.t('Information')]),
           h('span', { class: 'checks__message' }, [issue.message]),
         ]),
       ]))));

@@ -6,7 +6,8 @@
 
 &PROP ID='TC 1.5 mm', DIAMETER=0.0015 /
 
-&DEVC ID='East wall gauge', XYZ=1.45,0,0.9, QUANTITY='RADIATIVE HEAT FLUX GAS', ORIENTATION=-0.9946,0.0000,-0.1043 /
+! East wall gauge: tilt exceeds 5 degrees; FDS reports the flux normal to the face, a factor cos(tilt) on the direct component.
+&DEVC ID='East wall gauge', XYZ=1.45,0,0.9, QUANTITY='GAUGE HEAT FLUX', IOR=-1, ORIENTATION=-0.9946,0.0000,-0.1043 /
 &DEVC ID='North wall gauge', XYZ=0,1.95,0.9, QUANTITY='GAUGE HEAT FLUX', IOR=-2, ORIENTATION=0.0000,-0.9970,-0.0777 /
 &DEVC ID='East wall rake_1', XYZ=1.45,0,0.3, QUANTITY='WALL TEMPERATURE', IOR=-1 /
 &DEVC ID='East wall rake_2', XYZ=1.45,0,0.9, QUANTITY='WALL TEMPERATURE', IOR=-1 /

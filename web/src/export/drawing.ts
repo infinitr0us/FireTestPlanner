@@ -351,7 +351,7 @@ export function elevationHeading(doc: PlanDocument, view: 'front' | 'side'): str
 }
 
 /**
- * The plan's orientation mark, in the top-right margin: a north arrow where the
+ * The plan's orientation mark, in the reserved header: a north arrow where the
  * plan records which way north is, otherwise an arrow along +Y labelled as such.
  */
 function orientationMark(doc: PlanDocument): string {
@@ -551,7 +551,6 @@ function drawPlan(doc: PlanDocument, p: Projector, unit: LengthUnit): string {
   const [ox, oy] = p.project([0, 0, 0]);
   out.push(line(ox - 10, oy, ox + 10, oy, COLORS.ink, 'stroke-width="0.8"'));
   out.push(line(ox, oy - 10, ox, oy + 10, COLORS.ink, 'stroke-width="0.8"'));
-  out.push(orientationMark(doc));
 
   return out.join('\n');
 }
@@ -911,12 +910,15 @@ export function buildViewSvg(doc: PlanDocument, view: DrawingView, unit: LengthU
   const body = view === 'plan'
     ? drawPlan(doc, projector, unit)
     : drawElevation(doc, projector, unit, view);
-  const total = height + 34;
+  // A separate header viewport reserves space even when labels reach the edge.
+  const header = view === 'plan' ? 66 : 0;
+  const total = header + height + 34;
 
   return [
     `<svg class="drawing" viewBox="0 0 ${PAGE_WIDTH_PX} ${total.toFixed(0)}" width="100%" xmlns="http://www.w3.org/2000/svg">`,
     `<rect width="${PAGE_WIDTH_PX}" height="${total.toFixed(0)}" fill="#ffffff"/>`,
-    body,
+    header ? `<g class="drawing__orientation">${orientationMark(doc)}</g>` : '',
+    `<svg class="drawing__content" y="${header}" width="${PAGE_WIDTH_PX}" height="${height}" viewBox="0 0 ${PAGE_WIDTH_PX} ${height}" overflow="hidden">\n${body}\n</svg>`,
     scaleBar(projector, unit, total - 12),
     '</svg>',
   ].join('\n');

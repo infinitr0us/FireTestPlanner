@@ -7,6 +7,16 @@ import type { LengthUnit } from '../core/types';
 import { h } from './dom';
 
 export function row(label: string, control: HTMLElement, hint?: string): HTMLElement {
+  // A wrapping label names only its first input. Give every vector component a
+  // distinct name, retaining the visible row label and component/axis text.
+  const fields = control.matches('input, select, textarea') ? [control]
+    : [...control.querySelectorAll<HTMLElement>('input, select, textarea')];
+  for (const field of fields) {
+    if (!field.hasAttribute('aria-label')) {
+      const axis = field.closest('.field__vec-cell')?.querySelector('.field__vec-axis')?.textContent;
+      field.setAttribute('aria-label', axis ? i18n.t('{label}: {axis}', { label, axis }) : label);
+    }
+  }
   return h('label', { class: 'field' }, [
     h('span', { class: 'field__label', title: hint ?? '' }, [label]),
     control,
@@ -47,6 +57,16 @@ export function numberField(
       if (Number.isFinite(v)) onChange(v);
     },
   });
+}
+
+/** An absent measurement is not a measured zero. Clearing preserves null. */
+export function optionalNumberField(value: number | null | undefined, onChange: (v: number | null) => void,
+  opts: { step?: number; min?: number; max?: number } = {}): HTMLInputElement {
+  const input = numberField(value ?? 0, onChange, opts);
+  input.value = value == null ? '' : input.value;
+  input.placeholder = i18n.t('not set');
+  input.addEventListener('change', () => { if (!input.value.trim()) onChange(null); });
+  return input;
 }
 
 /**

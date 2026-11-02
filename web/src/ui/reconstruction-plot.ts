@@ -122,7 +122,7 @@ export class ReconstructionView implements PlotView {
     const charts = h('div');
     const volume = chart(plot, 1), area = chart(plot, 2);
     charts.append(volume.svg, area.svg);
-    const value = h('output', { class: 'plot-panel__values', 'aria-live': 'polite' });
+    const value = h('output', { class: 'plot-panel__values', 'aria-live': 'off' });
     const slider = h('input', { type: 'range', min: 0, max: plot.samples.length - 1, step: 1, value: this.index,
       'aria-label': i18n.t("Measurement sample"), disabled: plot.samples.length === 1,
       oninput: (e: Event) => {

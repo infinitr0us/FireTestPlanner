@@ -189,7 +189,7 @@ export class CurveEditor {
     }, 'btn--primary'), 'curve-apply');
     const area = h('textarea', { class: 'field__input hrr-curve__table', rows: 6, spellcheck: false, value: this.table,
       'data-focus-key': 'curve-table', 'aria-label': i18n.t("Curve table: time (s) and HRR (kW)"),
-      placeholder: 'Paste two columns from a spreadsheet:\ntime (s)\tHRR (kW)\n0\t0\n60\t168.8',
+      placeholder: i18n.t('Paste two columns from a spreadsheet:\ntime (s)\tHRR (kW)\n0\t0\n60\t168.8'),
       oninput: (e: Event) => { this.table = (e.target as HTMLTextAreaElement).value; refresh(); },
       onblur: (e: Event) => { this.table = (e.target as HTMLTextAreaElement).value; refresh(); } });
     const refresh = (): void => {

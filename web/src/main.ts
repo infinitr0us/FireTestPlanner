@@ -47,6 +47,7 @@ import { fireClockMarks } from './state/fire-clock';
 import { Playhead } from './state/playhead';
 import { Store } from './state/store';
 import { h, qs } from './ui/dom';
+import { menuButton } from './ui/menu-button';
 import { FdsImportDialog } from './ui/import-fds';
 import { FdsExportDialog } from './ui/export-fds';
 import { FdsResultsDialog } from './ui/fds-results';
@@ -365,6 +366,9 @@ store.subscribe((event) => {
 // -- toolbar --------------------------------------------------------------
 
 const toolbar = qs('#toolbar');
+const fileStatus = h('div', { class: 'sr-only', role: 'status', 'aria-live': 'polite', id: 'file-status' });
+toolbar.after(fileStatus);
+const announceFile = (text: string): void => { fileStatus.textContent = text; };
 
 /**
  * A viewport-option toggle.
@@ -386,6 +390,8 @@ const option = (
   }, title);
 
 function renderToolbar(): void {
+  const focused = toolbar.contains(document.activeElement) ? document.activeElement as HTMLElement : null;
+  const focusText = focused?.textContent;
   const dirtyMark = store.dirty ? ' •' : '';
 
   toolbar.replaceChildren(
@@ -400,11 +406,13 @@ function renderToolbar(): void {
       btn(i18n.t("Save"), () => { void savePlan(false); }),
       btn(i18n.t("Save as…"), () => { void savePlan(true); }),
       btn(i18n.t("Next test…"), () => { void saveNextTest(); }, i18n.t("Copy the rig for the next test of this series")),
-      btn(i18n.t("Import FDS…"), () => { void importFds(); },
-        i18n.t("Build a plan from an FDS input file — geometry, the burner and the devices")),
-      btn(i18n.t("Export to FDS…"), () => { playhead.pause(); fdsExport.open(store.document, store.fileName); },
-        i18n.t("Write gauges and thermocouple beads as FDS devices")),
-      btn(i18n.t("FDS results…"), () => { playhead.pause(); fdsResults.open(); }, i18n.t("Visualize and play recorded FDS simulation output")),
+      menuButton(i18n.t("FDS"), 'fds-menu', [
+        btn(i18n.t("Import FDS…"), () => { void importFds(); },
+          i18n.t("Build a plan from an FDS input file — geometry, the burner and the devices")),
+        btn(i18n.t("Export to FDS…"), () => { playhead.pause(); fdsExport.open(store.document, store.fileName); },
+          i18n.t("Write gauges and thermocouple beads as FDS devices")),
+        btn(i18n.t("FDS results…"), () => { playhead.pause(); fdsResults.open(); }, i18n.t("Visualize and play recorded FDS simulation output")),
+      ]),
       btn(i18n.t("Test data…"), () => openTestData(),
         i18n.t("Measured and simulated channels on the instruments: add a logger workbook or FDS output and map its channels")),
       btn(i18n.t("Example"), loadExample, i18n.t("Load the reference plan built from the hand sketch")),
@@ -457,14 +465,17 @@ function renderToolbar(): void {
       h('span', { class: 'language-switch', role: 'group', 'aria-label': i18n.t('Interface language') },
         (['en', 'fr'] as const).flatMap((value, index) => [
           ...(index ? [h('span', { 'aria-hidden': 'true' }, ['|'])] : []),
-          h('button', { type: 'button', class: 'toolbar__btn', lang: value,
-            'aria-label': value === 'en' ? 'English' : 'Français',
+          h('button', { type: 'button', class: 'toolbar__btn', lang: i18n.language(),
+            'aria-label': value === 'en' ? i18n.t('EN: English') : i18n.t('FR: French'),
             'aria-pressed': String(i18n.language() === value),
             dataset: { language: value }, onclick: () => chooseLanguage(value),
           }, [value.toUpperCase()]),
         ])),
     ]),
   );
+  if (focused && document.activeElement === document.body) {
+    [...toolbar.querySelectorAll<HTMLElement>('button, select')].find(e => e.textContent === focusText)?.focus();
+  }
 }
 
 const group = (children: Array<HTMLElement | null>): HTMLElement =>
@@ -502,6 +513,7 @@ const toggle = (label: string, active: boolean, onClick: () => void, title?: str
   h('button', {
     class: `toolbar__btn${active ? ' toolbar__btn--active' : ''}`,
     type: 'button',
+    'aria-pressed': String(active),
     onclick: () => onClick(),
     title: title ?? '',
   }, [label]);
@@ -553,6 +565,7 @@ function adopt(text: string, name: string, token: string | null = null): void {
     attachTestData(data.series);
     data.warnings.forEach(warning => console.warn(warning));
     viewport.frameAll();
+    announceFile(i18n.t('Opened {name}.', { name }));
     // Only an adopted file becomes a recent plan and the window's title.
     const bridge = shell();
     if (bridge && token) void bridge.adopted(token).then(refreshRecent, () => {});
@@ -604,9 +617,10 @@ async function savePlan(saveAs = false): Promise<void> {
     const saved = await savePlanText(text, suggested, saveAs, identity.token);
     // null means the user cancelled the dialog; a failed write throws.
     if (saved) {
+      announceFile(i18n.t('Saved {name}.', { name: saved.path.split(/[\\/]/).pop() ?? suggested }));
       store.markSaved(saved.path.split(/[\\/]/).pop() ?? suggested, identity, saved.token);
       refreshRecent();
-    }
+    } else announceFile(i18n.t('Save cancelled.'));
   } catch (err) {
     window.alert(
       i18n.t("{p1} was not saved:\n\n{p2}\n\nThe plan is still open and unchanged — try Save as… to a different location.", { p1: suggested, p2: (err as Error).message }),
@@ -660,6 +674,7 @@ async function importFds(): Promise<void> {
       // it is written, and Save must ask for a destination rather than aiming at
       // the .fds or at whatever plan was open before.
       store.replaceDocument(doc, name);
+      announceFile(i18n.t('Imported {name}.', { name: picked!.name }));
       store.markDirty();
       viewport.frameAll();
     }, { includesResolved: source.resolved, includeIssues: source.issues });

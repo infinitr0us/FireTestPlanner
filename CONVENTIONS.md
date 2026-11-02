@@ -1019,14 +1019,16 @@ fragment back into that plan frame, supply the same offset as `originM` / `origi
 a fragment has no burner or mesh from which the importer could infer it.
 
 A gauge gets `GAUGE HEAT FLUX` and the face's `IOR` when an axis-aligned wall,
-ceiling or obstruction face lies behind it within 0.05 m along its normal, and its
-normal is within 5 degrees of that axis. The shared occlusion solids honour wall
-openings and transformed boxes; hood skirts are excluded. The plan floor at z = 0
+ceiling or obstruction face lies behind it within 0.05 m measured perpendicular
+to the face, and its facing is within 45 degrees of the outward face normal. The
+shared occlusion solids honour wall openings and transformed boxes; hood skirts are excluded. The plan floor at z = 0
 is also a mounting face: a gauge from 0 to 0.05 m above it facing up within
-5 degrees gets `IOR=3`. Re-origination puts it on the source floor slab's top.
+45 degrees gets `IOR=3`. Re-origination puts it on the source floor slab's top.
 A tilted mounted gauge also carries its four-decimal `ORIENTATION`, preserving
-the recorded facing on re-import while IOR identifies the mounting face. All other
-gauges use `RADIATIVE HEAT FLUX GAS` and a four-decimal unit `ORIENTATION`.
+the recorded facing on re-import while IOR identifies the mounting face. Above
+5 degrees, a comment states that FDS reports flux normal to the face, a factor
+cos(tilt) on the direct component. This export rule does not change the occlusion
+rule or its 5 degree tolerance. All other gauges use `RADIATIVE HEAT FLUX GAS` and a four-decimal unit `ORIENTATION`.
 
 Device IDs use names, falling back to object IDs. Apostrophes become underscores
 and control characters become spaces; collisions gain `_2`, `_3`, and so on.

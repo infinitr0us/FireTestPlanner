@@ -53,7 +53,7 @@ const plural = (type: string, n: number): string => {
 };
 
 export class FdsImportDialog {
-  private root: HTMLElement | null = null;
+  private root: HTMLDialogElement | null = null;
   private text = '';
   private fileName = 'model.fds';
   /** What the caller knew before the conversion started -- whether `&CATF` includes
@@ -92,12 +92,16 @@ export class FdsImportDialog {
     this.options = { ...source };
     this.result = fdsToPlan(text, fileName, this.options);
 
-    this.root = h('div', { class: 'modal' }, [h('div', { class: 'modal__panel' })]);
+    this.root = h('dialog', { class: 'modal', 'aria-label': i18n.t('Import FDS preview') }, [h('div', { class: 'modal__panel' })]);
     document.body.appendChild(this.root);
     this.render();
+    this.root.addEventListener('cancel', e => { e.preventDefault(); this.close(); });
+    this.root.showModal();
+    this.root.querySelector<HTMLButtonElement>('button')?.focus();
   }
 
   close(): void {
+    this.root?.close();
     this.root?.remove();
     this.root = null;
     this.result = null;
@@ -105,9 +109,12 @@ export class FdsImportDialog {
   }
 
   private reconvert(patch: Partial<FdsImportOptions>): void {
+    const focused = document.activeElement as HTMLElement;
+    const index = [...this.root!.querySelectorAll('input, select, button')].indexOf(focused);
     this.options = { ...this.source, ...this.options, ...patch };
     this.result = fdsToPlan(this.text, this.fileName, this.options);
     this.render();
+    this.root?.querySelectorAll<HTMLElement>('input, select, button')[index]?.focus();
   }
 
   private render(): void {
@@ -124,7 +131,7 @@ export class FdsImportDialog {
 
     panel.append(
       h('h2', { class: 'modal__title' }, [i18n.t("Import {p1}", { p1: this.fileName })]),
-      h('p', { class: 'import__intro' }, [
+      h('p', { class: 'import__intro', role: 'status' }, [
         total === 0
           ? i18n.t("Nothing in this file maps onto a test plan.")
           : i18n.t("{p1} objects, re-origined onto the burner centre at floor level. The plan origin sits at ({p2}) in this file’s coordinates.", { p1: total, p2: result.originM
@@ -199,7 +206,7 @@ export class FdsImportDialog {
     const grouped = devices.some((g) => g.mappedTo === 'thermocouple' && g.objects < g.count);
 
     return h('div', {}, [
-      h('div', { class: 'import__scroll' }, [
+      h('div', { class: 'import__scroll', tabIndex: 0 }, [
         h('table', { class: 'import__table' }, [
           h('thead', {}, [h('tr', {}, [
             h('th', {}, [i18n.t("&DEVC quantity")]),
@@ -232,7 +239,7 @@ export class FdsImportDialog {
     const order: Record<Issue['severity'], number> = { error: 0, warning: 1, info: 2 };
     const sorted = [...issues].sort((a, b) => order[a.severity] - order[b.severity]);
 
-    return h('div', { class: 'import__scroll' }, [
+    return h('div', { class: 'import__scroll', tabIndex: 0 }, [
       h('ul', { class: 'import__issues' }, sorted.map((i) =>
         h('li', { class: `import__issue import__issue--${i.severity}` }, [
           h('code', {}, [i.code]),

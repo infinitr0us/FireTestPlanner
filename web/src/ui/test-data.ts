@@ -82,6 +82,7 @@ export class TestDataDialog {
   private unsubscribe: Array<() => void> = [];
   private busy = false;
   private progress: HTMLElement | null = null;
+  private announcement = h('p', { role: 'status', 'aria-live': 'polite', class: 'test-data__message' });
   /** A repaint waits while a mouse button is down, so the click lands on the button pressed. */
   private pointerDown = false;
   private repaintAfterPointer = false;
@@ -116,6 +117,7 @@ export class TestDataDialog {
     window.addEventListener('pointercancel', release, true);
     this.unsubscribe.push(() => { window.removeEventListener('pointerup', release, true); window.removeEventListener('pointercancel', release, true); });
     this.root = dialog;
+    dialog.append(this.announcement);
     document.body.append(dialog);
     this.unsubscribe.push(
       this.store.subscribe((event) => { if (event === 'document') this.render(); }),
@@ -237,18 +239,21 @@ export class TestDataDialog {
       : view.kind === 'reading' ? this.renderReading(view)
         : view.kind === 'new' ? this.renderEditor(view.pending.source, view.pending)
           : this.renderEditor(this.source(view.sourceId)!, null);
-    const status = h('p', { class: `fds-export__status test-data__message test-data__message--${this.status?.tone ?? 'dim'}`,
-      role: 'status', 'aria-live': 'polite' }, [this.status?.text ?? '']);
-    dialog.replaceChildren(
+    const sourceMessage = view.kind === 'list' ? [...content.body.querySelectorAll('.test-data__source')]
+      .map(card => i18n.t('{name}: {status}', { name: card.querySelector('strong')?.textContent ?? '', status: card.querySelector('.test-data__status')?.textContent ?? '' })).join('. ') : '';
+    const message = view.kind === 'reading' ? view.text : this.status?.text ?? sourceMessage;
+    this.announcement.className = `fds-export__status test-data__message test-data__message--${this.status?.tone ?? 'dim'}${sourceMessage && !this.status ? ' sr-only' : ''}`;
+    for (const child of [...dialog.children]) if (child !== this.announcement) child.remove();
+    dialog.prepend(
       h('h2', { class: 'modal__title', id: 'test-data-title' }, [title]),
       h('p', { class: 'import__intro' }, [view.kind === 'list'
         ? i18n.t("Measured and simulated channels on the plan's instruments. The plan keeps the file reference, the mapping and a manifest of what was read, never the samples.")
         : view.kind === 'new' ? i18n.t("Nothing changes in the plan until Add source, which adds the source and its mappings as one undoable edit.")
           : i18n.t("Each change here is one undoable edit. Reading the file is not an edit.")]),
       h('div', { class: 'test-data__body' }, [content.body]),
-      status,
-      h('div', { class: 'import__actions' }, content.actions),
     );
+    dialog.append(h('div', { class: 'import__actions' }, content.actions));
+    if (this.announcement.textContent !== message) this.announcement.textContent = message;
     if (view.kind === 'reading') this.progress = dialog.querySelector('.test-data__reading');
     const nextBody = dialog.querySelector<HTMLElement>('.test-data__body');
     const channels = dialog.querySelector<HTMLElement>('.test-data__channels');
@@ -490,6 +495,7 @@ export class TestDataDialog {
         reading.text = sheet === null ? i18n.t("Reading {p1}: workbook metadata (step {p2} of {p3})", { p1: name, p2: step, p3: steps })
           : i18n.t("Reading {p1}: step {p2} of {p3}, sheet {p4}", { p1: name, p2: step, p3: steps, p4: sheet });
         const bar = this.progress?.querySelector('progress');
+        this.announcement.textContent = this.view.kind === 'reading' ? this.view.text : '';
         const text = this.progress?.querySelector('p');
         if (bar) { bar.max = steps; bar.value = step; }
         if (text) text.textContent = reading.text;
@@ -554,7 +560,7 @@ export class TestDataDialog {
   }
 
   private renderReading(view: View & { kind: 'reading' }): { body: HTMLElement; actions: HTMLElement[] } {
-    const body = h('div', { class: 'test-data__reading', role: 'status', 'aria-live': 'polite' }, [
+    const body = h('div', { class: 'test-data__reading' }, [
       h('p', {}, [view.text]),
       h('progress', { max: view.steps, value: view.step, 'aria-label': i18n.t("Reading progress") }),
       h('p', { class: 'panel__hint' }, [i18n.t("Every sheet is read so the sheet can be changed without reading the file again. A large workbook takes a few seconds.")]),

@@ -9,6 +9,7 @@ All generated input and FDS output stay in a temporary directory under local/.
 from __future__ import annotations
 
 import argparse
+import math
 import os
 from pathlib import Path
 import re
@@ -19,6 +20,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'python'))
 
+from fireplan._math import look_at_quat
 from fireplan import Plan, namelist  # noqa: E402
 
 DEFAULT_BIN = Path('C:/Program Files/firemodels/FDS6/bin')
@@ -27,7 +29,14 @@ DEFAULT_BIN = Path('C:/Program Files/firemodels/FDS6/bin')
 def setup_input() -> str:
     """Keep source geometry and properties, replace devices, and stop after setup."""
     source = (ROOT / 'fixtures/fds/room_corner.fds').read_text(encoding='utf-8')
-    exported = Plan.load(ROOT / 'fixtures/fds/room_corner.ftp.json').to_fds_devices()
+    plan = Plan.load(ROOT / 'fixtures/fds/room_corner.ftp.json')
+    gauge = plan.heat_flux_sensors[0]
+    tilted = dict(gauge.raw, id='tilted-setup-gauge', name='Tilted setup gauge')
+    normal = [math.sin(math.radians(30)), math.cos(math.radians(30)), 0]
+    tilted['transform'] = dict(gauge.raw['transform'], rotation_quat=look_at_quat(gauge.position, gauge.position + normal).tolist())
+    plan.add(tilted)
+    exported = plan.to_fds_devices()
+    assert "ID='Tilted setup gauge'" in exported and 'factor cos(tilt)' in exported
     extra = Plan.load(ROOT / 'fixtures/instruments17.ftp.json')
     for obj in extra.objects:
         obj.position = [2.2, 4.0, 1.5]
