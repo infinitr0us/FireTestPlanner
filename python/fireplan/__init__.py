@@ -42,7 +42,7 @@ from .objects import (
 from .plan import FORMAT, VERSION, VERSION_LATEST, IR_SPOT_PX, Issue, Plan, PlanError
 from .serialize import dumps as dumps_canonical
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 __all__ = [
     "Plan",

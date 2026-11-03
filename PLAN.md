@@ -1,8 +1,9 @@
 # FireTestPlanner: plan and roadmap
 
-Status: **v0.8.0 released** (format 1.7, 2026-11-02). It carries the round planned in
+Status: **v0.9.0 released** (format 1.7, 2026-11-02). v0.8.0 carried the round planned in
 [section 9](#9-next-round-2026-11) from a review of the whole project with the fire
-safety engineers' data in hand. The French interface ships as a draft; its review
+safety engineers' data in hand; v0.9.0 adds [M19](#m19-lenses-for-a-large-outdoor-test-2026-11-02),
+the lenses and checks for a large outdoor test. The French interface ships as a draft; its review
 waits for a French-speaking user.
 Complements `ideas.md`, the original brief.
 
@@ -238,7 +239,7 @@ tool to exist.
 | M12 | **Reconstructed flame playback** | Format 1.4 voxel sequences, shared playback clock, PNG and embedded examples | **done** |
 | M13 | **FDS results** | Separate simulation session, slices, boundary fields, Smoke3D preview and device histories | **done** |
 | M14 | **Lens choice** | A8303sc lenses from its datasheet (17/25/50/100 mm), a Lens field and a lens comparison in the inspector | **done** |
-| M19 | **Lenses for a large outdoor test** | Every standoff lens of the A8303sc, A700 and T650sc; thermocouple beads in a camera's image (seen, pixel spacing, 3 × 3 px spot) per lens; camera roll; a flame height field that back-solves the HRR. No format change | **done**, unreleased |
+| M19 | **Lenses for a large outdoor test** | Every standoff lens of the A8303sc, A700 and T650sc; thermocouple beads in a camera's image (seen, pixel spacing, 3 × 3 px spot) per lens; camera roll; a flame height field that back-solves the HRR. No format change | **done**, v0.9.0 |
 
 Phase 1 is complete and Phase 2 has landed (v0.7.0). M15 to M18 are in
 [section 9](#9-next-round-2026-11) and landed in v0.8.0.

@@ -5,9 +5,10 @@ while the version is 0.x, a minor release may change behaviour. The plan file fo
 has its own version (`fire-test-plan` 1.0.0 to 1.7.0, one JSON Schema each in `schema/`),
 and a plan written by any release opens in every later one.
 
-## [Unreleased]
+## [0.9.0] - 2026-11-02
 
-No plan format change: every addition is derived from what a plan already stores.
+No plan format change (still 1.7.0 at most): every addition is derived from what a plan
+already stores, and a plan written by 0.9.0 opens in 0.8.0.
 
 ### Added
 - **Every standoff lens FLIR lists for the three IR bodies.** The T650sc becomes a body
@@ -256,6 +257,7 @@ Plan format 1.0.0.
 - The desktop app: the same bundle in a native window (pywebview, WebView2), native
   file dialogs and recent files, packaged as one exe.
 
+[0.9.0]: https://github.com/infinitr0us/FireTestPlanner/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/infinitr0us/FireTestPlanner/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/infinitr0us/FireTestPlanner/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/infinitr0us/FireTestPlanner/compare/v0.5.0...v0.6.0
