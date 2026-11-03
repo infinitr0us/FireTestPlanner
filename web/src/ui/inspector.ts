@@ -5,7 +5,7 @@ import { curvePeak, hrrAt } from '../core/hrr';
 import { nearestOpening } from '../core/instrument-placement';
 import { recordAsBuilt, asBuiltProblem } from '../core/asbuilt';
 import { isAimable, type Quat } from '../core/types';
-import { forwardOf } from '../core/math';
+import { forwardOf, rollOf, withRoll } from '../core/math';
 import { isVelocityProbe, isGasSampling, isLoadCell, GAS_SPECIES, type VelocityProbeObject, type GasSamplingObject, type LoadCellObject } from '../core/types';
 /**
  * Property inspector for the selected object.
@@ -16,7 +16,7 @@ import { isVelocityProbe, isGasSampling, isLoadCell, GAS_SPECIES, type VelocityP
  * intrinsics they come from.
  */
 
-import { DEFAULT_RADIATIVE_FRACTION, POINT_SOURCE_MIN_DIAMETERS } from '../core/correlations';
+import { DEFAULT_RADIATIVE_FRACTION, POINT_SOURCE_MIN_DIAMETERS, hrrForFlameHeightKw } from '../core/correlations';
 import { defaultAimTarget } from '../core/factory';
 import {
   applyXbToObject,
@@ -32,6 +32,7 @@ import {
 import { setAimTarget, setPosition, type AimableObject } from '../core/transform';
 import {
   beadOffsetsOf,
+  beadSeparationTone,
   beadVerdict,
   burnerDiameterM,
   burnerFlameHeightM,
@@ -42,6 +43,7 @@ import {
   displayName,
   effectiveFocalLengthMm,
   fireBurners,
+  findObject,
   flameTipZM,
   framingOf,
   fxOf,
@@ -63,10 +65,12 @@ import {
   isReconstructedFlame,
   isThermocouple,
   isWall,
+  IR_SPOT_PX,
   LOW_SIGNAL_FRACTION,
   plumeRadiusAtZ,
   positionOf,
   principalPointOf,
+  quatOf,
   radiativeFractionOf,
   standoffHorizontalM,
   standoffM,
@@ -74,6 +78,7 @@ import {
   tcMaxTemperatureC,
   tcTypeOf,
   thermocoupleBeads,
+  thermocoupleViewOf,
   verticalCoverageM,
   vfovDegOf,
   zoomOf,
@@ -741,6 +746,13 @@ export class Inspector {
     const spec = cam.camera;
 
     this.renderAim(cam, unit, i18n.t("No target set — this camera was rotated by hand"));
+    this.root.append(row(i18n.t("Roll (°)"),
+      numberField(Number((rollOf(quatOf(cam)) * 180 / Math.PI).toFixed(1)), deg =>
+        this.patch(cam.id, 'Set roll', o => {
+          o.transform = { ...o.transform, position_m: positionOf(o),
+            rotation_quat: withRoll(quatOf(o), deg * Math.PI / 180) };
+        }), { step: 90 }),
+      i18n.t("90 mounts the camera on its side (portrait); the view direction is unchanged")));
 
     this.root.append(sectionTitle(i18n.t("Optics")));
     this.root.append(
@@ -1031,8 +1043,40 @@ export class Inspector {
         const covers = verticalCoverageM(cam);
         items.push(h('p', { class: 'readout__note' }, [
           i18n.t("A {p1}° vertical field at {p2} covers about {p3} across the frame. Move back, {p4}or fit a wider lens{p5}.", { p1: i18n.numberText(vfovDegOf(cam).toFixed(0)), p2: formatLengthWithUnit(standoffM(cam), unit), p3: formatLengthWithUnit(covers, unit), p4: zoom > 1 ? i18n.t("zoom out, ") : '', p5: lensesOf(cam.camera.presetId).length > 0 ? i18n.t(" (Lens, under Optics)") : '' }),
+          Math.abs(rollOf(quatOf(cam))) < Math.PI / 4 && cam.camera.sensor_mm[0] > cam.camera.sensor_mm[1]
+            ? i18n.t(" Or mount the camera on its side (portrait).") : '',
         ]));
       }
+    }
+
+    const tc = thermocoupleViewOf(this.store.document, cam);
+    if (tc) {
+      const seen = tc.beads.filter(b => b.inFrame && b.blocker === null);
+      const pair = tc.closest;
+      const name = (id: string, index: number): string => {
+        const obj = findObject(this.store.document, id)!;
+        return displayName(obj) + (isThermocouple(obj) && beadOffsetsOf(obj).length > 1
+          ? i18n.t(" bead {p1}", { p1: index + 1 }) : '');
+      };
+      const blockers = [...new Map(tc.beads.flatMap(b => b.blocker ? [[b.blocker.id, b.blocker] as const] : [])).values()];
+      const meanMmPerPx = seen.reduce((sum, b) => sum + b.mmPerPx, 0) / seen.length;
+      items.push(
+        readout(i18n.t("Thermocouple beads seen"), i18n.t("{seen} of {total}", { seen: tc.seen, total: tc.total }),
+          tc.seen === 0 ? 'muted' : undefined),
+        readout(i18n.t("Closest pair"), pair ? i18n.t("{pixels} ({a} / {b})", {
+          pixels: i18n.formatQuantity(pair.px, 'px', 1),
+          a: name(pair.a.thermocoupleId, pair.a.index), b: name(pair.b.thermocoupleId, pair.b.index),
+        }) : i18n.t("—"), pair ? beadSeparationTone(pair.px) : 'muted'),
+        readout(i18n.t("3 × 3 px spot at the beads"), seen.length
+          ? formatLengthWithUnit(IR_SPOT_PX * meanMmPerPx / 1000, unit) : i18n.t("—"),
+          seen.length ? undefined : 'muted'),
+        h('p', { class: 'readout__note' }, [
+          blockers.length ? i18n.t("Outside frame: {outside}; hidden: {hidden} (behind {blockers}).", {
+            outside: tc.outside, hidden: tc.hidden, blockers: blockers.slice(0, 2).map(displayName).join(i18n.t(" and ")),
+          }) : i18n.t("Outside frame: {outside}; hidden: {hidden}.", { outside: tc.outside, hidden: tc.hidden }),
+          ' ', i18n.t("Each reading needs a 3 × 3 px spot; at 6 px or more apart two spots have a spot's width between them, from 3 to 6 px they touch, below 3 px they overlap."),
+        ]),
+      );
     }
 
     // The framing is real at any zoom; the resolution is only real at optical
@@ -1057,19 +1101,22 @@ export class Inspector {
     const rows = compareLenses(this.store.document, cam);
     if (rows.length === 0) return;
     const framed = rows.some((r) => r.framing !== null);
+    const hasTc = rows.some((r) => r.thermocouples !== null);
     const zoom = zoomOf(cam);
     const head = (text: string, title: string): HTMLElement => h('th', { scope: 'col', title }, [text]);
 
     this.root.append(sectionTitle(i18n.t("Lens comparison")));
-    this.root.append(h('div', { class: 'readouts' }, [h('table', { class: 'lens-table' }, [
+    this.root.append(h('div', { class: 'readouts' }, [h('table', { class: `lens-table${hasTc ? ' lens-table--tc' : ''}` }, [
       h('thead', {}, [h('tr', {}, [
         head(i18n.t("Lens"), i18n.t("Focal length. ▶ marks the lens on this camera")),
         head(i18n.t("FOV"), i18n.t("Horizontal × vertical field of view{p1}", { p1: zoom === 1 ? '' : ` at ${zoom}×` })),
         head('mm/px', i18n.t("Resolution at the fire: millimetres per pixel at the slant standoff")),
         framed ? head(i18n.t("Plume"), i18n.t("Share of the mean flame envelope in frame; ✓ when all of it is")) : null,
+        hasTc ? head(i18n.t("TC"), i18n.t("Thermocouple beads seen/total and closest pair separation in pixels")) : null,
       ])]),
       h('tbody', {}, rows.map((r) => {
         const whole = r.framing !== null && r.framing.fraction > 0.999;
+        const tc = r.thermocouples;
         return h('tr', {
           class: `lens-table__row${r.current ? ' lens-table__row--current' : ''}`,
           'aria-current': r.current ? 'true' : undefined,
@@ -1082,6 +1129,11 @@ export class Inspector {
               r.framing ? `${i18n.numberText((r.framing.fraction * 100).toFixed(0))}${i18n.unitSpace("")}% ${whole ? '✓' : '✗'}` : '—',
             ])
             : null,
+          hasTc ? h('td', { class: tc?.closest ? `lens-table__${beadSeparationTone(tc.closest.px)}` : undefined }, [
+            tc ? (tc.closest ? i18n.t("{seen}/{total} · {pixels}", {
+              seen: tc.seen, total: tc.total, pixels: i18n.formatQuantity(tc.closest.px, 'px', 1),
+            }) : i18n.t("{seen}/{total}", { seen: tc.seen, total: tc.total })) : i18n.t("—"),
+          ]) : null,
         ]);
       })),
     ]),
@@ -1089,6 +1141,7 @@ export class Inspector {
       i18n.t("This camera as placed and aimed, {p1} slant standoff{p2}. mm/px is the detail at the fire; {p3}", { p1: formatLengthWithUnit(standoffM(cam), unit), p2: zoom === 1 ? '' : i18n.t(", at {p1}× zoom", { p1: zoom }), p3: (framed
         ? i18n.t("Plume is how much of the mean flame envelope is in frame.")
         : i18n.t("framing needs a burner with a heat release rate.")) }),
+      hasTc ? ' ' + i18n.t("TC is thermocouple beads seen/total, followed by the closest pair in pixels.") : null,
     ])]));
   }
 
@@ -1147,6 +1200,7 @@ export class Inspector {
             const burner = o as BurnerObject;
             burner.fire = { ...(burner.fire ?? {}), hrr_kw: v !== null && v > 0 ? v : null };
           }), { step: 10, min: 0 })),
+      ...(b.fire?.hrrCurve ? [] : [this.flameHeightRow(b, unit)]),
       row(i18n.t("Radiative fraction"),
         numberField(radiativeFractionOf(b), (v) =>
           this.patch(b.id, 'Set radiative fraction', (o) => {
@@ -1181,6 +1235,30 @@ export class Inspector {
         i18n.t("Heskestad correlation. Mean height — the intermittent tip reaches higher."),
       ]),
     ]));
+  }
+
+  /**
+   * The mean flame height as an input. Typing one back-solves the HRR through the
+   * Heskestad inverse, the way typing a field of view back-solves a focal length:
+   * the HRR is what is stored, and the height stays derived. Absent while a curve
+   * sets the HRR, because a curve has no one flame height.
+   */
+  private flameHeightRow(b: BurnerObject, unit: LengthUnit): HTMLElement {
+    const flame = burnerFlameHeightM(b);
+    const shown = (): string => (flame === null ? '' : formatLength(flame, unit));
+    const input = lengthField(flame ?? 0, unit, (metres) => {
+      const q = hrrForFlameHeightKw(metres, burnerDiameterM(b));
+      // No HRR gives a flame of zero or negative height: put the field back.
+      if (q === null) { input.value = shown(); return; }
+      this.patch(b.id, 'Set flame height', (o) => {
+        const burner = o as BurnerObject;
+        burner.fire = { ...(burner.fire ?? {}), hrr_kw: q };
+      });
+    });
+    input.value = shown();
+    if (flame === null) input.placeholder = i18n.t('not set');
+    return row(i18n.t("Flame height ({p1})", { p1: unit }), input,
+      i18n.t("Mean height above the fuel surface (Heskestad). Typing one back-solves the HRR, which is what gets stored"));
   }
 
   // -- hood --------------------------------------------------------------

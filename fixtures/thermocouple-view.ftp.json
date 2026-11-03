@@ -1,0 +1,132 @@
+{
+  "format": "fire-test-plan",
+  "version": "1.2.0",
+  "meta": {
+    "title": "Thermocouple image geometry",
+    "created": "2026-11-02T00:00:00Z",
+    "modified": "2026-11-02T00:00:00Z"
+  },
+  "units": {
+    "length": "m",
+    "angle": "rad",
+    "power": "kW",
+    "temperature": "C",
+    "display": {
+      "length": "m",
+      "angle": "deg"
+    }
+  },
+  "coordinateSystem": {
+    "convention": "Z-up-right-handed",
+    "origin": "burner-center-floor"
+  },
+  "environment": {
+    "floorSize_m": [20, 20],
+    "ambientTemperature_C": 20
+  },
+  "objects": [
+    {
+      "id": "burner",
+      "type": "burner",
+      "name": "Synthetic burner",
+      "transform": {
+        "position_m": [0, 0, 0]
+      },
+      "footprint": {
+        "shape": "square",
+        "size_m": [0.2, 0.2]
+      },
+      "fire": {
+        "hrr_kw": 100
+      }
+    },
+    {
+      "id": "camera",
+      "type": "camera",
+      "name": "Synthetic IR camera",
+      "transform": {
+        "position_m": [0, -10.5, 1],
+        "rotation_quat": [0.707107, 0, 0, 0.707107],
+        "aimTarget_m": [0, 0, 1]
+      },
+      "camera": {
+        "modality": "LWIR",
+        "resolution_px": [1000, 750],
+        "sensor_mm": [20, 15],
+        "focalLength_mm": 50,
+        "principalPoint_px": null,
+        "distortion": null,
+        "intrinsicsSource": "nominal"
+      }
+    },
+    {
+      "id": "pack",
+      "type": "obstruction",
+      "name": "Synthetic pack",
+      "transform": {
+        "position_m": [0, 0, 0]
+      },
+      "size_m": [2, 1, 2]
+    },
+    {
+      "id": "tc-01",
+      "type": "thermocouple",
+      "name": "TC-01",
+      "transform": {
+        "position_m": [0, -0.5, 1]
+      },
+      "beadOffsets_m": [0],
+      "thermocouple": {
+        "tcType": "K"
+      }
+    },
+    {
+      "id": "tc-02",
+      "type": "thermocouple",
+      "name": "TC-02",
+      "transform": {
+        "position_m": [0.02, -0.5, 1]
+      },
+      "beadOffsets_m": [0],
+      "thermocouple": {
+        "tcType": "K"
+      }
+    },
+    {
+      "id": "tc-03",
+      "type": "thermocouple",
+      "name": "TC-03",
+      "transform": {
+        "position_m": [0.3, -0.5, 1.2]
+      },
+      "beadOffsets_m": [0],
+      "thermocouple": {
+        "tcType": "K"
+      }
+    },
+    {
+      "id": "tc-04",
+      "type": "thermocouple",
+      "name": "TC-04",
+      "transform": {
+        "position_m": [0, 0.5, 1]
+      },
+      "beadOffsets_m": [0],
+      "thermocouple": {
+        "tcType": "K"
+      }
+    },
+    {
+      "id": "tc-05",
+      "type": "thermocouple",
+      "name": "TC-05",
+      "transform": {
+        "position_m": [8, -0.5, 1]
+      },
+      "beadOffsets_m": [0],
+      "thermocouple": {
+        "tcType": "K"
+      }
+    }
+  ]
+}

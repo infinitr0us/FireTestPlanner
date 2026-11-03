@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from fireplan import Plan
-from fireplan._math import look_at_quat, matrix_to_quat, quat_to_matrix
+from fireplan._math import look_at_quat, matrix_to_quat, quat_to_matrix, roll_of, with_roll
 
 
 def _camera_at(position, target=(0.0, 0.0, 0.0), **spec_overrides):
@@ -134,14 +134,17 @@ def test_a_nonsense_zoom_falls_back_to_one_rather_than_to_infinity(bad):
 
 # -- shipped presets -----------------------------------------------------
 
-def _preset(preset_id):
+def _presets():
     path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
         "presets", "cameras.json",
     )
     with io.open(path, encoding="utf-8") as fh:
-        library = json.load(fh)
-    return next(p for p in library["presets"] if p["id"] == preset_id)
+        return json.load(fh)["presets"]
+
+
+def _preset(preset_id):
+    return next(p for p in _presets() if p["id"] == preset_id)
 
 
 def _fov_deg(preset):
@@ -183,22 +186,25 @@ def test_the_a700_24_degree_preset_uses_the_printed_18_mm_lens():
     assert preset["intrinsicsSource"] == "datasheet"
 
 
-def test_the_a700_body_carries_the_five_lenses_flir_prints():
+def test_the_a700_body_carries_the_six_lenses_flir_prints():
     # Each lens's printed focal length, and the pinhole field of view it gives on
     # the 7.68 x 5.76 mm array: 2 atan(7.68 / 2f) x 2 atan(5.76 / 2f). For the 6,
-    # 14 and 80 deg lenses that is not the printed angle (6 x 4.5, 14 x 10 and
-    # 80 x 63 deg); the presets keep the printed focal length and the README shows
-    # the mismatch. The palette places the 24 deg lens.
+    # 14 and 80 deg lenses, and the 17 mm f/1.3 24 deg lens (T300240, printed
+    # 24 x 18 deg), that is not the printed angle; the presets keep the printed focal
+    # length and the README shows the mismatch. The palette places the 18 mm 24 deg
+    # lens of the f/1.0 science kit.
     base = _preset("flir-a700-24deg")
     expected = {
-        6: (70.0, 6.28, 4.71),
-        14: (29.0, 15.09, 11.34),
-        24: (18.0, 24.09, 18.18),
-        42: (10.0, 42.01, 32.13),
-        80: (5.0, 75.05, 59.88),
+        "flir-a700-6deg": (70.0, 6.28, 4.71),
+        "flir-a700-14deg": (29.0, 15.09, 11.34),
+        "flir-a700-24deg": (18.0, 24.09, 18.18),
+        "flir-a700-24deg-17mm": (17.0, 25.46, 19.23),
+        "flir-a700-42deg": (10.0, 42.01, 32.13),
+        "flir-a700-80deg": (5.0, 75.05, 59.88),
     }
-    for deg, (mm, h_deg, v_deg) in expected.items():
-        preset = _preset("flir-a700-{}deg".format(deg))
+    assert sorted(p["id"] for p in _presets() if p.get("body") == "FLIR A700") == sorted(expected)
+    for preset_id, (mm, h_deg, v_deg) in expected.items():
+        preset = _preset(preset_id)
         assert preset["body"] == "FLIR A700"
         assert preset["focalLength_mm"] == pytest.approx(mm)
         for key in ("modality", "resolution_px", "sensor_mm", "spectralBand_um",
@@ -207,7 +213,36 @@ def test_the_a700_body_carries_the_five_lenses_flir_prints():
         h, v = _fov_deg(preset)
         assert h == pytest.approx(h_deg, abs=0.01)
         assert v == pytest.approx(v_deg, abs=0.01)
-        assert bool(preset.get("bodyDefault")) == (deg == 24)
+        assert bool(preset.get("bodyDefault")) == (preset_id == "flir-a700-24deg")
+
+
+def test_the_t650sc_body_carries_the_five_lenses_its_datasheet_lists():
+    # "Available Lenses: 88.9 mm (7 deg), 41.3 mm (15 deg), 24.6 mm (25 deg),
+    # 13.1 mm (45 deg), 6.5 mm (80 deg)" on 640 x 480 at 17 um. Under a pinhole each
+    # focal length reproduces its designation; the palette places the 25 deg lens.
+    base = _preset("flir-t650sc-25deg")
+    assert base["sensor_mm"] == pytest.approx([640 * 0.017, 480 * 0.017])
+    expected = {
+        7: (88.9, 7.00, 5.26),
+        15: (41.3, 15.01, 11.28),
+        25: (24.6, 24.94, 18.83),
+        45: (13.1, 45.10, 34.60),
+        80: (6.5, 79.85, 64.23),
+    }
+    assert sorted(p["id"] for p in _presets() if p.get("body") == "FLIR T650sc") == sorted(
+        "flir-t650sc-{}deg".format(deg) for deg in expected)
+    for deg, (mm, h_deg, v_deg) in expected.items():
+        preset = _preset("flir-t650sc-{}deg".format(deg))
+        assert preset["body"] == "FLIR T650sc"
+        assert preset["focalLength_mm"] == pytest.approx(mm)
+        for key in ("modality", "resolution_px", "sensor_mm", "spectralBand_um",
+                    "framerate_hz", "intrinsicsSource"):
+            assert preset[key] == base[key], key
+        h, v = _fov_deg(preset)
+        assert h == pytest.approx(h_deg, abs=0.01)
+        assert v == pytest.approx(v_deg, abs=0.01)
+        assert h == pytest.approx(deg, abs=0.2)
+        assert bool(preset.get("bodyDefault")) == (deg == 25)
 
 
 @pytest.mark.parametrize("preset_id, source, mm, fov", [
@@ -261,12 +296,14 @@ def test_the_a8303sc_preset_derives_its_sensor_from_the_detector_pitch():
     assert preset["intrinsicsSource"] == "datasheet"
 
 
-def test_the_a8303sc_body_carries_the_four_lenses_its_datasheet_lists():
-    # "Available Lenses: 17mm, 25 mm, 50 mm, 100 mm". One preset per lens, grouped
-    # by body; the lenses differ in focal length and nothing else, and the palette
-    # places the 25 mm one.
+def test_the_a8303sc_body_carries_the_five_lenses_its_datasheet_lists():
+    # "Available Lenses: 17 mm, 25 mm, 50 mm, 100 mm, 200 mm" (A8303sc sheet, P/N
+    # 29244-203). One preset per lens, grouped by body; the lenses differ in focal
+    # length and nothing else, and the palette places the 25 mm one.
     base = _preset("flir-a8303sc-25mm")
-    expected_fov = {17: (55.58, 33.03), 25: (39.44, 22.80), 50: (20.32, 11.51), 100: (10.24, 5.77)}
+    expected_fov = {17: (55.58, 33.03), 25: (39.44, 22.80), 50: (20.32, 11.51), 100: (10.24, 5.77),
+                    200: (5.13, 2.89)}
+    assert sorted(p["focalLength_mm"] for p in _presets() if p.get("body") == "FLIR A8303sc") == sorted(expected_fov)
     for mm, (h_deg, v_deg) in expected_fov.items():
         preset = _preset("flir-a8303sc-{}mm".format(mm))
         assert preset["body"] == "FLIR A8303sc"
@@ -437,3 +474,90 @@ def test_aim_at_keeps_quaternion_and_target_consistent():
     direction = np.array([1.0, 1.0, 0.4]) - cam.position
     direction = direction / np.linalg.norm(direction)
     assert np.allclose(cam.forward, direction, atol=1e-12)
+
+
+# Same directions, angles, intrinsics and projection values as camera-roll.test.ts.
+@pytest.mark.parametrize("direction", [
+    [0, 1, 0], [1, 2, 3], [-2, 1, -3], [0.01, -0.02, 10],
+    [0.01, -0.02, -10], [0, 0, 1], [0, 0, -1], [1e-6, 0, 1], [1e-6, 0, -1],
+])
+def test_roll_uses_level_frame_including_vertical_fallback(direction):
+    q = look_at_quat([0, 0, 0], direction)
+    assert roll_of(q) == pytest.approx(0, abs=1e-10)
+    for deg in [-170, -90, -30, 30, 90, 179.9]:
+        rolled = with_roll(q, math.radians(deg))
+        assert roll_of(rolled) == pytest.approx(math.radians(deg), abs=1e-10)
+        assert np.allclose(quat_to_matrix(rolled)[:, 2], quat_to_matrix(q)[:, 2], atol=1e-10)
+        assert np.linalg.norm(rolled) == pytest.approx(1, abs=1e-12)
+        assert roll_of(with_roll(-rolled, math.radians(30))) == pytest.approx(math.radians(30), abs=1e-10)
+
+
+@pytest.mark.parametrize("deg", [-540, -180, 180, 540])
+def test_roll_reports_half_turn_as_positive_180(deg):
+    q = look_at_quat([0, 0, 0], [0, 1, 0])
+    assert roll_of(with_roll(q, math.radians(deg))) == pytest.approx(math.pi, abs=1e-12)
+
+
+def test_positive_90_roll_puts_top_on_world_right_when_looking_along_y():
+    cam = _camera_at([0, -35, 5], [0, 0, 5])
+    cam.set_roll_deg(90)
+    assert cam.roll_deg == pytest.approx(90)
+    assert np.allclose(cam.up, [1, 0, 0], atol=1e-12)
+    assert np.allclose(cam.forward, [0, 1, 0], atol=1e-12)
+    assert np.allclose(cam.aim_target, [0, 0, 5])
+
+
+def test_aim_at_preserves_roll_after_a_move_and_defaults_missing_quaternion_to_level():
+    cam = _camera_at([0, -35, 5], [0, 0, 5])
+    cam.set_roll_deg(-30)
+    cam.position = [3, -30, 2]
+    cam.aim_at([0, 0, 5])
+    assert cam.roll_deg == pytest.approx(-30)
+    cam.aim_at([1, 2, 10])
+    assert cam.roll_deg == pytest.approx(-30)
+    direction = np.array([1, 2, 10]) - cam.position
+    assert np.allclose(cam.forward, direction / np.linalg.norm(direction), atol=1e-12)
+    del cam.raw["transform"]["rotation_quat"]
+    cam.aim_at([0, 0, 5])
+    assert cam.roll_deg == pytest.approx(0, abs=1e-10)
+
+
+def test_roll_and_reaim_use_the_existing_degenerate_pose_fallback():
+    cam = _camera_at([0, -35, 5], [0, 0, 5])
+    cam.raw["transform"]["rotation_quat"] = [0, 0, 0, 0]
+    assert cam.roll_deg == pytest.approx(0)
+    cam.aim_at([0, 0, 5])
+    assert cam.roll_deg == pytest.approx(0, abs=1e-10)
+    cam.raw["transform"]["rotation_quat"] = [0, 0, 0, 0]
+    cam.set_roll_deg(90)
+    assert cam.roll_deg == pytest.approx(90)
+
+
+def test_rolled_camera_frames_10_m_flame_at_35_m_and_exports_full_pose():
+    cam = _camera_at([0, -35, 5], [0, 0, 5], modality="MWIR",
+                     resolution_px=[1280, 720], sensor_mm=[17.92, 10.08], focalLength_mm=50)
+    plan = Plan.new("roll")
+    plan.add(cam.raw)
+    cam = plan.cameras["cam"]
+    plan.add({"id": "burner", "type": "burner", "transform": {"position_m": [0, 0, 0]},
+              "footprint": {"shape": "circle", "diameter_m": 1}, "rimHeight_m": 0,
+              "fire": {"hrr_kw": ((10 + 1.02) / 0.235) ** 2.5}})
+    level = plan.framing(cam)
+    assert not level["flame_base_visible"] and not level["flame_tip_visible"]
+    assert cam.project([0, 0, 10])[0] == pytest.approx([639.5, -150.704081632653])
+    cam.set_roll_deg(90)
+    rolled = plan.framing(cam)
+    assert rolled["flame_base_visible"] and rolled["flame_tip_visible"]
+    assert cam.project([0, 0, 10])[0] == pytest.approx([129.295918367347, 359.5])
+    for roll, span in [(0, 7.0462), (90, 12.5342)]:
+        cam.set_roll_deg(roll)
+        assert cam.project([0, 0, 5 + span / 2 - 1e-5])[1]
+        assert not cam.project([0, 0, 5 + span / 2 + 1e-5])[1]
+    assert "aim-mismatch" not in [i.code for i in plan.check()]
+    exported = np.asarray(plan.to_nerfstudio()["frames"][0]["transform_matrix"])
+    assert np.allclose(exported[:3, :3], [[0, 1, 0], [0, 0, -1], [-1, 0, 0]], atol=1e-12)
+    cam.aim_at([0, 10, 5])
+    assert cam.roll_deg == pytest.approx(90)
+    assert "aim-mismatch" not in [i.code for i in plan.check()]
+    cam.raw["transform"]["aimTarget_m"] = [10, 0, 5]
+    assert "aim-mismatch" in [i.code for i in plan.check()]

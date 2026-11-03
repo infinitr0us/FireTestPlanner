@@ -15,7 +15,7 @@ import { formatQuantity } from '../ui/i18n';
  * principal point and distortion were measured through the old lens.
  */
 
-import { framingOf, groundSampleDistanceM, hfovDegOf, vfovDegOf, type Framing } from './plan';
+import { framingOf, groundSampleDistanceM, hfovDegOf, thermocoupleViewOf, vfovDegOf, type Framing, type ThermocoupleView } from './plan';
 import { BUILTIN_CAMERA_PRESETS, presetGrade, type CameraPreset } from './presets';
 import type { CameraObject, CameraSpec, PlanDocument, Vec2 } from './types';
 
@@ -127,6 +127,8 @@ export interface LensComparisonRow {
   mmPerPx: number;
   /** Null when the plan has no fire to frame. */
   framing: Framing | null;
+  /** Null when the plan has no thermocouples. */
+  thermocouples: ThermocoupleView | null;
 }
 
 /**
@@ -147,6 +149,7 @@ export function compareLenses(doc: PlanDocument, cam: CameraObject): LensCompari
     vfovDeg: vfovDegOf(c),
     mmPerPx: groundSampleDistanceM(c) * 1000,
     framing: framingOf(doc, c),
+    thermocouples: thermocoupleViewOf(doc, c),
   });
   const rows = lenses.map((lens) => (lens === mine ? row(cam, lens, true) : row(withLens(cam, lens), lens, false)));
   if (!mine) rows.push(row(cam, null, true));

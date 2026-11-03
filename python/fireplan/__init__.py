@@ -39,7 +39,7 @@ from .objects import (
     UnknownObject,
     Wall,
 )
-from .plan import FORMAT, VERSION, VERSION_LATEST, Issue, Plan, PlanError
+from .plan import FORMAT, VERSION, VERSION_LATEST, IR_SPOT_PX, Issue, Plan, PlanError
 from .serialize import dumps as dumps_canonical
 
 __version__ = "0.8.0"
@@ -72,5 +72,6 @@ __all__ = [
     "FORMAT",
     "VERSION",
     "VERSION_LATEST",
+    "IR_SPOT_PX",
     "__version__",
 ]

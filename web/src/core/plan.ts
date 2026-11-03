@@ -555,6 +555,73 @@ export function framingOf(d: PlanDocument, c: CameraObject, rings = 24): Framing
   };
 }
 
+/** A radiometric reading needs a 3 x 3 px spot (FLIR guidance). */
+export const IR_SPOT_PX = 3;
+
+export interface BeadInView {
+  thermocoupleId: string;
+  /** Bead index in beadOffsets order. */
+  index: number;
+  /** World position from the thermocouple's planned transform. */
+  world: Vec3;
+  /** OpenCV pixel coordinates, NaN behind the camera. */
+  u: number;
+  v: number;
+  inFrame: boolean;
+  /** First occluder, or null when clear or outside the frame. */
+  blocker: PlanObject | null;
+  distanceM: number;
+  mmPerPx: number;
+  /** Nearest other seen bead, null if this bead is unseen or the only one seen. */
+  nearestPx: number | null;
+}
+
+export interface ThermocoupleView {
+  /** Every bead in plan order, then bead order. */
+  beads: BeadInView[];
+  seen: number;
+  outside: number;
+  hidden: number;
+  total: number;
+  /** Closest seen pair in Euclidean pixels, null when fewer than two are seen. */
+  closest: { px: number; a: BeadInView; b: BeadInView } | null;
+}
+
+/** Geometry from the planned camera pose. Null when the plan has no thermocouple. */
+export function thermocoupleViewOf(d: PlanDocument, c: CameraObject): ThermocoupleView | null {
+  const rakes = thermocouples(d);
+  if (rakes.length === 0) return null;
+  const at = positionOf(c);
+  const beads: BeadInView[] = rakes.flatMap(tc => beadPositions(tc).map((world, index) => {
+    const { u, v } = projectToPixels(c, world);
+    const inFrame = isPointVisible(c, world);
+    const distanceM = length(sub(world, at));
+    return {
+      thermocoupleId: tc.id, index, world, u, v, inFrame,
+      blocker: inFrame ? firstOccluder(d, at, world) : null,
+      distanceM, mmPerPx: groundSampleDistanceM(c, distanceM) * 1000, nearestPx: null,
+    };
+  }));
+  const seen = beads.filter(b => b.inFrame && b.blocker === null);
+  let closest: ThermocoupleView['closest'] = null;
+  for (let i = 0; i < seen.length; i += 1) {
+    for (let j = i + 1; j < seen.length; j += 1) {
+      const a = seen[i], b = seen[j];
+      const px = Math.hypot(a.u - b.u, a.v - b.v);
+      a.nearestPx = Math.min(a.nearestPx ?? Infinity, px);
+      b.nearestPx = Math.min(b.nearestPx ?? Infinity, px);
+      if (closest === null || px < closest.px) closest = { px, a, b };
+    }
+  }
+  const outside = beads.filter(b => !b.inFrame).length;
+  return { beads, seen: seen.length, outside, hidden: beads.length - outside - seen.length, total: beads.length, closest };
+}
+
+/** Good at two spot widths, warn at one (touching spots), bad below (overlap). */
+export function beadSeparationTone(px: number): 'good' | 'warn' | 'bad' {
+  return px >= 2 * IR_SPOT_PX ? 'good' : px >= IR_SPOT_PX ? 'warn' : 'bad';
+}
+
 // -- burner ---------------------------------------------------------------
 
 export function burnerAreaM2(b: BurnerObject): number {

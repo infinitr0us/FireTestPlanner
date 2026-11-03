@@ -34,12 +34,12 @@ const lens = (mm: number): CameraPreset => findPreset(`flir-a8303sc-${mm}mm`)!;
 const focals = (presets: CameraPreset[]): number[] => presets.map((p) => p.focalLength_mm);
 
 describe('the A8303sc lenses', () => {
-  it('offers the four the datasheet prints, whichever lens a camera has', () => {
-    // "Available Lenses: 17mm, 25 mm, 50 mm, 100 mm" -- the A8300sc datasheet, docs/datasheets/README.md.
-    for (const mm of [17, 25, 50, 100]) {
-      expect(focals(lensesOf(`flir-a8303sc-${mm}mm`))).toEqual([17, 25, 50, 100]);
+  it('offers the five the datasheet prints, whichever lens a camera has', () => {
+    // "Available Lenses: 17 mm, 25 mm, 50 mm, 100 mm, 200 mm" -- the A8303sc datasheet,
+    // P/N 29244-203; the 2015 A8300sc sheet stops at 100 mm. docs/datasheets/README.md.
+    for (const mm of [17, 25, 50, 100, 200]) {
+      expect(focals(lensesOf(`flir-a8303sc-${mm}mm`))).toEqual([17, 25, 50, 100, 200]);
     }
-    expect(lensesOf('flir-t650sc-25deg')).toEqual([]);
     expect(lensesOf('gopro-hero-wide')).toEqual([]);
     expect(lensesOf(null)).toEqual([]);
     expect(lensesOf('not-a-preset')).toEqual([]);
@@ -59,6 +59,9 @@ describe('the A8303sc lenses', () => {
     // 2 atan(17.92 / 200) = 10.24, 2 atan(10.08 / 200) = 5.77
     expect(fov(100)[0]).toBeCloseTo(10.24, 1);
     expect(fov(100)[1]).toBeCloseTo(5.77, 1);
+    // 2 atan(17.92 / 400) = 5.13, 2 atan(10.08 / 400) = 2.89
+    expect(fov(200)[0]).toBeCloseTo(5.13, 1);
+    expect(fov(200)[1]).toBeCloseTo(2.89, 1);
   });
 
   it('keeps every body to one default and lenses that differ only in focal length', () => {
@@ -78,23 +81,50 @@ describe('the A8303sc lenses', () => {
         expect(p.intrinsicsSource).toBe(first.intrinsicsSource);
       }
     }
-    expect([...bodies].sort()).toEqual(['FLIR A700', 'FLIR A8303sc']);
+    expect([...bodies].sort()).toEqual(['FLIR A700', 'FLIR A8303sc', 'FLIR T650sc']);
     expect(lens(25).bodyDefault).toBe(true);
     expect(findPreset('flir-a700-24deg')!.bodyDefault).toBe(true);
+    expect(findPreset('flir-t650sc-25deg')!.bodyDefault).toBe(true);
+  });
+});
+
+describe('the T650sc lenses', () => {
+  it('offers the five its datasheet prints, each agreeing with its angle', () => {
+    // 88.9 mm (7 deg), 41.3 mm (15 deg), 24.6 mm (25 deg), 13.1 mm (45 deg) and
+    // 6.5 mm (80 deg) on 640 x 480 at 17 um: docs/datasheets/README.md.
+    for (const deg of [7, 15, 25, 45, 80]) {
+      expect(focals(lensesOf(`flir-t650sc-${deg}deg`))).toEqual([6.5, 13.1, 24.6, 41.3, 88.9]);
+    }
+    const placed = { camera: specFromPreset(findPreset('flir-t650sc-25deg')!) } as CameraObject;
+    const listed = lensesOf(placed.camera.presetId).map((l) => {
+      const fitted = withLens(placed, l);
+      return `${lensName(l.focalLength_mm)} (${hfovDegOf(fitted).toFixed(1)}° × ${vfovDegOf(fitted).toFixed(1)}°)`;
+    });
+    expect(listed).toEqual([
+      '6.5 mm (79.9° × 64.2°)',
+      '13.1 mm (45.1° × 34.6°)',
+      '24.6 mm (24.9° × 18.8°)',
+      '41.3 mm (15.0° × 11.3°)',
+      '88.9 mm (7.0° × 5.3°)',
+    ]);
+    expect(currentLensOf(placed)?.id).toBe('flir-t650sc-25deg');
   });
 });
 
 describe('the A700 lenses', () => {
   const a700 = (deg: number): CameraPreset => findPreset(`flir-a700-${deg}deg`)!;
 
-  it('offers the five FLIR prints, by focal length, whichever lens a camera has', () => {
-    // 80 deg T300805 5 mm, 42 deg T300239 10 mm, 24 deg (science kit) 18 mm,
-    // 14 deg T300241 29 mm, 6 deg T300095 70 mm: docs/datasheets/README.md.
-    for (const deg of [6, 14, 24, 42, 80]) {
-      expect(lensesOf(`flir-a700-${deg}deg`).map((p) => p.id)).toEqual([
-        'flir-a700-80deg', 'flir-a700-42deg', 'flir-a700-24deg', 'flir-a700-14deg', 'flir-a700-6deg',
+  it('offers the six FLIR prints, by focal length, whichever lens a camera has', () => {
+    // 80 deg T300805 5 mm, 42 deg T300239 10 mm, 24 deg T300240 17 mm f/1.3,
+    // 24 deg (f/1.0 science kit) 18 mm, 14 deg T300241 29 mm, 6 deg T300095 70 mm:
+    // docs/datasheets/README.md.
+    for (const id of ['flir-a700-6deg', 'flir-a700-14deg', 'flir-a700-24deg', 'flir-a700-24deg-17mm',
+      'flir-a700-42deg', 'flir-a700-80deg']) {
+      expect(lensesOf(id).map((p) => p.id)).toEqual([
+        'flir-a700-80deg', 'flir-a700-42deg', 'flir-a700-24deg-17mm', 'flir-a700-24deg',
+        'flir-a700-14deg', 'flir-a700-6deg',
       ]);
-      expect(focals(lensesOf(`flir-a700-${deg}deg`))).toEqual([5, 10, 18, 29, 70]);
+      expect(focals(lensesOf(id))).toEqual([5, 10, 17, 18, 29, 70]);
     }
   });
 
@@ -110,14 +140,17 @@ describe('the A700 lenses', () => {
     expect(listed).toEqual([
       '5 mm (75.0° × 59.9°)',
       '10 mm (42.0° × 32.1°)',
+      '17 mm (25.5° × 19.2°)',
       '18 mm (24.1° × 18.2°)',
       '29 mm (15.1° × 11.3°)',
       '70 mm (6.3° × 4.7°)',
     ]);
     expect(currentLensOf(placed)?.id).toBe('flir-a700-24deg');
-    // The other 24 deg lens FLIR lists, 17 mm f/1.3, is not one of these: typed in,
-    // it reads as not a listed lens rather than as the 18 mm.
-    expect(currentLensOf({ camera: { ...placed.camera, focalLength_mm: 17 } } as CameraObject)).toBeNull();
+    // The other 24 deg lens FLIR sells, 17 mm f/1.3, is its own entry: a camera with
+    // it reads as that lens, not as the 18 mm.
+    expect(currentLensOf({ camera: { ...placed.camera, focalLength_mm: 17 } } as CameraObject)?.id)
+      .toBe('flir-a700-24deg-17mm');
+    expect(currentLensOf({ camera: { ...placed.camera, focalLength_mm: 17.5 } } as CameraObject)).toBeNull();
   });
 
   it('is listed once, by its body, and placed with the 24 deg lens', () => {
@@ -211,8 +244,8 @@ describe('the lens comparison', () => {
     const doc = example();
     const cam = mwir(doc);
     const rows = compareLenses(doc, cam);
-    expect(rows.map((r) => r.lens?.focalLength_mm)).toEqual([17, 25, 50, 100]);
-    expect(rows.map((r) => r.current)).toEqual([false, true, false, false]);
+    expect(rows.map((r) => r.lens?.focalLength_mm)).toEqual([17, 25, 50, 100, 200]);
+    expect(rows.map((r) => r.current)).toEqual([false, true, false, false, false]);
 
     const at = (mm: number) => rows.find((r) => r.focalLength_mm === mm)!;
     // The current row is the Coverage readout's own numbers.
@@ -254,7 +287,7 @@ describe('the lens comparison', () => {
     const cam = mwir(doc);
     cam.camera.focalLength_mm = 35;
     const rows = compareLenses(doc, cam);
-    expect(rows.map((r) => r.focalLength_mm)).toEqual([17, 25, 35, 50, 100]);
+    expect(rows.map((r) => r.focalLength_mm)).toEqual([17, 25, 35, 50, 100, 200]);
     const own = rows.find((r) => r.current)!;
     expect(own.lens).toBeNull();
     expect(own.focalLength_mm).toBe(35);
@@ -264,7 +297,7 @@ describe('the lens comparison', () => {
     const doc = example();
     doc.objects = doc.objects.filter((o) => o.type !== 'burner');
     const rows = compareLenses(doc, mwir(doc));
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(5);
     expect(rows.every((r) => r.framing === null)).toBe(true);
     expect(rows.every((r) => r.mmPerPx > 0)).toBe(true);
   });

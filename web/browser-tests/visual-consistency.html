@@ -13,6 +13,7 @@ import { handleTransportKey, transportButton } from '/src/ui/transport.ts';
 import { visualTheme } from '/src/ui/theme.ts';
 import { DEVICE_COLORS } from '/src/core/visual.ts';
 import { checkOcclusionInspector } from './occlusion.ts';
+import { checkThermocoupleView } from './thermocouple-view.ts';
 import { newPlan } from '/src/core/plan.ts';
 import { buildReportBody, REPORT_CSS } from '/src/export/report.ts';
 const results = [], output = document.querySelector('#report');
@@ -53,6 +54,7 @@ const deviceMetadata = ['TEMPERATURE','THERMOCOUPLE','WALL TEMPERATURE','GAUGE H
 let dialog;
 try {
   await checkOcclusionInspector(check, waitFor);
+  await checkThermocoupleView(check, waitFor);
   const drawingPlan = newPlan('Door and window set-out');
   drawingPlan.units.display.length = 'ft-in';
   drawingPlan.objects.push({id:'wall',type:'wall',name:'Test wall',polyline_m:[[0,0],[4,0]],height_m:3,thickness_m:0.2,

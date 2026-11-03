@@ -22,15 +22,18 @@ editor; a data scientist reads the same file as a camera rig description with th
   and displayed in metric, decimal feet or feet and inches.
 - **Checks that answer the planning questions.** Each camera's frustum, live preview,
   field of view, standoff, mm/px at the fire, and whether the flame base, tip and plume
-  are in frame and not hidden behind a wall. Each gauge's predicted incident flux
+  are in frame and not hidden behind a wall; for an IR camera read against thermocouples,
+  how many beads it sees and how many pixels apart the closest two land. Each gauge's predicted incident flux
   against its range and noise floor, scaled by how much of the flame it can see; each
   thermocouple bead's predicted plume temperature; hood capture and ceiling clearance;
   all from standard fire correlations (Heskestad).
 - **Fires that change.** A heat release rate curve on the burner (t² growth, a pasted
   table, an FDS ramp or a measured series) and a fire clock that plays the predicted
   flame through it. Checks judge the peak.
-- **Camera presets** derived from manufacturer datasheets, including the FLIR A8303sc
-  and A700 with a choice of lenses and a lens comparison, plus presets of your own.
+- **Camera presets** derived from manufacturer datasheets, including the FLIR A8303sc,
+  A700 and T650sc with every standoff lens FLIR lists and a lens comparison, plus presets
+  of your own. A camera can be mounted on its side (Roll 90°), and a burner's flame
+  height can be typed instead of its heat release rate.
 - **Drawings a crew can build from.** A dimensioned plan and elevations with doors and
   windows, an equipment list, a set-out table of coordinates and aim points, a
   planned-against-measured check once positions are surveyed, and an instrument schedule
@@ -97,15 +100,17 @@ checked against the fire it is pointed at rather than merely placed.
 ### Cameras this build has never heard of
 
 The preset list is seeded from [`presets/cameras.json`](presets/cameras.json), which
-includes the FLIR A700, A8303sc, K65 and ONE Pro, derived from the documents listed in
-[`docs/datasheets/`](docs/datasheets/README.md), and nominal presets for a Canon VIXIA
-HF R50 and an iPhone X whose derivations are written out there too. The A8303sc and
-the A700 are each listed once, placed with the 25 mm and the 24° lens; the **Lens**
-field in the inspector switches between the lenses FLIR prints for the body (17, 25,
-50 and 100 mm for the A8303sc; 6°, 14°, 24°, 42° and 80° for the A700), keeping the
-camera's position, aim and zoom. Below Coverage, a **Lens comparison** shows each lens fitted where the camera
-stands: its field of view, the detail at the fire in mm/px, and how much of the flame
-envelope stays in frame.
+includes the FLIR A700, A8303sc, T650sc, K65 and ONE Pro, derived from the documents
+listed in [`docs/datasheets/`](docs/datasheets/README.md), and nominal presets for a
+Canon VIXIA HF R50 and an iPhone X whose derivations are written out there too. The
+A8303sc, the A700 and the T650sc are each listed once, placed with their 25 mm, 24°
+(18 mm) and 25° lenses; the **Lens** field in the inspector switches between the lenses
+FLIR prints for the body (17, 25, 50, 100 and 200 mm for the A8303sc; 6°, 14°, two 24°
+lenses of 17 and 18 mm, 42° and 80° for the A700; 7°, 15°, 25°, 45° and 80° for the
+T650sc), keeping the camera's position, aim and zoom. Close-up and microscope lenses
+are left out: they cannot focus at a test standoff. Below Coverage, a **Lens
+comparison** shows each lens fitted where the camera stands: its field of view, the
+detail at the fire in mm/px, and how much of the flame envelope stays in frame.
 
 For anything else, place the nearest camera, correct its optics in the inspector, then
 **Save as preset**. It joins the list and persists (in the desktop app's settings

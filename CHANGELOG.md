@@ -5,6 +5,30 @@ while the version is 0.x, a minor release may change behaviour. The plan file fo
 has its own version (`fire-test-plan` 1.0.0 to 1.7.0, one JSON Schema each in `schema/`),
 and a plan written by any release opens in every later one.
 
+## [Unreleased]
+
+No plan format change: every addition is derived from what a plan already stores.
+
+### Added
+- **Every standoff lens FLIR lists for the three IR bodies.** The T650sc becomes a body
+  with its five lenses (7°, 15°, 25°, 45° and 80°); the A8303sc gains the 200 mm lens its
+  own datasheet lists; the A700 gains the second 24° lens, 17 mm f/1.3 (T300240), beside
+  the 18 mm f/1.0 one. Each is cited in `docs/datasheets/README.md`, which also closes
+  the gap the T650sc preset had there. Close-up and microscope lenses stay out.
+- **Thermocouple beads in a camera's image.** Coverage reports how many beads a camera
+  sees in frame and in line of sight, how far apart in pixels the two closest are, and
+  the size of a 3 × 3 px measurement spot at the beads; the lens comparison and the
+  printed coverage table add the same for every lens. Separation is good at 6 px or
+  more, touching from 3 to 6 px and overlapping below 3 px. In Python,
+  `Plan.thermocouple_view(camera)` gives every bead's pixel position.
+- **Camera roll.** A camera's **Roll** field mounts it on its side (90°) without
+  changing where it looks; re-aiming and moving keep the roll. When a level landscape
+  camera clips the flame, Coverage suggests it. The equipment list tells the crew
+  ("on its side (roll 90°)"). In Python, `Camera.roll_deg` and `set_roll_deg`.
+- **A flame height field on the burner.** Typing a mean flame height back-solves the
+  heat release rate through the Heskestad correlation, the way typing a field of view
+  back-solves a focal length. In Python, `correlations.hrr_for_flame_height_kw`.
+
 ## [0.8.0] - 2026-11-02
 
 Plan formats 1.5.0, 1.6.0 and 1.7.0.

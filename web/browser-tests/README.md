@@ -30,7 +30,14 @@ A8303sc camera it checks the single palette entry, the Lens options, a lens chan
 by a real key on the Lens select (comparison row, field of view and focal length)
 and its undo. It checks that the A700 is also one palette entry placed with its 24°
 lens, then switches the same camera to the A700 by a real key on the Preset select,
-checks its five Lens options and undoes the switch. At a 1280 × 720 window it checks
+checks its six Lens options and undoes the switch. A typed 90 in the same camera's
+**Roll** field mounts it on its side, which frames the flame base it missed while
+keeping the lens, and undo levels it; a typed burner **Flame height** back-solves the
+HRR, and undo restores it. The fixture page checks the thermocouple readouts on
+`fixtures/thermocouple-view.ftp.json` in both languages at the inspector's 320 px
+width: beads seen, the closest pair and its tone, the 3 × 3 px spot, the lens table's
+TC column and the printed column, and their updates through a focal length edit, a
+lens change, a display unit change and undo. At a 1280 × 720 window it checks
 that the left rail shows Checks and its first card without scrolling, and that
 **From FDS** is folded, opens with a real Space and stays open through a pasted
 record's Create.

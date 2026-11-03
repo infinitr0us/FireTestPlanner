@@ -115,3 +115,23 @@ def look_at_quat(eye, target, up_hint=WORLD_UP) -> np.ndarray:
     right = normalize(np.cross(up_hint, back))
     up = np.cross(back, right)
     return matrix_to_quat(np.column_stack([right, up, back]))
+
+
+def roll_of(q) -> float:
+    """Roll from the level look-at frame, right-handed about forward, in (-pi, pi]."""
+    actual = quat_to_matrix(q)
+    level = quat_to_matrix(look_at_quat([0, 0, 0], -actual[:, 2]))
+    up = actual[:, 1]
+    roll = float(np.arctan2(np.dot(up, level[:, 0]), np.dot(up, level[:, 1])))
+    return float(np.pi) if roll <= -np.pi else roll
+
+
+def with_roll(q, roll: float) -> np.ndarray:
+    """Keep the view direction and set absolute roll from its level look-at frame."""
+    level = quat_to_matrix(look_at_quat([0, 0, 0], -quat_to_matrix(q)[:, 2]))
+    right, up, back = level.T
+    r = float(roll) % (2 * np.pi)
+    if r > np.pi:
+        r -= 2 * np.pi
+    c, s = np.cos(r), np.sin(r)
+    return matrix_to_quat(np.column_stack([right * c - up * s, up * c + right * s, back]))

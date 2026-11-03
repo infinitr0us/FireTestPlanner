@@ -40,6 +40,17 @@ def test_flame_height_clamps_at_zero_rather_than_going_negative():
     assert z == 0.0
 
 
+def test_hrr_for_flame_height_inverts_the_flame_height():
+    """Q = ((L_f + 1.02 D) / 0.235)^2.5; ((2.704499 + 1.02) / 0.235)^2.5 =
+    15.848932^2.5 = 1000 kW, the 1 MW case back. Mirror of the web test."""
+    assert c.hrr_for_flame_height_kw(2.704499, 1.0) == pytest.approx(1000.0, abs=1e-3)
+    for height, d in ((0.5, 0.3), (9.6, 2.53), (10.0, 5.35)):
+        assert c.flame_height_m(c.hrr_for_flame_height_kw(height, d), d) == pytest.approx(height, abs=1e-9)
+    for height, d in ((0.0, 1.0), (-1.0, 1.0), (2.0, 0.0)):
+        with pytest.raises(ValueError):
+            c.hrr_for_flame_height_kw(height, d)
+
+
 def test_effective_diameter_is_equal_area():
     """D = sqrt(4A/pi); for A = 1 m^2 that is 1.128379 m."""
     assert c.effective_diameter_m(1.0) == pytest.approx(1.1283792, abs=1e-6)

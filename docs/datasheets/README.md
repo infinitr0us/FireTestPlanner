@@ -19,6 +19,12 @@ table says so.
 | Document | Where to get it | What it actually is | Preset(s) it backs |
 |---|---|---|---|
 | FLIR A8300sc datasheet (`flir-a8303sc.pdf`, SHA-256 `db28d573112ed24ee44ce684d4027456f3a2f749e70194fa52406e5a58f5c839`) | [FLIR A8300sc product page](https://www.flir.com/products/a8300sc/) | Marked "Updated 09/28/15". The A8303sc is a temperature-range variant of this body; the imaging specifications the preset uses are the family's, and the sheet does not name the `03` variant. | `flir-a8303sc-17mm`, `-25mm`, `-50mm`, `-100mm` |
+| FLIR A8303sc datasheet, P/N 29244-203 | [FLIR PDF](https://support.flir.com/DsDownload/Assets/29244-203-en-US_A4.pdf) | Modified 2018-11-13, formatted 2019-05-02. Specific to the A8303sc: prints 1280 × 720 at 14 µm, f/4.0, 60 Hz, "Available Lenses: 17 mm, 25 mm, 50 mm, 100 mm, 200 mm" and "Close-up Lenses/Microscopes: 1X, 4X". | All five `flir-a8303sc-*` presets; the only source of `-200mm` |
+| FLIR A700 24° Professional Science Kit, P/N 85902-0102 | [FLIR datasheet page](https://support.flir.com/DsDownload/Assets/85902-0102-en-US.html) | Revision 93984, modified 2023-11-01. A second 24° kit: prints its lens as 17 mm, f/1.3, 24° × 18°, the 12 µm pitch, and lists T300239 (10 mm, 42°), T300240 (17 mm, 24°), T300241 (29 mm, 14°), T300586 (dual FOV, 17/29 mm) and T300095 (70 mm, 6°). | `flir-a700-24deg-17mm`; cross-check of the 10, 29 and 70 mm lenses |
+| FLIR T300240, IR lens f=17 mm (24°) | [FLIR product page](https://www.flir.com/products/t300240/) | Undated web page. Names the lens by focal length and angle. | `flir-a700-24deg-17mm` |
+| FLIR T650sc datasheet ("updated 5/14") | Formerly hosted by the University of Cambridge at `cambeep.eng.cam.ac.uk/system/files/documents/flir-t650sc-datasheet-updated-5-14.pdf`, now redirected to an archive; a FLIR-authored copy | Read from its indexed text on 2026-11-02, not opened. Prints 640 × 480, 17 µm pitch, f/1.0 and "Available Lenses: 88.9 mm (7°), 41.3 mm (15°), 24.6 mm (25°), 13.1 mm (45°), 6.5 mm (80°)". The A655sc sheet prints the same five lenses on the same array. | All five `flir-t650sc-*` presets |
+| FLIR T650sc support page | [FLIR support page](https://www.flir.com/support/products/t650sc/) | Undated; read on 2026-11-02. Marks the T650sc **Discontinued** and lists the lenses as accessories with their part numbers: T198166 (7°, 88.9 mm), T197914 (15°, 41.3 mm), T197922 (25°, 24.6 mm), T197915 (45°, 13.1 mm), T198065 (80°, 6.5 mm), and three close-up lenses. It calls the integrated lens "18 mm (25°)", which its own T197922 entry contradicts. | Part numbers of the `flir-t650sc-*` presets |
+| FLIR T197914, IR lens 15° | [Datasheet](https://tester.co.uk/files/get/download/id/2612/flir-t197914-thermal-camera-lens-datasheet.pdf), a FLIR-authored copy hosted by the distributor Tester | Read from its indexed text. Prints 41.3 mm, 15° × 11° (19° diagonally) and a 500 mm minimum focus distance. | `flir-t650sc-15deg` |
 | FLIR A400 / A500 / A700 Science Kits datasheet (`flir-a400-a500-a700-science-kits.pdf`, SHA-256 `ec7b4b65ce871d8f746368fb0b98d66fedac755f749738864d3a425a48a1e406`) | [FLIR A400/A700 Science Kits product page](https://www.flir.com/products/a400-a700-science-kits/) | Rev. 10/26/23. One sheet for three bodies, so several rows read "camera dependent" without saying which value belongs to the A700. | The A700's resolution, band and frame rate, which agree with sheet 85903-0102 below. No longer the source of its pitch or of any focal length. |
 | FLIR A700 24° f/1.0 Professional Science Kit datasheet, P/N 85903-0102 | [FLIR datasheet page, with PDF download links](https://support.flir.com/dsdownload/assets/85903-0102-en-us.html) | Revision 98866, modified 2024-08-21. Specific to the A700 body: prints 640 × 480, the 12 µm pitch, 7.5–14 µm, 30 Hz and the 18 mm lens. | The A700 body (all five `flir-a700-*` presets); the focal length of `flir-a700-24deg` |
 | FLIR T300095, IR lens 6° with case | [FLIR product page](https://www.flir.com/products/t300095-lens-6-degree-with-case/) (undated); [datasheet](https://assets.testequity.com/te1/Documents/pdf/flir/flir-t300095-datasheet.pdf), a FLIR-authored copy hosted by the distributor TestEquity | Datasheet revision 79192, modified 2021-09-08. Prints 70 mm, 6° × 4.5° and distortion below 4.2%. | `flir-a700-6deg` |
@@ -39,23 +45,24 @@ table says so.
 reason the pitch is quoted. Where no pitch is printed (the Canon and the iPhone), it is
 inferred from an angle and labelled as such.
 
-## FLIR A8300sc / A8303sc, 17, 25, 50 and 100 mm lenses
+## FLIR A8300sc / A8303sc, 17, 25, 50, 100 and 200 mm lenses
 
 | Preset field | Value | Where it comes from |
 |---|---|---|
 | `resolution_px` | 1280 × 720 | printed — "Resolution" |
 | detector pitch | 14 µm | printed — "Detector Pitch" |
 | `sensor_mm` | 17.92 × 10.08 | derived — 1280 × 14 µm, 720 × 14 µm |
-| `focalLength_mm` | 17, 25, 50, 100 | printed — "Available Lenses: 17mm, 25mm, 50mm, 100mm" |
+| `focalLength_mm` | 17, 25, 50, 100, 200 | printed — "Available Lenses: 17 mm, 25 mm, 50 mm, 100 mm, 200 mm" on the A8303sc sheet (P/N 29244-203); the 2015 A8300sc sheet stops at 100 mm |
 | `spectralBand_um` | 3.0 – 5.0 | printed — "Spectral Range" |
 | `framerate_hz` | 60 | printed — "Max Frame Rate: 60Hz @ Full Window" |
-| field of view | per lens, below | derived from the sensor and the lens; the sheet prints no field of view |
+| field of view | per lens, below | derived from the sensor and the lens; the sheets print no field of view |
 
 Nothing is back-solved here: the lenses are designated by focal length, and the pitch
-and the designations are mutually consistent. The referenced sheet lists **four** lenses;
-a 200 mm option is not on it. Each lens is its own preset, and all four carry
-`"body": "FLIR A8303sc"`, so the editor lists the camera once and offers the lens as
-a separate choice. They differ in focal length and nothing else. The 25 mm preset is
+and the designations are mutually consistent. The A8300sc sheet of 2015 lists four
+lenses; the A8303sc's own sheet of 2018 adds a 200 mm one. Each lens is its own preset,
+and all five
+carry `"body": "FLIR A8303sc"`, so the editor lists the camera once and offers the lens
+as a separate choice. They differ in focal length and nothing else. The 25 mm preset is
 the one the palette places (`"bodyDefault": true`).
 
 | Lens | Field of view (H × V) | IFOV |
@@ -64,10 +71,18 @@ the one the palette places (`"bodyDefault": true`).
 | 25 mm | 39.4° × 22.8° | 0.56 mrad/px |
 | 50 mm | 20.3° × 11.5° | 0.28 mrad/px |
 | 100 mm | 10.2° × 5.8° | 0.14 mrad/px |
+| 200 mm | 5.1° × 2.9° | 0.07 mrad/px |
 
 All derived: `2·atan(sensor / 2f)` for the field of view and `pitch / f` for the IFOV.
 
-## FLIR A700, 6°, 14°, 24°, 42° and 80° lenses
+The sheet's 1X and 4X microscopes are close-up optics for small targets at short range,
+not lenses for a standoff, and are not presets. The A8303sc sheet also
+prints its temperature ranges: −20 to 350 °C as standard, and 250 to 2000 °C (ND1) or
+500 to 3000 °C (ND2) as options with band-matched optics. A camera meant to read a
+flame needs one of the optional ranges; that is a radiometric choice the plan does not
+model.
+
+## FLIR A700, 6°, 14°, two 24°, 42° and 80° lenses
 
 The body, from the A700's own science-kit sheet (P/N 85903-0102, revision 98866):
 
@@ -84,16 +99,18 @@ FLIR designates these lenses by angle, and the multi-body sheet names them only 
 way (24° included; 6°, 14°, 42° and 80° optional). The "17 mm" on that sheet is a
 minimum focus distance in macro mode, not a focal length. FLIR does print a focal length
 for every one of them elsewhere: the 24° lens on the A700 sheet, and each optional lens
-on its own product page and, except the 42°, its own datasheet. All five presets
-therefore store a printed focal length, and nothing is back-solved. They carry
+on its own product page and, except the 42°, its own datasheet; the second 24° lens,
+T300240, on its product page and on kit sheet 85902-0102. All six presets therefore
+store a printed focal length, and nothing is back-solved. They carry
 `"body": "FLIR A700"` and differ in focal length only; the palette lists the camera
-once and places the 24° lens (`"bodyDefault": true`), and the inspector offers the
-others under **Lens**.
+once and places the 18 mm 24° lens (`"bodyDefault": true`), and the inspector offers
+the others under **Lens**.
 
 | Preset | Lens | `focalLength_mm` (printed) | Printed source | IFOV (derived, pitch / f) |
 |---|---|---|---|---|
 | `flir-a700-80deg` | T300805, 80° | 5 | T300805 datasheet, revision 93944; product page | 2.40 mrad/px |
 | `flir-a700-42deg` | T300239, 42° | 10 | T300239 product page; FLIR lens table | 1.20 mrad/px |
+| `flir-a700-24deg-17mm` | T300240, 24° f/1.3 | 17 | A700 science-kit sheet 85902-0102, revision 93984; product page | 0.71 mrad/px |
 | `flir-a700-24deg` | 24° f/1.0 | 18 | A700 science-kit sheet 85903-0102, revision 98866 | 0.67 mrad/px |
 | `flir-a700-14deg` | T300241, 14° | 29 | T300241 datasheet, revision 79639; product page | 0.41 mrad/px |
 | `flir-a700-6deg` | T300095, 6° | 70 | T300095 datasheet, revision 79192; product page | 0.17 mrad/px |
@@ -106,7 +123,8 @@ shows the third column below and not the angle FLIR prints:
 |---|---|---|---|---|
 | 6° | 70 mm | 6.28° × 4.71° | 6° × 4.5° | 73.27 mm |
 | 14° | 29 mm | 15.09° × 11.34° | 14° × 10° | 31.27 mm |
-| 24° | 18 mm | 24.09° × 18.18° | 24° (designation) | 18.07 mm |
+| 24° (f/1.3) | 17 mm | 25.46° × 19.23° | 24° × 18° | 18.07 mm |
+| 24° (f/1.0) | 18 mm | 24.09° × 18.18° | 24° (designation) | 18.07 mm |
 | 42° | 10 mm | 42.01° × 32.13° | 42° × 32° | 10.00 mm |
 | 80° | 5 mm | 75.05° × 59.88° | 80° × 63° | 4.58 mm |
 
@@ -119,13 +137,19 @@ The T300095 sheet allows distortion below 4.2%. The presets keep the printed foc
 length, because that is the lens on the camera. Read the field of view of these three
 as a framing estimate, and calibrate before using them for reconstruction.
 
-**The 24° lens.** The preset is the f/1.0 lens of the A700 science kit, which sheet
-85903-0102 prints as 18 mm. Before 2026-11-02 it stored 18.07 mm, back-solved from the
-24° designation because the multi-body sheet prints no focal length. FLIR's lens table
-also lists a 17 mm f/1.3 lens as 24°, which under a pinhole gives 25.46° × 19.23°. Only
-the lens itself says which of the two is fitted. For the 17 mm one, type 17 in **Focal
-length**, and the inspector will report it as not a listed lens rather than round it to
-18 mm.
+**The two 24° lenses.** FLIR sells two lenses designated 24° for this body, and both are
+presets. The palette places the f/1.0 lens of science kit 85903-0102, which that sheet
+prints as 18 mm. Before 2026-11-02 the preset stored 18.07 mm, back-solved from the 24°
+designation because the multi-body sheet prints no focal length. The other is T300240,
+17 mm f/1.3, the lens of science kit 85902-0102 and of FLIR's lens table; under a pinhole
+it gives 25.46° × 19.23°, about 1.5° wider than its printed 24° × 18°. Only the lens
+itself says which of the two is fitted, so check the barrel and pick it under **Lens**.
+
+The same kit sheet lists a dual-FOV lens, T300586 (17/29 mm, 24°/14°). It is the 17 mm
+and the 29 mm lens in one barrel, so a camera fitted with it takes one of those two
+entries under **Lens**, whichever setting is used. The 2.0× macro lens (T300238) and the
+24° lens's macro mode are close-up options for small targets, not standoff lenses, and
+are not presets.
 
 ## FLIR K65
 
@@ -223,12 +247,42 @@ overstates the horizontal field by about 8°. Apple's reference says cinematic v
 stabilisation reduces the field of view; lock the format and the stabilisation setting
 when checking a plan against footage.
 
-## Not backed by a referenced sheet
+## FLIR T650sc, 7°, 15°, 25°, 45° and 80° lenses
 
-`flir-t650sc-25deg` carries `intrinsicsSource: "datasheet"` but has no sheet listed here. Its
-numbers — 640 × 480 at 17 µm, 24.6 mm standard lens — come from FLIR's published T650sc
-specification. Reference that sheet or downgrade the preset before treating it as
-checkable; today it is the one seeded preset whose audit trail stops at this sentence.
+From the T650sc datasheet ("updated 5/14") and FLIR's T650sc support page:
+
+| Preset field | Value | Where it comes from |
+|---|---|---|
+| `resolution_px` | 640 × 480 | printed on the datasheet |
+| detector pitch | 17 µm | printed on the datasheet |
+| `sensor_mm` | 10.88 × 8.16 | derived from 640 × 17 µm and 480 × 17 µm |
+| `focalLength_mm` | 88.9, 41.3, 24.6, 13.1, 6.5 | printed on the datasheet with each lens's angle, and in each lens's name on the support page |
+| `spectralBand_um` | 7.5 – 14.0 | FLIR's T650sc specification, unchanged from the earlier preset |
+| `framerate_hz` | 30 | FLIR's T650sc specification, unchanged from the earlier preset |
+
+The five presets carry `"body": "FLIR T650sc"`; the palette places the standard 25°
+lens. Unlike the A700's, every T650sc focal length reproduces its designation under a
+pinhole:
+
+| Preset | Lens | `focalLength_mm` (printed) | Pinhole field of view on 10.88 × 8.16 mm (H × V) | IFOV (pitch / f) |
+|---|---|---|---|---|
+| `flir-t650sc-80deg` | T198065, 80° | 6.5 | 79.85° × 64.23° | 2.62 mrad/px |
+| `flir-t650sc-45deg` | T197915, 45° | 13.1 | 45.10° × 34.60° | 1.30 mrad/px |
+| `flir-t650sc-25deg` | T197922, 25° (standard) | 24.6 | 24.94° × 18.83° | 0.69 mrad/px |
+| `flir-t650sc-15deg` | T197914, 15° | 41.3 | 15.01° × 11.28° (printed 15° × 11°) | 0.41 mrad/px |
+| `flir-t650sc-7deg` | T198166, 7° | 88.9 | 7.00° × 5.26° | 0.19 mrad/px |
+
+FLIR's support page calls the integrated lens "18 mm (25°)". On this array 18 mm would
+give 33.6°, and the same page lists the 25° lens as T197922, 24.6 mm, so the preset keeps
+24.6 mm. The support page marks the T650sc as discontinued while still listing these
+lenses; whether a lens can still be bought, and whether one bought separately must be
+calibrated with the camera body, is a question for FLIR or a distributor. The close-up
+lenses (1.5×, 2.9× and 5.8×; T198066, T198059, T198060) are for small targets at short
+range and are not presets.
+
+The band and frame rate were not on a sheet referenced here before 2026-11-02 and were
+not re-read from the datasheet copy, which could only be read from its indexed text.
+Check them against a FLIR copy before treating those two fields as checkable.
 
 `CONVENTIONS.md` section 4 is the normative statement of which quantities are stored and
 which are derived.

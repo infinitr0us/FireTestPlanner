@@ -9,7 +9,8 @@
  * moved. Centralising that is what stops the four paths drifting apart.
  */
 
-import { lookAtQuat } from './math';
+import { lookAtQuat, rollOf, withRoll } from './math';
+import { quatOf } from './plan';
 import { isMounted } from './types';
 import type { CameraObject, HeatFluxSensorObject, VelocityProbeObject, PlanObject, Vec3 } from './types';
 
@@ -39,7 +40,7 @@ export function setPosition(obj: PlanObject, position: Vec3): void {
     const far = Math.hypot(
       target[0] - position[0], target[1] - position[1], target[2] - position[2],
     ) > 1e-9;
-    if (far) t.rotation_quat = lookAtQuat(position, target);
+    if (far) t.rotation_quat = withRoll(lookAtQuat(position, target), rollOf(quatOf(obj)));
   }
 
   // Advisory, but it is what the equipment table prints as tripod height. Every
@@ -67,7 +68,7 @@ export function setAimTarget(cam: AimableObject, target: Vec3): boolean {
   // nothing. Refuse the whole edit instead; the caller reports it.
   if (Math.hypot(target[0] - p[0], target[1] - p[1], target[2] - p[2]) < 1e-9) return false;
   t.aimTarget_m = [target[0], target[1], target[2]];
-  t.rotation_quat = lookAtQuat(t.position_m, t.aimTarget_m);
+  t.rotation_quat = withRoll(lookAtQuat(t.position_m, t.aimTarget_m), rollOf(quatOf(cam)));
   return true;
 }
 

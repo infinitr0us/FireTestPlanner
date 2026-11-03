@@ -32,6 +32,9 @@ from .objects import (
 
 FORMAT = "fire-test-plan"
 
+# A radiometric reading needs a 3 x 3 px spot (FLIR guidance).
+IR_SPOT_PX = 3
+
 #: Baseline a new, empty plan declares. A plan states the LOWEST version that
 #: describes its own contents (serialize.required_version), so this is a floor
 #: rather than a stamp -- and a 1.0 plan stays openable in a 1.0 tool.
@@ -1379,6 +1382,46 @@ class Plan:
         result["plume_fraction_visible"] = float(np.mean(vis))
         result["unobstructed"] = self._camera_line_of_sight(camera, burner)[0]
         return result
+
+    def thermocouple_view(self, camera: Camera) -> Optional[dict]:
+        """Bead visibility, pixels, detail and separation from the planned pose.
+
+        Ideal pinhole geometry, with the existing 5 cm occlusion endpoint trim.
+        Every bead is returned in plan order, then bead-offset order.
+        """
+        rakes = self.thermocouples
+        if not rakes:
+            return None
+        beads = []
+        objects = self.objects
+        at = camera.position
+        for rake in rakes:
+            for index, world in enumerate(rake.bead_positions):
+                uv, in_frame = camera.project(world)
+                blocker = first_occluder(objects, at, world) if in_frame else None
+                distance = float(np.linalg.norm(world - at))
+                beads.append({
+                    "thermocouple_id": rake.id, "index": index, "world": world.tolist(),
+                    "u": float(uv[0]), "v": float(uv[1]), "in_frame": bool(in_frame),
+                    "blocked_by": blocker.id if blocker is not None else None,
+                    "distance_m": distance,
+                    "mm_per_px": camera.ground_sample_distance_m(distance) * 1000,
+                    "nearest_px": None,
+                })
+        seen = [b for b in beads if b["in_frame"] and b["blocked_by"] is None]
+        closest = None
+        for i, a in enumerate(seen):
+            for b in seen[i + 1:]:
+                px = math.hypot(a["u"] - b["u"], a["v"] - b["v"])
+                for bead in (a, b):
+                    if bead["nearest_px"] is None or px < bead["nearest_px"]:
+                        bead["nearest_px"] = px
+                if closest is None or px < closest["px"]:
+                    closest = {"px": px, "a": (a["thermocouple_id"], a["index"]),
+                               "b": (b["thermocouple_id"], b["index"])}
+        outside = sum(not b["in_frame"] for b in beads)
+        return {"beads": beads, "seen": len(seen), "outside": outside,
+                "hidden": len(beads) - outside - len(seen), "total": len(beads), "closest": closest}
 
     # -- export ----------------------------------------------------------
 

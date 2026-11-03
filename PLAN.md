@@ -238,6 +238,7 @@ tool to exist.
 | M12 | **Reconstructed flame playback** | Format 1.4 voxel sequences, shared playback clock, PNG and embedded examples | **done** |
 | M13 | **FDS results** | Separate simulation session, slices, boundary fields, Smoke3D preview and device histories | **done** |
 | M14 | **Lens choice** | A8303sc lenses from its datasheet (17/25/50/100 mm), a Lens field and a lens comparison in the inspector | **done** |
+| M19 | **Lenses for a large outdoor test** | Every standoff lens of the A8303sc, A700 and T650sc; thermocouple beads in a camera's image (seen, pixel spacing, 3 × 3 px spot) per lens; camera roll; a flame height field that back-solves the HRR. No format change | **done**, unreleased |
 
 Phase 1 is complete and Phase 2 has landed (v0.7.0). M15 to M18 are in
 [section 9](#9-next-round-2026-11) and landed in v0.8.0.
@@ -617,3 +618,27 @@ Still open from this round: the French is a draft. Its terms
 ([docs/french-review.md](docs/french-review.md)) wait for feedback from a
 French-speaking user of the tool, deferred until one is available (decided
 2026-11-02).
+
+## M19: Lenses for a large outdoor test (2026-11-02)
+
+The request is archived, without the client's details, in
+`docs/feature-requests/2026-11-outdoor-test-lenses.txt`: decide whether to buy lenses
+for three IR cameras standing at a 28 m safety distance from a vehicle fire, where an
+MWIR camera must frame a flame about 10 m high and two LWIR cameras are read against
+15 to 20 thermocouples on the battery.
+
+- **Every standoff lens** of the three bodies, from FLIR's own sheets and pages: the
+  A8303sc's five (its 2018 sheet adds 200 mm), the A700's six (a second 24° lens,
+  17 mm f/1.3), and the T650sc's five, which makes it a body with a Lens field. Close-up
+  and microscope lenses are left out.
+- **Thermocouple beads in a camera's image**: seen in frame and in line of sight, the
+  closest pair's separation in pixels against a 3 × 3 px measurement spot, per camera
+  and per lens, in the inspector, the lens comparison and the printout, and in Python.
+  This answers "will each thermocouple get its own pixels" for a lens before it is
+  bought. CONVENTIONS section 5b defines it.
+- **Camera roll**: a camera mounted on its side keeps its roll through re-aiming and
+  moves, and the equipment list tells the crew. CONVENTIONS section 3 defines it.
+- **Flame height field**: typing a mean flame height back-solves the HRR through
+  Heskestad, so a fire can be sized from the height the engineers estimate.
+
+No format change. The plans made for the test itself are not in this repository.
