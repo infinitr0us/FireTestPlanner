@@ -44,6 +44,20 @@ def flame_height_m(hrr_kw: float, diameter_m: float) -> float:
     return max(0.0, 0.235 * hrr_kw ** 0.4 - 1.02 * diameter_m)
 
 
+def hrr_for_flame_height_kw(flame_height_m: float, diameter_m: float) -> float:
+    """The HRR whose Heskestad mean flame height is `flame_height_m`.
+
+    Q = ((L_f + 1.02 D) / 0.235)^(5/2), the exact inverse of `flame_height_m` for a
+    positive height. Mirror of `hrrForFlameHeightKw` in web/src/core/correlations.ts,
+    which the editor's flame height field stores through.
+    """
+    if flame_height_m <= 0.0:
+        raise ValueError("flame height must be positive")
+    if diameter_m <= 0.0:
+        raise ValueError("diameter must be positive")
+    return ((flame_height_m + 1.02 * diameter_m) / 0.235) ** 2.5
+
+
 def virtual_origin_m(hrr_kw: float, diameter_m: float) -> float:
     """Heskestad virtual origin: z0 = 0.083 Q^(2/5) - 1.02 D.
 

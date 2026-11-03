@@ -82,6 +82,17 @@ export function flameHeightM(hrrKw: number, diameterM: number): number {
 }
 
 /**
+ * The heat release rate whose Heskestad mean flame height is `flameHeightM`:
+ * Q = ((L_f + 1.02 D) / 0.235)^(5/2), the exact inverse of `flameHeightM` for a
+ * positive height. What typing a flame height stores, the way typing a field of
+ * view stores a focal length. Null for a height or diameter that is not positive.
+ */
+export function hrrForFlameHeightKw(flameHeight: number, diameterM: number): number | null {
+  if (!(flameHeight > 0) || !(diameterM > 0)) return null;
+  return Math.pow((flameHeight + 1.02 * diameterM) / 0.235, 2.5);
+}
+
+/**
  * Virtual origin: z0 = 0.083 Q^(2/5) - 1.02 D.
  *
  * Routinely negative for larger pools. Deliberately not clamped -- clamping would

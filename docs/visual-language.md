@@ -161,6 +161,8 @@ error status, loading messages use neutral text, invalid scale inputs receive an
 error border and `aria-invalid`, and disabled controls share a subdued appearance.
 Native controls and scrollbars use the dark color scheme.
 
+The camera inspector and lens table report thermocouple visibility and pixel separation; the TC column keeps counts and pixels visible, with `lens-table__warn` using `--warn` for touching measurement spots.
+
 A red device is a measurement class; red error text is a status. These meanings are
 kept apart by placement, shape and explicit text. Data ramps and plot series are
 also distinct from interaction colors.
@@ -359,6 +361,12 @@ resolution or adding editor DOM labels to PNGs would be separate work.
 
 Print retains dark ink on paper, with its own text, rule and verdict colors.
 Instrument defaults still come from the shared identity map.
+
+The plan view's camera frustum projects the real image corners through the stored
+quaternion, so a rolled camera's wedge narrows to its short sensor axis. Elevations
+draw no frustum. The equipment detail tells the crew how to mount a rolled camera:
+"on its side (roll 90°)" within half a degree of a quarter turn, "rolled 30°" for any
+other roll of at least half a degree, and nothing for a level one.
 
 The drawing uses heavy wall strokes in plan. Doors leave gaps; windows replace
 the heavy span with two thin (0.8 px) parallel lines inside the recorded wall

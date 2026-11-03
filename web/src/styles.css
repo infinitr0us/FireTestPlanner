@@ -508,7 +508,9 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .lens-table__row--current th, .lens-table__row--current td { font-weight: 600; }
 .lens-table__row--current th { color: var(--accent); }
 .lens-table__good { color: var(--good); }
+.lens-table__warn { color: var(--warn); }
 .lens-table__bad { color: var(--bad); }
+.lens-table--tc th, .lens-table--tc td { white-space: normal; overflow-wrap: normal; }
 
 /* -- buttons ------------------------------------------------------------ */
 

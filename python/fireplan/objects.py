@@ -15,7 +15,7 @@ import numpy as np
 
 from . import correlations
 from .hrr import curve_at, curve_peak
-from ._math import look_at_quat, quat_to_matrix
+from ._math import look_at_quat, matrix_to_quat, quat_to_matrix, roll_of, with_roll
 
 IDENTITY_QUAT = [0.0, 0.0, 0.0, 1.0]
 
@@ -151,9 +151,10 @@ class PlanObject:
         return None if t is None else np.asarray(t, dtype=float)
 
     def aim_at(self, target: Iterable[float]) -> None:
-        """Re-orient to look at `target`, keeping quaternion and aimTarget in step."""
+        """Re-orient to look at `target`, preserving roll and recording the target."""
         target = [float(v) for v in target]
-        q = look_at_quat(self.position, np.asarray(target))
+        roll = roll_of(matrix_to_quat(self.rotation_matrix))
+        q = with_roll(look_at_quat(self.position, np.asarray(target)), roll)
         self._transform["rotation_quat"] = [float(v) for v in q]
         self._transform["aimTarget_m"] = target
 
@@ -207,6 +208,16 @@ class PlanObject:
 
 
 class Camera(PlanObject):
+    @property
+    def roll_deg(self) -> float:
+        """Roll about the view direction from level, in (-180, 180] degrees."""
+        return math.degrees(roll_of(matrix_to_quat(self.rotation_matrix)))
+
+    def set_roll_deg(self, deg: float) -> None:
+        """Set mounting roll without changing the view direction or aim target."""
+        q = with_roll(matrix_to_quat(self.rotation_matrix), math.radians(deg))
+        self._transform["rotation_quat"] = [float(v) for v in q]
+
     @property
     def spec(self) -> Dict[str, Any]:
         return self.raw["camera"]

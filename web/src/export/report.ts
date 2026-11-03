@@ -14,6 +14,7 @@ import { setOutCheck } from '../core/asbuilt';
 
 import {
   beadOffsetsOf,
+  beadSeparationTone,
   burnerDiameterM,
   burners,
   cameraColor,
@@ -53,6 +54,7 @@ import {
   thermocoupleBeads,
   thermocouples,
   thermocoupleVerdict,
+  thermocoupleViewOf,
   toWorld,
   vfovDegOf,
   walls,
@@ -63,7 +65,7 @@ export { facingText } from '../core/facing';
 import { printedLensOf } from '../core/lenses';
 import { fileName } from '../core/linked-files';
 import { formatLength, formatLengthWithUnit } from '../ui/display-units';
-import { forwardOf } from '../core/math';
+import { forwardOf, rollOf } from '../core/math';
 import {
   isAimable, isBurner, isCamera, isCeiling, isHeatFluxSensor, isHood,
   isObstruction, isThermocouple, isWall,
@@ -155,17 +157,33 @@ function setOutCheckTable(doc: PlanDocument, unit: LengthUnit): string {
     <tbody>${rows.map(r => `<tr data-object-id="${esc(r.id)}">${[r.name, r.planned.map(fmt).join(', '), r.measured.map(fmt).join(', '), fmt(r.plan_distance_m), fmt(r.height_difference_m), r.aim_difference_deg === null ? i18n.t("Unstated") : i18n.numberText(r.aim_difference_deg.toFixed(1)), r.date ?? i18n.t("Unstated")].map(v => cell(v, 'coord')).join('')}</tr>`).join('\n')}</tbody></table>`;
 }
 
+/**
+ * How the crew mounts a rolled camera, rounded to the degree. On its side within half a
+ * degree of a quarter turn; any other roll of at least half a degree is printed as a
+ * roll. Level prints nothing.
+ */
+function rollText(rollDeg: number): string {
+  if (Math.abs(rollDeg) < 0.5) return '';
+  const shown = i18n.numberText(Math.sign(rollDeg) * Math.round(Math.abs(rollDeg)));
+  return Math.abs(Math.abs(rollDeg) - 90) < 0.5
+    ? i18n.t(", on its side (roll {roll}°)", { roll: shown })
+    : i18n.t(", rolled {roll}°", { roll: shown });
+}
+
 function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
   const rows: string[] = [];
 
   for (const cam of cameras(doc)) {
     // The lens is what the crew screws on, so a body with a lens choice names it.
     const lens = printedLensOf(cam);
+    // Remove quaternion roundoff at the half-degree print threshold.
+    const roll = Number((rollOf(quatOf(cam)) * 180 / Math.PI).toFixed(10));
     rows.push('<tr>' + [
       `<td><span class="swatch" style="background:${esc(cameraColor(cam))}"></span>${esc(displayName(cam))}</td>`,
       cell(domainLabel(cam.camera.modality)),
       cell(`${cam.camera.resolution_px[0]}×${cam.camera.resolution_px[1]}`
-        + (lens ? `, ${lens.name}${lens.listed ? i18n.t(" lens") : i18n.t(", not a listed lens")}` : '')),
+        + (lens ? `, ${lens.name}${lens.listed ? i18n.t(" lens") : i18n.t(", not a listed lens")}` : '')
+        + rollText(roll)),
       cell(`${i18n.numberText(hfovDegOf(cam).toFixed(1))}° × ${i18n.numberText(vfovDegOf(cam).toFixed(1))}°`
         + (zoomOf(cam) === 1 ? '' : i18n.t(" at {p1}×", { p1: zoomOf(cam) }))),
       cell(formatLength(standoffHorizontalM(cam), unit), 'num'),
@@ -341,9 +359,12 @@ function equipmentTable(doc: PlanDocument, unit: LengthUnit): string {
 function coverageTable(doc: PlanDocument, unit: LengthUnit): string {
   const list = cameras(doc);
   if (list.length === 0) return `<p class="empty">${esc(i18n.t("No cameras in this plan."))}</p>`;
+  const hasTc = thermocouples(doc).length > 0;
 
   const rows = list.map((cam) => {
     const c = framingOf(doc, cam);
+    const tc = thermocoupleViewOf(doc, cam);
+    const tone = tc?.closest ? beadSeparationTone(tc.closest.px) : null;
     const yesNo = (v: boolean): string => `<td class="${v ? 'ok' : 'bad'}">${esc(domainLabel(v ? 'yes' : 'no'))}</td>`;
     const zoom = zoomOf(cam);
     return '<tr>' + [
@@ -356,17 +377,22 @@ function coverageTable(doc: PlanDocument, unit: LengthUnit): string {
         + (c.unobstructed === null ? '<td>—</td>'
           : `<td class="num ${c.unobstructed > 0.999 ? 'ok' : 'bad'}">${i18n.numberText((c.unobstructed * 100).toFixed(0))}${i18n.unitSpace("")}%</td>`)
         : '<td>—</td><td>—</td><td>—</td><td>—</td>')
+      + (tc ? cell(tc.closest ? i18n.t("{seen}/{total} · {pixels}", {
+        seen: tc.seen, total: tc.total, pixels: i18n.formatQuantity(tc.closest.px, 'px', 1),
+      }) : i18n.t("{seen}/{total}", { seen: tc.seen, total: tc.total }), tone === 'good' ? 'ok' : tone === 'bad' ? 'bad' : '') : '')
       + '</tr>';
   });
 
   return `<table>
     <thead><tr>${[
       i18n.t("Camera"), i18n.t("Slant range ({p1})", { p1: unit }), i18n.t("mm/px at fire"), i18n.t("Flame base"), i18n.t("Flame tip"), i18n.t("Plume"), i18n.t("Unobstructed"),
+      ...(hasTc ? [i18n.t("TC beads")] : []),
     ].map(head).join('')}</tr></thead>
     <tbody>${rows.join('')}</tbody>
   </table>
   <p class="note">${esc(i18n.t("Coverage is computed against the Heskestad mean flame height and a 15° plume\n  envelope. Unobstructed is the clear share of centreline samples inside the frame.\n  The intermittent flame tip reaches higher than the mean."))}</p>${list.some((cam) => zoomOf(cam) !== 1) ? `
-  <p class="note">${esc(i18n.t("mm/px for a zoomed camera is what its output pixels imply. A digital zoom\n  crops and interpolates: it does not resolve finer detail than the unzoomed detector."))}</p>` : ''}`;
+  <p class="note">${esc(i18n.t("mm/px for a zoomed camera is what its output pixels imply. A digital zoom\n  crops and interpolates: it does not resolve finer detail than the unzoomed detector."))}</p>` : ''}${hasTc ? `
+  <p class="note">${esc(i18n.t("TC beads shows seen/total and the closest pair in pixels; each reading needs a 3 × 3 px spot (6 px or more: a spot's width between spots; 3 to 6 px: touching; below 3 px: overlapping)."))}</p>` : ''}`;
 }
 
 /**

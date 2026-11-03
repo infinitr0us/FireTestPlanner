@@ -162,6 +162,25 @@ Storage is OpenGL and the reader default is OpenCV. That is deliberate, not an
 oversight: storage matches the tool that writes it, reading matches the tools that
 consume it. Both ends are explicit, and neither has to remember the other's choice.
 
+### Roll
+
+Roll is the angle about the camera's view direction from its level orientation
+(the one `lookAtQuat` / `look_at_quat` gives for the same view direction, including
+the existing fallback when looking straight up or down) to its actual orientation.
+It is right-handed about the forward (view) direction, clockwise as seen from
+behind the camera. With stored OpenGL columns `[right, up, back]`:
+
+```
+up = up0 cos(roll) + right0 sin(roll)
+```
+
+Thus +90 degrees puts the camera's top edge on the right as seen from behind.
+Roll is derived from the quaternion, never stored separately, and is reported in
+(-180, 180] degrees. `rollOf` / `roll_of` and `withRoll` / `with_roll` use radians;
+the inspector and Python `Camera.roll_deg` / `set_roll_deg` use degrees.
+Re-aiming keeps the current roll, including when moving an object with an aim
+target in the editor. An object with no quaternion starts with roll zero.
+
 ### `aimTarget_m`
 
 Advisory. It records authoring intent — *"point this at the flame base"* — so that
@@ -171,7 +190,8 @@ a camera is oriented as it is.
 **`rotation_quat` is authoritative.** A writer must keep the two consistent.
 `Plan.check()` (and the editor's checks list) warns `aim-mismatch` when they disagree
 by more than 0.1°, which catches a hand-edited file where someone changed the target
-and forgot the quaternion.
+and forgot the quaternion. This comparison uses view direction only, so a rolled
+camera aimed at its target does not raise `aim-mismatch`.
 
 ### Aimed instruments (1.1)
 
@@ -267,8 +287,9 @@ real calibration if the plan will feed a reconstruction.
 ### Lenses of one body
 
 A seeded preset may name a `body`. Presets that share one are the lenses of one
-camera (the A8303sc's 17, 25, 50 and 100 mm; the A700's 5 to 70 mm, which FLIR
-designates 80° to 6°) and differ in focal length only. This is
+camera (the A8303sc's 17 to 200 mm; the A700's 5 to 70 mm, which FLIR designates 80°
+to 6° and which include two 24° lenses of 17 and 18 mm; the T650sc's 6.5 to 88.9 mm,
+80° to 7°) and differ in focal length only. This is
 a property of the preset library, not of the file. A camera placed with one of them
 stores its intrinsics inline like any other, and its `presetId` names the lens
 (`flir-a8303sc-50mm`), so a plan still records which lens it was planned with. The
@@ -618,6 +639,28 @@ misses the flame from a wall that hides a correctly framed flame.
 | `gauge-no-line-of-sight` | error | No direct view of the flame; only indirect radiation can reach the gauge |
 | `gauge-partly-shadowed` | warning | Part of the flame is hidden; the visible percentage scales the prediction |
 | `camera-view-blocked` | warning | At least one in-frame centreline sample is hidden; the message names the first one or two blocking objects |
+
+### Thermocouple beads in a camera image
+
+`thermocoupleViewOf` / `Plan.thermocouple_view` reports every bead in plan order,
+then bead-offset order, using the camera's and thermocouple's **planned poses**.
+Beads are points projected through the ideal pinhole model into OpenCV pixels;
+distortion is not applied, and pixels behind the camera are NaN. Seen means in
+frame with no occluder; outside means out of frame; hidden means in frame with a
+first blocking object. The usual **5 cm trim at both ray endpoints** applies:
+a bead flush with a box's near face is clear, while its far face can be hidden.
+The report gives slant distance and millimetres per pixel at that distance, each
+seen bead's nearest other seen bead, and the closest seen pair in Euclidean
+pixels. Pair distances are null with fewer than two seen beads; the whole view
+is null without thermocouples. No burner or HRR is needed.
+
+A radiometric reading needs a uniform **3 × 3 px** target spot (`IR_SPOT_PX = 3`,
+FLIR guidance). Separation is good at **6 px or more**, with a spot's width of
+clear pixels between spots; warn from **3 px up to but excluding 6 px** (spots
+touch); bad below **3 px** (spots overlap). The inspector's spot size is three
+times the mean mm/px of the seen beads, converted to the display length unit.
+These are geometry checks only: they do not judge emissivity, target uniformity,
+or flame or smoke in the line of sight, and they do not model bead diameter.
 
 ### Gas temperature — Heskestad plume centreline
 

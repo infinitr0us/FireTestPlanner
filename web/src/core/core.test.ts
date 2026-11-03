@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import {
   effectiveDiameterM,
   flameHeightM,
+  hrrForFlameHeightKw,
   plumeRadiusM,
   virtualOriginM,
 } from './correlations';
@@ -363,6 +364,18 @@ describe('Heskestad correlations', () => {
 
   it('clamps a negative flame height to zero', () => {
     expect(flameHeightM(1, 5)).toBe(0);
+  });
+
+  it('inverts the flame height into the HRR that gives it', () => {
+    // ((2.704499 + 1.02) / 0.235)^2.5 = 15.848932^2.5 = 1000 kW: the 1 MW case back.
+    expect(hrrForFlameHeightKw(2.704499, 1)).toBeCloseTo(1000, 3);
+    for (const [height, d] of [[0.5, 0.3], [9.6, 2.53], [10, 5.35]]) {
+      expect(flameHeightM(hrrForFlameHeightKw(height, d)!, d)).toBeCloseTo(height, 9);
+    }
+    expect(hrrForFlameHeightKw(0, 1)).toBeNull();
+    expect(hrrForFlameHeightKw(-1, 1)).toBeNull();
+    expect(hrrForFlameHeightKw(2, 0)).toBeNull();
+    expect(hrrForFlameHeightKw(Number.NaN, 1)).toBeNull();
   });
 
   it('does not clamp a virtual origin below the fuel surface', () => {

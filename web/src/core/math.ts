@@ -148,6 +148,27 @@ export function forwardOf(q: Quat): Vec3 {
 export const upOf = (q: Quat): Vec3 => quatToColumns(q)[1];
 export const rightOf = (q: Quat): Vec3 => quatToColumns(q)[0];
 
+/** Roll from the level look-at frame, right-handed about forward, in (-pi, pi]. */
+export function rollOf(q: Quat): number {
+  const level = quatToColumns(lookAtQuat([0, 0, 0], forwardOf(q)));
+  const up = upOf(q);
+  const roll = Math.atan2(dot(up, level[0]), dot(up, level[1]));
+  return roll <= -Math.PI ? Math.PI : roll;
+}
+
+/** Keep the view direction and set absolute roll from its level look-at frame. */
+export function withRoll(q: Quat, roll: number): Quat {
+  const [right, up, back] = quatToColumns(lookAtQuat([0, 0, 0], forwardOf(q)));
+  const wrapped = roll % (2 * Math.PI);
+  const r = wrapped <= -Math.PI ? wrapped + 2 * Math.PI : wrapped;
+  const c = Math.cos(r), s = Math.sin(r);
+  return columnsToQuat([
+    right.map((v, i) => v * c - up[i] * s) as Vec3,
+    up.map((v, i) => v * c + right[i] * s) as Vec3,
+    back,
+  ]);
+}
+
 /** Angle in degrees between two directions. */
 export function angleBetweenDeg(a: Vec3, b: Vec3): number {
   const c = Math.max(-1, Math.min(1, dot(normalize(a), normalize(b))));

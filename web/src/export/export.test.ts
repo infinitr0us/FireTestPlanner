@@ -8,7 +8,8 @@
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { setLanguage } from '../ui/i18n';
 
 import { applyLensToSpec } from '../core/lenses';
 import { checkPlan, firePointSourceM, newPlan, parsePlan, positionOf } from '../core/plan';
@@ -22,6 +23,43 @@ const FIXTURE_PATH = fileURLToPath(new URL('../../../fixtures/pool-fire-camera-r
 const fixture = (): PlanDocument => parsePlan(readFileSync(FIXTURE_PATH, 'utf8'));
 const FLAME_PATH = fileURLToPath(new URL('../../../fixtures/flame/flame-test.ftp.json', import.meta.url));
 const flameFixture = (): PlanDocument => parsePlan(readFileSync(FLAME_PATH, 'utf8'));
+
+describe('thermocouple camera coverage in print', () => {
+  const tcFixture = (): PlanDocument => parsePlan(readFileSync(
+    new URL('../../../fixtures/thermocouple-view.ftp.json', import.meta.url), 'utf8',
+  ));
+  afterEach(() => setLanguage('en'));
+
+  it.each([[20, 'bad', '2.0'], [50, '', '5.0'], [100, 'ok', '10.0']])(
+    'prints seen/total and closest pixels at %s mm using print verdict classes', (focal, tone, px) => {
+      const doc = tcFixture();
+      (doc.objects.find(o => o.type === 'camera') as CameraObject).camera.focalLength_mm = Number(focal);
+      const body = buildReportBody(doc, 'mm');
+      expect(body).toContain('<th>TC beads</th>');
+      expect(body).toContain(`<td${tone ? ` class="${tone}"` : ''}>3/5 · ${px} px</td>`);
+      expect(body).toContain('TC beads shows seen/total and the closest pair in pixels');
+    },
+  );
+
+  it('keeps the column without a fire, shows only counts under two seen and omits it without TCs', () => {
+    const doc = tcFixture();
+    doc.objects = doc.objects.filter(o => o.type === 'camera' || o.id === 'tc-01');
+    expect(buildReportBody(doc, 'm')).toContain('<td>1/1</td>');
+    (doc.objects.find(o => o.type === 'camera') as CameraObject).transform!.rotation_quat = [0, 0, 0, 1];
+    expect(buildReportBody(doc, 'm')).toContain('<td>0/1</td>');
+    doc.objects = doc.objects.filter(o => o.type === 'camera');
+    expect(buildReportBody(doc, 'm')).not.toContain('<th>TC beads</th>');
+    expect(buildReportBody(doc, 'm')).not.toContain('TC beads shows');
+  });
+
+  it('uses French labels, decimal commas and unit spacing without translating recorded names', () => {
+    setLanguage('fr');
+    const body = buildReportBody(tcFixture(), 'mm');
+    expect(body).toContain('<th>Jonctions TC</th>');
+    expect(body).toContain('<td>3/5 · 5,0\u202fpx</td>');
+    expect(body).toContain('Synthetic IR camera');
+  });
+});
 
 it('reserves an orientation band above an extreme top-right marker and its label', () => {
   for (const north of [null, 0, Math.PI / 2, Math.PI, 3 * Math.PI / 2]) {

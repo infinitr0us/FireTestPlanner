@@ -303,7 +303,7 @@ try {
 
   phase('lens choice');
   // Lens choice (2026-10-16): the A8303sc is one palette row and one picker entry; its
-  // inspector offers the datasheet's four lenses, a real key on the Lens select swaps
+  // inspector offers the datasheet's five lenses, a real key on the Lens select swaps
   // the lens and moves the comparison's current row, and undo puts the 25 mm back.
   const ctrlZ = async () => {
     await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
@@ -316,7 +316,7 @@ try {
   const a700Row = '[...document.querySelectorAll(".palette__row")].find(r=>r.querySelector(".palette__row-label").textContent==="FLIR A700")';
   check('the palette lists the A700 body once, placed with its 24° (18 mm) lens',
     await evaluate('[...document.querySelectorAll(".palette__row-label")].map(e=>e.textContent).filter(t=>t.includes("A700")).join("|")') === 'FLIR A700'
-    && await evaluate(a700Row + '.title.startsWith("Placed with the 18 mm lens. Choose 5, 10, 18, 29 or 70 mm under Lens")'));
+    && await evaluate(a700Row + '.title.startsWith("Placed with the 18 mm lens. Choose 5, 10, 17, 18, 29 or 70 mm under Lens")'));
   const field =label => '[...document.querySelectorAll("#inspector label.field")].find(l=>l.querySelector(".field__label")?.textContent==="' + label + '")?.querySelector("select,input")';
   const lensSelect = field('Lens');
   const currentLens = 'document.querySelector("#inspector .lens-table__row--current th")?.textContent';
@@ -326,22 +326,22 @@ try {
   check('selected camera exposes flame line of sight', await evaluate('!!' + losReadout('Flame unobstructed')));
   const lensOptions = await evaluate('[...(' + lensSelect + ').options].map(o=>o.textContent).join("|")');
   check('the Lens select lists the datasheet lenses with their fields of view (' + lensOptions + ')',
-    lensOptions === '17 mm (55.6° × 33.0°)|25 mm (39.4° × 22.8°)|50 mm (20.3° × 11.5°)|100 mm (10.2° × 5.8°)'
+    lensOptions === '17 mm (55.6° × 33.0°)|25 mm (39.4° × 22.8°)|50 mm (20.3° × 11.5°)|100 mm (10.2° × 5.8°)|200 mm (5.1° × 2.9°)'
     && await evaluate('(' + lensSelect + ').value') === 'flir-a8303sc-25mm');
   check('the preset picker names the body, not one lens',
     await evaluate('(' + field('Preset') + ').selectedOptions[0].textContent') === 'FLIR A8303sc');
   const before = await evaluate('[...document.querySelectorAll("#inspector .lens-table tbody tr")].map(r=>r.textContent).join("|")');
   check('the comparison has a row per lens, the 25 mm current, with plume verdicts (' + before + ')',
     await evaluate(currentLens) === '▶ 25 mm'
-    && await evaluate('document.querySelectorAll("#inspector .lens-table tbody tr").length') === 4
-    && await evaluate('document.querySelectorAll("#inspector .lens-table td.lens-table__good, #inspector .lens-table td.lens-table__bad").length') === 4);
+    && await evaluate('document.querySelectorAll("#inspector .lens-table tbody tr").length') === 5
+    && await evaluate('document.querySelectorAll("#inspector .lens-table td.lens-table__good:nth-child(4), #inspector .lens-table td.lens-table__bad:nth-child(4)").length') === 5);
   await evaluate('(' + lensSelect + ').focus()');
   await key('End', 'End', 35);
-  await waitFor(() => evaluate(currentLens + '==="▶ 100 mm"'), 'comparison follows the lens key');
-  check('a key on the Lens select fits the 100 mm lens everywhere',
-    await evaluate(fovReadout) === '10.2° × 5.8°'
-    && await evaluate('(' + field('Focal length (mm)') + ').value') === '100'
-    && await evaluate('(' + lensSelect + ').value') === 'flir-a8303sc-100mm');
+  await waitFor(() => evaluate(currentLens + '==="▶ 200 mm"'), 'comparison follows the lens key');
+  check('a key on the Lens select fits the 200 mm lens everywhere',
+    await evaluate(fovReadout) === '5.1° × 2.9°'
+    && await evaluate('(' + field('Focal length (mm)') + ').value') === '200'
+    && await evaluate('(' + lensSelect + ').value') === 'flir-a8303sc-200mm');
   await evaluate('document.querySelector("#inspector .lens-table").scrollIntoView({block:"center"})');
   await screenshot('lens');
   await evaluate('document.activeElement?.blur()');
@@ -358,11 +358,11 @@ try {
   await key('ArrowUp', 'ArrowUp', 38);
   await waitFor(() => evaluate(presetName + '==="FLIR A700" && ' + currentLens + '==="▶ 18 mm"'), 'A700 chosen by a key on the Preset select');
   const a700Options = await evaluate('[...(' + lensSelect + ').options].map(o=>o.textContent).join("|")');
-  check('the A700 Lens select lists its five lenses with their fields of view, the 24° (18 mm) fitted (' + a700Options + ')',
-    a700Options === '5 mm (75.0° × 59.9°)|10 mm (42.0° × 32.1°)|18 mm (24.1° × 18.2°)|29 mm (15.1° × 11.3°)|70 mm (6.3° × 4.7°)'
+  check('the A700 Lens select lists its six lenses with their fields of view, the 24° (18 mm) fitted (' + a700Options + ')',
+    a700Options === '5 mm (75.0° × 59.9°)|10 mm (42.0° × 32.1°)|17 mm (25.5° × 19.2°)|18 mm (24.1° × 18.2°)|29 mm (15.1° × 11.3°)|70 mm (6.3° × 4.7°)'
     && await evaluate('(' + lensSelect + ').value') === 'flir-a700-24deg'
     && await evaluate(fovReadout) === '24.1° × 18.2°'
-    && await evaluate('document.querySelectorAll("#inspector .lens-table tbody tr").length') === 5);
+    && await evaluate('document.querySelectorAll("#inspector .lens-table tbody tr").length') === 6);
   await evaluate('document.activeElement?.blur()');
   await ctrlZ();
   await waitFor(() => evaluate(presetName + '==="FLIR A8303sc" && ' + currentLens + '==="▶ 25 mm"'), 'undo of the switch to the A700');
@@ -370,8 +370,51 @@ try {
     await evaluate(fovReadout) === '39.4° × 22.8°'
     && await evaluate('!document.querySelector(".toolbar__file").textContent.includes("•")'));
 
+  phase('camera roll and flame height');
+  // Roll (2026-11-02): a typed 90 on the A8303sc's Roll field mounts it on its side,
+  // which puts its long sensor axis vertical and brings the flame base into frame
+  // without changing the lens; undo levels it again. Metres first, so the flame
+  // height field below reads in metres.
+  const rollUnits = '[...document.querySelectorAll("select")].find(s=>s.title.startsWith("Display units"))';
+  await evaluate('(' + rollUnits + ').focus()'); await key('Home', 'Home', 36);
+  await waitFor(() => evaluate('(' + rollUnits + ').value==="m"'), 'metre display for roll and flame height');
+  const readoutValue = label => '[...document.querySelectorAll("#inspector .readout")].find(r=>r.querySelector(".readout__label").textContent===' + JSON.stringify(label) + ')?.querySelector(".readout__value").textContent';
+  const rollField = field('Roll (°)');
+  await waitFor(() => evaluate('!!' + rollField), 'Roll field');
+  check('the level A8303sc misses the flame base',
+    await evaluate(readoutValue('Flame base in frame')) === 'no' && await evaluate('(' + rollField + ').value') === '0');
+  await click(rollField); await evaluate('(' + rollField + ').select()');
+  await send('Input.insertText', { text: '90' }); await key('Tab', 'Tab', 9);
+  await waitFor(() => evaluate(readoutValue('Flame base in frame') + '==="yes"'), 'the rolled camera frames the base');
+  check('a typed 90° roll mounts the A8303sc on its side and keeps its lens',
+    await evaluate('(' + rollField + ').value') === '90' && await evaluate(readoutValue('Flame tip in frame')) === 'yes'
+    && await evaluate(fovReadout) === '39.4° × 22.8°');
+  await screenshot('camera-roll');
+  await evaluate('document.activeElement?.blur()');
+  await ctrlZ();
+  await waitFor(() => evaluate('(' + rollField + ').value==="0"'), 'undo of the roll');
+  check('undo of the roll levels the camera again', await evaluate(readoutValue('Flame base in frame')) === 'no');
+  // Flame height (2026-11-02): typing a height back-solves the HRR, which is what is
+  // stored; the readout shows the typed height and undo restores the HRR.
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("Heptane pan"))');
+  const flameField = field('Flame height (m)');
+  await waitFor(() => evaluate('!!' + flameField), 'Flame height field');
+  const hrrBefore = await evaluate('(' + field('HRR (kW)') + ').value');
+  await click(flameField); await evaluate('(' + flameField + ').select()');
+  await send('Input.insertText', { text: '2' }); await key('Tab', 'Tab', 9);
+  await waitFor(() => evaluate(readoutValue('Mean flame height') + '==="2 m"'), 'typed flame height');
+  const hrrAfter = await evaluate('(' + field('HRR (kW)') + ').value');
+  check('a typed flame height back-solves the HRR (' + hrrBefore + ' to ' + hrrAfter + ' kW)',
+    Number(hrrAfter) > Number(hrrBefore) && await evaluate('(' + flameField + ').value') === '2');
+  await evaluate('document.activeElement?.blur()');
+  await ctrlZ();
+  await waitFor(() => evaluate('(' + field('HRR (kW)') + ').value===' + JSON.stringify(hrrBefore)), 'undo of the flame height');
+  check('undo of a flame height restores the HRR', true);
+  await click('[...document.querySelectorAll(".outliner__row")].find(r=>r.textContent.includes("FLIR A8303sc MWIR"))');
+  await waitFor(() => evaluate('!!document.querySelector("#inspector .lens-table")'), 'A8303sc selected again');
+
   phase('as-built camera survey');
-  const surveyUnits = '[...document.querySelectorAll("select")].find(s=>s.title.startsWith("Display units"))';
+  const surveyUnits ='[...document.querySelectorAll("select")].find(s=>s.title.startsWith("Display units"))';
   await evaluate('(' + surveyUnits + ').focus()'); await key('Home', 'Home', 36);
   await waitFor(() => evaluate('(' + surveyUnits + ').value==="m"'), 'survey units');
   const recordSurvey = '[...document.querySelectorAll("#inspector .as-built button")].find(b=>b.textContent==="Record as built")';
