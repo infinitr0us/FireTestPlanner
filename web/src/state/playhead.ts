@@ -21,6 +21,11 @@ export type ClockKind = 'flame' | 'fire';
 /** Real-time multipliers the bar offers. x1 is one 5 s frame every 5 s. */
 export const SPEEDS = [1, 2, 5, 10, 30, 60] as const;
 export const DEFAULT_SPEED = 10;
+/** The flame analysis board's speeds: camera pictures ten a second over about a
+ *  minute, where x10 would skip most of them and slow motion shows the flicker
+ *  (a kept exception in docs/visual-language.md). Real time is the default. */
+export const ANALYSIS_SPEEDS = [0.25, 0.5, 1, 2, 5] as const;
+export const ANALYSIS_DEFAULT_SPEED = 1;
 
 export class Playhead {
   private listeners = new Set<Listener>();

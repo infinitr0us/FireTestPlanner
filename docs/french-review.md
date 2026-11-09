@@ -19,6 +19,9 @@ terms in their engineering context:
 | standoff (plan / slant) | distance (plan / oblique) | Camera inspector, set-out, coverage | distance horizontale / distance directe; confirm the distinction is clear. |
 | range / over range | étendue / hors étendue | Gauge checks and plots | plage de mesure / dépassement de plage; distinguish sensor capacity from plotted limits. |
 | hood capture / spill | captage / débordement | Hood checks and report | collecte / échappement; confirm for calorimetry rather than ventilation alone. |
+| Flame analysis… (toolbar) | Flamme… | Toolbar | Analyse de flamme… is the closer term, but with a plan's title beside it the French toolbar needs a third row at 1280 x 720; the tooltip and the board's own title keep Analyse de flamme. |
+| onset (of a fire event) | début | Flame analysis board: readout, plots | apparition, déclenchement; confirm for a battery vent jet. |
+| close-up / whole picture | gros plan / image entière | Flame analysis camera tiles | |
 | as built / pose | tel que construit / pose | Survey overlay and inspector | relevé réel / position et orientation; confirm wording for movable instruments. |
 | lattice pitch | pas du réseau | Reconstructed-flame diagnostics | pas de grille; distinguish spacing from voxel size. |
 | boundary patch | zone de frontière | FDS result errors | portion de paroi; keep the FDS output family distinct from a physical wall. |

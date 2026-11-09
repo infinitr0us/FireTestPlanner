@@ -180,6 +180,12 @@ export function frameTimestamp(name: string): number | null {
 export async function parseFrameFile(name: string, bytes: Uint8Array): Promise<RawFrame> {
   const timestamp = frameTimestamp(name);
   if (timestamp === null) throw new Error(`${name}: not named t_<seconds>s.npz`);
+  return parseFrameData(name, bytes, timestamp);
+}
+
+/** A frame file whose time is known from elsewhere (a flame analysis event's
+ *  instants, where times may be negative and names are free). */
+export async function parseFrameData(name: string, bytes: Uint8Array, timestamp: number): Promise<RawFrame> {
   let entries: Map<string, Uint8Array>;
   try {
     entries = await readZip(bytes);

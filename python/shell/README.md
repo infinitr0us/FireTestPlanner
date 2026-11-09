@@ -74,6 +74,9 @@ and drive the user's file dialogs.
 | `/api/pick-folder` | POST | Native folder dialog for a reconstructed flame's frames |
 | `/api/flame/list` | POST | The frame files a voxel folder holds; registers the folder for `/api/flame/frame` |
 | `/api/flame/frame` | GET | One frame's bytes, from a registered folder only |
+| `/api/flame-analysis/open` | POST | Native dialog for a flame analysis folder's `analysis.json`; the folder becomes a read-only session, returns `{token, name}` |
+| `/api/flame-analysis/file` | GET | One whole file of that folder by its `/` path, confined to the folder (no `..`, links out or non-files; 64 MiB cap) |
+| `/api/flame-analysis/close` | POST | Ends the session `token` names |
 | `/api/presets` | GET, POST | The custom camera preset library in the settings file: read, or replace |
 | `/api/results/open` | POST | Native dialog for an FDS `.smv`; opens a results session over its folder |
 | `/api/results/read` | GET | A byte range of one output the session's `.smv` names (including `RESULTS_DIR` subfolders) |

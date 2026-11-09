@@ -42,6 +42,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 import linked_files
 from fds_results import ResultFiles
+from flame_analysis import AnalysisFolders
 
 # webview is imported lazily, inside the functions that open windows and dialogs.
 # That keeps the file logic, settings and HTTP API importable -- and therefore
@@ -149,6 +150,7 @@ class Shell:
         #: Voxel folders the page has listed this run; the frame route serves only these.
         self._flame_folders: set = set()
         self.results = ResultFiles()
+        self.analyses = AnalysisFolders()
 
     # -- settings ------------------------------------------------------
 
@@ -362,6 +364,23 @@ class Shell:
         path = selected[0] if isinstance(selected, (list, tuple)) else selected
         try:
             return self.results.open(str(path))
+        except (OSError, ValueError) as exc:
+            return {"error": str(exc)}
+
+    def open_analysis(self) -> Optional[Dict[str, Any]]:
+        """Native dialog for a flame analysis folder's analysis.json; the folder it is
+        in becomes a read-only session the page reads whole files from."""
+        if self.window is None:
+            return None
+        import webview
+        selected = self.window.create_file_dialog(
+            webview.OPEN_DIALOG, allow_multiple=False,
+            file_types=("Flame analysis (analysis.json)",), directory=self._last_directory())
+        if not selected:
+            return None
+        path = selected[0] if isinstance(selected, (list, tuple)) else selected
+        try:
+            return self.analyses.open(str(path))
         except (OSError, ValueError) as exc:
             return {"error": str(exc)}
 
@@ -804,6 +823,11 @@ class Handler(SimpleHTTPRequestHandler):
             elif route == "/api/results/close":
                 self.shell.results.close(str(body.get("token", "")))
                 self._send_json({"closed": True})
+            elif route == "/api/flame-analysis/open":
+                self._send_json(self.shell.open_analysis())
+            elif route == "/api/flame-analysis/close":
+                self.shell.analyses.close(str(body.get("token", "")))
+                self._send_json({"closed": True})
             elif route == "/api/open-recent":
                 self._send_json(self.shell.open_recent(body.get("path")))
             elif route == "/api/adopted":
@@ -864,6 +888,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_test_data_file()
             elif route == "/api/results/read":
                 self._send_result_range()
+            elif route == "/api/flame-analysis/file":
+                self._send_analysis_file()
             else:
                 self._send_json({"error": "unknown route"}, 404)
             return
@@ -909,6 +935,24 @@ class Handler(SimpleHTTPRequestHandler):
                                            int(value("offset")), int(value("length")))
         except (OSError, ValueError, TypeError) as exc:
             self._send_json({"error": str(exc)}, 400)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _send_analysis_file(self) -> None:
+        """A whole file of an opened flame analysis folder. Errors are JSON; success
+        is the raw bytes (a picture, a manifest, a CSV or a hull frame)."""
+        query = parse_qs(urlparse(self.path).query)
+        token = (query.get("token") or [""])[0]
+        name = (query.get("path") or [""])[0]
+        try:
+            data = self.shell.analyses.read(token, name)
+        except (OSError, ValueError, TypeError) as exc:
+            self._send_json({"error": str(exc)}, 404 if isinstance(exc, FileNotFoundError) else 400)
             return
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")

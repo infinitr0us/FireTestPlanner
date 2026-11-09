@@ -1,8 +1,10 @@
 # Flame analysis board: design
 
-Status: **phase 0 done** (format 1.0 with its schemas and `fireplan.flame_analysis`,
-CONVENTIONS section 13, the synthetic test, the first delivery converted); the board
-itself is not built yet. Draft of 2026-11-08, revised the same day after review.
+Status: **phases 0 and 1 done** (2026-11-08): format 1.0 with its schemas and
+`fireplan.flame_analysis` (CONVENTIONS section 13), the synthetic test, the first
+delivery converted, and the board itself (`ui/flame-analysis*.ts`,
+`scene/flame-analysis.ts`, the shell's `/api/flame-analysis/*` routes). Video export
+(phase 2) is next.
 
 A read-only workspace that walks a fire safety engineer through one processed fire
 event recorded by two to four ordinary video cameras: the synchronised camera frames,
@@ -225,6 +227,18 @@ Target 1920 x 1080; everything stays usable at 1280 x 720.
 
 Each phase follows the visual-language checklist and ends with the browser checks on
 the synthetic test and a desktop check on the first delivery.
+
+**Phase 1 as built.** The layout is section 6's, with four plots rather than three
+(heat release rate, volume, surface area, flame height: one quantity per axis reads
+better than two axes on one plot). The board opens on the instant of the largest
+one-second-mean flame, so the first view shows a flame; Home goes to the first
+instant. Pictures open as close-ups when the folder has them. Only the cameras and the
+fire are labelled in 3-D, and the flame close-up frames the flame's usual extent (the
+10th to 90th percentile of each instant's box), so a brief fireball does not shrink
+it. The browser regressions run on the synthetic test (`browser-tests/flame-analysis.*`
+and two phases of `run.mjs`, one in French at 1280 x 720, plus two axe scans); the
+first delivery was checked by eye in a browser tab, with every instant's 3-D flame
+read in under two seconds from a local disk.
 
 ## 10. Conventions this will touch
 

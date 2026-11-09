@@ -51,6 +51,7 @@ import { menuButton } from './ui/menu-button';
 import { FdsImportDialog } from './ui/import-fds';
 import { FdsExportDialog } from './ui/export-fds';
 import { FdsResultsDialog } from './ui/fds-results';
+import { FlameAnalysisWorkspace } from './ui/flame-analysis';
 import { Inspector } from './ui/inspector';
 import { ChecksPanel, Outliner, Palette } from './ui/panels';
 import { PlaybackBar } from './ui/playback-bar';
@@ -289,6 +290,9 @@ const reportOverlay = new ReportOverlay((html, name) => { void saveHtml(html, na
 const fdsImport = new FdsImportDialog();
 const fdsExport = new FdsExportDialog(open => viewport.setSuspended(open));
 let fdsResults = new FdsResultsDialog(open => viewport.setSuspended(open));
+const newFlameAnalysis = (): FlameAnalysisWorkspace =>
+  new FlameAnalysisWorkspace(open => viewport.setSuspended(open), { lengthUnit: () => store.displayUnit });
+let flameAnalysis = newFlameAnalysis();
 const testDataDialog = new TestDataDialog(store, testDataStore, open => viewport.setSuspended(open), () => {
   // The toolbar is rebuilt by every edit made in the dialog, so the button that
   // opened it is gone; give the keyboard back to its replacement.
@@ -396,8 +400,8 @@ function renderToolbar(): void {
 
   toolbar.replaceChildren(
     h('div', { class: 'toolbar__group toolbar__group--title' }, [
-      h('span', { class: 'toolbar__title' }, [store.document.meta?.title ?? i18n.t("Untitled")]),
-      h('span', { class: 'toolbar__file' }, [`${store.fileName}${dirtyMark}`]),
+      h('span', { class: 'toolbar__title', title: store.document.meta?.title ?? i18n.t("Untitled") }, [store.document.meta?.title ?? i18n.t("Untitled")]),
+      h('span', { class: 'toolbar__file', title: store.fileName }, [`${store.fileName}${dirtyMark}`]),
     ]),
 
     group([
@@ -415,6 +419,8 @@ function renderToolbar(): void {
       ]),
       btn(i18n.t("Test data…"), () => openTestData(),
         i18n.t("Measured and simulated channels on the instruments: add a logger workbook or FDS output and map its channels")),
+      btn(i18n.t("Flame analysis…"), () => { playhead.pause(); flameAnalysis.open(); },
+        i18n.t("Review a fire filmed by several cameras: pictures, flame outlines, the 3-D flame and heat release rate")),
       btn(i18n.t("Example"), loadExample, i18n.t("Load the reference plan built from the hand sketch")),
     ]),
 
@@ -816,7 +822,7 @@ window.addEventListener('focusin', noteCommitted);
 window.addEventListener('change', (e) => { if (e.target === committedText?.el) noteCommitted(e); }, true);
 
 window.addEventListener('keydown', (e) => {
-  if (fdsResults.isOpen || fdsExport.isOpen || testDataDialog.isOpen) return;
+  if (fdsResults.isOpen || fdsExport.isOpen || testDataDialog.isOpen || flameAnalysis.isOpen) return;
   const target = e.target as HTMLElement | null;
   const control = target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName) ? target : null;
   // Escape cancels what was typed, then hands the keyboard back to the editor.
@@ -904,6 +910,8 @@ i18n.subscribeLanguage(() => {
   document.title = i18n.t('Fire Test Plan Editor');
   fdsResults.close();
   fdsResults = new FdsResultsDialog(open => viewport.setSuspended(open));
+  flameAnalysis.dispose();
+  flameAnalysis = newFlameAnalysis();
   palette.render();
   inspector.render();
   outliner.render();

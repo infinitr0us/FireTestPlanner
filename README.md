@@ -53,6 +53,10 @@ editor; a data scientist reads the same file as a camera rig description with th
   start the next test of a series from the same rig.
 - **Reconstructed flame playback.** Play a visual-hull reconstruction (one voxel file
   per timestep) inside the layout, against the predicted flame.
+- **Flame analysis board.** Walk through a fire filmed by several calibrated cameras:
+  the synchronised pictures, the flame outline in each, the 3-D flame inside the site,
+  its volume, surface area and height, and heat release rate estimates beside the hood,
+  on one clock, with each step explained by the analysis folder's own text.
 - **English and French.** The editor, its checks and the printed drawing switch
   between English and (draft) Canadian French; plans and exported files are the same
   in either.
@@ -276,6 +280,33 @@ seq = plan.flame_sequence(plan.reconstructed_flames[0])
 seq.voxels(55.0)                     # (25639, 3) centres at t = 55 s
 ```
 
+### Reviewing a fire filmed by several cameras
+
+**Flame analysis…** opens a read-only board for a flame analysis folder: a processed
+test (two to four calibrated cameras, one or more events) described by an
+`analysis.json` and one `event.json` per event (format in
+[CONVENTIONS.md](CONVENTIONS.md) section 13). In the desktop app pick the
+`analysis.json`; in a browser tab choose the folder. The board never touches the plan
+that is open.
+
+For the chosen event it shows, on one clock: each camera's picture (a close-up around
+the flame or the whole picture, with the flame outline on request; a click opens the
+full-resolution frame), the 3-D flame inside the site plan with the cameras' view
+cones, plots of heat release rate (measured and estimated), flame volume, surface area
+and height with the key moments and the instants a quality flag marks, and key numbers
+(peaks, heat released, each estimate against the measurement). Six step buttons, from
+the cameras to the heat release rate, open the folder's own explanation of each step,
+with what to watch for and notes on this event. Playback runs from ×0.25 to ×5.
+`fixtures/flame-analysis/` is a synthetic test to try it on; the design is in
+[docs/flame-analysis-board-design.md](docs/flame-analysis-board-design.md).
+
+```python
+from fireplan.flame_analysis import FlameAnalysis
+analysis = FlameAnalysis.load("fixtures/flame-analysis")
+analysis.check()                     # [] when the board can show every event
+t, q = analysis.event("E1").read_series("hood")
+```
+
 ## Read a plan in Python
 
 ```bash
@@ -387,7 +418,8 @@ by fire safety engineers; that data is not distributed.
 
 - [CONVENTIONS.md](CONVENTIONS.md): the normative rules of the plan format: frames,
   units, correlations, versioning, FDS mapping, linked files and flame sequences.
-- [schema/](schema/): one JSON Schema per format version, 1.0.0 to 1.6.0.
+- [schema/](schema/): one JSON Schema per plan format version, 1.0.0 to 1.7.0, and
+  the three of the flame analysis folder format 1.0.0.
 - [docs/visual-language.md](docs/visual-language.md): colours, labels, transport
   controls and print palette, and the checklist for any new UI.
 - [docs/fds-results.md](docs/fds-results.md), [docs/linked-files.md](docs/linked-files.md),

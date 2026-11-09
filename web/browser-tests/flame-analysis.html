@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flame analysis board checks</title>
+<link rel="stylesheet" href="/src/styles.css">
+</head>
+<body>
+<pre id="report" hidden></pre>
+<script type="module">
+import { FlameAnalysisWorkspace } from '/src/ui/flame-analysis.ts';
+import { setLanguage } from '/src/ui/i18n.ts';
+import { checkFlameAnalysis } from './flame-analysis.ts';
+
+// The synthetic test, served by Vite; or, for a manual look at another folder on
+// this machine, ?folder=<URL of the folder holding analysis.json>.
+const params = new URLSearchParams(location.search);
+const urls = import.meta.glob('../../fixtures/flame-analysis/**/*', { query: '?url', import: 'default', eager: true });
+const prefix = '../../fixtures/flame-analysis/';
+const fixture = new Map(Object.entries(urls).map(([path, url]) => [path.slice(prefix.length), url]));
+const folder = params.get('folder');
+const fetchBytes = async (path) => {
+  const url = folder ? folder.replace(/\/?$/, '/') + path : fixture.get(path);
+  if (!url) throw new Error(`Missing file: ${path}`);
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Missing file: ${path} (HTTP ${response.status})`);
+  return response.blob();
+};
+const source = {
+  name: folder ? folder.split('/').filter(Boolean).pop() : 'flame-analysis',
+  read: async (path) => new Uint8Array(await (await fetchBytes(path)).arrayBuffer()),
+  blob: fetchBytes,
+  close() {},
+};
+if (params.get('lang') === 'fr') setLanguage('fr');
+const workspace = new FlameAnalysisWorkspace(() => {}, { lengthUnit: () => params.get('unit') ?? 'm' });
+window.workspace = workspace;
+workspace.open();
+await workspace.load(source);
+if (params.has('check')) {
+  const report = document.querySelector('#report');
+  report.hidden = false;
+  try {
+    report.textContent = JSON.stringify(await checkFlameAnalysis(workspace));
+  } catch (error) {
+    report.textContent = `FAILED: ${error.stack ?? error}`;
+  }
+}
+</script>
+</body>
+</html>

@@ -682,6 +682,29 @@ export const isSingleFileBuild = (): boolean =>
   bootHtml.length > 200_000 && !bootHtml.includes('/@vite/client');
 
 
+/** A flame analysis folder the shell opened: its `analysis.json` picked in a native
+ *  dialog, and every later read confined to that folder by the token. */
+export interface OpenedAnalysis { token: string; name: string }
+export async function openShellAnalysis(): Promise<OpenedAnalysis | null> {
+  const result = await call<OpenedAnalysis & { error?: string }>('/api/flame-analysis/open', {});
+  if (result?.error) throw new Error(result.error);
+  return result;
+}
+/** One whole file of an opened analysis folder, by its '/' path inside it. */
+export async function readShellAnalysisFile(token: string, path: string): Promise<Response> {
+  const response = await fetch(`/api/flame-analysis/file?${new URLSearchParams({ token, path })}`, {
+    headers: { 'X-Shell-Token': shellToken ?? '' }, cache: 'no-store',
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(body?.error ?? i18n.t("Could not read {p1}: HTTP {p2}.", { p1: path, p2: response.status }));
+  }
+  return response;
+}
+export function closeShellAnalysis(token: string): void {
+  void call('/api/flame-analysis/close', { token }).catch(() => undefined);
+}
+
 export interface OpenedResults { token: string; smv: string; files: { name: string; size: number }[] }
 export async function openShellResults(): Promise<OpenedResults | null> {
   const result = await call<OpenedResults & { error?: string }>('/api/results/open', {});

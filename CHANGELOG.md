@@ -16,7 +16,16 @@ and a plan written by any release opens in every later one.
   `fireplan.flame_analysis.FlameAnalysis` reads and checks a folder. A synthetic test
   with two events (`fixtures/flame-analysis/`, from
   `tools/build_synthetic_flame_event.py`) regenerates byte for byte. No plan format
-  change; the board itself comes next.
+  change.
+- **Flame analysis board.** **Flame analysis…** in the toolbar opens a read-only
+  workspace for such a folder: each camera's synchronised picture (close-up or whole,
+  flame outline on request, full resolution on a click), the 3-D flame inside the site
+  plan with the cameras' view cones, plots of heat release rate (measured and estimated),
+  flame volume, surface area and height with key moments and quality flags, key
+  numbers (peaks, heat released, each estimate against the measurement), and six step
+  buttons that open the folder's own explanation of each step. One clock, the shared
+  transport, speeds ×0.25 to ×5, English and French. The desktop app reads the folder
+  through three new bridge routes confined to it.
 
 ## [0.9.0] - 2026-11-02
 

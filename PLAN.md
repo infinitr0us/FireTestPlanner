@@ -657,8 +657,10 @@ The design, decisions and phases are in
   13, three schemas), `fireplan.flame_analysis`, and a synthetic test with two events.
   Real deliveries and the converter for the analysis pipeline's own output stay in the
   ignored `local/`: the pipeline's methods are not published.
-- **Phase 1:** the board. **Phase 2:** video and PNG export, after a WebView2 encoder
-  spike. **Phase 3:** hull check, the hood's response time, Heskestad height, smooth
-  meshes.
+- **Phase 1 (done 2026-11-08):** the board: event selector, camera tiles, 3-D site and
+  flame, four plots with key moments and quality bands, key numbers, step texts from
+  the folder, playback ×0.25 to ×5, EN and FR, the shell's `/api/flame-analysis/*`.
+- **Phase 2:** video and PNG export, after a WebView2 encoder spike. **Phase 3:** hull
+  check, the hood's response time, Heskestad height, smooth meshes.
 
 No plan format change.

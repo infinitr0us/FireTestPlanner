@@ -913,3 +913,66 @@ def test_schedule_csv_bridge_preserves_bom_and_crlf(server, tmp_path, monkeypatc
     assert "*.csv" in asked[0][1][0]
     monkeypatch.setattr(shell, "_ask_save", lambda *_: None)
     assert request(base, "/api/save-csv", "test-token", {"text": text})[1] is None
+
+
+# -- flame analysis folders -------------------------------------------------
+
+def _analysis_folder(tmp_path):
+    folder = tmp_path / "test"
+    (folder / "E1" / "frames").mkdir(parents=True)
+    (folder / "analysis.json").write_text('{"format": "fireplan-flame-analysis"}', encoding="utf-8")
+    (folder / "E1" / "frames" / "t_1.png").write_bytes(b"\x89PNG picture")
+    (tmp_path / "outside.txt").write_text("not yours", encoding="utf-8")
+    return folder
+
+
+def test_flame_analysis_route_reads_inside_the_opened_folder_only(server, tmp_path):
+    from urllib.parse import urlencode
+    shell, _, base, _ = server
+    folder = _analysis_folder(tmp_path)
+    opened = shell.analyses.open(str(folder / "analysis.json"))
+    assert opened["name"] == "test"
+    route = lambda path, token=opened["token"]: "/api/flame-analysis/file?" + urlencode({"token": token, "path": path})
+    for header in (None, "wrong-token"):
+        with pytest.raises(urllib.error.HTTPError) as error:
+            request(base, route("analysis.json"), header)
+        assert error.value.code == 403
+    req = urllib.request.Request(base + route("E1/frames/t_1.png"), headers={"X-Shell-Token": "test-token"})
+    with urllib.request.urlopen(req, timeout=10) as response:
+        assert response.read() == b"\x89PNG picture"
+        assert response.headers["Cache-Control"] == "no-store"
+    for bad in ("../outside.txt", "E1/../../outside.txt", str(tmp_path / "outside.txt"),
+                "C:/Windows/win.ini", "E1\frames\t_1.png", "E1//frames/t_1.png", "./analysis.json", "E1/frames"):
+        with pytest.raises(urllib.error.HTTPError) as error:
+            request(base, route(bad), "test-token")
+        assert error.value.code == 400, bad
+    with pytest.raises(urllib.error.HTTPError) as error:
+        request(base, route("E1/frames/missing.png"), "test-token")
+    assert error.value.code == 404
+    _, closed = request(base, "/api/flame-analysis/close", "test-token", {"token": opened["token"]})
+    assert closed == {"closed": True}
+    with pytest.raises(urllib.error.HTTPError) as error:
+        request(base, route("analysis.json"), "test-token")
+    assert error.value.code == 400 and "closed" in json.loads(error.value.read().decode("utf-8"))["error"]
+
+
+def test_flame_analysis_opens_only_an_analysis_json(tmp_path):
+    folder = _analysis_folder(tmp_path)
+    analyses = shell_app.AnalysisFolders()
+    with pytest.raises(ValueError):
+        analyses.open(str(folder / "E1" / "frames" / "t_1.png"))
+    tokens = [analyses.open(str(folder / "analysis.json"))["token"] for _ in range(6)]
+    assert len(analyses.sessions) == 4 and tokens[-1] in analyses.sessions and tokens[0] not in analyses.sessions
+
+
+def test_flame_analysis_refuses_a_link_out_of_the_folder(tmp_path):
+    folder = _analysis_folder(tmp_path)
+    link = folder / "E1" / "escape.txt"
+    try:
+        os.symlink(tmp_path / "outside.txt", link)
+    except (OSError, NotImplementedError):
+        pytest.skip("symbolic links need privileges here")
+    analyses = shell_app.AnalysisFolders()
+    token = analyses.open(str(folder / "analysis.json"))["token"]
+    with pytest.raises(ValueError, match="leads out"):
+        analyses.read(token, "E1/escape.txt")

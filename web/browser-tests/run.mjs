@@ -210,6 +210,64 @@ try {
   await screenshot('results');
   const resultsStyle = await evaluate('(() => { const s=getComputedStyle(document.querySelector("dialog .playback-bar__btn")); return [s.fontFamily,s.fontSize,s.lineHeight,s.padding,s.borderRadius]; })()');
 
+  phase('flame analysis board');
+  // The synthetic test (fixtures/flame-analysis): the page's own DOM checks, then
+  // real keys and clicks on the board.
+  await openTab();
+  await send('Page.navigate', { url: origin + '/browser-tests/flame-analysis.html?check=1' });
+  const board = await waitFor(async () => {
+    const text = await evaluate('document.querySelector("#report")?.textContent ?? ""');
+    if (text.includes('FAILED:')) throw new Error(text);
+    try { const result = JSON.parse(text); return result.checks ? result : false; } catch { return false; }
+  }, 'flame analysis board checks', Math.max(TIMEOUT_MS, 60000));
+  for (const c of board.checks) check('flame analysis: ' + c.name + (c.passed ? '' : ' ' + c.detail), c.passed);
+  const boardStamp = 'document.querySelector(".flame-analysis__transport .playback-bar__readout").textContent';
+  const boardIndex = async () => Number((await evaluate(boardStamp)).match(/instant (\d+)\//)[1]);
+  await evaluate('document.querySelector(".flame-analysis__scene-host canvas").focus()');
+  const startIndex = await boardIndex();
+  await key('.', 'Period', 190);
+  await waitFor(async () => (await boardIndex()) === startIndex + 1, 'board period step');
+  check('board: a real period key steps one instant', true);
+  await key(' ', 'Space', 32);
+  await waitFor(async () => (await boardIndex()) >= startIndex + 3, 'board playback');
+  await key(' ', 'Space', 32);
+  await waitFor(() => evaluate('document.querySelector(".flame-analysis__transport button[aria-label=\\"Play (Space)\\"]") !== null'), 'board pause');
+  const paused = await boardIndex();
+  await new Promise(r => setTimeout(r, 400));
+  check('board: Space plays at real time and Space pauses', (await boardIndex()) === paused);
+  await click('document.querySelector(".flame-analysis__step[data-step=hrr]")');
+  await waitFor(() => evaluate('!document.querySelector(".flame-analysis__drawer").hidden'), 'board drawer');
+  check('board: the heat release rate step points at its plot, its text beside the pictures', await evaluate(
+    '!!document.querySelector(".flame-analysis__plot[data-plot=hrr].flame-analysis--pointed") && document.querySelector(".flame-analysis__drawer").classList.contains("flame-analysis__drawer--left")'));
+  await key('Escape', 'Escape', 27);
+  check('board: Escape closes the step text and returns focus to its step', await evaluate(
+    'document.querySelector(".flame-analysis__drawer").hidden && document.activeElement?.dataset.step === "hrr" && document.querySelector("dialog.flame-analysis").open'));
+  await click('document.querySelector(".flame-analysis__tile-open")');
+  await waitFor(() => evaluate('(document.querySelector(".flame-analysis__zoom-picture")?.width ?? 0) > 1'), 'board full-resolution view');
+  await key('Escape', 'Escape', 27);
+  check('board: a tile opens its picture full size and Escape closes it, not the board', await evaluate(
+    '!document.querySelector(".flame-analysis__zoom") && document.querySelector("dialog.flame-analysis").open'));
+  await screenshot('flame-analysis');
+  await key('Escape', 'Escape', 27);
+  check('board: Escape then leaves the board', await evaluate('!document.querySelector("dialog.flame-analysis[open]")'));
+  phase('flame analysis board in French at 1280 x 720');
+  await openTab();
+  await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+  await send('Page.navigate', { url: origin + '/browser-tests/flame-analysis.html?lang=fr' });
+  await waitFor(() => evaluate('document.querySelectorAll(".flame-analysis__picture").length===3 && [...document.querySelectorAll(".flame-analysis__picture")].every(c=>c.width>1)'), 'French board', Math.max(TIMEOUT_MS, 60000));
+  const frenchBoard = await evaluate(`({
+    steps: [...document.querySelectorAll('.flame-analysis__step')].map(b => b.textContent),
+    plots: [...document.querySelectorAll('.flame-analysis__plot caption')].map(c => c.textContent),
+    overflow: [...document.querySelectorAll('.flame-analysis__header, .flame-analysis__steps, .flame-analysis__panel-bar, .flame-analysis__transport, .flame-analysis__number')]
+      .filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.className),
+    plotsFit: [...document.querySelectorAll('.flame-analysis__plot-svg')].every(s => s.getBoundingClientRect().height > 50),
+  })`);
+  check('French board: steps and plots in French, nothing overflows at 1280 x 720: ' + JSON.stringify(frenchBoard),
+    frenchBoard.steps.some(s => s.includes('Flamme 3D')) && frenchBoard.plots[0].startsWith('Taux de dégagement de chaleur, convectif')
+    && frenchBoard.overflow.length === 0 && frenchBoard.plotsFit);
+  await screenshot('flame-analysis-fr');
+  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+
   // Exercise the built single-file editor, including its window-level key routing.
   phase('built editor');
   await openTab();

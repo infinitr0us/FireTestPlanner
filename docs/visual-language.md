@@ -33,6 +33,8 @@ the feature:
 | Plot series, grid and cursor | `--plot-*` tokens in `styles.css` |
 | Viewport plot frame, collapse and view selector | `ui/plot-panel.ts` |
 | Plot dashes, bead ramp, ticks and time axis | `ui/plot-svg.ts` |
+| Flame outline over a camera picture | `--flame-outline` in `styles.css`, drawn by `drawOutline` in `ui/flame-analysis-cameras.ts` |
+| Flame analysis board speeds | `ANALYSIS_SPEEDS` in `state/playhead.ts` |
 
 Reuse those definitions rather than copying their current values into a new
 component. When an existing definition cannot express a new meaning,
@@ -137,6 +139,7 @@ changing themes at runtime would require refreshing existing snapshots.
 | `--plot-primary`, `--plot-secondary`, `--plot-grid`, `--plot-cursor` | plot series, grid and time cursor |
 | `--plot-planned`, `--plot-limit` | a plot's planned-value line and a gauge's full-scale range |
 | `--plot-ramp-low`, `--plot-ramp-high` | ends of the ordinal ramp a rake's beads take by height |
+| `--flame-outline` | the recorded flame outline drawn over camera pictures (a data colour) |
 
 Current screen values (the CSS definitions remain authoritative):
 
@@ -148,6 +151,7 @@ Current screen values (the CSS definitions remain authoritative):
 | accent, good, warn, bad | `#38bdf8`, `#34d399`, `#fbbf24`, `#f87171` |
 | plot primary, secondary, grid, cursor | `#65caff`, `#ffbe66`, `#405066`, `#cbd5e1` |
 | plot planned, limit, ramp low, ramp high | `#e2e8f0`, `#7b8aa1`, `#7a68e0`, `#e6e0fd` |
+| flame outline | `#a3e635` |
 
 The accent is the editor's sky blue, `#38bdf8`. Results selection uses that color
 for the ring, selected label border and direction arrow, with a dark ring halo to
@@ -256,7 +260,10 @@ transitions and smooth scrolling, leaving user-started playback available.
 
 The FDS menu groups the three simulation commands. Toolbar gaps and horizontal
 padding are tighter so both languages fit two rows at 1280 x 720, without changing
-font sizes or removing commands. The drawing reserves a separate 66 px band for
+font sizes or removing commands. The plan's title and file name take one line each in
+at most 170 px, cut off with an ellipsis and whole in their tooltips, so a long title
+cannot push the toolbar to a third row; the French **Flame analysis…** command is
+**Flamme…** for the same reason (french-review.md). The drawing reserves a separate 66 px band for
 its orientation mark; plan content has its own viewport below the band.
 
 ## Playback
@@ -267,7 +274,8 @@ keyboard dispatch. Each workspace owns its clock, data loading and playback stat
 - Order: first, previous, play/pause, next, last, scrubber, time, speed, Loop.
 - Readout: `t = … s · frame …/…`. Results retain up to three decimals so nearby
   output timestamps remain distinguishable; the flame clock retains one decimal.
-- Speeds use the existing `SPEEDS` values and the same `×10` notation.
+- Speeds use the existing `SPEEDS` values and the same `×10` notation (the flame
+  analysis board's slower list is a kept exception).
 - Space toggles, comma/period step, Home/End jump to the first/last frame.
 - Editable controls retain their keys. Buttons, disclosure summaries, links and
   custom focus controls retain Space activation; comma/period and Home/End still
@@ -342,6 +350,22 @@ scale, offset, row and time inputs keep the typed text with an error border and
 `aria-invalid`. Focus survives its repaints; Escape closes it and returns focus to
 the toolbar, and playback and plan keys pause while it is open. Browser
 regressions cover it separately from native dialogs.
+
+**The flame analysis board** (`ui/flame-analysis*.ts`) is a full-window workspace
+like the results: its own scene, clock and file session, the shared transport and
+buttons, and the editor's builders for the site. Its plots follow the instrument
+plots: measured solid in `--plot-primary`; an *estimated* series (a heat release rate
+the analysis derived from the flame) takes the simulated family, `--plot-secondary`
+dashed, because it is a model's output rather than a measurement; the 10 Hz samples
+of a reconstructed quantity are a thin line under their one-second mean. Instants a
+quality flag marks are shaded behind the lines (`--warn` for no 3-D flame although a
+camera sees flame, `--text-dim` for flame at a picture's edge), each with a text key
+under the plots. Key moments are dotted `--text-faint` lines labelled on the first
+plot. The flame outline over a camera picture is `--flame-outline`, stroked with a
+light even-odd fill, kept apart from the accent and every instrument colour. A step
+button outlines the panel it explains with the accent. Escape closes the innermost
+layer first (full-size picture, then step text, then the board), handled on the key
+itself so Chromium's close-request rules cannot close the board early.
 
 The result scene keeps its unlit fields, translucent context geometry, free orbit
 and existing camera fit. FDS coordinates can be negative and are not constrained
@@ -427,6 +451,9 @@ Token reuse alone is not an accessibility or scientific-validation claim.
 | Length precision | Fixed decimals on dimensions and set-out coordinates; trimmed decimals in inspector fields | Adjacent construction labels need consistent precision; fields stay compact and editable | Keep; fractional ft-in uses the same reduced sixteenths everywhere |
 | Rake plots | Bead lines take the ordinal `--plot-ramp-*` colours instead of `--plot-primary`/`--plot-secondary` | Colour encodes bead height; the measured/simulated distinction is carried by dash, as on every instrument plot | Keep |
 | Gauge range on plots | Drawn only while within twice the plotted maximum; otherwise an off-scale label | A 50 kW/m² range on a 5 kW/m² reading would flatten the data the plot is for | Keep |
+| Flame analysis speeds | ×0.25 to ×5 (`ANALYSIS_SPEEDS`), default ×1, Loop off, instead of `SPEEDS` | Camera pictures come ten a second over about a minute: ×10 and up skip most of them, slow motion shows the flicker | Keep; same transport, keys and `×` notation |
+| Flame analysis 3-D labels | Only the cameras (by the folder's short names) and the fire are labelled | A label on every plate and pole of a real site hides the flame the view is for | Keep |
+| Flame analysis plots | Drawn in screen pixels at their laid-out size and redrawn on resize, not a fixed `viewBox` scaled to fit | Each plot gets a share of the column whose shape changes with the window; a fixed aspect left the text a few pixels high | Keep |
 
 The editor's scene materials and furniture remain in `scene/builders.ts` and
 `scene/viewport.ts`; object defaults and camera modality colors are in

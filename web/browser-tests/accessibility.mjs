@@ -225,5 +225,18 @@ export async function accessibility({ web, origin, send, evaluate, click, key, o
   check('mapping editor keeps the same live region', await evaluate(`window.__a11yMessage===document.querySelector('dialog.test-data [role=status]')`));
   check('one persistent live region in Test data', await evaluate(`document.querySelectorAll('dialog.test-data [role=status]').length===1`));
   await key('Escape', 'Escape', 27);
+
+  // The flame analysis board: its welcome in the built editor, then the synthetic
+  // test loaded on its regression page with a step's text open.
+  await click(button('Flame analysis…'));
+  await waitFor(() => evaluate(`!!document.querySelector('dialog.flame-analysis[open] .flame-analysis__welcome button')`), 'flame analysis welcome');
+  await scan('Flame analysis empty');
+  await key('Escape', 'Escape', 27);
+  check('Escape closes the empty flame analysis board', await evaluate(`!document.querySelector('dialog.flame-analysis[open]')`));
+  await openTab();
+  await send('Page.navigate', { url: origin + '/browser-tests/flame-analysis.html' });
+  await waitFor(() => evaluate(`document.querySelectorAll('.flame-analysis__picture').length===3 && [...document.querySelectorAll('.flame-analysis__picture')].every(c=>c.width>1)`), 'flame analysis loaded', 60000);
+  await click(`document.querySelector('.flame-analysis__step[data-step=hrr]')`);
+  await scan('Flame analysis loaded');
   return { scans, toolbar, checks, exclusions: [], notes: ['Share uses a file download and native alert messages, with no HTML dialog.'] };
 }
