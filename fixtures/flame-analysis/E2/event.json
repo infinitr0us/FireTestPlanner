@@ -1,0 +1,236 @@
+{
+ "format": "fireplan-flame-event",
+ "version": "1.0.0",
+ "id": "E2",
+ "label": "Synthetic event 2",
+ "onset_s": 160.0,
+ "cameras": [
+  "camA",
+  "camB"
+ ],
+ "instants": {
+  "t_s": [
+   159.5,
+   159.6,
+   159.7,
+   159.8,
+   159.9,
+   160.0,
+   160.1,
+   160.2,
+   160.3,
+   160.4,
+   160.5,
+   160.6,
+   160.7,
+   160.8,
+   160.9,
+   161.0,
+   161.1,
+   161.2,
+   161.3,
+   161.4,
+   161.5,
+   161.6,
+   161.7,
+   161.8,
+   161.9,
+   162.0,
+   162.1,
+   162.2,
+   162.3,
+   162.4,
+   162.5,
+   162.6,
+   162.7,
+   162.8,
+   162.9,
+   163.0
+  ],
+  "stem": [
+   "t_0159.50",
+   "t_0159.60",
+   "t_0159.70",
+   "t_0159.80",
+   "t_0159.90",
+   "t_0160.00",
+   "t_0160.10",
+   "t_0160.20",
+   "t_0160.30",
+   "t_0160.40",
+   "t_0160.50",
+   "t_0160.60",
+   "t_0160.70",
+   "t_0160.80",
+   "t_0160.90",
+   "t_0161.00",
+   "t_0161.10",
+   "t_0161.20",
+   "t_0161.30",
+   "t_0161.40",
+   "t_0161.50",
+   "t_0161.60",
+   "t_0161.70",
+   "t_0161.80",
+   "t_0161.90",
+   "t_0162.00",
+   "t_0162.10",
+   "t_0162.20",
+   "t_0162.30",
+   "t_0162.40",
+   "t_0162.50",
+   "t_0162.60",
+   "t_0162.70",
+   "t_0162.80",
+   "t_0162.90",
+   "t_0163.00"
+  ]
+ },
+ "files": {
+  "display": "frames/{cam}/{stem}.png",
+  "outlines": "outlines/{cam}.json",
+  "hull": "hull/{stem}.npz"
+ },
+ "images": {
+  "camA": {
+   "size_px": [
+    240,
+    180
+   ],
+   "display_px": [
+    240,
+    180
+   ]
+  },
+  "camB": {
+   "size_px": [
+    240,
+    180
+   ],
+   "display_px": [
+    240,
+    180
+   ]
+  }
+ },
+ "hull": {
+  "voxelSize_m": 0.03,
+  "frame": "plan"
+ },
+ "series": [
+  {
+   "id": "hood",
+   "label": {
+    "en": "Hood (measured)",
+    "fr": "Hotte (mesurée)"
+   },
+   "role": "measured",
+   "quantity": "hrr",
+   "unit": "kW",
+   "basis": "convective",
+   "file": "series/hood.csv",
+   "time": "t_s",
+   "value": "hrr_convective_kW",
+   "note": "Synthetic: the true flame volume times 1800 kW/m3, lagged."
+  },
+  {
+   "id": "hrr-from-volume",
+   "label": {
+    "en": "Estimate from flame volume",
+    "fr": "Estimation par le volume de flamme"
+   },
+   "role": "estimated",
+   "quantity": "hrr",
+   "unit": "kW",
+   "basis": "convective",
+   "file": "series/hrr_estimate.csv",
+   "time": "t_s",
+   "value": "from_volume_kW"
+  },
+  {
+   "id": "hrr-from-area",
+   "label": {
+    "en": "Estimate from flame surface area",
+    "fr": "Estimation par la surface de flamme"
+   },
+   "role": "estimated",
+   "quantity": "hrr",
+   "unit": "kW",
+   "basis": "convective",
+   "file": "series/hrr_estimate.csv",
+   "time": "t_s",
+   "value": "from_area_kW"
+  },
+  {
+   "id": "volume",
+   "label": {
+    "en": "Flame volume",
+    "fr": "Volume de flamme"
+   },
+   "role": "reconstructed",
+   "quantity": "volume",
+   "unit": "m3",
+   "file": "series/metrics.csv",
+   "time": "t_s",
+   "value": "volume_m3"
+  },
+  {
+   "id": "area",
+   "label": {
+    "en": "Flame surface area",
+    "fr": "Surface de flamme"
+   },
+   "role": "reconstructed",
+   "quantity": "area",
+   "unit": "m2",
+   "file": "series/metrics.csv",
+   "time": "t_s",
+   "value": "surface_area_m2"
+  },
+  {
+   "id": "height",
+   "label": {
+    "en": "Flame top above the pan",
+    "fr": "Sommet de flamme au-dessus du bac"
+   },
+   "role": "reconstructed",
+   "quantity": "height",
+   "unit": "m",
+   "file": "series/metrics.csv",
+   "time": "t_s",
+   "value": "top_above_rim_m"
+  }
+ ],
+ "quality": {
+  "noHull": []
+ },
+ "keyMoments": [
+  {
+   "t_s": 160.0,
+   "label": {
+    "en": "Ignition",
+    "fr": "Allumage"
+   }
+  },
+  {
+   "t_s": 160.8,
+   "label": {
+    "en": "Largest flame",
+    "fr": "Flamme la plus grande"
+   }
+  },
+  {
+   "t_s": 161.2,
+   "label": {
+    "en": "Decay starts",
+    "fr": "Début du déclin"
+   }
+  }
+ ],
+ "notes": {
+  "reconstruction": {
+   "en": "Synthetic: built from 2 camera(s); with fewer cameras the 3-D flame is larger than the flame that made the pictures.",
+   "fr": "Synthétique : construite à partir de 2 caméra(s) ; avec moins de caméras, la flamme 3D est plus grande que la flamme des images."
+  }
+ }
+}

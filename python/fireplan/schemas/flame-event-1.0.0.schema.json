@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/infinitr0us/FireTestPlanner/main/schema/flame-event-1.0.0.schema.json",
+  "title": "Flame analysis event",
+  "description": "One event of a flame analysis: the instants with pictures and a 3-D flame, where their files are, the series to plot and what to mark. Times are seconds on the test's time base (analysis.json timeBase). Paths and templates are relative to this file, use '/', and stay inside the analysis folder; templates substitute {cam} and {stem}. See docs/flame-analysis-board-design.md and CONVENTIONS.md.",
+  "type": "object",
+  "required": ["format", "version", "id", "label", "onset_s", "cameras", "instants", "files", "images", "hull", "series"],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "const": "fireplan-flame-event" },
+    "version": { "const": "1.0.0" },
+    "id": { "$ref": "#/$defs/id" },
+    "label": { "$ref": "#/$defs/text" },
+    "onset_s": { "type": "number" },
+    "cameras": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "instants": {
+      "type": "object",
+      "required": ["t_s", "stem"],
+      "additionalProperties": false,
+      "properties": {
+        "t_s": { "type": "array", "minItems": 1, "items": { "type": "number" } },
+        "stem": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9_.+-]{1,64}$" }
+        }
+      }
+    },
+    "files": {
+      "type": "object",
+      "required": ["display", "outlines", "hull"],
+      "additionalProperties": false,
+      "properties": {
+        "display": { "allOf": [{ "$ref": "#/$defs/template" }, { "pattern": "\\{cam\\}" }, { "pattern": "\\{stem\\}" }] },
+        "frame": { "allOf": [{ "$ref": "#/$defs/template" }, { "pattern": "\\{cam\\}" }, { "pattern": "\\{stem\\}" }] },
+        "closeup": { "allOf": [{ "$ref": "#/$defs/template" }, { "pattern": "\\{cam\\}" }, { "pattern": "\\{stem\\}" }] },
+        "outlines": { "allOf": [{ "$ref": "#/$defs/template" }, { "pattern": "\\{cam\\}" }, { "not": { "pattern": "\\{stem\\}" } }] },
+        "hull": { "allOf": [{ "$ref": "#/$defs/template" }, { "pattern": "\\{stem\\}" }, { "not": { "pattern": "\\{cam\\}" } }] }
+      }
+    },
+    "images": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/id" },
+      "additionalProperties": {
+        "type": "object",
+        "required": ["size_px", "display_px"],
+        "additionalProperties": false,
+        "properties": {
+          "size_px": { "$ref": "#/$defs/size" },
+          "display_px": { "$ref": "#/$defs/size" },
+          "closeup": {
+            "description": "A fixed rectangle of the full-resolution picture around the flame over the whole event (x, y of its top-left corner and its width and height, in pixels), and the size of its pre-cut copies (files.closeup).",
+            "type": "object",
+            "required": ["rect_px", "display_px"],
+            "additionalProperties": false,
+            "properties": {
+              "rect_px": {
+                "type": "array",
+                "prefixItems": [
+                  { "type": "integer", "minimum": 0 },
+                  { "type": "integer", "minimum": 0 },
+                  { "type": "integer", "minimum": 1 },
+                  { "type": "integer", "minimum": 1 }
+                ],
+                "minItems": 4,
+                "maxItems": 4
+              },
+              "display_px": { "$ref": "#/$defs/size" }
+            }
+          }
+        }
+      }
+    },
+    "hull": {
+      "type": "object",
+      "required": ["voxelSize_m", "frame"],
+      "additionalProperties": false,
+      "properties": {
+        "voxelSize_m": { "type": "number", "exclusiveMinimum": 0 },
+        "frame": { "const": "plan" }
+      }
+    },
+    "series": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "role", "quantity", "unit", "file", "time", "value"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "label": { "$ref": "#/$defs/text" },
+          "role": { "enum": ["measured", "reconstructed", "estimated"] },
+          "quantity": { "enum": ["hrr", "volume", "area", "height"] },
+          "unit": { "enum": ["kW", "m3", "m2", "m"] },
+          "basis": { "enum": ["convective", "total"] },
+          "file": { "$ref": "#/$defs/path" },
+          "time": { "type": "string", "minLength": 1 },
+          "value": { "type": "string", "minLength": 1 },
+          "note": { "$ref": "#/$defs/text" }
+        },
+        "allOf": [
+          { "if": { "properties": { "quantity": { "const": "hrr" } } }, "then": { "properties": { "unit": { "const": "kW" } } }, "else": { "not": { "required": ["basis"] } } },
+          { "if": { "properties": { "quantity": { "const": "volume" } } }, "then": { "properties": { "unit": { "const": "m3" } } } },
+          { "if": { "properties": { "quantity": { "const": "area" } } }, "then": { "properties": { "unit": { "const": "m2" } } } },
+          { "if": { "properties": { "quantity": { "const": "height" } } }, "then": { "properties": { "unit": { "const": "m" } } } }
+        ]
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "noHull": { "$ref": "#/$defs/indices" },
+        "outsideFrame": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/id" },
+          "additionalProperties": { "$ref": "#/$defs/indices" }
+        }
+      }
+    },
+    "keyMoments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["t_s", "label"],
+        "additionalProperties": false,
+        "properties": {
+          "t_s": { "type": "number" },
+          "label": { "$ref": "#/$defs/text" }
+        }
+      }
+    },
+    "notes": {
+      "type": "object",
+      "propertyNames": { "enum": ["cameras", "frames", "segmentation", "reconstruction", "size", "hrr", "limitations"] },
+      "additionalProperties": { "$ref": "#/$defs/text" }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$" },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.?(/|$))[^\\\\:*?\"<>|{}]+$"
+    },
+    "template": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.?(/|$))(?:[^\\\\:*?\"<>|{}]|\\{cam\\}|\\{stem\\})+$"
+    },
+    "size": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "integer", "minimum": 1 },
+        { "type": "integer", "minimum": 1 }
+      ],
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "indices": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } },
+    "text": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "required": ["en"],
+          "additionalProperties": false,
+          "properties": {
+            "en": { "type": "string", "minLength": 1 },
+            "fr": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,247 @@
+{
+ "format": "fireplan-flame-event",
+ "version": "1.0.0",
+ "id": "E1",
+ "label": "Synthetic event 1",
+ "onset_s": 100.0,
+ "cameras": [
+  "camA",
+  "camB",
+  "camC"
+ ],
+ "instants": {
+  "t_s": [
+   99.5,
+   99.6,
+   99.7,
+   99.8,
+   99.9,
+   100.0,
+   100.1,
+   100.2,
+   100.3,
+   100.4,
+   100.5,
+   100.6,
+   100.7,
+   100.8,
+   100.9,
+   101.0,
+   101.1,
+   101.2,
+   101.3,
+   101.4,
+   101.5,
+   101.6,
+   101.7,
+   101.8,
+   101.9,
+   102.0,
+   102.1,
+   102.2,
+   102.3,
+   102.4,
+   102.5,
+   102.6,
+   102.7,
+   102.8,
+   102.9,
+   103.0
+  ],
+  "stem": [
+   "t_0099.50",
+   "t_0099.60",
+   "t_0099.70",
+   "t_0099.80",
+   "t_0099.90",
+   "t_0100.00",
+   "t_0100.10",
+   "t_0100.20",
+   "t_0100.30",
+   "t_0100.40",
+   "t_0100.50",
+   "t_0100.60",
+   "t_0100.70",
+   "t_0100.80",
+   "t_0100.90",
+   "t_0101.00",
+   "t_0101.10",
+   "t_0101.20",
+   "t_0101.30",
+   "t_0101.40",
+   "t_0101.50",
+   "t_0101.60",
+   "t_0101.70",
+   "t_0101.80",
+   "t_0101.90",
+   "t_0102.00",
+   "t_0102.10",
+   "t_0102.20",
+   "t_0102.30",
+   "t_0102.40",
+   "t_0102.50",
+   "t_0102.60",
+   "t_0102.70",
+   "t_0102.80",
+   "t_0102.90",
+   "t_0103.00"
+  ]
+ },
+ "files": {
+  "display": "frames/{cam}/{stem}.png",
+  "outlines": "outlines/{cam}.json",
+  "hull": "hull/{stem}.npz"
+ },
+ "images": {
+  "camA": {
+   "size_px": [
+    240,
+    180
+   ],
+   "display_px": [
+    240,
+    180
+   ]
+  },
+  "camB": {
+   "size_px": [
+    240,
+    180
+   ],
+   "display_px": [
+    240,
+    180
+   ]
+  },
+  "camC": {
+   "size_px": [
+    135,
+    240
+   ],
+   "display_px": [
+    135,
+    240
+   ]
+  }
+ },
+ "hull": {
+  "voxelSize_m": 0.03,
+  "frame": "plan"
+ },
+ "series": [
+  {
+   "id": "hood",
+   "label": {
+    "en": "Hood (measured)",
+    "fr": "Hotte (mesurée)"
+   },
+   "role": "measured",
+   "quantity": "hrr",
+   "unit": "kW",
+   "basis": "convective",
+   "file": "series/hood.csv",
+   "time": "t_s",
+   "value": "hrr_convective_kW",
+   "note": "Synthetic: the true flame volume times 1800 kW/m3, lagged."
+  },
+  {
+   "id": "hrr-from-volume",
+   "label": {
+    "en": "Estimate from flame volume",
+    "fr": "Estimation par le volume de flamme"
+   },
+   "role": "estimated",
+   "quantity": "hrr",
+   "unit": "kW",
+   "basis": "convective",
+   "file": "series/hrr_estimate.csv",
+   "time": "t_s",
+   "value": "from_volume_kW"
+  },
+  {
+   "id": "hrr-from-area",
+   "label": {
+    "en": "Estimate from flame surface area",
+    "fr": "Estimation par la surface de flamme"
+   },
+   "role": "estimated",
+   "quantity": "hrr",
+   "unit": "kW",
+   "basis": "convective",
+   "file": "series/hrr_estimate.csv",
+   "time": "t_s",
+   "value": "from_area_kW"
+  },
+  {
+   "id": "volume",
+   "label": {
+    "en": "Flame volume",
+    "fr": "Volume de flamme"
+   },
+   "role": "reconstructed",
+   "quantity": "volume",
+   "unit": "m3",
+   "file": "series/metrics.csv",
+   "time": "t_s",
+   "value": "volume_m3"
+  },
+  {
+   "id": "area",
+   "label": {
+    "en": "Flame surface area",
+    "fr": "Surface de flamme"
+   },
+   "role": "reconstructed",
+   "quantity": "area",
+   "unit": "m2",
+   "file": "series/metrics.csv",
+   "time": "t_s",
+   "value": "surface_area_m2"
+  },
+  {
+   "id": "height",
+   "label": {
+    "en": "Flame top above the pan",
+    "fr": "Sommet de flamme au-dessus du bac"
+   },
+   "role": "reconstructed",
+   "quantity": "height",
+   "unit": "m",
+   "file": "series/metrics.csv",
+   "time": "t_s",
+   "value": "top_above_rim_m"
+  }
+ ],
+ "quality": {
+  "noHull": []
+ },
+ "keyMoments": [
+  {
+   "t_s": 100.0,
+   "label": {
+    "en": "Ignition",
+    "fr": "Allumage"
+   }
+  },
+  {
+   "t_s": 101.1,
+   "label": {
+    "en": "Largest flame",
+    "fr": "Flamme la plus grande"
+   }
+  },
+  {
+   "t_s": 102.0,
+   "label": {
+    "en": "Decay starts",
+    "fr": "Début du déclin"
+   }
+  }
+ ],
+ "notes": {
+  "reconstruction": {
+   "en": "Synthetic: built from 3 camera(s); with fewer cameras the 3-D flame is larger than the flame that made the pictures.",
+   "fr": "Synthétique : construite à partir de 3 caméra(s) ; avec moins de caméras, la flamme 3D est plus grande que la flamme des images."
+  }
+ }
+}

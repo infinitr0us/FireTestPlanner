@@ -1,0 +1,121 @@
+{
+ "format": "fireplan-flame-analysis",
+ "version": "1.0.0",
+ "title": {
+  "en": "Synthetic flame analysis test",
+  "fr": "Essai synthétique d'analyse de flamme"
+ },
+ "date": "2026-11-08",
+ "sitePlan": "site.ftp.json",
+ "timeBase": {
+  "label": "t_clock",
+  "description": {
+   "en": "Seconds on the synthetic test's clock.",
+   "fr": "Secondes sur l'horloge de l'essai synthétique."
+  }
+ },
+ "cameras": [
+  {
+   "id": "camA",
+   "planCameraId": "camA"
+  },
+  {
+   "id": "camB",
+   "planCameraId": "camB"
+  },
+  {
+   "id": "camC",
+   "planCameraId": "camC"
+  }
+ ],
+ "steps": {
+  "cameras": {
+   "title": {
+    "en": "Cameras",
+    "fr": "Caméras"
+   },
+   "text": {
+    "en": "Three synthetic cameras look at a pan from the front, the side and above.",
+    "fr": "Trois caméras synthétiques regardent un bac de face, de côté et d'en haut."
+   }
+  },
+  "frames": {
+   "title": {
+    "en": "Synchronised frames",
+    "fr": "Images synchronisées"
+   },
+   "text": {
+    "en": "One picture per camera every 0.1 s, rendered from the synthetic flame.",
+    "fr": "Une image par caméra toutes les 0,1 s, rendue à partir de la flamme synthétique."
+   }
+  },
+  "segmentation": {
+   "title": {
+    "en": "Flame in each view",
+    "fr": "Flamme dans chaque vue"
+   },
+   "text": {
+    "en": "Every pixel whose line of sight crosses the flame is flame.",
+    "fr": "Tout pixel dont la ligne de visée traverse la flamme est de la flamme."
+   }
+  },
+  "reconstruction": {
+   "title": {
+    "en": "3-D flame",
+    "fr": "Flamme 3D"
+   },
+   "text": {
+    "en": "The space inside the flame outline of every camera at once.",
+    "fr": "L'espace à l'intérieur du contour de flamme de toutes les caméras à la fois."
+   }
+  },
+  "size": {
+   "title": {
+    "en": "Flame volume and surface area",
+    "fr": "Volume et surface de flamme"
+   },
+   "text": {
+    "en": "Counted on the 3 cm cubes of the 3-D flame.",
+    "fr": "Comptés sur les cubes de 3 cm de la flamme 3D."
+   }
+  },
+  "hrr": {
+   "title": {
+    "en": "Heat release rate",
+    "fr": "Débit calorifique"
+   },
+   "text": {
+    "en": "Illustrative numbers with made-up coefficients, for testing the board.",
+    "fr": "Valeurs indicatives aux coefficients inventés, pour tester le tableau."
+   }
+  },
+  "limitations": {
+   "title": {
+    "en": "What this can and cannot tell you",
+    "fr": "Ce que cela peut et ne peut pas dire"
+   },
+   "text": {
+    "en": "Nothing about a real fire: every number here is synthetic.",
+    "fr": "Rien sur un vrai feu : toutes les valeurs sont synthétiques."
+   }
+  }
+ },
+ "events": [
+  {
+   "id": "E1",
+   "label": {
+    "en": "Synthetic event 1",
+    "fr": "Événement synthétique 1"
+   },
+   "path": "E1/event.json"
+  },
+  {
+   "id": "E2",
+   "label": {
+    "en": "Synthetic event 2",
+    "fr": "Événement synthétique 2"
+   },
+   "path": "E2/event.json"
+  }
+ ]
+}

@@ -643,3 +643,22 @@ MWIR camera must frame a flame about 10 m high and two LWIR cameras are read aga
   Heskestad, so a fire can be sized from the height the engineers estimate.
 
 No format change. The plans made for the test itself are not in this repository.
+
+## M20: Flame analysis board (from 2026-11-08)
+
+A read-only workspace that walks fire safety engineers through a fire event filmed by
+two to four calibrated cameras: synchronised frames, the flame in each view, the 3-D
+flame in the site, flame volume and surface area, and heat release rate estimates
+beside the hood. Post-test review in the desktop exe, with a video export for slides.
+The design, decisions and phases are in
+[docs/flame-analysis-board-design.md](docs/flame-analysis-board-design.md).
+
+- **Phase 0 (done 2026-11-08):** flame analysis folder format 1.0 (CONVENTIONS section
+  13, three schemas), `fireplan.flame_analysis`, and a synthetic test with two events.
+  Real deliveries and the converter for the analysis pipeline's own output stay in the
+  ignored `local/`: the pipeline's methods are not published.
+- **Phase 1:** the board. **Phase 2:** video and PNG export, after a WebView2 encoder
+  spike. **Phase 3:** hull check, the hood's response time, Heskestad height, smooth
+  meshes.
+
+No plan format change.

@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/infinitr0us/FireTestPlanner/main/schema/flame-analysis-1.0.0.schema.json",
+  "title": "Flame analysis",
+  "description": "The test-level manifest of a flame analysis folder: the site plan, the cameras, the clock every file of the test uses, the explanatory text of each step and the events. Paths are relative to this file, use '/', and stay inside its folder. See docs/flame-analysis-board-design.md and CONVENTIONS.md.",
+  "type": "object",
+  "required": ["format", "version", "title", "sitePlan", "timeBase", "cameras", "events"],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "const": "fireplan-flame-analysis" },
+    "version": { "const": "1.0.0" },
+    "title": { "$ref": "#/$defs/text" },
+    "date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "sitePlan": { "$ref": "#/$defs/path" },
+    "timeBase": {
+      "type": "object",
+      "required": ["label"],
+      "additionalProperties": false,
+      "properties": {
+        "label": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "description": { "$ref": "#/$defs/text" }
+      }
+    },
+    "cameras": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["id", "planCameraId"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "planCameraId": { "type": "string", "minLength": 1 },
+          "label": { "$ref": "#/$defs/text" }
+        }
+      }
+    },
+    "steps": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/stepId" },
+      "additionalProperties": {
+        "type": "object",
+        "required": ["text"],
+        "additionalProperties": false,
+        "properties": {
+          "title": { "$ref": "#/$defs/text" },
+          "text": { "$ref": "#/$defs/text" },
+          "watchFor": { "$ref": "#/$defs/text" }
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "path"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "label": { "$ref": "#/$defs/text" },
+          "path": { "$ref": "#/$defs/path" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$" },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.?(/|$))[^\\\\:*?\"<>|]+$"
+    },
+    "stepId": { "enum": ["cameras", "frames", "segmentation", "reconstruction", "size", "hrr", "limitations"] },
+    "text": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "required": ["en"],
+          "additionalProperties": false,
+          "properties": {
+            "en": { "type": "string", "minLength": 1 },
+            "fr": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    }
+  }
+}

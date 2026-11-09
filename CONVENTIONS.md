@@ -1,6 +1,7 @@
 # Conventions
 
-Normative reference for `fire-test-plan` formats 1.0.0 through 1.7.0. If code and
+Normative reference for `fire-test-plan` formats 1.0.0 through 1.7.0, and (section 13)
+for the separate flame analysis folder format 1.0.0. If code and
 this document disagree, this document is wrong and should be fixed — but check the
 tests first, because they encode these rules directly.
 
@@ -1353,3 +1354,71 @@ stored data. Shared pages carry these decimated series in an HTML-only
 a plan. The session and sharing APIs are documented in
 `docs/test-data-design.md` under Editor plumbing, and the editor's Test data dialog
 and instrument plots, including what each edit does to the manifest, under Editor UI.
+
+## 13. Flame analysis folders (flame analysis 1.0)
+
+A separate format beside the plan, with its own version and schemas
+(`schema/flame-analysis-1.0.0`, `flame-event-1.0.0` and `flame-outlines-1.0.0`,
+mirrored in `python/fireplan/schemas/`). It holds one processed test filmed by
+calibrated cameras, for the flame analysis board
+([design](docs/flame-analysis-board-design.md)); `fireplan.flame_analysis` reads and
+checks it. It describes results, not how they were made: no field carries a
+pipeline's thresholds, coefficients or file layout. A plan never refers to it, and
+nothing in it changes the plan format.
+
+**Two manifests.** `analysis.json` (`format` `fireplan-flame-analysis`) names the site
+plan, the cameras (`id`, the site plan's `planCameraId`, an optional `label`), the time
+base (`label`, optional `description`), optional step texts and the events.
+Each event's manifest (`format` `fireplan-flame-event`) names its cameras in display
+order, its instants (`t_s` strictly increasing, a unique file `stem` each), path
+templates, picture sizes, the hull's voxel size, its series and optional quality
+indices, key moments and notes. `version` is `1.0.0`, and both schemas close every
+object: an unknown field is an error, not something to keep.
+
+**Paths** are relative to the manifest that holds them, use `/`, and may not be
+absolute, contain `.` or `..` segments, or resolve outside the folder that holds
+`analysis.json`. **Templates** substitute `{cam}` and `{stem}` and nothing else:
+`display` and `frame` (and `closeup`) need both, `outlines` needs `{cam}` only, `hull`
+`{stem}` only.
+
+**Time.** Every time in a folder is seconds on its test's time base, the same clock for
+every event and file. `onset_s` marks the event's start; the board shows time from it,
+negative before. A picture or hull holds from its instant until the next one: nothing
+is interpolated between instants.
+
+**Pictures.** `images.<cam>.size_px` is the full-resolution size; it must equal the
+site plan camera's `resolution_px` for the hull to be drawn over the picture (a
+warning otherwise, since the pictures are still worth showing). `display_px` is the
+size of the display copies. An optional `closeup` is a fixed rectangle `rect_px`
+(`x, y, w, h` of the full-resolution picture) with its own copies (`files.closeup`,
+`closeup.display_px`); a closeup on one camera requires one on all.
+
+**Outlines** (`fireplan-flame-outlines`) give each camera's flame as closed rings, one
+list per instant in instant order. A ring is a flat `[x0, y0, x1, y1, ...]` of at least
+three points in full-resolution pixel coordinates: x right, y down, the centre of a
+pixel at integer coordinates, the convention of `Camera.project`. Rings are filled
+even-odd, so a ring inside another is a hole. A region one pixel wide has no area and
+no ring.
+
+**Hulls** use the section 11 frame format (`voxels` M x 3 float64, metres, and
+`voxel_size`) in the plan frame (`hull.frame` is `plan`). The instant's time comes from
+`instants`, not the file name.
+
+**Series** name a CSV file and two of its columns: `time` (strictly increasing, no
+gaps) and `value`. The file is UTF-8 (a BOM is accepted), comma separated, with one
+header row and then numbers only; an empty value cell is a missing sample, any other
+text is an error with its row number. `quantity` fixes the unit: `hrr` kW, `volume`
+m3, `area` m2, `height` m. `role` is `measured`, `reconstructed` or `estimated`;
+`basis` (`convective` or `total`) is for heat release rate only. Volume and area may
+not be negative.
+
+**Text** is a string or `{"en": ..., "fr": ...}` with English required. Step ids are
+`cameras`, `frames`, `segmentation`, `reconstruction`, `size`, `hrr` and
+`limitations`; an event's `notes` use the same ids and add to the test's text.
+
+`FlameAnalysis.check()` returns every problem as an `Issue` (the plan's type): the
+schemas, unknown or duplicate ids, cameras missing from the site plan, instants out of
+order, quality indices out of range, close-ups outside the picture, unreadable or
+out-of-order series, and missing files; `deep` also opens every outline and hull. The
+synthetic test in `fixtures/flame-analysis/` is built by
+`tools/build_synthetic_flame_event.py` and regenerates byte for byte.
