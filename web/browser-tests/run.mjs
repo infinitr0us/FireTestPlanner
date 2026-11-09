@@ -285,10 +285,21 @@ try {
     overflow: [...document.querySelectorAll('.flame-analysis__header, .flame-analysis__steps, .flame-analysis__panel-bar, .flame-analysis__transport, .flame-analysis__number')]
       .filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.className),
     plotsFit: [...document.querySelectorAll('.flame-analysis__plot-svg')].every(s => s.getBoundingClientRect().height > 50),
+    // A laptop screen shows every plot without scrolling and the playback bar on one row,
+    // with four key moments (as a real delivery has), and each moment's label inside its plot.
+    chartsScroll: (c => c.scrollHeight - c.clientHeight)(document.querySelector('.flame-analysis__plots')),
+    transportHeight: Math.round(document.querySelector('.flame-analysis__transport').getBoundingClientRect().height),
+    moments: document.querySelectorAll('.flame-analysis__moments button').length,
+    labelsInside: [...document.querySelectorAll('.flame-analysis__moment-label')].every(t => {
+      const b = t.getBBox(); return b.x >= 0 && b.x + b.width <= t.ownerSVGElement.getBoundingClientRect().width + 1;
+    }),
   })`);
   check('French board: steps and plots in French, nothing overflows at 1280 x 720: ' + JSON.stringify(frenchBoard),
     frenchBoard.steps.some(s => s.includes('Flamme 3D')) && frenchBoard.plots[0].startsWith('Taux de dégagement de chaleur, convectif')
     && frenchBoard.overflow.length === 0 && frenchBoard.plotsFit);
+  check('French board at 1280 x 720: every plot without scrolling, the playback bar on one row, moment labels inside: '
+    + JSON.stringify(frenchBoard), frenchBoard.chartsScroll <= 1 && frenchBoard.transportHeight < 50
+    && frenchBoard.moments === 4 && frenchBoard.labelsInside);
   await screenshot('flame-analysis-fr');
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
 

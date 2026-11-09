@@ -432,6 +432,8 @@ def build_event(root, plan, cameras, spec, rng):
         hood.append([num(ht, 1), num(3.0 + y + noise, 2)])
     write_text(folder / "series" / "hood.csv", "t_s,hrr_convective_kW\n"
                + "".join(",".join(r) + "\n" for r in hood))
+    # The hood's peak within the event's instants, a key moment as a delivery would mark it.
+    hood_peak_t = max((float(v), float(ht)) for ht, v in hood if times[0] <= float(ht) <= times[-1])[1]
 
     vol = np.array([float(r[1]) for r in hull_rows])
     area = np.array([float(r[2]) for r in hull_rows])
@@ -493,6 +495,7 @@ def build_event(root, plan, cameras, spec, rng):
             {"t_s": onset, "label": {"en": "Ignition", "fr": "Allumage"}},
             {"t_s": times[peak_i], "label": {"en": "Largest flame", "fr": "Flamme la plus grande"}},
             {"t_s": round(onset + shape[1], 2), "label": {"en": "Decay starts", "fr": "Début du déclin"}},
+            {"t_s": hood_peak_t, "label": {"en": "Hood peak", "fr": "Maximum de la hotte"}},
         ],
         "notes": {
             "reconstruction": {

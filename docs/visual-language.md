@@ -364,7 +364,12 @@ of a reconstructed quantity are a thin line under their one-second mean. Instant
 quality flag marks are shaded behind the lines (`--warn` for no 3-D flame although a
 camera sees flame, `--text-dim` for flame at a picture's edge), each with a text key
 under the plots. Key moments are dotted `--text-faint` lines labelled on the first
-plot. The flame outline over a camera picture is `--flame-outline`, stroked with a
+plot, to the right of the line or, where the label would run past the plot's edge, to
+its left; overlapping labels take the next row. At laptop size (1280 x 720, four
+cameras, four key moments, EN and FR) every plot stays on screen without scrolling: a
+plot is as tall as its legend and a minimum drawing area, and the playback bar keeps
+one row because the board's readout and slider may narrow (the step row may wrap).
+The flame outline over a camera picture is `--flame-outline`, stroked with a
 light even-odd fill, kept apart from the accent and every instrument colour. The hull
 check draws the 3-D flame through the camera as `--hull-check` squares, a second data
 colour beside the lime outline, and states its agreement in words under the tile ("3-D

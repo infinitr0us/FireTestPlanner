@@ -151,10 +151,16 @@ export class AnalysisPlots {
       const px = x(moment.t);
       svg.append(svgElement('line', { x1: px, x2: px, y1: Y0, y2: Y1, class: 'flame-analysis__moment' }));
       if (this.plots[0] === plot) {
-        row = px < labelEnd ? row + 1 : 0;
-        const label = svgElement('text', { x: px + 3, y: Y0 + 9 + row * 11, class: 'flame-analysis__moment-label' }, moment.label);
+        // Right of its line, or left of it where it would run past the plot's edge.
+        const width = moment.label.length * 5.5, before = px + 3 + width > X1;
+        const start = before ? px - 3 - width : px + 3;
+        row = start < labelEnd ? row + 1 : 0;
+        const label = svgElement('text', {
+          x: before ? px - 3 : px + 3, y: Y0 + 9 + row * 11, class: 'flame-analysis__moment-label',
+          ...(before ? { 'text-anchor': 'end' } : {}),
+        }, moment.label);
         svg.append(label);
-        labelEnd = px + 6 + moment.label.length * 5.5;
+        labelEnd = start + width + 3;
       }
     }
     for (const line of spec.lines) {

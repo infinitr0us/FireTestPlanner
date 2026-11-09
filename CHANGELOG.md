@@ -72,6 +72,13 @@ and a plan written by any release opens in every later one.
   JSON with an optional BOM and no NaN are documented in CONVENTIONS section 13 and
   shared as a test corpus (`fixtures/flame-analysis-validation/`). The synthetic
   test's hulls now store their real voxel size.
+- **The flame analysis board at laptop size:** at 1280 x 720 with four cameras and four
+  key moments, every plot is on screen without scrolling (a plot takes the height its
+  legend needs rather than a fixed minimum, and keeps it while the values at the
+  cursor change during playback), the playback bar stays on one row, and a
+  key moment's label near the plot's right edge goes to the left of its line instead
+  of being cut off, on screen and in the export. The synthetic test gains a fourth key
+  moment (Hood peak) so the browser checks cover this case.
 - **Desktop app:** adding the file extension after a save dialog never overwrites
   another file (MP4, PNG, FDS and CSV), the analysis folder reader checks the file it
   actually opened, and request bodies that are oversized or not JSON objects are refused.

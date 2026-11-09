@@ -950,8 +950,8 @@ dialog.report-overlay { padding: 0; }
 .flame-analysis__status--error { color: var(--bad); }
 .flame-analysis__note { margin: 4px 8px; font-size: 12px; color: var(--text-dim); }
 
-.flame-analysis__steps { flex: none; display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 16px 0; }
-.flame-analysis__step { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--bg-raised); color: var(--text); border: 1px solid var(--border); border-radius: 999px; font: inherit; font-size: 12px; cursor: pointer; }
+.flame-analysis__steps { flex: none; display: flex; flex-wrap: wrap; gap: 3px; padding: 8px 16px 0; }
+.flame-analysis__step { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--bg-raised); color: var(--text); border: 1px solid var(--border); border-radius: 999px; font: inherit; font-size: 12px; cursor: pointer; }
 .flame-analysis__step:hover { border-color: var(--accent); }
 .flame-analysis__step[aria-expanded=true] { border-color: var(--accent); background: var(--bg-hover); }
 .flame-analysis__step:not(:first-child):not(.flame-analysis__step--about)::before { content: '→'; color: var(--text-faint); margin-right: 2px; }
@@ -994,11 +994,16 @@ dialog.report-overlay { padding: 0; }
 .flame-analysis__scene-host > canvas { display: block; }
 .flame-analysis__labels { position: absolute; inset: 0; pointer-events: none; }
 
-.flame-analysis__charts { display: flex; flex-direction: column; overflow: auto; padding: 6px 8px; }
-.flame-analysis__plots { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
-.flame-analysis__plot { flex: 1 1 0; min-height: 96px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, 210px); gap: 6px; padding: 2px; border-radius: 4px; }
-.flame-analysis__plot:last-child, .flame-analysis__plot:nth-last-child(2):has(+ .flame-analysis__bands) { min-height: 120px; flex-grow: 1.25; }
-.flame-analysis__plot-area { position: relative; min-width: 0; min-height: 0; }
+/* The plots list scrolls if it must, never the panel: a scrollbar beside the plots leaves
+   the plot bar its width, so it cannot wrap the bar and keep itself shown. */
+.flame-analysis__charts { display: flex; flex-direction: column; overflow: hidden; padding: 6px 8px; }
+.flame-analysis__plots { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+/* A plot is at least as tall as its legend (the flex item's automatic minimum) and its
+   drawing area; on a laptop screen the column then fits without scrolling. */
+.flame-analysis__plot { flex: 1 1 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, 210px); gap: 6px; padding: 2px; border-radius: 4px; }
+.flame-analysis__plot:last-child, .flame-analysis__plot:nth-last-child(2):has(+ .flame-analysis__bands) { flex-grow: 1.25; }
+.flame-analysis__plot-area { position: relative; min-width: 0; min-height: 48px; }
+.flame-analysis__plot:last-child .flame-analysis__plot-area, .flame-analysis__plot:nth-last-child(2):has(+ .flame-analysis__bands) .flame-analysis__plot-area { min-height: 68px; } /* the time axis */
 .flame-analysis__plot-svg { position: absolute; inset: 0; display: block; cursor: crosshair; touch-action: none; }
 .flame-analysis__tick { font: 10px var(--font); fill: var(--text-dim); }
 .flame-analysis__moment { stroke: var(--text-faint); stroke-width: 1; stroke-dasharray: 1.5 3; }
@@ -1009,7 +1014,7 @@ dialog.report-overlay { padding: 0; }
 .flame-analysis__legend caption { caption-side: top; text-align: left; padding-bottom: 2px; color: var(--text); font-size: 12px; font-weight: 600; }
 .flame-analysis__legend th { font-weight: normal; color: var(--text-dim); text-align: left; padding: 0 6px 0 4px; }
 .flame-analysis__legend td { padding: 0; vertical-align: middle; }
-.flame-analysis__value { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.flame-analysis__value { width: 7ch; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; } /* a fixed column: a value changing at the cursor never re-wraps the labels, so a plot (as tall as its legend) keeps its height */
 .flame-analysis__bands { display: flex; flex-wrap: wrap; gap: 12px; margin: 2px 0 0; font-size: 11px; color: var(--text-dim); }
 .flame-analysis__band-key::before { content: ''; display: inline-block; width: 12px; height: 9px; margin-right: 5px; vertical-align: -1px; }
 .flame-analysis__band-key--nohull::before { background: color-mix(in srgb, var(--warn) 40%, transparent); }
@@ -1023,7 +1028,11 @@ dialog.report-overlay { padding: 0; }
 .flame-analysis__drawer-bar { display: flex; align-items: center; gap: 10px; }
 .flame-analysis__drawer-bar h2 { margin: 0 auto 0 0; font-size: 15px; }
 
-.flame-analysis__transport { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 16px; border-top: 1px solid var(--border); font-size: 12px; }
+.flame-analysis__transport { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 16px; border-top: 1px solid var(--border); font-size: 12px; }
+/* The shared readout keeps room for the editor's longest text; the board's is short, and
+   its playback bar has to fit one row on a laptop screen. */
+.flame-analysis__transport .playback-bar__readout { min-width: 0; }
+.flame-analysis__transport .playback-bar__slider { flex-basis: 96px; min-width: 96px; } /* lines break on the basis */
 .flame-analysis__moments { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
 .flame-analysis__export { display: inline-flex; gap: 4px; padding-left: 8px; border-left: 1px solid var(--border); }
 .flame-analysis__moments + .flame-analysis__export { margin-left: 0; }

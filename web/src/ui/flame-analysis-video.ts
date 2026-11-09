@@ -340,12 +340,15 @@ export class Composer {
       const px = x(m.t);
       ctx.beginPath(); ctx.moveTo(px, Y0); ctx.lineTo(px, Y1); ctx.stroke();
       if (first) {
-        row = px < labelEnd ? row + 1 : 0;
         ctx.fillStyle = k.dim;
         ctx.font = this.font(12);
-        ctx.textAlign = 'left';
-        ctx.fillText(m.label, px + 4, Y0 + 12 + row * 14);
-        labelEnd = px + 8 + ctx.measureText(m.label).width;
+        // Right of its line, or left of it where it would run past the plot's edge.
+        const width = ctx.measureText(m.label).width, before = px + 4 + width > X1;
+        const start = before ? px - 4 - width : px + 4;
+        row = start < labelEnd ? row + 1 : 0;
+        ctx.textAlign = before ? 'right' : 'left';
+        ctx.fillText(m.label, before ? px - 4 : px + 4, Y0 + 12 + row * 14);
+        labelEnd = start + width + 4;
       }
     }
     ctx.setLineDash([]);

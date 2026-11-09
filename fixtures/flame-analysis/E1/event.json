@@ -238,6 +238,13 @@
     "en": "Decay starts",
     "fr": "Début du déclin"
    }
+  },
+  {
+   "t_s": 103.0,
+   "label": {
+    "en": "Hood peak",
+    "fr": "Maximum de la hotte"
+   }
   }
  ],
  "notes": {
