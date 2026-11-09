@@ -22,6 +22,10 @@ terms in their engineering context:
 | Flame analysis… (toolbar) | Flamme… | Toolbar | Analyse de flamme… is the closer term, but with a plan's title beside it the French toolbar needs a third row at 1280 x 720; the tooltip and the board's own title keep Analyse de flamme. |
 | onset (of a fire event) | début | Flame analysis board: readout, plots | apparition, déclenchement; confirm for a battery vent jet. |
 | close-up / whole picture | gros plan / image entière | Flame analysis camera tiles | |
+| hull check (the 3-D flame drawn over a camera picture) | contrôle de l’enveloppe | Flame analysis camera bar and captions | vérification de l’enveloppe visuelle; confirm that enveloppe reads as the 3-D flame. |
+| as the hood sees it / response time | vu par la hotte / temps de réponse | Flame analysis plot bar and legend | avec la réponse de la hotte; confirm for a first-order instrument lag. |
+| heat released | chaleur dégagée | Flame analysis plot bar, key numbers | énergie dégagée; MJ on the axis either way. |
+| pool fire (Heskestad) | feu de nappe | Flame analysis height plot and note | feu de bac; confirm the term for a liquid pan fire. |
 | as built / pose | tel que construit / pose | Survey overlay and inspector | relevé réel / position et orientation; confirm wording for movable instruments. |
 | lattice pitch | pas du réseau | Reconstructed-flame diagnostics | pas de grille; distinguish spacing from voxel size. |
 | boundary patch | zone de frontière | FDS result errors | portion de paroi; keep the FDS output family distinct from a physical wall. |

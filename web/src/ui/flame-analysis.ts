@@ -8,23 +8,25 @@
  * made comes from the analysis folder, never from this code.
  */
 
-import { FlameSequence, parseFrameData, type RawFrame } from '../core/flame';
+import { FlameSequence, parseFrameData, surfaceCells, type RawFrame } from '../core/flame';
+import { flameHeightM } from '../core/correlations';
 import {
-  centredMean, fillTemplate, folderOf, instantAt, joinPath, keyNumbers, localText,
+  centredMean, cumulative, fillTemplate, firstOrderResponse, folderOf, heskestadSeries, instantAt, joinPath,
+  keyNumbers, localText, parseMesh, projectHull, type HullProjection,
   parseAnalysisManifest, parseEventManifest, parseOutlines, parseSeriesCsv, STEP_IDS,
   type AnalysisManifest, type EventManifest, type KeyNumbers, type Series, type StepId,
 } from '../core/flame-analysis';
-import { cameras as planCameras, displayName } from '../core/plan';
+import { burnerDiameterM, cameras as planCameras, displayName, primaryBurner, radiativeFractionOf } from '../core/plan';
 import type { CameraObject, LengthUnit, PlanDocument } from '../core/types';
 import { parseAndValidatePlan } from '../core/validate';
 import { openShellAnalysis, saveMedia, shell } from '../io/files';
 import {
   pickedAnalysisSource, readText, shellAnalysisSource, type AnalysisSource,
 } from '../io/flame-analysis-source';
-import { AnalysisScene, type SceneView } from '../scene/flame-analysis';
+import { AnalysisScene, type FlameLook, type SceneView } from '../scene/flame-analysis';
 import { ANALYSIS_DEFAULT_SPEED, ANALYSIS_SPEEDS, Playhead } from '../state/playhead';
 import { h } from './dom';
-import { CameraTiles, drawOutline, placement, type PictureMode } from './flame-analysis-cameras';
+import { CameraTiles, drawHull, drawOutline, placement, type PictureMode } from './flame-analysis-cameras';
 import { AnalysisPlots, type Band, type Moment, type PlotLine, type PlotSpec } from './flame-analysis-plots';
 import {
   Composer, encodePng, encodeVideo, VIDEO_FPS, videoFrames, type VideoLayout, type VideoOptions,
@@ -109,6 +111,12 @@ export class FlameAnalysisWorkspace {
   lastVideo?: Blob;
   private focusBefore?: HTMLElement;
   private outlinesShown = false;
+  private hullCheck = false;
+  private hullCache = new Map<string, HullProjection | null>();
+  private flameLook: FlameLook = 'cubes';
+  /** The plots' choices: heat released instead of its rate, the estimates as the
+   *  hood would record them, and the Heskestad height beside the flame's. */
+  private plotOptions = { heat: false, hoodResponse: false, heskestad: false };
 
   constructor(private onOpenChange: (open: boolean) => void = () => {}, private options: FlameAnalysisOptions = {}) {
     this.dialog.append(
@@ -376,24 +384,41 @@ export class FlameAnalysisWorkspace {
       onclick: () => this.setOutlines(!this.outlinesShown),
     }, [i18n.t("Flame outline")]);
     tiles.setOutlines(this.outlinesShown);
+    const hullToggle = h('button', {
+      type: 'button', class: 'btn flame-analysis__toggle flame-analysis__hull-toggle', 'aria-pressed': String(this.hullCheck && !!sequence),
+      disabled: !sequence, title: i18n.t("Draw the 3-D flame through each camera's calibrated view, over its picture"),
+      onclick: () => this.setHullCheck(!this.hullCheck),
+    }, [i18n.t("Hull check")]);
+    this.hullCache.clear();
+    tiles.setHullCheck(this.hullCheck && sequence ? this.hullProjection : null);
 
     const cameraPanel = h('section', { class: 'flame-analysis__panel flame-analysis__cameras', dataset: { target: 'cameras' }, 'aria-label': i18n.t("Camera pictures") }, [
       h('div', { class: 'flame-analysis__panel-bar' }, [
         h('h2', {}, [i18n.t("Cameras")]),
         h('div', { class: 'flame-analysis__group', role: 'group', 'aria-label': i18n.t("Picture") }, pictureButtons),
         outlineToggle,
+        hullToggle,
       ]),
       tiles.element,
     ]);
     const scenePanel = h('section', { class: 'flame-analysis__panel flame-analysis__scene', dataset: { target: 'scene' }, 'aria-label': i18n.t("3-D view") }, [
       h('div', { class: 'flame-analysis__panel-bar' }, [
         h('h2', {}, [i18n.t("3-D flame in the site")]),
+        event.files.mesh ? h('div', { class: 'flame-analysis__group', role: 'group', 'aria-label': i18n.t("Flame drawn as") },
+          (['cubes', 'surface'] as FlameLook[]).map((look) => h('button', {
+            type: 'button', class: 'btn flame-analysis__toggle flame-analysis__look', dataset: { look },
+            'aria-pressed': String(look === this.flameLook), onclick: () => this.setLook(look),
+          }, [look === 'cubes' ? i18n.t("Cubes") : i18n.t("Surface")]))) : null,
         h('div', { class: 'flame-analysis__group', role: 'group', 'aria-label': i18n.t("3-D view") }, viewButtons),
       ]),
       sceneHost,
       sequence ? null : h('p', { class: 'flame-analysis__note' }, [i18n.t("This event has no 3-D flame at any instant.")]),
     ]);
-    const plotPanel = h('section', { class: 'flame-analysis__panel flame-analysis__charts', 'aria-label': i18n.t("Plots") }, [plots.element]);
+    const plotPanel = h('section', { class: 'flame-analysis__panel flame-analysis__charts', 'aria-label': i18n.t("Plots") },
+      [this.plotBar(event, series), plots.element, ...(() => {
+        const note = this.plotOptions.heskestad ? this.heskestad(event, series)?.note : undefined;
+        return note ? [h('p', { class: 'flame-analysis__note flame-analysis__plot-note' }, [note])] : [];
+      })()]);
     const main = h('div', { class: 'flame-analysis__main' }, [
       h('div', { class: 'flame-analysis__left' }, [cameraPanel, scenePanel]),
       plotPanel,
@@ -415,6 +440,12 @@ export class FlameAnalysisWorkspace {
       this.scene.attach(sceneHost);
     }
     this.scene.setFlame(sequence, this.planCamera(event.cameras[0]));
+    const meshTemplate = event.files.mesh;
+    this.scene.setSurfaces(meshTemplate && sequence ? (index) => {
+      const file = joinPath(folder, fillTemplate(meshTemplate, undefined, event.instants.stem[index]));
+      return source.read(file).then((bytes) => parseMesh(bytes, file));
+    } : null, sequence ? [sequence.bounds[0][2], sequence.bounds[1][2]] : undefined);
+    this.scene.setLook(this.flameLook);
     this.setSceneView(this.sceneView, viewButtons);
 
     const times = event.instants.t_s;
@@ -426,6 +457,112 @@ export class FlameAnalysisWorkspace {
     this.playhead.seek(start);
     this.showTime(this.playhead.time_s);
     this.closeDrawer();
+  }
+
+  private setHullCheck(on: boolean): void {
+    this.hullCheck = on;
+    const loaded = this.loaded;
+    loaded?.tiles.setHullCheck(on && loaded.sequence ? this.hullProjection : null);
+    this.body.querySelector('.flame-analysis__hull-toggle')?.setAttribute('aria-pressed', String(on && !!loaded?.sequence));
+  }
+
+  /** The 3-D flame at an instant through a camera's calibrated model: its surface
+   *  cells projected into the full-resolution picture. Null when the pictures are
+   *  not the size of the site plan's camera, so they cannot be compared. */
+  private hullProjection = (camera: string, index: number): HullProjection | null => {
+    const loaded = this.loaded, sequence = loaded?.sequence;
+    const planCamera = this.planCamera(camera);
+    if (!loaded || !sequence || !planCamera) return null;
+    const [w, h] = loaded.event.images[camera].size_px;
+    if (w !== planCamera.camera.resolution_px[0] || h !== planCamera.camera.resolution_px[1]) return null;
+    const key = `${camera}/${index}`;
+    const cached = this.hullCache.get(key);
+    if (cached !== undefined) return cached;
+    const frame = sequence.frames[index];
+    let projection: HullProjection = { uv: new Float32Array(0), size: 0 };
+    if (frame?.count) {
+      const cells = surfaceCells(frame);
+      const origin = sequence.frameOrigin(frame), pitch = sequence.grid.pitch_m;
+      const points = new Float64Array(cells.length);
+      for (let i = 0; i < cells.length; i++) points[i] = origin[i % 3] + cells[i] * pitch;
+      projection = projectHull(planCamera, points, pitch);
+    }
+    this.hullCache.set(key, projection);
+    if (this.hullCache.size > 400) this.hullCache.delete(this.hullCache.keys().next().value as string);
+    return projection;
+  };
+
+  private setLook(look: FlameLook): void {
+    this.flameLook = look;
+    this.scene?.setLook(look);
+    this.body.querySelectorAll<HTMLButtonElement>('.flame-analysis__look').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.look === look)));
+  }
+
+  /** The measured heat release rate's response time (format 1.1), if the folder gives one. */
+  private responseTime(event: EventManifest): number | undefined {
+    return event.series.find((s) => s.role === 'measured' && s.quantity === 'hrr' && s.responseTime_s)?.responseTime_s;
+  }
+
+  /** Heskestad's mean height from the measured heat release rate and the site plan's
+   *  fire, with what it assumed; null without a hood record or a burner. */
+  private heskestad(event: EventManifest, series: Map<string, Series>): (Series & { note: string }) | null {
+    const hood = event.series.find((s) => s.role === 'measured' && s.quantity === 'hrr');
+    const burner = this.plan ? primaryBurner(this.plan) : undefined;
+    if (!hood || !burner) return null;
+    const d = burnerDiameterM(burner), chi = radiativeFractionOf(burner);
+    const convective = hood.basis === 'convective';
+    const data = heskestadSeries(series.get(hood.id)!, d, convective, chi, flameHeightM);
+    const note = convective
+      ? i18n.t("Heskestad: L = 0.235 Q^0.4 - 1.02 D, with Q the total heat release rate (the hood's convective rate divided by 1 - {p1}, the radiative fraction of the site plan's fire) and D = {p2} m. A pool-fire correlation of the mean flame height, shown for comparison: the flame top is the 3-D flame's highest point.", { p1: i18n.formatNumber(chi), p2: i18n.formatNumber(Number(d.toFixed(2))) })
+      : i18n.t("Heskestad: L = 0.235 Q^0.4 - 1.02 D, with Q the hood's heat release rate and D = {p1} m. A pool-fire correlation of the mean flame height, shown for comparison: the flame top is the 3-D flame's highest point.", { p1: i18n.formatNumber(Number(d.toFixed(2))) });
+    return { ...data, note };
+  }
+
+  private plotBar(event: EventManifest, series: Map<string, Series>): HTMLElement {
+    const hasHrr = event.series.some((s) => s.quantity === 'hrr');
+    const tau = this.responseTime(event);
+    const canHeskestad = event.series.some((s) => s.quantity === 'height') && this.heskestad(event, series) !== null;
+    const toggle = (label: string, key: 'hoodResponse' | 'heskestad', title: string, disabled = false): HTMLButtonElement =>
+      h('button', {
+        type: 'button', class: 'btn flame-analysis__toggle', 'aria-pressed': String(this.plotOptions[key]), title, disabled,
+        onclick: (e: Event) => {
+          this.plotOptions[key] = !this.plotOptions[key];
+          (e.currentTarget as HTMLElement).setAttribute('aria-pressed', String(this.plotOptions[key]));
+          this.rebuildPlots();
+        },
+      }, [label]);
+    const mode = (['rate', 'heat'] as const).map((m) => h('button', {
+      type: 'button', class: 'btn flame-analysis__toggle flame-analysis__heat', dataset: { mode: m },
+      'aria-pressed': String((m === 'heat') === this.plotOptions.heat),
+      onclick: () => {
+        this.plotOptions.heat = m === 'heat';
+        this.body.querySelectorAll<HTMLElement>('.flame-analysis__heat').forEach((b) => b.setAttribute('aria-pressed', String((b.dataset.mode === 'heat') === this.plotOptions.heat)));
+        this.rebuildPlots();
+      },
+    }, [m === 'rate' ? i18n.t("Rate") : i18n.t("Heat released")]));
+    return h('div', { class: 'flame-analysis__panel-bar' }, [
+      h('h2', {}, [i18n.t("Plots")]),
+      hasHrr ? h('div', { class: 'flame-analysis__group', role: 'group', 'aria-label': i18n.t("Heat release") }, mode) : null,
+      tau ? toggle(i18n.t("As the hood sees it"), 'hoodResponse',
+        i18n.t("The estimates passed through the hood's own response time ({p1} s), so their timing compares with the hood's", { p1: i18n.formatNumber(tau) })) : null,
+      canHeskestad ? toggle(i18n.t("Heskestad height"), 'heskestad', i18n.t("Heskestad's mean flame height from the hood record, beside the 3-D flame's top")) : null,
+    ]);
+  }
+
+  private rebuildPlots(): void {
+    const loaded = this.loaded;
+    if (!loaded) return;
+    const { plots, plotData } = this.makePlots(loaded.event, loaded.series);
+    const old = loaded.plots.element;
+    loaded.plots.dispose();
+    old.replaceWith(plots.element);
+    loaded.plots = plots;
+    loaded.plotData = plotData;
+    const note = this.plotOptions.heskestad ? this.heskestad(loaded.event, loaded.series)?.note : undefined;
+    const charts = plots.element.parentElement;
+    charts?.querySelector('.flame-analysis__plot-note')?.remove();
+    if (note) plots.element.after(h('p', { class: 'flame-analysis__note flame-analysis__plot-note' }, [note]));
+    plots.setTime(loaded.event.instants.t_s[Math.max(this.index, 0)]);
   }
 
   private setOutlines(shown: boolean): void {
@@ -462,10 +599,20 @@ export class FlameAnalysisWorkspace {
       const basis = bases.size === 1 && hrr[0].basis ? hrr[0].basis : null;
       const lines: PlotLine[] = [];
       let nEstimated = 0;
+      const tau = this.responseTime(event);
       for (const s of [...hrr.filter((x) => x.role === 'measured'), ...hrr.filter((x) => x.role !== 'measured')]) {
-        lines.push(line(s.id, s.role === 'estimated' ? 'estimated' : 'measured', s.role === 'estimated' ? nEstimated++ : 0));
+        const estimated = s.role === 'estimated';
+        const base = line(s.id, estimated ? 'estimated' : 'measured', estimated ? nEstimated++ : 0);
+        const data = series.get(s.id)!;
+        if (this.plotOptions.heat) lines.push({ ...base, v: cumulative(data).v });
+        else if (estimated && this.plotOptions.hoodResponse && tau) {
+          lines.push({ ...base, v: firstOrderResponse(data, tau).v, label: i18n.t("{p1}, as the hood sees it", { p1: base.label }) });
+        } else lines.push(base);
       }
-      plots.push({
+      plots.push(this.plotOptions.heat ? {
+        id: 'hrr', unit: 'MJ', scale: 0.001, lines,
+        title: basis === 'convective' ? i18n.t("Heat released, convective") : basis === 'total' ? i18n.t("Heat released, total") : i18n.t("Heat released"),
+      } : {
         id: 'hrr', unit: 'kW', lines,
         title: basis === 'convective' ? i18n.t("Heat release rate, convective") : basis === 'total' ? i18n.t("Heat release rate, total") : i18n.t("Heat release rate"),
       });
@@ -485,7 +632,12 @@ export class FlameAnalysisWorkspace {
     sized('volume', i18n.t("Flame volume"), units.volume);
     sized('area', i18n.t("Flame surface area"), units.area);
     const height = event.series.find((x) => x.quantity === 'height');
-    if (height) plots.push({ id: 'height', title: localText(height.label), unit: units.height[1], scale: units.height[0], lines: [line(height.id, 'reconstructed', 0)] });
+    if (height) {
+      const lines = [line(height.id, 'reconstructed', 0)];
+      const predicted = this.plotOptions.heskestad ? this.heskestad(event, series) : null;
+      if (predicted) lines.push({ label: i18n.t("Heskestad mean height (pool fire), from the hood"), t: predicted.t, v: predicted.v, role: 'predicted', nth: 0 });
+      plots.push({ id: 'height', title: localText(height.label), unit: units.height[1], scale: units.height[0], lines });
+    }
 
     const times = event.instants.t_s;
     const step = times.length > 1 ? times[1] - times[0] : 0.1;
@@ -593,6 +745,7 @@ export class FlameAnalysisWorkspace {
       outlines: tiles.outlinesOn ? loaded.outlines : null,
       outsideFrame: event.quality?.outsideFrame ?? {},
       picture: (camera, index) => tiles.picture(camera, index),
+      hull: tiles.hullCheckOn ? this.hullProjection : null,
       scene: this.scene ?? null,
       plots: loaded.plotData,
     }, layout, width);
@@ -867,6 +1020,10 @@ export class FlameAnalysisWorkspace {
       const ctx = canvas.getContext('2d')!;
       ctx.drawImage(bitmap, 0, 0);
       const image = event.images[cam];
+      if (this.hullCheck) {
+        const projection = this.hullProjection(cam, index);
+        if (projection) drawHull(ctx, projection, { ...placement(image, 'whole'), scale: bitmap.width / image.size_px[0] });
+      }
       if (this.outlinesShown) drawOutline(ctx, loaded.outlines.get(cam)?.[index] ?? [], { ...placement(image, 'whole'), scale: bitmap.width / image.size_px[0] }, 1, Math.max(2, bitmap.width / 800));
       bitmap.close();
       note.textContent = event.files.frame ? '' : i18n.t("This folder has no full-resolution pictures; the display copy is shown.");

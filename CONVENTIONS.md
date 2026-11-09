@@ -1355,11 +1355,11 @@ a plan. The session and sharing APIs are documented in
 `docs/test-data-design.md` under Editor plumbing, and the editor's Test data dialog
 and instrument plots, including what each edit does to the manifest, under Editor UI.
 
-## 13. Flame analysis folders (flame analysis 1.0)
+## 13. Flame analysis folders (flame analysis 1.0, events 1.0 and 1.1)
 
 A separate format beside the plan, with its own version and schemas
-(`schema/flame-analysis-1.0.0`, `flame-event-1.0.0` and `flame-outlines-1.0.0`,
-mirrored in `python/fireplan/schemas/`). It holds one processed test filmed by
+(`schema/flame-analysis-1.0.0`, `flame-event-1.0.0`, `flame-event-1.1.0` and
+`flame-outlines-1.0.0`, mirrored in `python/fireplan/schemas/`). It holds one processed test filmed by
 calibrated cameras, for the flame analysis board
 ([design](docs/flame-analysis-board-design.md)); `fireplan.flame_analysis` reads and
 checks it. It describes results, not how they were made: no field carries a
@@ -1372,14 +1372,18 @@ base (`label`, optional `description`), optional step texts and the events.
 Each event's manifest (`format` `fireplan-flame-event`) names its cameras in display
 order, its instants (`t_s` strictly increasing, a unique file `stem` each), path
 templates, picture sizes, the hull's voxel size, its series and optional quality
-indices, key moments and notes. `version` is `1.0.0`, and both schemas close every
-object: an unknown field is an error, not something to keep.
+indices, key moments and notes. `analysis.json` is version `1.0.0`. An event is
+`1.0.0` or `1.1.0` and is checked against the schema of its own version, so a folder
+may mix them; 1.1 adds only optional fields (`files.mesh`, `series[].responseTime_s`),
+a 1.0 event carrying one is an error, and a reader shows a 1.0 event without what 1.1
+adds. Every schema closes every object: an unknown field is an error, not something to
+keep.
 
 **Paths** are relative to the manifest that holds them, use `/`, and may not be
 absolute, contain `.` or `..` segments, or resolve outside the folder that holds
 `analysis.json`. **Templates** substitute `{cam}` and `{stem}` and nothing else:
 `display` and `frame` (and `closeup`) need both, `outlines` needs `{cam}` only, `hull`
-`{stem}` only.
+and `mesh` `{stem}` only.
 
 **Time.** Every time in a folder is seconds on its test's time base, the same clock for
 every event and file. `onset_s` marks the event's start; the board shows time from it,
@@ -1404,13 +1408,27 @@ no ring.
 `voxel_size`) in the plan frame (`hull.frame` is `plan`). The instant's time comes from
 `instants`, not the file name.
 
+**Meshes** (event 1.1, optional) are a smoothed surface of the same 3-D flame, one file
+per instant (`files.mesh`), for drawing only: volume and area come from the series, not
+from the mesh. The file is a binary little-endian PLY in metres in the plan frame, with
+exactly this layout: the header `ply`, `format binary_little_endian 1.0`,
+`element vertex N` with `property float x`, `y` and `z`, `element face M` with
+`property list uchar int vertex_indices`, `end_header`; then N records of three float32
+and M records of one byte 3 and three int32 indices of existing vertices, nothing after
+them (`N x 12 + M x 13` bytes). An instant without a flame has an empty mesh (N and M
+zero), not a missing file. `fireplan.flame_analysis.write_mesh` writes this layout and
+`read_mesh` refuses anything else.
+
 **Series** name a CSV file and two of its columns: `time` (strictly increasing, no
 gaps) and `value`. The file is UTF-8 (a BOM is accepted), comma separated, with one
 header row and then numbers only; an empty value cell is a missing sample, any other
 text is an error with its row number. `quantity` fixes the unit: `hrr` kW, `volume`
 m3, `area` m2, `height` m. `role` is `measured`, `reconstructed` or `estimated`;
 `basis` (`convective` or `total`) is for heat release rate only. Volume and area may
-not be negative.
+not be negative. `responseTime_s` (event 1.1, a positive number of seconds) is the
+first-order response time of a `measured` heat release rate, the hood's lag; the
+board uses it to pass the estimates through the same lag (`y' = (x - y) / tau`, stepped
+exactly between samples), and no other series may carry it.
 
 **Text** is a string or `{"en": ..., "fr": ...}` with English required. Step ids are
 `cameras`, `frames`, `segmentation`, `reconstruction`, `size`, `hrr` and
@@ -1419,7 +1437,8 @@ not be negative.
 `FlameAnalysis.check()` returns every problem as an `Issue` (the plan's type): the
 schemas, unknown or duplicate ids, cameras missing from the site plan, instants out of
 order, quality indices out of range, close-ups outside the picture, unreadable or
-out-of-order series, and missing files; `deep` also opens every outline and hull. The
+out-of-order series, and missing files (meshes counted, with the first missing one
+named); `deep` also opens every outline, hull and mesh. The
 synthetic test in `fixtures/flame-analysis/` is built by
 `tools/build_synthetic_flame_event.py` and regenerates exactly: the same bytes for its
 text files, the same pixels for its PNGs and the same arrays for its NPZ files (their

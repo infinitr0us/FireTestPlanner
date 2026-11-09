@@ -294,7 +294,14 @@ the flame or the whole picture, with the flame outline on request; a click opens
 full-resolution frame), the 3-D flame inside the site plan with the cameras' view
 cones, plots of heat release rate (measured and estimated), flame volume, surface area
 and height with the key moments and the instants a quality flag marks, and key numbers
-(peaks, heat released, each estimate against the measurement). Six step buttons, from
+(peaks, heat released, each estimate against the measurement). **Hull check** draws
+the 3-D flame through each camera over its picture and says how much of the flame
+outline it covers. The plot bar switches the first plot to **Heat released** (MJ
+since the first instant), passes the estimates through the hood's response time
+(**As the hood sees it**, when the folder gives one) so their timing compares with the
+hood's, and adds **Heskestad height**, the pool-fire correlation's mean flame height
+from the hood record, beside the 3-D flame's top. When the folder has meshes, the 3-D
+flame can be drawn as a smoothed **Surface** instead of cubes. Six step buttons, from
 the cameras to the heat release rate, open the folder's own explanation of each step,
 with what to watch for and notes on this event. Playback runs from ×0.25 to ×5.
 **Export video…** writes an MP4 for slides (H.264, which PowerPoint plays): the full
@@ -424,7 +431,8 @@ by fire safety engineers; that data is not distributed.
 - [CONVENTIONS.md](CONVENTIONS.md): the normative rules of the plan format: frames,
   units, correlations, versioning, FDS mapping, linked files and flame sequences.
 - [schema/](schema/): one JSON Schema per plan format version, 1.0.0 to 1.7.0, and
-  the three of the flame analysis folder format 1.0.0.
+  those of the flame analysis folders (analysis and outlines 1.0.0, events 1.0.0 and
+  1.1.0).
 - [docs/visual-language.md](docs/visual-language.md): colours, labels, transport
   controls and print palette, and the checklist for any new UI.
 - [docs/fds-results.md](docs/fds-results.md), [docs/linked-files.md](docs/linked-files.md),

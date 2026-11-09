@@ -14,6 +14,7 @@ import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRe
 import { displayName, positionOf } from '../core/plan';
 import type { CameraObject, PlanDocument, PlanObject } from '../core/types';
 import type { FlameSequence } from '../core/flame';
+import type { Mesh as SurfaceMesh } from '../core/flame-analysis';
 import * as i18n from '../ui/i18n';
 import { visualTheme } from '../ui/theme';
 import {
@@ -23,6 +24,9 @@ import {
 import { FlameMesh } from './flame';
 
 export type SceneView = 'site' | 'flame';
+/** Cubes (the hull as reconstructed) or the smoothed surface of format 1.1. */
+export type FlameLook = 'cubes' | 'surface';
+const SURFACE_CACHE = 40;
 
 /** One object of the site plan, as the editor draws it; nothing that edits. */
 function buildSiteObject(obj: PlanObject): THREE.Group | null {
@@ -56,6 +60,16 @@ export class AnalysisScene {
   private lookFrom = new THREE.Vector3(0, -1, 0.4);
   private siteSide = new THREE.Vector3(0, -1, 0.55).normalize();
   private exportRenderer?: THREE.WebGLRenderer;
+  private surface = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.55, metalness: 0, side: THREE.DoubleSide }));
+  private surfaceLoader: ((index: number) => Promise<SurfaceMesh>) | null = null;
+  private surfaces = new Map<number, Promise<THREE.BufferGeometry>>();
+  private surfaceIndex = -1;
+  /** The surface on screen has left the cache, so replacing it must free it. */
+  private surfaceEvicted = false;
+  private frameIndex = -1;
+  private look: FlameLook = 'cubes';
+  private zRange: [number, number] = [0, 1];
 
   constructor(private host: HTMLElement) {
     const theme = visualTheme();
@@ -76,7 +90,9 @@ export class AnalysisScene {
     key.position.set(6, -8, 12);
     const fill = new THREE.DirectionalLight(0x93c5fd, 0.5);
     fill.position.set(-8, 6, 4);
-    this.scene.add(key, fill, this.site, this.flame.group);
+    this.surface.visible = false;
+    this.surface.raycast = () => {};
+    this.scene.add(key, fill, this.site, this.flame.group, this.surface);
     this.observer = new ResizeObserver(() => this.resize());
     this.observer.observe(host);
     this.animate();
@@ -168,7 +184,92 @@ export class AnalysisScene {
 
   /** Show instant `index` of the flame (-1 for none). */
   setFrame(index: number): void {
+    this.frameIndex = index;
     if (this.flame.setFrame(index)) this.dirty = true;
+    if (this.look === 'surface') void this.showSurface(index);
+  }
+
+  /** Where the event's smoothed surfaces come from (format 1.1), or null. */
+  setSurfaces(loader: ((index: number) => Promise<SurfaceMesh>) | null, zRange?: [number, number]): void {
+    this.surfaceLoader = loader;
+    for (const pending of this.surfaces.values()) void pending.then((g) => g.dispose(), () => undefined);
+    this.surfaces.clear();
+    this.surfaceIndex = -1;
+    if (zRange) this.zRange = zRange;
+    if (!loader) this.setLook('cubes');
+  }
+  get hasSurfaces(): boolean { return this.surfaceLoader !== null; }
+
+  setLook(look: FlameLook): void {
+    if (look === 'surface' && !this.surfaceLoader) look = 'cubes';
+    this.look = look;
+    this.flame.group.visible = look === 'cubes';
+    this.surface.visible = look === 'surface';
+    if (look === 'surface') void this.showSurface(this.frameIndex);
+    this.dirty = true;
+  }
+  get flameLook(): FlameLook { return this.look; }
+
+  /** Resolves once instant `index` is ready to draw (a surface may still be loading). */
+  async prepareFrame(index: number): Promise<void> {
+    this.setFrame(index);
+    if (this.look === 'surface') await this.showSurface(index);
+  }
+
+  private geometry(index: number): Promise<THREE.BufferGeometry> {
+    let pending = this.surfaces.get(index);
+    if (pending) {
+      this.surfaces.delete(index);
+      this.surfaces.set(index, pending);
+      return pending;
+    }
+    pending = this.surfaceLoader!(index).then((mesh) => {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(mesh.positions, 3));
+      geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+      geometry.computeVertexNormals();
+      // The cubes' ramp: blue at the base, yellow in the middle, red at the tip, on
+      // the sequence's fixed height scale (sRGB, as the voxel shader decodes it).
+      const colours = new Float32Array(mesh.positions.length);
+      const colour = new THREE.Color();
+      const [lo, hi] = this.zRange;
+      for (let i = 0; i < mesh.positions.length; i += 3) {
+        const t = Math.min(Math.max((mesh.positions[i + 2] - lo) / Math.max(hi - lo, 1e-6), 0), 1);
+        colour.setRGB(Math.min(t * 2, 1), Math.max(0, 1 - Math.abs(t - 0.5) * 2), Math.max(0, 1 - t), THREE.SRGBColorSpace);
+        colours[i] = colour.r; colours[i + 1] = colour.g; colours[i + 2] = colour.b;
+      }
+      geometry.setAttribute('color', new THREE.BufferAttribute(colours, 3));
+      return geometry;
+    });
+    this.surfaces.set(index, pending);
+    while (this.surfaces.size > SURFACE_CACHE) {
+      const [oldest, geometry] = this.surfaces.entries().next().value as [number, Promise<THREE.BufferGeometry>];
+      this.surfaces.delete(oldest);
+      // The surface on screen stays until it is replaced, and is freed then.
+      if (oldest === this.surfaceIndex) this.surfaceEvicted = true;
+      else void geometry.then((g) => g.dispose(), () => undefined);
+    }
+    return pending;
+  }
+
+  private async showSurface(index: number): Promise<void> {
+    if (!this.surfaceLoader || index < 0) {
+      this.replaceSurface(new THREE.BufferGeometry(), -1);
+      return;
+    }
+    const geometry = await this.geometry(index);
+    if (this.frameIndex !== index || this.look !== 'surface') return;
+    this.replaceSurface(geometry, index);
+  }
+
+  private replaceSurface(geometry: THREE.BufferGeometry, index: number): void {
+    if (this.surfaceEvicted) {
+      this.surface.geometry.dispose();
+      this.surfaceEvicted = false;
+    }
+    this.surface.geometry = geometry;
+    this.surfaceIndex = index;
+    this.dirty = true;
   }
   get cubeCount(): number { return this.flame.cubeCount; }
 
@@ -265,6 +366,9 @@ export class AnalysisScene {
     this.controls.dispose();
     this.clear(this.site);
     this.flame.dispose();
+    this.setSurfaces(null);
+    this.surface.geometry.dispose();
+    (this.surface.material as THREE.Material).dispose();
     this.exportRenderer?.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();

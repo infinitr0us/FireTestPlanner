@@ -24,6 +24,9 @@
 *.m2ts binary
 *.npz binary
 *.fvs binary
+# Flame analysis meshes: binary PLY after an ASCII header, which git's text
+# detection can take for text and normalise.
+*.ply binary
 
 # FDS Fortran records and RLE payloads must never undergo line-ending conversion.
 *.sf binary

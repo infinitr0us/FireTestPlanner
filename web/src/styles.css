@@ -26,6 +26,9 @@
      a recorded mask, so a data colour, kept apart from the accent and the
      instrument identities (lime is none of them). */
   --flame-outline: #a3e635;
+  /* The hull check: the 3-D flame projected over a camera picture, beside the lime
+     outline; another data colour, apart from the accent and the instruments. */
+  --hull-check: #e879f9;
   --border: #263251;
   --text: #e2e8f0;
   --text-dim: #94a3b8;
@@ -978,9 +981,15 @@ dialog.report-overlay { padding: 0; }
 .flame-analysis__tile-open { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 0; background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px; cursor: zoom-in; }
 .flame-analysis__tile-open:hover { border-color: var(--accent); }
 .flame-analysis__picture { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; }
-.flame-analysis__tile figcaption { display: flex; justify-content: space-between; gap: 6px; font-size: 11px; color: var(--text-dim); white-space: nowrap; overflow: hidden; }
+.flame-analysis__tile figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; column-gap: 6px; font-size: 11px; color: var(--text-dim); white-space: nowrap; overflow: hidden; }
+.flame-analysis__tile figcaption > * { min-width: 0; }
+.flame-analysis__tile-agreement { order: 3; flex-basis: 100%; }
 .flame-analysis__tile-name { overflow: hidden; text-overflow: ellipsis; }
 .flame-analysis__tile-flag { color: var(--warn); }
+.flame-analysis__tile-agreement { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+.flame-analysis__tile-agreement:empty, .flame-analysis__tile-flag:empty { display: none; }
+.flame-analysis__plot-note { margin: 4px 0 0; font-size: 11px; line-height: 1.45; }
+.flame-analysis__charts > .flame-analysis__panel-bar { padding: 0 0 6px; }
 .flame-analysis__scene-host { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 .flame-analysis__scene-host > canvas { display: block; }
 .flame-analysis__labels { position: absolute; inset: 0; pointer-events: none; }

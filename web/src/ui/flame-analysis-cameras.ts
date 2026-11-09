@@ -9,7 +9,7 @@
  */
 
 import {
-  fillTemplate, joinPath, type EventImage, type EventManifest,
+  fillTemplate, joinPath, type EventImage, type EventManifest, type HullProjection,
 } from '../core/flame-analysis';
 import type { AnalysisSource } from '../io/flame-analysis-source';
 import { h } from './dom';
@@ -35,12 +35,13 @@ export function placement(image: EventImage, mode: PictureMode): Placement {
 
 export class CameraTiles {
   readonly element = h('div', { class: 'flame-analysis__tiles' });
-  private tiles = new Map<string, { figure: HTMLElement; canvas: HTMLCanvasElement; caption: HTMLElement; flag: HTMLElement; drawn: number }>();
+  private tiles = new Map<string, { figure: HTMLElement; canvas: HTMLCanvasElement; caption: HTMLElement; flag: HTMLElement; agreement: HTMLElement; drawn: number }>();
   private cache = new Map<string, Promise<ImageBitmap>>();
   private bitmaps = new Map<string, ImageBitmap>();
   private index = -1;
   private mode: PictureMode;
   private outlinesShown = false;
+  private hull: ((camera: string, index: number) => HullProjection | null) | null = null;
   private disposed = false;
 
   constructor(
@@ -56,6 +57,7 @@ export class CameraTiles {
       const canvas = h('canvas', { class: 'flame-analysis__picture', role: 'img' });
       const caption = h('span', { class: 'flame-analysis__tile-name' }, [camera.label]);
       const flag = h('span', { class: 'flame-analysis__tile-flag' });
+      const agreement = h('span', { class: 'flame-analysis__tile-agreement' });
       const figure = h('figure', { class: 'flame-analysis__tile' }, [
         h('button', {
           type: 'button', class: 'flame-analysis__tile-open',
@@ -63,11 +65,11 @@ export class CameraTiles {
           'aria-label': i18n.t("Show {p1} at full resolution", { p1: camera.label }),
           onclick: () => this.onOpen(camera.id),
         }, [canvas]),
-        h('figcaption', {}, [caption, flag]),
+        h('figcaption', {}, [caption, agreement, flag]),
       ]);
       const image = event.images[camera.id];
       figure.style.setProperty('--tile-aspect', String(image.size_px[0] / image.size_px[1]));
-      this.tiles.set(camera.id, { figure, canvas, caption, flag, drawn: -1 });
+      this.tiles.set(camera.id, { figure, canvas, caption, flag, agreement, drawn: -1 });
       this.element.append(figure);
     }
     this.element.dataset.count = String(cameras.length);
@@ -83,6 +85,15 @@ export class CameraTiles {
     for (const tile of this.tiles.values()) tile.drawn = -1;
     this.show(this.index);
   }
+
+  /** The hull check: the 3-D flame at an instant through a camera, or null to hide it. */
+  setHullCheck(projection: ((camera: string, index: number) => HullProjection | null) | null): void {
+    if (projection === this.hull) return;
+    this.hull = projection;
+    for (const tile of this.tiles.values()) { tile.drawn = -1; tile.agreement.textContent = ''; }
+    this.show(this.index);
+  }
+  get hullCheckOn(): boolean { return this.hull !== null; }
 
   setOutlines(shown: boolean): void {
     if (shown === this.outlinesShown) return;
@@ -162,8 +173,14 @@ export class CameraTiles {
     }
     const ctx = canvas.getContext('2d')!;
     ctx.drawImage(bitmap, 0, 0);
-    if (this.outlinesShown) drawOutline(ctx, this.outlines.get(camera)?.[index] ?? [], place, bitmap.width / place.width,
-      lineWidthFor(canvas));
+    const rings = this.outlines.get(camera)?.[index] ?? [];
+    const projection = this.hull?.(camera, index) ?? null;
+    if (projection) {
+      drawHull(ctx, projection, place, bitmap.width / place.width);
+      const share = coverage(rings, projection, place, bitmap.width / place.width, bitmap.width, bitmap.height);
+      tile.agreement.textContent = share === null ? '' : i18n.t("3-D flame covers {p1} of the outline", { p1: i18n.formatQuantity(Math.round(share * 100), '%') });
+    }
+    if (this.outlinesShown) drawOutline(ctx, rings, place, bitmap.width / place.width, lineWidthFor(canvas));
     tile.drawn = index;
   }
 
@@ -218,4 +235,77 @@ export function drawOutline(
   ctx.lineJoin = 'round';
   ctx.stroke(path);
   ctx.restore();
+}
+
+
+/**
+ * The hull check over a picture: every surface cell of the 3-D flame at that instant,
+ * projected through the camera's calibrated model, drawn as a square of about one
+ * cube's size in `--hull-check` at 50 % (one pass on a scratch canvas, so overlapping
+ * cells do not darken). Where it agrees with the picture's flame, the two coincide.
+ */
+export function drawHull(ctx: CanvasRenderingContext2D, projection: HullProjection, place: Placement, extra = 1): void {
+  if (!projection.uv.length) return;
+  const { width, height } = ctx.canvas;
+  const scratch = scratchCanvas(width, height);
+  const g = scratch.getContext('2d')!;
+  g.clearRect(0, 0, width, height);
+  g.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--hull-check').trim();
+  hullSquares(g, projection, place, extra);
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.drawImage(scratch, 0, 0);
+  ctx.restore();
+}
+
+export function hullSquares(g: CanvasRenderingContext2D, projection: HullProjection, place: Placement, extra: number): void {
+  const k = place.scale * extra;
+  const side = Math.max(1.5, projection.size * k * 1.2);
+  const { uv } = projection;
+  for (let i = 0; i < uv.length; i += 2) {
+    g.fillRect((uv[i] - place.x + 0.5) * k - side / 2, (uv[i + 1] - place.y + 0.5) * k - side / 2, side, side);
+  }
+}
+
+let scratch: HTMLCanvasElement | null = null;
+function scratchCanvas(width: number, height: number): HTMLCanvasElement {
+  scratch ??= document.createElement('canvas');
+  if (scratch.width !== width || scratch.height !== height) { scratch.width = width; scratch.height = height; }
+  return scratch;
+}
+
+/**
+ * How much of the camera's flame outline the 3-D flame covers in that picture: both
+ * drawn on a small grid (at most 240 px wide), the outline even-odd, the hull as its
+ * cells. Null when the outline is empty.
+ */
+export function coverage(rings: Float32Array[], projection: HullProjection, place: Placement, extra: number,
+  width: number, height: number): number | null {
+  if (!rings.length) return null;
+  const f = Math.min(1, 240 / width);
+  const w = Math.max(1, Math.round(width * f)), h = Math.max(1, Math.round(height * f));
+  const grid = document.createElement('canvas');
+  grid.width = w; grid.height = h;
+  const g = grid.getContext('2d', { willReadFrequently: true })!;
+  const k = place.scale * extra * f;
+  const path = new Path2D();
+  for (const ring of rings) {
+    for (let i = 0; i < ring.length; i += 2) {
+      const x = (ring[i] - place.x + 0.5) * k, y = (ring[i + 1] - place.y + 0.5) * k;
+      if (i === 0) path.moveTo(x, y); else path.lineTo(x, y);
+    }
+    path.closePath();
+  }
+  g.fillStyle = 'white'; // a mask, never shown
+  g.fill(path, 'evenodd');
+  const outline = g.getImageData(0, 0, w, h).data;
+  g.clearRect(0, 0, w, h);
+  g.fillStyle = 'white'; // a mask, never shown
+  hullSquares(g, projection, place, extra * f);
+  const hull = g.getImageData(0, 0, w, h).data;
+  let inside = 0, both = 0;
+  for (let i = 3; i < outline.length; i += 4) {
+    if (outline[i] > 127) { inside++; if (hull[i] > 127) both++; }
+  }
+  return inside ? both / inside : null;
 }

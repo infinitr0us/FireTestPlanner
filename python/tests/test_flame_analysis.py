@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from fireplan.flame_analysis import (
-    FlameAnalysis, FlameAnalysisError, fill_template, read_series_csv, trace_outlines)
+    FlameAnalysis, FlameAnalysisError, fill_template, read_mesh, read_series_csv, trace_outlines, write_mesh)
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "fixtures" / "flame-analysis"
@@ -50,10 +50,11 @@ def test_the_synthetic_test_passes_every_check():
     assert sizes["camC"][0] < sizes["camC"][1] and sizes["camA"][0] > sizes["camA"][1]
 
 
-def test_one_event_regenerates_byte_for_byte(tmp_path):
-    generator.build(tmp_path, events=["E2"])
-    fresh = sorted(p for p in (tmp_path / "E2").rglob("*") if p.is_file())
-    kept = sorted(p for p in (FIXTURE / "E2").rglob("*") if p.is_file())
+@pytest.mark.parametrize("event_id", ["E1", "E2"])
+def test_each_event_regenerates_exactly(tmp_path, event_id):
+    generator.build(tmp_path, events=[event_id])
+    fresh = sorted(p for p in (tmp_path / event_id).rglob("*") if p.is_file())
+    kept = sorted(p for p in (FIXTURE / event_id).rglob("*") if p.is_file())
     assert [p.relative_to(tmp_path) for p in fresh] == [p.relative_to(FIXTURE) for p in kept]
     for path in fresh + [tmp_path / "site.ftp.json", tmp_path / "analysis.json"]:
         committed = FIXTURE / path.relative_to(tmp_path)
@@ -135,6 +136,58 @@ def test_fewer_cameras_give_a_larger_hull_for_a_similar_flame():
     assert v2.max() / v1.max() > 0.7 ** 3
 
 
+def test_format_1_1_meshes_and_the_hood_response_time():
+    analysis = FlameAnalysis.load(str(FIXTURE))
+    e1, e2 = analysis.event("E1"), analysis.event("E2")
+    assert (e1.data["version"], e2.data["version"]) == ("1.1.0", "1.0.0")
+    hood = next(s for s in e1.series if s.id == "hood")
+    assert hood.responseTime_s == pytest.approx(2.3)
+    i = e1.stems.index("t_0101.50")
+    vertices, faces = e1.mesh(i)
+    hull = e1.hull(i)
+    assert len(faces) > 1000 and faces.max() < len(vertices)
+    # The surface wraps the hull: the same height, within a cell.
+    assert abs(vertices[:, 2].max() - hull[:, 2].max()) < 0.06
+    assert abs(vertices[:, 2].min() - hull[:, 2].min()) < 0.06
+    assert e1.mesh(0)[0].shape == (0, 3)  # before the onset: an empty mesh
+
+
+def test_mesh_files_round_trip_and_refuse_a_wrong_size(tmp_path):
+    path = str(tmp_path / "m.ply")
+    v = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0.5]], dtype=float)
+    f = np.array([[0, 1, 2]])
+    write_mesh(path, v, f)
+    rv, rf = read_mesh(path)
+    assert np.allclose(rv, v) and rf.tolist() == [[0, 1, 2]]
+    with open(path, "ab") as fh:
+        fh.write(b"\x00")
+    with pytest.raises(FlameAnalysisError, match="bytes after the header"):
+        read_mesh(path)
+
+
+@pytest.mark.parametrize("change, message", [
+    (lambda d: d["series"][1].update(responseTime_s=2.0), "series/1"),
+    (lambda d: d["files"].update(mesh="mesh/{cam}/{stem}.ply"), "mesh"),
+])
+def test_the_1_1_schema_refuses(copy, change, message):
+    edit_json(copy / "E1" / "event.json", change)
+    with pytest.raises(FlameAnalysisError, match="schema validation") as caught:
+        FlameAnalysis.load(str(copy)).event("E1")
+    assert message in str(caught.value)
+
+
+def test_a_1_0_event_cannot_carry_1_1_fields(copy):
+    edit_json(copy / "E2" / "event.json", lambda d: d["files"].update(mesh="mesh/{stem}.ply"))
+    with pytest.raises(FlameAnalysisError, match="schema validation"):
+        FlameAnalysis.load(str(copy)).event("E2")
+
+
+def test_check_counts_missing_meshes(copy):
+    (copy / "E1" / "mesh" / "t_0101.50.ply").unlink()
+    issues = [i for i in FlameAnalysis.load(str(copy)).check(deep=False) if i.code == "file"]
+    assert any("mesh: 1 of 36 files missing" in i.message for i in issues)
+
+
 # -- reader details ------------------------------------------------------------
 
 def test_a_frame_holds_until_the_next_instant():
@@ -178,7 +231,7 @@ def test_templates_take_cam_and_stem_only():
     (lambda d: d["series"][0].update(file="../outside.csv"), "series/0/file"),
     (lambda d: d["files"].update(hull="C:/hull/{stem}.npz"), "hull"),
     (lambda d: d.update(surprise=1), "surprise"),
-    (lambda d: d.update(version="1.1.0"), "version"),
+    (lambda d: d.update(version="1.9.0"), "version"),
 ])
 def test_the_event_schema_refuses(copy, change, message):
     edit_json(copy / "E1" / "event.json", change)
@@ -194,7 +247,7 @@ def test_the_analysis_schema_refuses_an_unknown_step(copy):
 
 
 def test_the_schemas_are_mirrored_in_the_package_byte_for_byte():
-    for name in ("flame-analysis-1.0.0", "flame-event-1.0.0", "flame-outlines-1.0.0"):
+    for name in ("flame-analysis-1.0.0", "flame-event-1.0.0", "flame-event-1.1.0", "flame-outlines-1.0.0"):
         normative = (ROOT / "schema" / (name + ".schema.json")).read_bytes()
         shipped = (ROOT / "python/fireplan/schemas" / (name + ".schema.json")).read_bytes()
         assert normative == shipped, name

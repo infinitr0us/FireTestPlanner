@@ -10,13 +10,13 @@
  * dashes, bands and key moments. Instants are held, never interpolated.
  */
 
-import { instantAt, type EventImage } from '../core/flame-analysis';
+import { instantAt, type EventImage, type HullProjection } from '../core/flame-analysis';
 import { muxMp4, type Mp4Sample } from '../core/mp4';
 import type { AnalysisScene } from '../scene/flame-analysis';
-import { drawOutline, placement, type PictureMode } from './flame-analysis-cameras';
-import type { Band, Moment, PlotLine, PlotSpec } from './flame-analysis-plots';
+import { drawOutline, hullSquares, placement, type PictureMode } from './flame-analysis-cameras';
+import { colourOf, dashOf, type Band, type Moment, type PlotLine, type PlotSpec } from './flame-analysis-plots';
 import * as i18n from './i18n';
-import { fmt, niceTicks, roleColor, runs, seriesDash, valueAt, valueExtent } from './plot-svg';
+import { fmt, niceTicks, runs, valueAt, valueExtent } from './plot-svg';
 
 export type VideoLayout = 'board' | 'cameras' | 'plots';
 export interface VideoOptions {
@@ -43,6 +43,8 @@ export interface CompositionSource {
   outlines: Map<string, Float32Array[][]> | null;
   outsideFrame: Record<string, number[]>;
   picture(camera: string, index: number): Promise<ImageBitmap>;
+  /** The hull check (the 3-D flame through each camera), or null when the board hides it. */
+  hull: ((camera: string, index: number) => HullProjection | null) | null;
   scene: AnalysisScene | null;
   plots: { specs: PlotSpec[]; bands: Band[]; moments: Moment[]; window: [number, number] };
 }
@@ -67,12 +69,13 @@ function tokens() {
     bg: t('--bg'), panel: t('--bg-panel'), border: t('--border'), text: t('--text'), dim: t('--text-dim'),
     faint: t('--text-faint'), grid: t('--plot-grid'), cursor: t('--plot-cursor'), warn: t('--warn'),
     label: t('--bg-label'), primary: t('--plot-primary'), secondary: t('--plot-secondary'), font: t('--font'),
+    planned: t('--plot-planned'), hull: t('--hull-check'),
   };
 }
 type Tokens = ReturnType<typeof tokens>;
 /** `var(--plot-primary)` and friends, resolved for a canvas. */
 const resolve = (colour: string, k: Tokens): string =>
-  colour === roleColor('simulated') ? k.secondary : colour === roleColor('measured') ? k.primary : colour;
+  ({ 'var(--plot-secondary)': k.secondary, 'var(--plot-primary)': k.primary, 'var(--plot-planned)': k.planned } as Record<string, string>)[colour] ?? colour;
 const dash = (pattern: string): number[] => (pattern ? pattern.split(/\s+/).map(Number) : []);
 
 /** Draws the composition for an instant onto its own canvas. */
@@ -97,6 +100,7 @@ export class Composer {
     const pictures = rects.cameras
       ? await Promise.all(source.cameras.map((c) => source.picture(c.id, index).catch(() => null)))
       : [];
+    if (rects.scene && source.scene) await source.scene.prepareFrame(index);
     ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     ctx.fillStyle = k.panel;
     ctx.fillRect(0, 0, W, H);
@@ -161,6 +165,8 @@ export class Composer {
         try {
           ctx.drawImage(bitmap, x, inner.y, w, height);
         } catch { /* a picture evicted mid-draw: the tile stays empty this frame */ }
+        const projection = source.hull?.(camera.id, index);
+        if (projection?.uv.length) this.hull(projection, placement(camera.image, source.pictureMode), x, inner.y, w, height);
         const rings = source.outlines?.get(camera.id)?.[index];
         if (rings?.length) {
           const place = placement(camera.image, source.pictureMode);
@@ -182,6 +188,23 @@ export class Composer {
       x += w + gap;
     });
   }
+
+  /** The hull check over one picture: drawn opaque on a scratch canvas at the
+   *  output's pixel size, then laid over at 50 % as on the board. */
+  private hull(projection: HullProjection, place: ReturnType<typeof placement>, x: number, y: number, w: number, h: number): void {
+    const pw = Math.max(1, Math.round(w * this.scale)), ph = Math.max(1, Math.round(h * this.scale));
+    this.scratch ??= document.createElement('canvas');
+    this.scratch.width = pw;
+    this.scratch.height = ph;
+    const g = this.scratch.getContext('2d')!;
+    g.fillStyle = this.k.hull;
+    hullSquares(g, projection, place, pw / place.width);
+    this.ctx.save();
+    this.ctx.globalAlpha = 0.5;
+    this.ctx.drawImage(this.scratch, x, y, w, h);
+    this.ctx.restore();
+  }
+  private scratch?: HTMLCanvasElement;
 
   private scene(r: Rect, index: number): void {
     const { ctx, k, source } = this;
@@ -325,10 +348,10 @@ export class Composer {
 
   private lineStyle(line: PlotLine): void {
     const { ctx, k } = this;
-    ctx.strokeStyle = resolve(line.role === 'estimated' ? roleColor('simulated') : roleColor('measured'), k);
-    ctx.lineWidth = line.thin ? 1 : line.role === 'estimated' ? 2 : 2.5;
+    ctx.strokeStyle = resolve(colourOf(line), k);
+    ctx.lineWidth = line.thin ? 1 : line.role === 'measured' || line.role === 'reconstructed' ? 2.5 : 2;
     ctx.globalAlpha = line.thin ? 0.5 : 1;
-    ctx.setLineDash(line.role === 'estimated' ? dash(seriesDash('simulated', line.nth)).map((d) => d * 1.4) : []);
+    ctx.setLineDash(dash(dashOf(line)).map((d) => d * 1.4));
     ctx.lineJoin = 'round';
   }
 }

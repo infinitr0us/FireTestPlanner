@@ -10,7 +10,7 @@
  * that size in screen pixels, so text stays the size of the interface's.
  */
 
-import { fmt, niceTicks, roleColor, runs, seriesDash, svgElement, valueAt, valueExtent } from './plot-svg';
+import { fmt, niceTicks, PLANNED_DASH, roleColor, runs, seriesDash, svgElement, valueAt, valueExtent } from './plot-svg';
 import { h } from './dom';
 import * as i18n from './i18n';
 
@@ -18,7 +18,8 @@ export interface PlotLine {
   label: string;
   t: Float64Array;
   v: Float64Array;
-  role: 'measured' | 'estimated' | 'reconstructed';
+  /** `predicted`: a correlation's value (Heskestad), in the planned-value style. */
+  role: 'measured' | 'estimated' | 'reconstructed' | 'predicted';
   /** n-th line of its role on this plot, for the dash pattern. */
   nth: number;
   /** A thin line of every sample under the thick one (10 Hz under its 1 s mean). */
@@ -36,6 +37,14 @@ export interface Band { from: number; to: number; kind: 'noHull' | 'outsideFrame
 export interface Moment { t: number; label: string }
 
 const LEFT = 44, RIGHT = 10, TOP = 8, AXIS = 30;
+
+/** A line's colour token: measured and reconstructed primary, estimated in the
+ *  simulated family, a correlation's prediction in the planned-value neutral. */
+export const colourOf = (line: Pick<PlotLine, 'role'>): string =>
+  line.role === 'predicted' ? 'var(--plot-planned)' : line.role === 'estimated' ? roleColor('simulated') : roleColor('measured');
+/** Measured and reconstructed solid, estimated dashed, predicted long dashes. */
+export const dashOf = (line: Pick<PlotLine, 'role' | 'nth'>): string =>
+  line.role === 'predicted' ? PLANNED_DASH : line.role === 'estimated' ? seriesDash('simulated', line.nth) : '';
 
 interface Drawn { spec: PlotSpec; host: HTMLElement; svg?: SVGSVGElement; cursor?: SVGLineElement; x0: number; x1: number; last: boolean }
 
@@ -147,9 +156,9 @@ export class AnalysisPlots {
       if (!d) continue;
       svg.append(svgElement('path', {
         d, fill: 'none', stroke: this.colour(line),
-        'stroke-width': line.thin ? 0.8 : line.role === 'estimated' ? 1.6 : 2,
+        'stroke-width': line.thin ? 0.8 : line.role === 'measured' || line.role === 'reconstructed' ? 2 : 1.6,
         'stroke-opacity': line.thin ? 0.5 : 1,
-        'stroke-dasharray': line.role === 'estimated' ? seriesDash('simulated', line.nth) : '',
+        'stroke-dasharray': dashOf(line),
         'stroke-linejoin': 'round',
       }));
     }
@@ -161,9 +170,7 @@ export class AnalysisPlots {
     this.place(plot);
   }
 
-  private colour(line: PlotLine): string {
-    return line.role === 'estimated' ? roleColor('simulated') : roleColor('measured');
-  }
+  private colour(line: PlotLine): string { return colourOf(line); }
 
   private path(line: PlotLine, scale: number, x: (t: number) => number, y: (v: number) => number): string {
     const [t0, t1] = this.window;
@@ -184,7 +191,7 @@ export class AnalysisPlots {
     svg.append(svgElement('line', {
       x1: 1, x2: 25, y1: 5, y2: 5, stroke: this.colour(line), 'stroke-width': line.thin ? 1 : 2,
       'stroke-opacity': line.thin ? 0.6 : 1,
-      'stroke-dasharray': line.role === 'estimated' ? seriesDash('simulated', line.nth) : '',
+      'stroke-dasharray': dashOf(line),
     }));
     return svg;
   }

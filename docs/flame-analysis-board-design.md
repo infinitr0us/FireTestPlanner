@@ -1,11 +1,13 @@
 # Flame analysis board: design
 
-Status: **phases 0 and 1 done** (2026-11-08): format 1.0 with its schemas and
-`fireplan.flame_analysis` (CONVENTIONS section 13), the synthetic test, the first
-delivery converted, and the board itself (`ui/flame-analysis*.ts`,
-`scene/flame-analysis.ts`, the shell's `/api/flame-analysis/*` routes). Phase 2, video
-and PNG export, is done too (`ui/flame-analysis-video.ts`, `core/mp4.ts`,
-`/api/save-media`); phase 3 is next.
+Status: **phases 0 to 3 done** (2026-11-08). Phases 0 and 1: format 1.0 with its
+schemas and `fireplan.flame_analysis` (CONVENTIONS section 13), the synthetic test, the
+first delivery converted, and the board itself (`ui/flame-analysis*.ts`,
+`scene/flame-analysis.ts`, the shell's `/api/flame-analysis/*` routes). Phase 2: video
+and PNG export (`ui/flame-analysis-video.ts`, `core/mp4.ts`, `/api/save-media`).
+Phase 3: event format 1.1 (meshes and the hood's response time), the hull check, the
+hood's view of the estimates, heat released, the Heskestad height and the smoothed
+surface.
 
 A read-only workspace that walks a fire safety engineer through one processed fire
 event recorded by two to four ordinary video cameras: the synchronised camera frames,
@@ -72,6 +74,7 @@ else. The board needs no coefficient, threshold or recipe of the pipeline.
       closeup/<cam>/   the region around the flame, cut from the full-resolution frames
       outlines/<cam>.json   the flame masks as outlines, every instant
       hull/            the 3-D flame per instant in the tool's voxel format, plan frame
+      mesh/            its smoothed surface per instant (event format 1.1), plan frame
       series/          series the delivery did not hold in the format's CSV shape
 ```
 
@@ -111,6 +114,11 @@ names them, use `/`, and may not leave the analysis folder. Text shown to people
 | `quality` | Optional instant indices: `noHull` (a flame is seen but the hull is empty) and `outsideFrame` per camera (the flame reaches the picture's edge) |
 | `keyMoments` | Optional `{t_s, label}` |
 | `notes` | Optional localised text per step id, for this event only |
+
+Event version **1.1.0** (phase 3) adds two optional fields: `files.mesh`, a template
+with `{stem}` naming a smoothed surface of the 3-D flame per instant, and
+`responseTime_s` on the measured heat release rate. CONVENTIONS section 13 has the
+mesh file's exact layout.
 
 **Series CSV**: UTF-8, comma separated, one header row, then numbers; an empty cell is
 a missing value and breaks the line. `time` and `value` name columns, so a file can
@@ -169,8 +177,8 @@ Target 1920 x 1080; everything stays usable at 1280 x 720.
   that instant drawn through the camera's calibrated projection over the picture).
   Clicking a tile shows it full size at full resolution.
 - **3-D.** The site plan's objects and cameras with their frustums, and the hull at the
-  playback time. **Whole site** and **Flame close-up** are two views of one scene; the
-  predicted (Heskestad) flame is off by default.
+  playback time. **Whole site** and **Flame close-up** are two views of one scene. (As
+  built, the Heskestad height is a line on the height plot instead: see phase 3.)
 - **Plots.** One time axis and one cursor. Heat release rate: measured solid
   (`--plot-primary`), estimated in a new dash family, labelled, with the basis in the
   axis title. Volume and area: 10 Hz thin, one-second mean thick. Flame height. A
@@ -254,6 +262,39 @@ native dialog (`/api/save-media`, the raw bytes rather than base64), a browser d
 The planned PNG-sequence fallback was not needed and is not built: an engine without
 H.264 encoding says so.
 
+**Phase 3 as built.** Two of the five items needed data the format did not carry, so
+event format 1.1 adds two optional fields (CONVENTIONS section 13): `files.mesh`, a
+smoothed surface of the 3-D flame per instant as a small binary PLY in the plan frame,
+and `responseTime_s` on the measured heat release rate. A 1.0 event still opens, and
+the board leaves out what it cannot show for it.
+
+- **Hull check** (camera bar) draws the 3-D flame at the instant through each camera's
+  calibrated projection over its picture, one square per cube, and says under each
+  tile how much of the flame outline the projection covers. The hull is carved from
+  the outlines, so it never reaches outside them; what it covers says how much of what
+  this camera saw the other cameras confirmed. The synthetic test reads 100 % in every
+  camera, and the export draws the same overlay.
+- **As the hood sees it** (plot bar, 1.1 with a response time) passes the estimates
+  through the hood's first-order lag, stepped exactly between samples, and relabels
+  them, so the timing of an estimate compares with the hood's rather than with the
+  flame's. The hood's own line is never changed.
+- **Heat released** switches the heat release rate plot between the rate (kW) and its
+  running integral (MJ, trapezoids from the first instant); the key numbers already
+  gave the totals.
+- **Heskestad height** adds L = 0.235 Q^0.4 - 1.02 D to the flame height plot, from
+  the hood's record and the site plan's fire: D its effective diameter, and a
+  convective hood rate divided by 1 minus the fire's radiative fraction to give the
+  total Q the correlation is for. It is drawn as a predicted value (the planned-value
+  colour and long dash), and a note under the plots says what it assumed and that it
+  is a pool-fire correlation of the mean height, beside the 3-D flame's highest point.
+  The 3-D view keeps no predicted flame: one comparison, on the plot, reads better.
+- **Cubes | Surface** (3-D bar, 1.1 with meshes) draws the flame as its smoothed
+  surface, coloured by height like the cubes. An instant's mesh is read when it is
+  first shown and the last 40 are kept; playback shows the latest one read, and the
+  export waits for each. The synthetic
+  generator makes its meshes from the hull itself (surface nets on a coarsened grid);
+  the internal converter takes the pipeline's own meshes, which line up with its hull.
+
 ## 10. Conventions this will touch
 
 - Shared sources it reuses: `ui/transport.ts` and `state/playhead.ts` (speeds),
@@ -262,7 +303,8 @@ H.264 encoding says so.
   `scene/flame.ts`, `io/flame-sources.ts` (NPZ), `ui/i18n.ts`.
 - New shared meanings, added at their source: an *estimated* series role beside
   measured and simulated (its dash family), the quality-strip shading, slower speeds.
-- CONVENTIONS gains a section for format 1.0 when phase 0 lands.
+- CONVENTIONS gains a section for format 1.0 when phase 0 lands (section 13), and
+  event format 1.1 joins it in phase 3.
 - A kept exception may be needed for the video composition's fixed layout.
 
 ## 11. Open questions

@@ -663,7 +663,10 @@ The design, decisions and phases are in
 - **Phase 2 (done 2026-11-08):** video and PNG export. The spike found H.264 encoding
   (High profile, 1080p) in WebView2 155, Chrome and Edge alike, with byte-identical
   output, so the engine's own software encoder does it on any laptop; `core/mp4.ts`
-  writes the file. **Phase 3:** hull check, the hood's response time, Heskestad height,
-  smooth meshes.
+  writes the file.
+- **Phase 3 (done 2026-11-08):** event format 1.1 (`files.mesh`, `responseTime_s`;
+  CONVENTIONS section 13), the hull check with its coverage per camera, heat released,
+  the estimates as the hood sees them, the Heskestad height on the height plot, and
+  the smoothed surface in 3-D; all of them in the export too.
 
 No plan format change.

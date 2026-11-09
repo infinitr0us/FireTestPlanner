@@ -24,6 +24,9 @@ board and its tests run on data that can be published.
 - 3-D flame: the visual hull of the event's cameras, every grid cell whose centre
   projects (nearest pixel) inside every camera's mask. E1 uses all three cameras,
   E2 only camA and camB, so its hull is visibly fatter than its flame.
+- Meshes (event E1, format 1.1): the hull's smoothed surface by naive surface nets,
+  on 6 cm cells so the committed files stay small.
+  E2 stays format 1.0 (no meshes, no hood response time), so both versions are tested.
 - Series (seconds on the test clock "t_clock"): hull volume, exposed-face surface
   area and the flame top above the pan rim per instant; a hood record at 1 Hz, the
   true flame volume times 1800 kW/m3 passed through a first-order lag (35 % of the
@@ -54,7 +57,8 @@ sys.path.insert(0, str(ROOT / "python"))
 
 from fireplan import Plan  # noqa: E402
 from fireplan._math import look_at_quat  # noqa: E402
-from fireplan.flame_analysis import dump_compact, outlines_document, trace_outlines  # noqa: E402
+from fireplan.flame_analysis import (  # noqa: E402
+    dump_compact, outlines_document, trace_outlines, write_mesh)
 
 _spec = importlib.util.spec_from_file_location("synthetic_flame", ROOT / "tools/build_synthetic_flame.py")
 _synthetic_flame = importlib.util.module_from_spec(_spec)
@@ -77,10 +81,13 @@ CAMERAS = [
 ]
 
 EVENTS = [
-    # id, label, onset, cameras, envelope (rise end, hold end, out), peak scale, lean
-    ("E1", "Synthetic event 1", 100.0, ["camA", "camB", "camC"], (0.8, 2.0, 3.0), 1.0, 0.18),
-    ("E2", "Synthetic event 2", 160.0, ["camA", "camB"], (0.5, 1.2, 2.2), 0.7, -0.12),
+    # id, label, onset, cameras, envelope (rise end, hold end, out), peak scale, lean, meshes
+    ("E1", "Synthetic event 1", 100.0, ["camA", "camB", "camC"], (0.8, 2.0, 3.0), 1.0, 0.18, True),
+    ("E2", "Synthetic event 2", 160.0, ["camA", "camB"], (0.5, 1.2, 2.2), 0.7, -0.12, False),
 ]
+#: The synthetic hood closes 35 % of its gap each second: a first-order response time
+#: of -1 / ln(0.65) = 2.32 s, which event E1 (format 1.1) records.
+HOOD_RESPONSE_S = 2.3
 BEFORE, AFTER, DT = 0.5, 3.0, 0.1           # instants from onset - 0.5 s to onset + 3.0 s
 
 
@@ -311,6 +318,52 @@ def carve(cams, masks):
     return occ
 
 
+def surface_mesh(occ, smoothing=3, coarsen=2):
+    """A smoothed surface of the hull by naive surface nets: one vertex per cube of
+    eight neighbouring cells that is partly occupied, a quad across every face between
+    an occupied and an empty cell, then Laplacian smoothing. Only + - * / on floats."""
+    # On cells `coarsen` times larger (6 cm), which keeps the committed meshes small.
+    n = np.array(occ.shape) // coarsen
+    occ = occ[:n[0] * coarsen, :n[1] * coarsen, :n[2] * coarsen].reshape(
+        n[0], coarsen, n[1], coarsen, n[2], coarsen).any(axis=(1, 3, 5))
+    size = VOXEL * coarsen
+    nx, ny, nz = occ.shape
+    p = np.pad(occ, 1)
+    cubes = sum(p[i:i + nx + 1, j:j + ny + 1, k:k + nz + 1].astype(np.int8)
+                for i in (0, 1) for j in (0, 1) for k in (0, 1))
+    active = (cubes > 0) & (cubes < 8)
+    index = -np.ones(active.shape, np.int64)
+    cells = np.argwhere(active)
+    index[tuple(cells.T)] = np.arange(len(cells))
+    vertices = GRID_LO + cells * size       # a cube's centre, in metres
+    quads = []
+    for axis in range(3):
+        perm = (axis, (axis + 1) % 3, (axis + 2) % 3)
+        q = p.transpose(perm)
+        a, b = q[:-1, 1:-1, 1:-1], q[1:, 1:-1, 1:-1]
+        for i, j, k in np.argwhere(a != b):
+            corners = [(i, j, k), (i, j + 1, k), (i, j + 1, k + 1), (i, j, k + 1)]
+            ids = []
+            for c in corners:
+                original = [0, 0, 0]
+                for d in range(3):
+                    original[perm[d]] = c[d]
+                ids.append(index[tuple(original)])
+            quads.append(ids if a[i, j, k] else ids[::-1])
+    if not quads:
+        return np.zeros((0, 3)), np.zeros((0, 3), np.int64)
+    quads = np.array(quads, dtype=np.int64)
+    faces = np.concatenate([quads[:, [0, 1, 2]], quads[:, [0, 2, 3]]])
+    edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+    for _ in range(smoothing):
+        total = np.zeros_like(vertices)
+        count = np.zeros(len(vertices))
+        np.add.at(total, edges[:, 0], vertices[edges[:, 1]])
+        np.add.at(count, edges[:, 0], 1.0)
+        vertices = 0.5 * vertices + 0.5 * total / np.maximum(count, 1.0)[:, None]
+    return vertices, faces
+
+
 def exposed_faces(occ):
     padded = np.pad(occ, 1)
     core = padded[1:-1, 1:-1, 1:-1]
@@ -325,7 +378,7 @@ def exposed_faces(occ):
 # -- events ------------------------------------------------------------------
 
 def build_event(root, plan, cameras, spec, rng):
-    eid, label, onset, cam_ids, shape, peak, lean = spec
+    eid, label, onset, cam_ids, shape, peak, lean, meshes = spec
     folder = root / eid
     cams = [plan.cameras[c] for c in cam_ids]
     backs = [background(c) for c in cams]
@@ -349,6 +402,9 @@ def build_event(root, plan, cameras, spec, rng):
         hull = carve(cams, masks) if any(m.any() for m in masks) else np.zeros(GRID_N, bool)
         (folder / "hull").mkdir(parents=True, exist_ok=True)
         write_npz(folder / "hull" / (stem + ".npz"), centres(hull))
+        if meshes:
+            (folder / "mesh").mkdir(parents=True, exist_ok=True)
+            write_mesh(str(folder / "mesh" / (stem + ".ply")), *surface_mesh(hull))
         count = int(hull.sum())
         top = ""
         if count:
@@ -402,11 +458,11 @@ def build_event(root, plan, cameras, spec, rng):
         quality["outsideFrame"] = edge
     peak_i = int(np.argmax(vol))
     event = {
-        "format": "fireplan-flame-event", "version": "1.0.0",
+        "format": "fireplan-flame-event", "version": "1.1.0" if meshes else "1.0.0",
         "id": eid, "label": label, "onset_s": onset, "cameras": cam_ids,
         "instants": {"t_s": times, "stem": stems},
         "files": {"display": "frames/{cam}/{stem}.png", "outlines": "outlines/{cam}.json",
-                  "hull": "hull/{stem}.npz"},
+                  "hull": "hull/{stem}.npz", **({"mesh": "mesh/{stem}.ply"} if meshes else {})},
         "images": {c: {"size_px": list(plan.cameras[c].resolution),
                        "display_px": list(plan.cameras[c].resolution)} for c in cam_ids},
         "hull": {"voxelSize_m": VOXEL, "frame": "plan"},
@@ -414,7 +470,8 @@ def build_event(root, plan, cameras, spec, rng):
             {"id": "hood", "label": {"en": "Hood (measured)", "fr": "Hotte (mesurée)"},
              "role": "measured", "quantity": "hrr", "unit": "kW", "basis": "convective",
              "file": "series/hood.csv", "time": "t_s", "value": "hrr_convective_kW",
-             "note": "Synthetic: the true flame volume times 1800 kW/m3, lagged."},
+             "note": "Synthetic: the true flame volume times 1800 kW/m3, lagged.",
+             **({"responseTime_s": HOOD_RESPONSE_S} if meshes else {})},
             {"id": "hrr-from-volume", "label": {"en": "Estimate from flame volume", "fr": "Estimation par le volume de flamme"},
              "role": "estimated", "quantity": "hrr", "unit": "kW", "basis": "convective",
              "file": "series/hrr_estimate.csv", "time": "t_s", "value": "from_volume_kW"},

@@ -3,9 +3,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { parseFrameData } from './flame';
+import { flameHeightM } from './correlations';
 import {
-  centredMean, fillTemplate, FlameAnalysisError, instantAt, integrate, joinPath, keyNumbers, localText,
-  parseAnalysisManifest, parseEventManifest, parseOutlines, parseSeriesCsv, type Series,
+  centredMean, cumulative, fillTemplate, firstOrderResponse, FlameAnalysisError, heskestadSeries, instantAt, integrate,
+  joinPath, keyNumbers, localText, parseAnalysisManifest, parseEventManifest, parseMesh, parseOutlines, parseSeriesCsv,
+  type Series,
 } from './flame-analysis';
 
 const ROOT = new URL('../../../fixtures/flame-analysis/', import.meta.url);
@@ -77,7 +79,7 @@ describe('manifest validation', () => {
     ['a path leaving the folder', (d: any) => { d.series[0].file = '../outside.csv'; }, 'series/0/file'],
     ['a drive path', (d: any) => { d.files.hull = 'C:/hull/{stem}.npz'; }, 'files/hull'],
     ['an unknown field', (d: any) => { d.surprise = 1; }, 'surprise'],
-    ['another version', (d: any) => { d.version = '1.1.0'; }, 'version'],
+    ['another version', (d: any) => { d.version = '1.9.0'; }, 'version'],
   ])('refuses %s', (_, change, place) => {
     expect(() => parseEventManifest(broken(change))).toThrowError(new RegExp(`schema validation[\\s\\S]*${place}`));
   });
@@ -143,5 +145,78 @@ describe('series, outlines and numbers', () => {
     expect(integrate(ramp, 0, 2)).toBe(20);
     expect(integrate(ramp, 0.5, 1.5)).toBe(10);
     expect(integrate(ramp, -5, 0)).toBe(0);
+  });
+});
+
+describe('format 1.1: meshes and the hood response time (mirror of fireplan)', () => {
+  it('reads E1 at 1.1 with its meshes, and E2 at 1.0', () => {
+    const e1 = event('E1'), e2 = event('E2');
+    expect([e1.version, e2.version]).toEqual(['1.1.0', '1.0.0']);
+    expect(e1.series.find((s) => s.id === 'hood')!.responseTime_s).toBe(2.3);
+    const i = e1.instants.t_s.indexOf(101.5);
+    const mesh = parseMesh(new Uint8Array(readFileSync(new URL(joinPath('E1', fillTemplate(e1.files.mesh!, undefined, e1.instants.stem[i])), ROOT))));
+    expect(mesh.indices.length / 3).toBeGreaterThan(1000);
+    expect(Math.max(...mesh.indices)).toBeLessThan(mesh.positions.length / 3);
+    const empty = parseMesh(new Uint8Array(readFileSync(new URL(joinPath('E1', fillTemplate(e1.files.mesh!, undefined, e1.instants.stem[0])), ROOT))));
+    expect(empty.positions.length).toBe(0);
+  });
+  it('refuses 1.1 fields where they do not belong', () => {
+    const e1 = JSON.parse(read('E1/event.json'));
+    e1.series[1].responseTime_s = 2;
+    expect(() => parseEventManifest(JSON.stringify(e1))).toThrowError(/series\/1\/responseTime_s/);
+    const e2 = JSON.parse(read('E2/event.json'));
+    e2.files.mesh = 'mesh/{stem}.ply';
+    expect(() => parseEventManifest(JSON.stringify(e2))).toThrowError(/unexpected property 'mesh'/);
+  });
+  it('refuses a mesh file of the wrong length', () => {
+    const header = new TextEncoder().encode(['ply', 'format binary_little_endian 1.0', 'element vertex 1',
+      'property float x', 'property float y', 'property float z', 'element face 0',
+      'property list uchar int vertex_indices', 'end_header', ''].join(String.fromCharCode(10)));
+    const bytes = new Uint8Array(header.length + 11);
+    bytes.set(header);
+    expect(() => parseMesh(bytes)).toThrowError(/bytes after the header/);
+  });
+});
+
+describe('what the board derives from the series', () => {
+  it('passes a step through a first-order response', () => {
+    const t = Float64Array.from({ length: 41 }, (_, i) => i * 0.25);
+    const step: Series = { t, v: t.map((x) => (x < 1 ? 0 : 100)) };
+    const r = firstOrderResponse(step, 2).v;
+    expect(r[4]).toBe(0);                                   // at t = 1 the input has just changed
+    expect(r[12]).toBeCloseTo(100 * (1 - Math.exp(-1)), 9); // one time constant later: 63 %
+    expect(r[40]).toBeCloseTo(100 * (1 - Math.exp(-4.5)), 9);
+  });
+  it('integrates heat released as it goes', () => {
+    const ramp: Series = { t: Float64Array.from([0, 1, 2, 3]), v: Float64Array.from([0, 10, 10, NaN]) };
+    expect([...cumulative(ramp).v]).toEqual([0, 5, 15, 15]);
+  });
+  it('turns a convective hood record into a Heskestad height through the radiative fraction', () => {
+    const hood: Series = { t: Float64Array.from([0, 1]), v: Float64Array.from([70, NaN]) };
+    const h = heskestadSeries(hood, 0.3, true, 0.3, flameHeightM).v;
+    expect(h[0]).toBeCloseTo(flameHeightM(100, 0.3), 12);  // 70 kW convective is 100 kW total at 0.3
+    expect(Number.isNaN(h[1])).toBe(true);
+    expect(heskestadSeries(hood, 0.3, false, 0.3, flameHeightM).v[0]).toBeCloseTo(flameHeightM(70, 0.3), 12);
+  });
+});
+
+describe('the hull check projection', () => {
+  it('is projectToPixels with the camera basis computed once', async () => {
+    const { parseAndValidatePlan } = await import('./validate');
+    const { cameras, projectToPixels, fxOf } = await import('./plan');
+    const { projectHull } = await import('./flame-analysis');
+    const plan = parseAndValidatePlan(read('site.ftp.json'));
+    const points = [0.05, -0.02, 0.4, -0.1, 0.12, 1.1, 0.2, 0.2, 0.9];
+    for (const camera of cameras(plan)) {
+      const projection = projectHull(camera, points, 0.03);
+      for (let i = 0; i < 3; i++) {
+        const { u, v } = projectToPixels(camera, [points[3 * i], points[3 * i + 1], points[3 * i + 2]]);
+        expect(projection.uv[2 * i]).toBeCloseTo(u, 3);
+        expect(projection.uv[2 * i + 1]).toBeCloseTo(v, 3);
+      }
+      // About one cube's width in pixels at the points' mean distance.
+      expect(projection.size).toBeGreaterThan(0);
+      expect(projection.size).toBeLessThan(fxOf(camera) * 0.03);
+    }
   });
 });

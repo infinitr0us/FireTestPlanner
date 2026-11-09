@@ -1,6 +1,6 @@
 {
  "format": "fireplan-flame-event",
- "version": "1.0.0",
+ "version": "1.1.0",
  "id": "E1",
  "label": "Synthetic event 1",
  "onset_s": 100.0,
@@ -90,7 +90,8 @@
  "files": {
   "display": "frames/{cam}/{stem}.png",
   "outlines": "outlines/{cam}.json",
-  "hull": "hull/{stem}.npz"
+  "hull": "hull/{stem}.npz",
+  "mesh": "mesh/{stem}.ply"
  },
  "images": {
   "camA": {
@@ -142,7 +143,8 @@
    "file": "series/hood.csv",
    "time": "t_s",
    "value": "hrr_convective_kW",
-   "note": "Synthetic: the true flame volume times 1800 kW/m3, lagged."
+   "note": "Synthetic: the true flame volume times 1800 kW/m3, lagged.",
+   "responseTime_s": 2.3
   },
   {
    "id": "hrr-from-volume",

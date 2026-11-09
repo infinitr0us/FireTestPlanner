@@ -42,21 +42,25 @@ ANALYSIS_FORMAT = "fireplan-flame-analysis"
 EVENT_FORMAT = "fireplan-flame-event"
 OUTLINES_FORMAT = "fireplan-flame-outlines"
 VERSION = "1.0.0"
+#: Event manifests: 1.1 adds files.mesh and series[].responseTime_s. A file
+#: declares the lowest version its contents need.
+EVENT_VERSIONS = ("1.0.0", "1.1.0")
 
 #: The steps of the explanation, in the order the board shows them.
 STEP_IDS = ("cameras", "frames", "segmentation", "reconstruction", "size", "hrr", "limitations")
 
 _SCHEMA_FILES = {
-    ANALYSIS_FORMAT: "flame-analysis-1.0.0.schema.json",
-    EVENT_FORMAT: "flame-event-1.0.0.schema.json",
-    OUTLINES_FORMAT: "flame-outlines-1.0.0.schema.json",
+    (ANALYSIS_FORMAT, "1.0.0"): "flame-analysis-1.0.0.schema.json",
+    (EVENT_FORMAT, "1.0.0"): "flame-event-1.0.0.schema.json",
+    (EVENT_FORMAT, "1.1.0"): "flame-event-1.1.0.schema.json",
+    (OUTLINES_FORMAT, "1.0.0"): "flame-outlines-1.0.0.schema.json",
 }
 
 _TEMPLATE_FIELD = re.compile(r"\{([a-z]+)\}")
 
 
 class FlameAnalysisError(Exception):
-    """A folder, manifest or data file that cannot be read as format 1.0."""
+    """A folder, manifest or data file that cannot be read as format 1.0 or 1.1."""
 
 
 def localized(value: Any, language: str = "en") -> str:
@@ -73,7 +77,9 @@ def _validate(kind: str, data: Any, where: str) -> None:
     """Schema validation; the first few violations name their place in the file."""
     import jsonschema
 
-    schema = json.loads(_schema_text(_SCHEMA_FILES[kind]))
+    version = data.get("version") if isinstance(data, dict) else None
+    filename = _SCHEMA_FILES.get((kind, version)) or _SCHEMA_FILES[(kind, "1.0.0")]
+    schema = json.loads(_schema_text(filename))
     validator = jsonschema.Draft202012Validator(schema)
     errors = sorted(validator.iter_errors(data), key=lambda e: list(e.absolute_path))
     if errors:
@@ -171,6 +177,8 @@ class Series:
     value: str
     basis: Optional[str] = None
     note: Any = None
+    #: 1.1: the first-order response time of a measured heat release rate.
+    responseTime_s: Optional[float] = None
 
 
 class FlameEvent:
@@ -363,7 +371,72 @@ class FlameEvent:
                     read_frame(path)
                 except ValueError as exc:
                     problems.append(str(exc))
+        if "mesh" in self.data["files"]:
+            missing = []
+            for stem in self.stems:
+                path = self.file("mesh", stem=stem)
+                if not os.path.isfile(path):
+                    missing.append(stem)
+                elif deep:
+                    try:
+                        read_mesh(path)
+                    except FlameAnalysisError as exc:
+                        problems.append(str(exc))
+            if missing:
+                problems.append("mesh: {} of {} files missing (first: {})".format(
+                    len(missing), len(self.stems), missing[0]))
         return problems
+
+    def mesh(self, index: int) -> Tuple[np.ndarray, np.ndarray]:
+        """The smoothed surface at an instant: (V, 3) vertices in metres (plan frame)
+        and (F, 3) triangles; both empty when the instant has no flame."""
+        return read_mesh(self.file("mesh", stem=self.stems[index]))
+
+
+_PLY_HEADER = (
+    "ply\nformat binary_little_endian 1.0\nelement vertex {v}\n"
+    "property float x\nproperty float y\nproperty float z\n"
+    "element face {f}\nproperty list uchar int vertex_indices\nend_header\n"
+)
+
+
+def write_mesh(path: str, vertices: np.ndarray, faces: np.ndarray) -> None:
+    """A mesh file of format 1.1: binary little-endian PLY, float32 vertices,
+    triangles as (uchar 3, int32 x 3) records. Empty arrays write an empty mesh."""
+    vertices = np.ascontiguousarray(vertices, dtype="<f4").reshape(-1, 3)
+    faces = np.ascontiguousarray(faces, dtype="<i4").reshape(-1, 3)
+    records = np.empty(len(faces), dtype=[("n", "u1"), ("i", "<i4", (3,))])
+    records["n"], records["i"] = 3, faces
+    with open(path, "wb") as fh:
+        fh.write(_PLY_HEADER.format(v=len(vertices), f=len(faces)).encode("ascii"))
+        fh.write(vertices.tobytes())
+        fh.write(records.tobytes())
+
+
+def read_mesh(path: str) -> Tuple[np.ndarray, np.ndarray]:
+    """Read a format 1.1 mesh file (the exact layout `write_mesh` writes)."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    end = data.find(b"end_header\n")
+    name = os.path.basename(path)
+    if not data.startswith(b"ply\n") or end < 0:
+        raise FlameAnalysisError("{}: not a PLY file".format(name))
+    header = data[:end].decode("ascii", "replace")
+    v = re.search(r"element vertex (\d+)", header)
+    f = re.search(r"element face (\d+)", header)
+    if ("binary_little_endian" not in header or not v or not f or "property list uchar int" not in header
+            or header.count("property float") != 3):
+        raise FlameAnalysisError("{}: not a binary little-endian triangle PLY with float x, y, z".format(name))
+    nv, nf = int(v.group(1)), int(f.group(1))
+    body = data[end + len(b"end_header\n"):]
+    if len(body) != nv * 12 + nf * 13:
+        raise FlameAnalysisError("{}: {} bytes after the header, {} vertices and {} triangles need {}".format(
+            name, len(body), nv, nf, nv * 12 + nf * 13))
+    vertices = np.frombuffer(body[:nv * 12], dtype="<f4").reshape(nv, 3).astype(np.float64)
+    records = np.frombuffer(body[nv * 12:], dtype=[("n", "u1"), ("i", "<i4", (3,))])
+    if nf and (np.any(records["n"] != 3) or records["i"].min() < 0 or records["i"].max() >= nv):
+        raise FlameAnalysisError("{}: faces must be triangles of existing vertices".format(name))
+    return vertices, records["i"].astype(np.int64).reshape(-1, 3)
 
 
 class FlameAnalysis:

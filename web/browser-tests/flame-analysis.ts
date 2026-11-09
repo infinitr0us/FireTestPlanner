@@ -77,6 +77,35 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   check('the step points at the 3-D view', !!$('.flame-analysis__scene.flame-analysis--pointed'));
   check('the drawer takes focus', document.activeElement === $('.flame-analysis__drawer'));
 
+  // Phase 3 on E1 (format 1.1): hull check, surfaces, heat released, the hood's
+  // response time and the Heskestad height.
+  const press = (selector: string): void => ($(selector) as HTMLButtonElement).click();
+  const caption = (): string[] => $$('.flame-analysis__tile-agreement').map((e) => e.textContent!.replace(/ | /g, ' '));
+  $$<HTMLButtonElement>('.flame-analysis__moments button').find((b) => b.textContent === 'Largest flame')!.click();
+  press('.flame-analysis__hull-toggle');
+  await wait(() => caption().filter(Boolean).length === 3, 'hull check captions');
+  check('hull check: every E1 camera says how much of its outline the 3-D flame covers (all of it: the hull contains the flame)',
+    caption().every((c) => c === '3-D flame covers 100 % of the outline'), caption());
+  const scene = (workspace as unknown as { scene: { flameLook: string } }).scene;
+  press('.flame-analysis__look[data-look="surface"]');
+  check('the 3-D flame switches to its smoothed surface', scene.flameLook === 'surface');
+  const plotCaptions = (): string[] => $$('.flame-analysis__plot caption').map((c) => c.textContent!);
+  press('.flame-analysis__heat[data-mode="heat"]');
+  check('Heat released turns the first plot into MJ', plotCaptions()[0] === 'Heat released, convective (MJ)', plotCaptions());
+  press('.flame-analysis__heat[data-mode="rate"]');
+  const toggles = (): HTMLButtonElement[] => $$<HTMLButtonElement>('.flame-analysis__charts .flame-analysis__toggle');
+  toggles().find((b) => b.textContent === 'As the hood sees it')!.click();
+  const legend = (): string[] => $$('.flame-analysis__legend th').map((t) => t.textContent!);
+  check('As the hood sees it relabels the estimates', legend().filter((l) => l.endsWith(', as the hood sees it')).length === 2, legend());
+  toggles().find((b) => b.textContent === 'Heskestad height')!.click();
+  check('Heskestad height adds a predicted line and says what it assumed',
+    legend().includes('Heskestad mean height (pool fire), from the hood') && text('.flame-analysis__plot-note').includes('1 - 0.3'),
+    [legend(), text('.flame-analysis__plot-note')]);
+  const predicted = (): boolean => $$('.flame-analysis__plot[data-plot="height"] path')
+    .some((p) => p.getAttribute('stroke') === 'var(--plot-planned)' && p.getAttribute('stroke-dasharray') === '10 4');
+  await wait(predicted, 'the predicted line drawn').catch(() => undefined);
+  check('the predicted line takes the planned-value long dash', predicted());
+
   // The second event: two cameras, its own clock.
   const select = $('.flame-analysis__event select') as HTMLSelectElement;
   select.value = 'E2';
@@ -87,6 +116,9 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   check('the outline choice carries over', ($('.flame-analysis__outline-toggle') as HTMLButtonElement).getAttribute('aria-pressed') === 'true');
   check('E2 times are its own', /\(t_clock 16\d/.test(text('.flame-analysis__readout')), text('.flame-analysis__readout'));
   check('the 3-D view draws cubes', (workspace as unknown as { scene: { cubeCount: number } }).scene.cubeCount > 0);
+  check('a format 1.0 event offers no surfaces and no hood response, and falls back to cubes',
+    !$('.flame-analysis__look') && !toggles().some((b) => b.textContent === 'As the hood sees it') && scene.flameLook === 'cubes');
+  check('the hull check carries over to E2', caption().filter(Boolean).length === 2, caption());
 
   // Export: a PNG of the composition, and a short H.264 MP4 Chromium itself plays.
   const png = await workspace.exportPng(1280);

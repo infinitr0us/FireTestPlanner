@@ -1,7 +1,7 @@
 /**
- * Flame analysis folders (format 1.0): the manifests, their files and the numbers
- * the board shows. DOM-free; mirror of `python/fireplan/flame_analysis.py`, and
- * the schemas in `schema/flame-*-1.0.0.schema.json` are the normative definition
+ * Flame analysis folders (format 1.0, events 1.0 and 1.1): the manifests, their files
+ * and the numbers the board shows. DOM-free; mirror of `python/fireplan/flame_analysis.py`,
+ * and the schemas in `schema/flame-*.schema.json` are the normative definition
  * (CONVENTIONS.md section 13). The two engines are held to the same verdicts on
  * the synthetic test in `fixtures/flame-analysis/`.
  *
@@ -11,11 +11,16 @@
 
 import * as i18n from '../ui/i18n';
 import { delimitedRows } from './delimited';
+import { quatToColumns } from './math';
+import { fxOf, fyOf, positionOf, principalPointOf, quatOf } from './plan';
+import type { CameraObject } from './types';
 
 export const ANALYSIS_FORMAT = 'fireplan-flame-analysis';
 export const EVENT_FORMAT = 'fireplan-flame-event';
 export const OUTLINES_FORMAT = 'fireplan-flame-outlines';
 export const FORMAT_VERSION = '1.0.0';
+/** Event manifests: 1.1 adds `files.mesh` and `series[].responseTime_s`. */
+export const EVENT_VERSIONS = ['1.0.0', '1.1.0'] as const;
 
 export const STEP_IDS = ['cameras', 'frames', 'segmentation', 'reconstruction', 'size', 'hrr', 'limitations'] as const;
 export type StepId = (typeof STEP_IDS)[number];
@@ -54,8 +59,10 @@ export interface EventSeries {
   time: string;
   value: string;
   note?: LocalText;
+  /** 1.1: the first-order response time of a measured heat release rate. */
+  responseTime_s?: number;
 }
-export interface EventFiles { display: string; frame?: string; closeup?: string; outlines: string; hull: string }
+export interface EventFiles { display: string; frame?: string; closeup?: string; outlines: string; hull: string; mesh?: string }
 export interface EventManifest {
   format: typeof EVENT_FORMAT;
   version: string;
@@ -212,7 +219,8 @@ export function parseEventManifest(textValue: string, where = 'event.json'): Eve
   const p = new Problems();
   const required = ['format', 'version', 'id', 'label', 'onset_s', 'cameras', 'instants', 'files', 'images', 'hull', 'series'];
   if (closed(p, '', data, required, ['quality', 'keyMoments', 'notes'])) {
-    header(p, data, EVENT_FORMAT);
+    if (data.format !== EVENT_FORMAT) p.add('format', i18n.t("must be '{p1}'", { p1: EVENT_FORMAT }));
+    if (!(EVENT_VERSIONS as readonly unknown[]).includes(data.version)) p.add('version', i18n.t("must be '{p1}'", { p1: EVENT_VERSIONS.join("' or '") }));
     if ('id' in data) id(p, 'id', data.id);
     if ('label' in data) text(p, 'label', data.label);
     if ('onset_s' in data && !isNumber(data.onset_s)) p.add('onset_s', i18n.t("must be a number"));
@@ -228,7 +236,8 @@ export function parseEventManifest(textValue: string, where = 'event.json'): Eve
         p.add('instants/stem', i18n.t("must be a non-empty list of different file stems"));
       }
     }
-    if ('files' in data && closed(p, 'files', data.files, ['display', 'outlines', 'hull'], ['frame', 'closeup'])) {
+    const v11 = data.version === '1.1.0';
+    if ('files' in data && closed(p, 'files', data.files, ['display', 'outlines', 'hull'], ['frame', 'closeup', ...(v11 ? ['mesh'] : [])])) {
       const files = data.files;
       for (const key of ['display', 'frame', 'closeup']) {
         if (!(key in files)) continue;
@@ -238,6 +247,10 @@ export function parseEventManifest(textValue: string, where = 'event.json'): Eve
       if ('outlines' in files) {
         path(p, 'files/outlines', files.outlines, true);
         if (typeof files.outlines === 'string' && (!/\{cam\}/.test(files.outlines) || /\{stem\}/.test(files.outlines))) p.add('files/outlines', i18n.t("needs {cam} and no {stem}"));
+      }
+      if ('mesh' in files) {
+        path(p, 'files/mesh', files.mesh, true);
+        if (typeof files.mesh === 'string' && (!/\{stem\}/.test(files.mesh) || /\{cam\}/.test(files.mesh))) p.add('files/mesh', i18n.t("needs {stem} and no {cam}"));
       }
       if ('hull' in files) {
         path(p, 'files/hull', files.hull, true);
@@ -265,7 +278,7 @@ export function parseEventManifest(textValue: string, where = 'event.json'): Eve
       if (!Array.isArray(data.series)) p.add('series', i18n.t("must be a list"));
       else data.series.forEach((s, i) => {
         const place = `series/${i}`;
-        if (!closed(p, place, s, ['id', 'label', 'role', 'quantity', 'unit', 'file', 'time', 'value'], ['basis', 'note'])) return;
+        if (!closed(p, place, s, ['id', 'label', 'role', 'quantity', 'unit', 'file', 'time', 'value'], ['basis', 'note', ...(v11 ? ['responseTime_s'] : [])])) return;
         if ('id' in s) id(p, `${place}/id`, s.id);
         if ('label' in s) text(p, `${place}/label`, s.label);
         if ('role' in s) oneOf(p, `${place}/role`, s.role, ['measured', 'reconstructed', 'estimated']);
@@ -281,6 +294,10 @@ export function parseEventManifest(textValue: string, where = 'event.json'): Eve
         if ('file' in s) path(p, `${place}/file`, s.file);
         for (const key of ['time', 'value']) if (key in s && (typeof s[key] !== 'string' || !s[key])) p.add(`${place}/${key}`, i18n.t("must name a column"));
         if ('note' in s) text(p, `${place}/note`, s.note);
+        if ('responseTime_s' in s) {
+          if (!isNumber(s.responseTime_s) || s.responseTime_s <= 0) p.add(`${place}/responseTime_s`, i18n.t("must be a positive number"));
+          if (s.role !== 'measured' || s.quantity !== 'hrr') p.add(`${place}/responseTime_s`, i18n.t("is for a measured heat release rate only"));
+        }
       });
     }
     const indices = (place: string, v: unknown): void => {
@@ -490,4 +507,132 @@ export function keyNumbers(event: EventManifest, series: Map<string, Series>): K
     if (peak) out.height = { peak };
   }
   return out;
+}
+
+// -- format 1.1: meshes, and what the board derives from the series ----------------
+
+export interface Mesh { positions: Float32Array; indices: Uint32Array }
+
+/** A format 1.1 mesh file: binary little-endian PLY, float x y z vertices, triangles
+ *  as (uchar 3, int32 x 3). Mirror of `read_mesh` in fireplan. */
+export function parseMesh(bytes: Uint8Array, where = 'mesh'): Mesh {
+  const marker = new TextEncoder().encode('end_header\n');
+  let end = -1;
+  outer: for (let i = 0; i + marker.length <= Math.min(bytes.length, 4096); i++) {
+    for (let k = 0; k < marker.length; k++) if (bytes[i + k] !== marker[k]) continue outer;
+    end = i;
+    break;
+  }
+  const header = new TextDecoder().decode(bytes.subarray(0, Math.max(end, 0)));
+  if (!header.startsWith('ply\n') || end < 0) throw new FlameAnalysisError(i18n.t("{p1}: not a PLY file", { p1: where }));
+  const nv = Number(/element vertex (\d+)/.exec(header)?.[1]);
+  const nf = Number(/element face (\d+)/.exec(header)?.[1]);
+  if (!header.includes('binary_little_endian') || !Number.isInteger(nv) || !Number.isInteger(nf)
+    || !header.includes('property list uchar int') || (header.match(/property float/g) ?? []).length !== 3) {
+    throw new FlameAnalysisError(i18n.t("{p1}: not a binary little-endian triangle PLY with float x, y, z", { p1: where }));
+  }
+  const start = end + marker.length;
+  if (bytes.length - start !== nv * 12 + nf * 13) {
+    throw new FlameAnalysisError(i18n.t("{p1}: {p2} bytes after the header, {p3} vertices and {p4} triangles need {p5}",
+      { p1: where, p2: bytes.length - start, p3: nv, p4: nf, p5: nv * 12 + nf * 13 }));
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset + start, bytes.length - start);
+  const positions = new Float32Array(nv * 3);
+  for (let i = 0; i < nv * 3; i++) positions[i] = view.getFloat32(i * 4, true);
+  const indices = new Uint32Array(nf * 3);
+  for (let f = 0; f < nf; f++) {
+    const at = nv * 12 + f * 13;
+    if (view.getUint8(at) !== 3) throw new FlameAnalysisError(i18n.t("{p1}: faces must be triangles of existing vertices", { p1: where }));
+    for (let k = 0; k < 3; k++) {
+      const index = view.getInt32(at + 1 + 4 * k, true);
+      if (index < 0 || index >= nv) throw new FlameAnalysisError(i18n.t("{p1}: faces must be triangles of existing vertices", { p1: where }));
+      indices[f * 3 + k] = index;
+    }
+  }
+  return { positions, indices };
+}
+
+/**
+ * A series as an instrument with a first-order response time `tau` would record it:
+ * y' = (x - y) / tau, stepped exactly between samples (the input held over each
+ * step). Starts at the first sample; a missing sample holds the response.
+ */
+export function firstOrderResponse({ t, v }: Series, tau: number): Series {
+  const out = new Float64Array(v.length).fill(NaN);
+  let y = NaN, input = NaN;
+  for (let i = 0; i < t.length; i++) {
+    if (Number.isNaN(y)) {
+      if (Number.isFinite(v[i])) { y = v[i]; input = v[i]; }
+      out[i] = y;
+      continue;
+    }
+    y += (input - y) * (1 - Math.exp(-(t[i] - t[i - 1]) / tau));
+    if (Number.isFinite(v[i])) input = v[i];
+    out[i] = y;
+  }
+  return { t, v: out };
+}
+
+/** The running integral from the series' first sample (value x seconds; kJ from
+ *  kW), by trapezoids; an interval with a missing end adds nothing. */
+export function cumulative({ t, v }: Series): Series {
+  const out = new Float64Array(v.length);
+  let total = 0;
+  for (let i = 0; i < t.length; i++) {
+    if (i > 0 && Number.isFinite(v[i]) && Number.isFinite(v[i - 1])) total += ((v[i] + v[i - 1]) / 2) * (t[i] - t[i - 1]);
+    out[i] = total;
+  }
+  return { t, v: out };
+}
+
+/**
+ * Heskestad's mean flame height for a measured heat release rate: L = 0.235 Q^0.4 -
+ * 1.02 D, with Q the total heat release rate (a convective one is divided by
+ * 1 - radiative fraction first) and D the fire's effective diameter. A pool-fire
+ * correlation: for a jet it is a reference, not a prediction of that flame.
+ */
+export function heskestadSeries({ t, v }: Series, diameterM: number, convective: boolean, radiativeFraction: number,
+  height: (q: number, d: number) => number): Series {
+  const out = new Float64Array(v.length).fill(NaN);
+  for (let i = 0; i < v.length; i++) {
+    if (!Number.isFinite(v[i])) continue;
+    const total = convective ? Math.max(0, v[i]) / Math.max(1e-6, 1 - radiativeFraction) : Math.max(0, v[i]);
+    out[i] = height(total, diameterM);
+  }
+  return { t, v: out };
+}
+
+// -- the hull check: the 3-D flame through a camera ----------------------------------
+
+export interface HullProjection {
+  /** Pixel coordinates (u, v pairs) of the points in front of the camera, in the
+   *  full-resolution picture (pixel centres at integers, as `projectToPixels`). */
+  uv: Float32Array;
+  /** About how many pixels one cube spans in that picture, at the points' distance. */
+  size: number;
+}
+
+/** Project points (x, y, z flat, metres) through a plan camera: `projectToPixels`
+ *  with the camera's basis computed once, for the tens of thousands of cells of an
+ *  instant. */
+export function projectHull(camera: CameraObject, points: ArrayLike<number>, pitch: number): HullProjection {
+  const cols = quatToColumns(quatOf(camera));
+  const [px, py, pz] = positionOf(camera);
+  const right = cols[0], down = [-cols[1][0], -cols[1][1], -cols[1][2]], fwd = [-cols[2][0], -cols[2][1], -cols[2][2]];
+  const [cx, cy] = principalPointOf(camera);
+  const fx = fxOf(camera), fy = fyOf(camera);
+  const uv = new Float32Array((points.length / 3) * 2);
+  let n = 0, depth = 0;
+  for (let i = 0; i < points.length; i += 3) {
+    const dx = points[i] - px, dy = points[i + 1] - py, dz = points[i + 2] - pz;
+    const z = dx * fwd[0] + dy * fwd[1] + dz * fwd[2];
+    if (z <= 0) continue;
+    const x = dx * right[0] + dy * right[1] + dz * right[2];
+    const y = dx * down[0] + dy * down[1] + dz * down[2];
+    uv[n++] = (fx * x) / z + cx;
+    uv[n++] = (fy * y) / z + cy;
+    depth += z;
+  }
+  const count = n / 2;
+  return { uv: uv.subarray(0, n), size: count ? (fx * pitch) / (depth / count) : 0 };
 }

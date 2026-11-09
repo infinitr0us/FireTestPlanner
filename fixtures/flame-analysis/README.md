@@ -1,6 +1,7 @@
 # Synthetic flame analysis test
 
-A flame analysis folder (format 1.0, [CONVENTIONS.md section 13](../../CONVENTIONS.md))
+A flame analysis folder ([CONVENTIONS.md section 13](../../CONVENTIONS.md); E1 is event
+format 1.1, E2 format 1.0, so both are exercised)
 made entirely by `tools/build_synthetic_flame_event.py` for the flame analysis board's
 tests and as a public example. Nothing in it was measured or filmed, and its numbers
 say nothing about any real fire or about any analysis method.
@@ -16,13 +17,16 @@ say nothing about any real fire or about any analysis method.
   shape; `outlines/`: the rings of the pixels whose ray met the flame;
   `hull/`: the visual hull of the event's cameras carved from those masks on a 3 cm
   grid, so E2's two-camera hull is visibly larger than its flame.
+- `E1/mesh/`: a smoothed surface of E1's hull per instant (naive surface nets on 6 cm
+  cells, then Laplacian smoothing), 715 kB in all; E2 has none.
 - `series/`: hull volume, surface area (exposed faces) and flame top per instant; a
-  1 Hz "hood" made from the true flame volume (1800 kW/m3, one second late, lagged,
-  plus noise); "estimates" from the hull volume (700 kW/m3) and area (35 kW/m2)
-  averaged over five instants. These coefficients are invented for the test.
+  1 Hz "hood" made from the true flame volume (1800 kW/m3, one second late, through a
+  first-order lag of 2.3 s, plus noise), whose lag E1 records as its response time;
+  "estimates" from the hull volume (700 kW/m3) and area (35 kW/m2) averaged over five
+  instants. These coefficients are invented for the test.
 
 Regenerate from the repository root with `python tools/build_synthetic_flame_event.py`
 (NumPy and the standard library). The content comes out the same on every platform:
 the text files byte for byte, the PNGs pixel for pixel and the NPZ files array for
-array (compressed bytes vary with the zlib build). `python/tests/test_flame_analysis.py`
-rebuilds event E2 and compares.
+array (compressed bytes vary with the zlib build). The whole folder is 1.8 MB.
+`python/tests/test_flame_analysis.py` rebuilds each event and compares.

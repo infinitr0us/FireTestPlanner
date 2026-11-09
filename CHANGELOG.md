@@ -33,6 +33,18 @@ and a plan written by any release opens in every later one.
   does the work and a small MP4 writer in the app packages it, so nothing is bundled or
   installed; the desktop app saves through a native dialog. **PNG** saves the current
   instant.
+- **Flame event format 1.1** (`schema/flame-event-1.1.0.schema.json`): two optional
+  fields, `files.mesh` (a smoothed surface of the 3-D flame per instant, a small binary
+  PLY in the plan frame, CONVENTIONS section 13) and `responseTime_s` on the measured
+  heat release rate. A 1.0 event still opens; `fireplan.flame_analysis` gains
+  `write_mesh` and `read_mesh`. The synthetic test's E1 is now 1.1, with meshes.
+- **On the flame analysis board:** **Hull check** draws the 3-D flame through each
+  camera over its picture, with how much of the flame outline it covers; **Heat
+  released** shows the running total in MJ; **As the hood sees it** passes the
+  estimates through the hood's response time; **Heskestad height** adds the pool-fire
+  correlation's mean flame height from the hood record, in the plan's Planned style with
+  a note on what it assumed; **Cubes | Surface** draws the 3-D flame as its smoothed
+  surface. The video and PNG export draw the same.
 
 ## [0.9.0] - 2026-11-02
 
