@@ -55,6 +55,7 @@ export class AnalysisScene {
   private dirty = true;
   private lookFrom = new THREE.Vector3(0, -1, 0.4);
   private siteSide = new THREE.Vector3(0, -1, 0.55).normalize();
+  private exportRenderer?: THREE.WebGLRenderer;
 
   constructor(private host: HTMLElement) {
     const theme = visualTheme();
@@ -149,8 +150,10 @@ export class AnalysisScene {
         const values = boxes.map((b) => b[axis][end]).sort((a, b) => a - b);
         return values[Math.min(values.length - 1, Math.max(0, Math.round(q * (values.length - 1))))];
       };
-      const lo = [0, 1, 2].map((a) => pick(a, 0, 0.1));
-      const hi = [0, 1, 2].map((a) => pick(a, 1, 0.9));
+      // Sideways the usual extent; upwards nearly the tallest, since the tallest
+      // instants are the ones worth showing.
+      const lo = [pick(0, 0, 0.1), pick(1, 0, 0.1), pick(2, 0, 0.02)];
+      const hi = [pick(0, 1, 0.9), pick(1, 1, 0.9), pick(2, 1, 0.98)];
       this.flameBounds.set(new THREE.Vector3(...lo), new THREE.Vector3(...hi));
     }
     if (from) {
@@ -175,7 +178,7 @@ export class AnalysisScene {
     if (view === 'flame') box.expandByScalar(0.15);
     const centre = box.getCenter(new THREE.Vector3());
     const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, view === 'flame' ? 0.3 : 0.5);
-    const distance = radius / Math.sin(THREE.MathUtils.degToRad(this.camera.fov / 2)) * (view === 'flame' ? 0.8 : 0.6);
+    const distance = radius / Math.sin(THREE.MathUtils.degToRad(this.camera.fov / 2)) * (view === 'flame' ? 0.95 : 0.6);
     // The whole site from the side the cameras stand on, low enough to see under a hood.
     const direction = view === 'flame' ? this.lookFrom.clone() : this.siteSide.clone();
     this.camera.position.copy(centre).addScaledVector(direction, distance);
@@ -210,6 +213,40 @@ export class AnalysisScene {
     this.labelRenderer.render(this.scene, this.camera);
   }
 
+  /** The view at the board's camera pose, `width` x `height` pixels, for a video or
+   *  PNG frame. A second renderer, so the board's own canvas keeps its size. */
+  renderTo(width: number, height: number): HTMLCanvasElement {
+    if (!this.exportRenderer) {
+      this.exportRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+      this.exportRenderer.setPixelRatio(1);
+    }
+    this.exportRenderer.setSize(width, height, false);
+    this.exportRenderer.render(this.scene, this.exportCamera(width, height));
+    return this.exportRenderer.domElement;
+  }
+
+  /** The visible labels (cameras, the fire) where `renderTo` puts them. */
+  labelsAt(width: number, height: number): { text: string; x: number; y: number }[] {
+    const camera = this.exportCamera(width, height);
+    const out: { text: string; x: number; y: number }[] = [];
+    this.scene.updateMatrixWorld();
+    this.scene.traverseVisible((o) => {
+      if (!(o instanceof CSS2DObject) || !o.element.textContent) return;
+      const p = o.getWorldPosition(new THREE.Vector3()).project(camera);
+      if (p.z > 1 || Math.abs(p.x) > 1 || Math.abs(p.y) > 1) return;
+      out.push({ text: o.element.textContent, x: ((p.x + 1) / 2) * width, y: ((1 - p.y) / 2) * height });
+    });
+    return out;
+  }
+
+  private exportCamera(width: number, height: number): THREE.PerspectiveCamera {
+    const camera = this.camera.clone();
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    return camera;
+  }
+
   private clear(group: THREE.Group): void {
     group.traverse((o) => {
       if (o instanceof CSS2DObject) o.element.remove();
@@ -228,6 +265,7 @@ export class AnalysisScene {
     this.controls.dispose();
     this.clear(this.site);
     this.flame.dispose();
+    this.exportRenderer?.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
     this.labelRenderer.domElement.remove();

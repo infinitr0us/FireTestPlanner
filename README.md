@@ -297,6 +297,11 @@ and height with the key moments and the instants a quality flag marks, and key n
 (peaks, heat released, each estimate against the measurement). Six step buttons, from
 the cameras to the heat release rate, open the folder's own explanation of each step,
 with what to watch for and notes on this event. Playback runs from ×0.25 to ×5.
+**Export video…** writes an MP4 for slides (H.264, which PowerPoint plays): the full
+board, the cameras with the 3-D view, or the 3-D view with the plots, at 1920 × 1080 or
+1280 × 720, over the whole event or between two key moments, in real time or slowed to
+×0.5 or ×0.25. It is encoded by the browser engine itself, so nothing needs installing;
+**PNG** saves the board at the current instant the same way.
 `fixtures/flame-analysis/` is a synthetic test to try it on; the design is in
 [docs/flame-analysis-board-design.md](docs/flame-analysis-board-design.md).
 

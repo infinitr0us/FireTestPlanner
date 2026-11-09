@@ -56,6 +56,7 @@ PLAN_FILTER = ("Fire test plan (*.ftp.json;*.json)", "All files (*.*)")
 FDS_FILTER = ("FDS input (*.fds)", "All files (*.*)")
 HTML_FILTER = ("Web page (*.html)", "All files (*.*)")
 MAX_BODY_BYTES = 256 * 1024 * 1024  # a plan with an embedded viewer can be large
+MAX_MEDIA_BYTES = 1024 * 1024 * 1024  # an exported flame analysis video
 MAX_TEST_DATA_BYTES = 64 * 1024 * 1024
 #: What the native close prompt says. pywebview shows it only while the page has
 #: reported unsaved changes (`Shell.set_dirty` flips `confirm_close`).
@@ -680,6 +681,43 @@ class Shell:
                 except OSError:
                     pass
 
+    def save_media(self, data: bytes, name: Any, kind: Any) -> Optional[Dict[str, str]]:
+        """A video or picture the page made (the flame analysis board's export):
+        checked for what it claims to be, written atomically where the user says."""
+        formats = {"video": (".mp4", "MP4 video (*.mp4)"), "png": (".png", "PNG image (*.png)")}
+        if kind not in formats:
+            return {"error": "Unknown media kind."}
+        extension, file_type = formats[kind]
+        if kind == "video" and data[4:8] != b"ftyp":
+            return {"error": "Not an MP4 file."}
+        if kind == "png" and not data.startswith(bytes([137, 80, 78, 71, 13, 10, 26, 10])):
+            return {"error": "Invalid PNG signature."}
+        suggested = os.path.basename(str(name or "")) or "flame-analysis" + extension
+        path = self._ask_save(suggested, (file_type,))
+        if not path:
+            return None
+        if not path.lower().endswith(extension):
+            path += extension
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=os.path.dirname(os.path.abspath(path)), prefix=".flame-analysis-",
+                                             delete=False) as stream:
+                temporary = stream.name
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+            temporary = None
+            return {"path": path}
+        except OSError as exc:
+            return {"error": str(exc)}
+        finally:
+            if temporary is not None:
+                try:
+                    os.remove(temporary)
+                except OSError:
+                    pass
+
     def take_queued_plan(self) -> Optional[Dict[str, str]]:
         queued, self._queued_plan = self._queued_plan, None
         return self.read_plan(queued) if queued else None
@@ -795,6 +833,9 @@ class Handler(SimpleHTTPRequestHandler):
         route = urlparse(self.path).path
         if not self._authorised():
             self._send_json({"error": "bad token"}, 403)
+            return
+        if route == "/api/save-media":
+            self._save_media()
             return
         try:
             body = self._read_json()
@@ -942,6 +983,34 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
+
+    def _save_media(self) -> None:
+        """The raw body is the file (an exported video can be tens of megabytes, so
+        not base64 in JSON); name and kind come in the query."""
+        query = parse_qs(urlparse(self.path).query)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if length <= 0 or length > MAX_MEDIA_BYTES:
+            self._send_json({"error": "Empty or oversized media (1 GiB at most)."}, 400)
+            return
+        data = bytearray()
+        while len(data) < length:
+            chunk = self.rfile.read(min(1 << 20, length - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
+        if len(data) != length:
+            self._send_json({"error": "Truncated media upload."}, 400)
+            return
+        try:
+            result = self.shell.save_media(bytes(data), (query.get("name") or [""])[0], (query.get("kind") or [""])[0])
+        except Exception as exc:  # noqa: BLE001 - report, never take the server down
+            report("api error on /api/save-media: {!r}".format(exc))
+            self._send_json({"error": str(exc)}, 500)
+            return
+        self._send_json(result)
 
     def _send_analysis_file(self) -> None:
         """A whole file of an opened flame analysis folder. Errors are JSON; success

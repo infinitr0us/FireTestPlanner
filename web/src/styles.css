@@ -1016,6 +1016,17 @@ dialog.report-overlay { padding: 0; }
 
 .flame-analysis__transport { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 16px; border-top: 1px solid var(--border); font-size: 12px; }
 .flame-analysis__moments { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+.flame-analysis__export { display: inline-flex; gap: 4px; padding-left: 8px; border-left: 1px solid var(--border); }
+.flame-analysis__moments + .flame-analysis__export { margin-left: 0; }
+.flame-analysis__transport > .flame-analysis__export:nth-child(9) { margin-left: auto; }
+.flame-analysis__zoom.flame-analysis__export-panel { inset: 80px auto auto 50%; width: min(640px, calc(100% - 32px)); max-height: calc(100% - 96px); overflow: auto; transform: translateX(-50%); }
+.flame-analysis__export-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px 14px; margin: 6px 0; }
+.flame-analysis__export-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); }
+.flame-analysis__export-form select { width: 100%; }
+.flame-analysis__export-form select[aria-invalid=true] { border-color: var(--bad); }
+.flame-analysis__export-actions { display: flex; align-items: center; gap: 12px; }
+.flame-analysis__progress { flex: 1; accent-color: var(--accent); }
+.flame-analysis__export-panel .flame-analysis__status { padding: 4px 0; }
 .flame-analysis__zoom { position: absolute; inset: 60px 16px 16px; z-index: 6; display: flex; flex-direction: column; gap: 6px; padding: 10px; background: var(--bg-overlay); border: 1px solid var(--accent); border-radius: var(--radius); }
 .flame-analysis__zoom-picture { flex: 1; min-height: 0; width: 100%; height: 100%; object-fit: contain; }
 .flame-analysis__zoom .flame-analysis__readout { margin-left: auto; }

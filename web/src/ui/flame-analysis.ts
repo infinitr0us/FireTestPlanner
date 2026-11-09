@@ -17,7 +17,7 @@ import {
 import { cameras as planCameras, displayName } from '../core/plan';
 import type { CameraObject, LengthUnit, PlanDocument } from '../core/types';
 import { parseAndValidatePlan } from '../core/validate';
-import { openShellAnalysis, shell } from '../io/files';
+import { openShellAnalysis, saveMedia, shell } from '../io/files';
 import {
   pickedAnalysisSource, readText, shellAnalysisSource, type AnalysisSource,
 } from '../io/flame-analysis-source';
@@ -25,7 +25,10 @@ import { AnalysisScene, type SceneView } from '../scene/flame-analysis';
 import { ANALYSIS_DEFAULT_SPEED, ANALYSIS_SPEEDS, Playhead } from '../state/playhead';
 import { h } from './dom';
 import { CameraTiles, drawOutline, placement, type PictureMode } from './flame-analysis-cameras';
-import { AnalysisPlots, type Band, type PlotLine, type PlotSpec } from './flame-analysis-plots';
+import { AnalysisPlots, type Band, type Moment, type PlotLine, type PlotSpec } from './flame-analysis-plots';
+import {
+  Composer, encodePng, encodeVideo, VIDEO_FPS, videoFrames, type VideoLayout, type VideoOptions,
+} from './flame-analysis-video';
 import * as i18n from './i18n';
 import { fmt } from './plot-svg';
 import { handleTransportKey, setTransportPlaying, transportButton } from './transport';
@@ -59,6 +62,8 @@ interface LoadedEvent {
   numbers: KeyNumbers;
   tiles: CameraTiles;
   plots: AnalysisPlots;
+  /** What the plots draw, for the video and PNG composition. */
+  plotData: { specs: PlotSpec[]; bands: Band[]; moments: Moment[]; window: [number, number] };
 }
 
 export interface FlameAnalysisOptions {
@@ -98,6 +103,10 @@ export class FlameAnalysisWorkspace {
     ANALYSIS_SPEEDS.map((s) => h('option', { value: String(s), selected: s === ANALYSIS_DEFAULT_SPEED }, [`×${i18n.numberText(s)}`])));
   private loop = h('input', { type: 'checkbox' });
   private zoom?: HTMLElement;
+  private exportPanel?: HTMLElement;
+  private exportAbort?: () => void;
+  /** The last video the export panel made (for hosts and tests). */
+  lastVideo?: Blob;
   private focusBefore?: HTMLElement;
   private outlinesShown = false;
 
@@ -113,7 +122,8 @@ export class FlameAnalysisWorkspace {
     );
     this.dialog.addEventListener('cancel', (e) => {
       e.preventDefault();
-      if (this.zoom) this.closeZoom();
+      if (this.exportPanel) this.closeExport();
+      else if (this.zoom) this.closeZoom();
       else if (this.drawerStep) this.closeDrawer();
       else this.close();
     });
@@ -122,12 +132,14 @@ export class FlameAnalysisWorkspace {
       // Escape closes the innermost layer here, on the key itself: once a dialog's
       // cancel has been prevented, Chromium may close the whole dialog on the next
       // Escape without asking, taking the board down with the full-size picture.
-      if (e.key === 'Escape' && (this.zoom || this.drawerStep)) {
+      if (e.key === 'Escape' && (this.exportPanel || this.zoom || this.drawerStep)) {
         e.preventDefault();
-        if (this.zoom) this.closeZoom(); else this.closeDrawer();
+        if (this.exportPanel) this.closeExport();
+        else if (this.zoom) this.closeZoom();
+        else this.closeDrawer();
         return;
       }
-      if (!this.loaded || this.zoom) return;
+      if (!this.loaded || this.zoom || this.exportPanel) return;
       handleTransportKey(e, {
         play: () => this.playhead.toggle(),
         previous: () => this.seekIndex(this.index - 1),
@@ -163,6 +175,7 @@ export class FlameAnalysisWorkspace {
 
   close(): void {
     if (!this.isOpen) return;
+    this.closeExport();
     this.playhead.pause();
     cancelAnimationFrame(this.raf);
     this.dialog.close();
@@ -342,8 +355,8 @@ export class FlameAnalysisWorkspace {
     const numbers = keyNumbers(event, series);
     const tiles = new CameraTiles(source, event, folder,
       event.cameras.map((id) => ({ id, label: this.cameraLabel(id) })), outlines, (cam) => { void this.openZoom(cam); });
-    const plots = this.makePlots(event, series);
-    this.loaded = { event, folder, series, outlines, sequence, numbers, tiles, plots };
+    const { plots, plotData } = this.makePlots(event, series);
+    this.loaded = { event, folder, series, outlines, sequence, numbers, tiles, plots, plotData };
 
     const sceneHost = h('div', { class: 'flame-analysis__scene-host' });
     const viewButtons = (['site', 'flame'] as SceneView[]).map((view) => h('button', {
@@ -435,7 +448,7 @@ export class FlameAnalysisWorkspace {
       : { volume: [1000, 'L'], area: [1, 'm²'], height: [1, 'm'] };
   }
 
-  private makePlots(event: EventManifest, series: Map<string, Series>): AnalysisPlots {
+  private makePlots(event: EventManifest, series: Map<string, Series>): { plots: AnalysisPlots; plotData: LoadedEvent['plotData'] } {
     const units = this.units();
     const line = (id: string, role: PlotLine['role'], nth: number, extra: Partial<PlotLine> = {}): PlotLine => {
       const s = event.series.find((x) => x.id === id)!;
@@ -490,7 +503,11 @@ export class FlameAnalysisWorkspace {
     toBands(event.quality?.noHull, 'noHull');
     toBands(Object.values(event.quality?.outsideFrame ?? {}).flat(), 'outsideFrame');
     const moments = (event.keyMoments ?? []).map((m) => ({ t: m.t_s, label: localText(m.label) }));
-    return new AnalysisPlots(plots, [times[0], times[times.length - 1]], event.onset_s, bands, moments, (t) => this.seekTime(t));
+    const window: [number, number] = [times[0], times[times.length - 1]];
+    return {
+      plots: new AnalysisPlots(plots, window, event.onset_s, bands, moments, (t) => this.seekTime(t)),
+      plotData: { specs: plots, bands, moments, window },
+    };
   }
 
   private numbersRow(numbers: KeyNumbers, event: EventManifest): HTMLElement {
@@ -549,7 +566,174 @@ export class FlameAnalysisWorkspace {
       h('label', { class: 'playback-bar__loop' }, [this.loop, i18n.t("Loop")]),
       moments.length ? h('div', { class: 'flame-analysis__moments', role: 'group', 'aria-label': i18n.t("Key moments") },
         moments.map((m) => h('button', { type: 'button', class: 'btn btn--small', onclick: () => this.seekTime(m.t_s) }, [localText(m.label)]))) : null,
+      h('div', { class: 'flame-analysis__export', role: 'group', 'aria-label': i18n.t("Export") }, [
+        h('button', { type: 'button', class: 'btn btn--small', onclick: () => this.openExport(),
+          title: i18n.t("Make an MP4 video of the board for slides") }, [i18n.t("Export video…")]),
+        h('button', { type: 'button', class: 'btn btn--small', onclick: () => { void this.savePng(); },
+          title: i18n.t("Save the board at this instant as a PNG picture") }, [i18n.t("PNG")]),
+      ]),
     ]);
+  }
+
+  // -- export ------------------------------------------------------------------------
+
+  /** The composition a video frame or PNG is drawn from, as the board shows it now. */
+  composer(layout: VideoLayout, width: 1920 | 1280): Composer | null {
+    const loaded = this.loaded, analysis = this.analysis;
+    if (!loaded || !analysis) return null;
+    const { event, tiles } = loaded;
+    return new Composer({
+      title: localText(analysis.title),
+      eventLabel: localText(event.label),
+      onset: event.onset_s,
+      timeBase: analysis.timeBase.label,
+      times: event.instants.t_s,
+      cameras: event.cameras.map((id) => ({ id, label: this.cameraLabel(id), image: event.images[id] })),
+      pictureMode: tiles.pictureMode,
+      outlines: tiles.outlinesOn ? loaded.outlines : null,
+      outsideFrame: event.quality?.outsideFrame ?? {},
+      picture: (camera, index) => tiles.picture(camera, index),
+      scene: this.scene ?? null,
+      plots: loaded.plotData,
+    }, layout, width);
+  }
+
+  /** Encode a video of the board; public so tests and hosts can call it directly. */
+  async exportVideo(options: VideoOptions, progress: (done: number, total: number) => void = () => {},
+    signal?: AbortSignal): Promise<Blob> {
+    const composer = this.composer(options.layout, options.width);
+    if (!composer || !this.loaded) throw new Error(i18n.t("No event is open."));
+    this.playhead.pause();
+    try {
+      const bytes = await encodeVideo(composer, this.loaded.event.instants.t_s, options, progress, signal);
+      return new Blob([bytes as BlobPart], { type: 'video/mp4' });
+    } finally {
+      this.scene?.setFrame(this.loaded?.sequence ? this.index : -1);
+    }
+  }
+
+  /** The board at the playback instant as a PNG, in the full-board layout. */
+  async exportPng(width: 1920 | 1280 = 1920, layout: VideoLayout = 'board'): Promise<Blob> {
+    const composer = this.composer(layout, width);
+    if (!composer || this.index < 0) throw new Error(i18n.t("No event is open."));
+    return encodePng(composer, this.index);
+  }
+
+  private async savePng(): Promise<void> {
+    const event = this.loaded?.event;
+    if (!event) return;
+    const relative = event.instants.t_s[Math.max(this.index, 0)] - event.onset_s;
+    const name = `${event.id}_${relative >= 0 ? '+' : '-'}${Math.abs(relative).toFixed(1)}s.png`;
+    try {
+      const saved = await saveMedia(await this.exportPng(), name, 'png');
+      this.setStatus(saved ? i18n.t("Saved {p1}.", { p1: saved }) : '');
+    } catch (error) {
+      this.setStatus((error as Error).message, 'error');
+    }
+  }
+
+  private openExport(): void {
+    const loaded = this.loaded;
+    if (!loaded || this.exportPanel) return;
+    this.playhead.pause();
+    const { event } = loaded;
+    const times = event.instants.t_s;
+    const select = (label: string, options: [string, string][], value: string): HTMLSelectElement => {
+      const el = h('select', { class: 'field__input', 'aria-label': label },
+        options.map(([v, text]) => h('option', { value: v, selected: v === value }, [text])));
+      return el;
+    };
+    const hasPlots = loaded.plotData.specs.length > 0;
+    const layout = select(i18n.t("Layout"), [
+      ['board', i18n.t("Full board")], ['cameras', i18n.t("Cameras and 3-D")], ...(hasPlots ? [['plots', i18n.t("3-D and plots")] as [string, string]] : []),
+    ], 'board');
+    const size = select(i18n.t("Size"), [['1920', '1920 × 1080'], ['1280', '1280 × 720']], '1920');
+    const moments = (event.keyMoments ?? []).filter((m) => m.t_s > times[0] && m.t_s < times[times.length - 1]);
+    const at = (t: number): string => `${t - event.onset_s > 0 ? '+' : ''}${i18n.formatNumber(t - event.onset_s, 1)} s`;
+    const startPoints: [string, string][] = [
+      [String(times[0]), i18n.t("Start of the event ({p1})", { p1: at(times[0]) })],
+      ...(event.onset_s > times[0] && event.onset_s < times[times.length - 1] ? [[String(event.onset_s), i18n.t("Onset ({p1})", { p1: at(event.onset_s) })] as [string, string]] : []),
+      ...moments.map((m) => [String(m.t_s), `${localText(m.label)} (${at(m.t_s)})`] as [string, string]),
+      [String(times[Math.max(this.index, 0)]), i18n.t("Playback time ({p1})", { p1: at(times[Math.max(this.index, 0)]) })],
+    ];
+    const from = select(i18n.t("From"), startPoints, String(times[0]));
+    const to = select(i18n.t("To"), [
+      ...moments.map((m) => [String(m.t_s), `${localText(m.label)} (${at(m.t_s)})`] as [string, string]),
+      [String(times[times.length - 1]), i18n.t("End of the event ({p1})", { p1: at(times[times.length - 1]) })],
+    ], String(times[times.length - 1]));
+    const speed = select(i18n.t("Speed"), [['1', i18n.t("Real time (×1)")], ['0.5', i18n.t("Slow (×0.5)")], ['0.25', i18n.t("Slower (×0.25)")]], '1');
+    const summary = h('p', { class: 'flame-analysis__note' });
+    const status = h('p', { class: 'flame-analysis__status', role: 'status' });
+    const bar = h('progress', { class: 'flame-analysis__progress', max: 1, value: 0, hidden: true, 'aria-label': i18n.t("Export progress") });
+    const options = (): VideoOptions => ({
+      layout: layout.value as VideoLayout, width: Number(size.value) as 1920 | 1280,
+      from: Number(from.value), to: Number(to.value), speed: Number(speed.value),
+    });
+    const go = h('button', { type: 'button', class: 'btn btn--primary' }, [i18n.t("Export")]);
+    const close = h('button', { type: 'button', class: 'btn' }, [i18n.t("Close")]);
+    const update = (): void => {
+      const o = options();
+      const valid = o.to > o.from;
+      go.disabled = !valid;
+      to.setAttribute('aria-invalid', String(!valid));
+      const frames = valid ? videoFrames(times, o).length : 0;
+      summary.textContent = valid
+        ? i18n.t("{p1} s of video, {p2} frames at {p3} per second, H.264 MP4.", { p1: i18n.formatNumber(frames / VIDEO_FPS, 1), p2: frames, p3: VIDEO_FPS })
+        : i18n.t("The end must come after the start.");
+    };
+    for (const el of [layout, size, from, to, speed]) el.onchange = update;
+    let controller: AbortController | null = null;
+    go.onclick = async () => {
+      const o = options();
+      controller = new AbortController();
+      go.disabled = true;
+      close.textContent = i18n.t("Cancel");
+      bar.hidden = false;
+      status.classList.remove('flame-analysis__status--error');
+      const t0 = performance.now();
+      try {
+        const blob = await this.exportVideo(o, (done, total) => {
+          bar.value = done / total;
+          status.textContent = i18n.t("Encoding frame {p1} of {p2}…", { p1: done, p2: total });
+        }, controller.signal);
+        status.textContent = i18n.t("Encoded in {p1} s; choose where to save it.", { p1: i18n.formatNumber((performance.now() - t0) / 1000, 0) });
+        this.lastVideo = blob;
+        const saved = await saveMedia(blob, `${event.id}_${o.layout}_${o.width}.mp4`, 'video');
+        status.textContent = saved ? i18n.t("Saved {p1}.", { p1: saved }) : i18n.t("Not saved.");
+      } catch (error) {
+        const aborted = (error as Error).name === 'AbortError';
+        status.textContent = aborted ? i18n.t("The export was cancelled.") : (error as Error).message;
+        status.classList.toggle('flame-analysis__status--error', !aborted);
+      } finally {
+        controller = null;
+        go.disabled = false;
+        close.textContent = i18n.t("Close");
+        bar.hidden = true;
+      }
+    };
+    close.onclick = () => { if (controller) controller.abort(); else this.closeExport(); };
+    this.exportAbort = () => controller?.abort();
+    this.exportPanel = h('div', { class: 'flame-analysis__zoom flame-analysis__export-panel', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'flame-analysis-export-title' }, [
+      h('div', { class: 'flame-analysis__drawer-bar' }, [h('h2', { id: 'flame-analysis-export-title' }, [i18n.t("Export video")]), close]),
+      h('p', { class: 'flame-analysis__note' }, [i18n.t("A fixed 16:9 picture of the board for slides: the pictures as the board shows them (close-up or whole, outline on or off), the 3-D view from its current angle, and the plots. Each instant is held, never interpolated.")]),
+      h('div', { class: 'flame-analysis__export-form' }, [
+        h('label', {}, [i18n.t("Layout"), layout]), h('label', {}, [i18n.t("Size"), size]),
+        h('label', {}, [i18n.t("From"), from]), h('label', {}, [i18n.t("To"), to]), h('label', {}, [i18n.t("Speed"), speed]),
+      ]),
+      summary, h('div', { class: 'flame-analysis__export-actions' }, [go, bar]), status,
+    ]);
+    this.dialog.append(this.exportPanel);
+    update();
+    layout.focus();
+  }
+
+  private closeExport(): void {
+    if (!this.exportPanel) return;
+    this.exportAbort?.();
+    this.exportPanel.remove();
+    this.exportPanel = undefined;
+    this.exportAbort = undefined;
+    this.body.querySelector<HTMLElement>('.flame-analysis__export button')?.focus();
   }
 
   // -- the clock -------------------------------------------------------------------

@@ -87,5 +87,27 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   check('the outline choice carries over', ($('.flame-analysis__outline-toggle') as HTMLButtonElement).getAttribute('aria-pressed') === 'true');
   check('E2 times are its own', /\(t_clock 16\d/.test(text('.flame-analysis__readout')), text('.flame-analysis__readout'));
   check('the 3-D view draws cubes', (workspace as unknown as { scene: { cubeCount: number } }).scene.cubeCount > 0);
+
+  // Export: a PNG of the composition, and a short H.264 MP4 Chromium itself plays.
+  const png = await workspace.exportPng(1280);
+  const picture = await createImageBitmap(png);
+  check('PNG export is a 1280 x 720 picture', png.type === 'image/png' && picture.width === 1280 && picture.height === 720,
+    [png.type, picture.width, picture.height]);
+  const onset = 160;
+  const video = await workspace.exportVideo({ layout: 'board', width: 1280, from: onset, to: onset + 1, speed: 0.5 });
+  const player = document.createElement('video');
+  player.muted = true;
+  player.src = URL.createObjectURL(video);
+  await new Promise<void>((resolve, reject) => {
+    player.onloadeddata = () => resolve();
+    player.onerror = () => reject(new Error('the video does not load: ' + player.error?.message));
+  });
+  check('video export: an MP4 Chromium decodes, 1280 x 720, 2 s for 1 s at x0.5',
+    video.type === 'video/mp4' && player.videoWidth === 1280 && player.videoHeight === 720 && Math.abs(player.duration - 61 / 30) < 0.05,
+    [video.type, player.videoWidth, player.videoHeight, player.duration]);
+  player.currentTime = 1.5;
+  await new Promise<void>((resolve) => { player.onseeked = () => resolve(); });
+  check('video export: seeking into it decodes a frame', player.readyState >= 2);
+  URL.revokeObjectURL(player.src);
   return { passed: checks.every((c) => c.passed), checks };
 }

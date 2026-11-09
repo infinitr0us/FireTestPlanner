@@ -454,6 +454,7 @@ Token reuse alone is not an accessibility or scientific-validation claim.
 | Flame analysis speeds | ×0.25 to ×5 (`ANALYSIS_SPEEDS`), default ×1, Loop off, instead of `SPEEDS` | Camera pictures come ten a second over about a minute: ×10 and up skip most of them, slow motion shows the flicker | Keep; same transport, keys and `×` notation |
 | Flame analysis 3-D labels | Only the cameras (by the folder's short names) and the fire are labelled | A label on every plate and pole of a real site hides the flame the view is for | Keep |
 | Flame analysis plots | Drawn in screen pixels at their laid-out size and redrawn on resize, not a fixed `viewBox` scaled to fit | Each plot gets a share of the column whose shape changes with the window; a fixed aspect left the text a few pixels high | Keep |
+| Flame analysis video and PNG | A fixed 16:9 composition (1920 x 1080 or 1280 x 720) drawn on canvas for slides, with larger type (30 px title, 14 to 18 px labels at 1080p), not a capture of the window; plots redrawn on canvas from the same data, tokens, dashes and bands | A slide needs one layout at one size whatever the window was, and text legible from the back of a room | Keep |
 
 The editor's scene materials and furniture remain in `scene/builders.ts` and
 `scene/viewport.ts`; object defaults and camera modality colors are in

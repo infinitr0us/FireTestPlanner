@@ -167,11 +167,12 @@ export class CameraTiles {
     tile.drawn = index;
   }
 
-  /** Bitmaps a video frame or a PNG is composed from: the current instant's. */
-  async current(camera: string): Promise<ImageBitmap | null> {
-    if (this.index < 0) return null;
-    return this.bitmap(this.picturePath(camera, this.index)).catch(() => null);
+  /** A camera's picture at any instant, as the tiles show it (close-up or whole),
+   *  from the same cache: what a video frame or a PNG is composed from. */
+  picture(camera: string, index: number): Promise<ImageBitmap> {
+    return this.bitmap(this.picturePath(camera, index));
   }
+  get outlinesOn(): boolean { return this.outlinesShown; }
 
   dispose(): void {
     this.disposed = true;

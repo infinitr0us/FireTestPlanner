@@ -248,6 +248,30 @@ try {
   check('board: a tile opens its picture full size and Escape closes it, not the board', await evaluate(
     '!document.querySelector(".flame-analysis__zoom") && document.querySelector("dialog.flame-analysis").open'));
   await screenshot('flame-analysis');
+  // Export video through its panel with real clicks; the browser download goes to
+  // the run's temporary profile, not the user's Downloads folder.
+  await send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: profile }, null);
+  await click('[...document.querySelectorAll(".flame-analysis__export button")].find(b=>b.textContent==="Export video…")');
+  await waitFor(() => evaluate('!!document.querySelector(".flame-analysis__export-panel")'), 'export panel');
+  check('board: the export panel takes focus and says what it will make', await evaluate(
+    'document.activeElement === document.querySelector(".flame-analysis__export-panel select") && document.querySelector(".flame-analysis__export-panel").textContent.includes("frames at 30 per second, H.264 MP4")'));
+  await evaluate(`(() => {
+    const [layout, size, from, to] = document.querySelectorAll('.flame-analysis__export-panel select');
+    from.value = from.options[from.options.length - 2].value; to.value = to.options[0].value; from.dispatchEvent(new Event('change'));
+    return true; })()`);
+  check('board: an empty range turns Export off and says why', await evaluate(
+    'document.querySelector(".flame-analysis__export-panel .btn--primary").disabled && document.querySelector(".flame-analysis__export-panel").textContent.includes("The end must come after the start.")'));
+  await evaluate(`(() => {
+    const [layout, size, from, to] = document.querySelectorAll('.flame-analysis__export-panel select');
+    size.value = '1280'; from.value = from.options[1].value; to.value = to.options[1].value;
+    for (const s of [size, from, to]) s.dispatchEvent(new Event('change'));
+    window.workspace.lastVideo = undefined; return true; })()`);
+  await click('document.querySelector(".flame-analysis__export-panel .btn--primary")');
+  await waitFor(() => evaluate('/^Saved .*\\.mp4\\.$/.test(document.querySelector(".flame-analysis__export-panel [role=status]").textContent)'), 'video export through the panel', Math.max(TIMEOUT_MS, 120000));
+  check('board: Export makes and saves an MP4 through the panel', await evaluate('window.workspace.lastVideo?.type === "video/mp4" && window.workspace.lastVideo.size > 10000'));
+  await key('Escape', 'Escape', 27);
+  check('board: Escape closes the export panel, not the board', await evaluate(
+    '!document.querySelector(".flame-analysis__export-panel") && !!document.querySelector("dialog.flame-analysis[open]")'));
   await key('Escape', 'Escape', 27);
   check('board: Escape then leaves the board', await evaluate('!document.querySelector("dialog.flame-analysis[open]")'));
   phase('flame analysis board in French at 1280 x 720');

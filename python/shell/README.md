@@ -77,6 +77,7 @@ and drive the user's file dialogs.
 | `/api/flame-analysis/open` | POST | Native dialog for a flame analysis folder's `analysis.json`; the folder becomes a read-only session, returns `{token, name}` |
 | `/api/flame-analysis/file` | GET | One whole file of that folder by its `/` path, confined to the folder (no `..`, links out or non-files; 64 MiB cap) |
 | `/api/flame-analysis/close` | POST | Ends the session `token` names |
+| `/api/save-media` | POST | The raw body is an exported MP4 or PNG (`kind` and suggested `name` in the query); checked for its signature, written atomically where a native Save dialog says; 1 GiB cap |
 | `/api/presets` | GET, POST | The custom camera preset library in the settings file: read, or replace |
 | `/api/results/open` | POST | Native dialog for an FDS `.smv`; opens a results session over its folder |
 | `/api/results/read` | GET | A byte range of one output the session's `.smv` names (including `RESULTS_DIR` subfolders) |

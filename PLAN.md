@@ -660,7 +660,10 @@ The design, decisions and phases are in
 - **Phase 1 (done 2026-11-08):** the board: event selector, camera tiles, 3-D site and
   flame, four plots with key moments and quality bands, key numbers, step texts from
   the folder, playback ×0.25 to ×5, EN and FR, the shell's `/api/flame-analysis/*`.
-- **Phase 2:** video and PNG export, after a WebView2 encoder spike. **Phase 3:** hull
-  check, the hood's response time, Heskestad height, smooth meshes.
+- **Phase 2 (done 2026-11-08):** video and PNG export. The spike found H.264 encoding
+  (High profile, 1080p) in WebView2 155, Chrome and Edge alike, with byte-identical
+  output, so the engine's own software encoder does it on any laptop; `core/mp4.ts`
+  writes the file. **Phase 3:** hull check, the hood's response time, Heskestad height,
+  smooth meshes.
 
 No plan format change.

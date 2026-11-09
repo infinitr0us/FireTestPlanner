@@ -976,3 +976,44 @@ def test_flame_analysis_refuses_a_link_out_of_the_folder(tmp_path):
     token = analyses.open(str(folder / "analysis.json"))["token"]
     with pytest.raises(ValueError, match="leads out"):
         analyses.read(token, "E1/escape.txt")
+
+
+def _post_bytes(base, route, data, token="test-token"):
+    req = urllib.request.Request(base + route, data=data, method="POST")
+    if token:
+        req.add_header("X-Shell-Token", token)
+    req.add_header("Content-Type", "application/octet-stream")
+    with urllib.request.urlopen(req, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def test_save_media_writes_the_raw_body_where_the_dialog_says(server, tmp_path, monkeypatch):
+    from urllib.parse import urlencode
+    shell, _, base, _ = server
+    asked = []
+    target = tmp_path / "out" / "E1-board"
+    target.parent.mkdir()
+    monkeypatch.setattr(shell, "_ask_save", lambda name, types: asked.append((name, types)) or str(target))
+    mp4 = b"\x00\x00\x00\x18ftypisom" + bytes(range(256)) * 4
+    route = "/api/save-media?" + urlencode({"name": "C:/elsewhere/E1-board.mp4", "kind": "video"})
+    with pytest.raises(urllib.error.HTTPError) as error:
+        _post_bytes(base, route, mp4, token=None)
+    assert error.value.code == 403
+    assert _post_bytes(base, route, mp4) == {"path": str(target) + ".mp4"}
+    assert (tmp_path / "out" / "E1-board.mp4").read_bytes() == mp4
+    assert asked == [("E1-board.mp4", ("MP4 video (*.mp4)",))]
+    assert not [p for p in (tmp_path / "out").iterdir() if p.name.startswith(".flame-analysis-")]
+    monkeypatch.setattr(shell, "_ask_save", lambda name, types: None)
+    assert _post_bytes(base, route, mp4) is None  # cancelled
+
+
+def test_save_media_checks_what_it_is_given(server, monkeypatch):
+    from urllib.parse import urlencode
+    shell, _, base, _ = server
+    monkeypatch.setattr(shell, "_ask_save", lambda name, types: pytest.fail("no dialog for a refused file"))
+    assert "Not an MP4" in _post_bytes(base, "/api/save-media?" + urlencode({"name": "a.mp4", "kind": "video"}), b"not a video")["error"]
+    assert "PNG" in _post_bytes(base, "/api/save-media?" + urlencode({"name": "a.png", "kind": "png"}), b"GIF89a....")["error"]
+    assert "Unknown" in _post_bytes(base, "/api/save-media?" + urlencode({"name": "a", "kind": "exe"}), b"MZ")["error"]
+    with pytest.raises(urllib.error.HTTPError) as error:
+        _post_bytes(base, "/api/save-media?kind=png", b"")
+    assert error.value.code == 400

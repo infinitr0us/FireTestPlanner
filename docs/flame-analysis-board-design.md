@@ -3,8 +3,9 @@
 Status: **phases 0 and 1 done** (2026-11-08): format 1.0 with its schemas and
 `fireplan.flame_analysis` (CONVENTIONS section 13), the synthetic test, the first
 delivery converted, and the board itself (`ui/flame-analysis*.ts`,
-`scene/flame-analysis.ts`, the shell's `/api/flame-analysis/*` routes). Video export
-(phase 2) is next.
+`scene/flame-analysis.ts`, the shell's `/api/flame-analysis/*` routes). Phase 2, video
+and PNG export, is done too (`ui/flame-analysis-video.ts`, `core/mp4.ts`,
+`/api/save-media`); phase 3 is next.
 
 A read-only workspace that walks a fire safety engineer through one processed fire
 event recorded by two to four ordinary video cameras: the synchronised camera frames,
@@ -239,6 +240,19 @@ it. The browser regressions run on the synthetic test (`browser-tests/flame-anal
 and two phases of `run.mjs`, one in French at 1280 x 720, plus two axe scans); the
 first delivery was checked by eye in a browser tab, with every instant's 3-D flame
 read in under two seconds from a local disk.
+
+**Phase 2 as built.** The spike ran the same probe in WebView2 155 (the desktop app's
+runtime), Chrome and Edge: each encodes 1920 x 1080 H.264 High profile, 30 frames in
+about 250 ms, with byte-identical output, so the encoder is the engine's own software
+one and needs nothing on the laptop. The export draws a fixed 16:9 composition on a
+canvas (header with the time from the onset and the key moment just passed; the
+cameras as the board shows them; the 3-D view rendered by a second renderer at the
+output size from the board's camera; the plots redrawn on canvas), hands each frame to
+`VideoEncoder`, and `core/mp4.ts` writes the MP4 with its index first. On the first
+delivery a 9.5 s 1080p clip took about 20 s to make; the desktop app saves through a
+native dialog (`/api/save-media`, the raw bytes rather than base64), a browser downloads.
+The planned PNG-sequence fallback was not needed and is not built: an engine without
+H.264 encoding says so.
 
 ## 10. Conventions this will touch
 

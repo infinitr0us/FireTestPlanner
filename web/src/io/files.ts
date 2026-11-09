@@ -734,6 +734,26 @@ export function closeShellResults(token: string): void {
 }
 
 
+/**
+ * Save a video or picture the page made: through a native Save dialog in the desktop
+ * app (the bytes go to the shell as they are, not as base64 in JSON: a video can be
+ * tens of megabytes), or as a browser download. The path or name it went to, or null
+ * when the dialog was cancelled.
+ */
+export async function saveMedia(blob: Blob, name: string, kind: 'video' | 'png'): Promise<string | null> {
+  if (!bridge) {
+    download(blob, name);
+    return name;
+  }
+  const response = await fetch(`/api/save-media?${new URLSearchParams({ name, kind })}`, {
+    method: 'POST', body: blob,
+    headers: { 'X-Shell-Token': shellToken ?? '', 'Content-Type': 'application/octet-stream' },
+  });
+  const result = await response.json().catch(() => null) as { path?: string; error?: string } | null;
+  if (!response.ok || result?.error) throw new Error(result?.error ?? i18n.t("Could not save {p1}: HTTP {p2}.", { p1: name, p2: response.status }));
+  return result?.path ?? null;
+}
+
 /** Desktop snapshots use a native Save dialog, independent of WebView downloads. */
 export async function saveResultPng(data: string): Promise<string | null> {
   return unwrapSave(await call<SaveResult>('/api/results/png', { data }))?.path ?? null;

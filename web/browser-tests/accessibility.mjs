@@ -238,5 +238,9 @@ export async function accessibility({ web, origin, send, evaluate, click, key, o
   await waitFor(() => evaluate(`document.querySelectorAll('.flame-analysis__picture').length===3 && [...document.querySelectorAll('.flame-analysis__picture')].every(c=>c.width>1)`), 'flame analysis loaded', 60000);
   await click(`document.querySelector('.flame-analysis__step[data-step=hrr]')`);
   await scan('Flame analysis loaded');
+  await key('Escape', 'Escape', 27);
+  await click(`[...document.querySelectorAll('.flame-analysis__export button')].find(b=>b.textContent==='Export video…')`);
+  await waitFor(() => evaluate(`!!document.querySelector('.flame-analysis__export-panel')`), 'flame analysis export panel');
+  await scan('Flame analysis export');
   return { scans, toolbar, checks, exclusions: [], notes: ['Share uses a file download and native alert messages, with no HTML dialog.'] };
 }

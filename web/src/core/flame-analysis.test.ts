@@ -97,6 +97,21 @@ describe('manifest validation', () => {
   });
 });
 
+describe('the frames of an exported video', () => {
+  it('holds each instant for as many frames as the speed gives it', async () => {
+    const { videoFrames } = await import('../ui/flame-analysis-video');
+    const times = [0, 0.1, 0.2, 0.3, 0.4, 0.5];
+    // 0.5 s at x1 is 15 frames plus the last; each 0.1 s instant shows for 3 frames.
+    expect(videoFrames(times, { from: 0, to: 0.5, speed: 1 })).toEqual([0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5]);
+    // At x0.25 the same half second lasts 2 s: 12 frames per instant.
+    const slow = videoFrames(times, { from: 0, to: 0.5, speed: 0.25 });
+    expect(slow).toHaveLength(61);
+    expect(slow.filter((i) => i === 2)).toHaveLength(12);
+    // A start between instants shows the one before it; a range of zero is one frame.
+    expect(videoFrames(times, { from: 0.15, to: 0.15, speed: 1 })).toEqual([1]);
+  });
+});
+
 describe('series, outlines and numbers', () => {
   it('reads series CSVs as fireplan does', () => {
     const s = parseSeriesCsv('\ufefft,v\n0,1\n1,\n2,3.5\n', 't', 'v');

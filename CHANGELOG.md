@@ -26,6 +26,13 @@ and a plan written by any release opens in every later one.
   buttons that open the folder's own explanation of each step. One clock, the shared
   transport, speeds ×0.25 to ×5, English and French. The desktop app reads the folder
   through three new bridge routes confined to it.
+- **Video and PNG export of the flame analysis board.** **Export video…** makes an H.264
+  MP4 for slides: a fixed 16:9 composition (full board, cameras and 3-D, or 3-D and
+  plots) at 1920 × 1080 or 1280 × 720, over the event or between two key moments, at
+  ×1, ×0.5 or ×0.25, each instant held. The browser engine's own encoder (WebCodecs)
+  does the work and a small MP4 writer in the app packages it, so nothing is bundled or
+  installed; the desktop app saves through a native dialog. **PNG** saves the current
+  instant.
 
 ## [0.9.0] - 2026-11-02
 
