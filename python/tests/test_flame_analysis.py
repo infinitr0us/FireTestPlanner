@@ -2,7 +2,9 @@
 import importlib.util
 import json
 import shutil
+import struct
 import zipfile
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -55,6 +57,11 @@ def test_one_event_regenerates_byte_for_byte(tmp_path):
     assert [p.relative_to(tmp_path) for p in fresh] == [p.relative_to(FIXTURE) for p in kept]
     for path in fresh + [tmp_path / "site.ftp.json", tmp_path / "analysis.json"]:
         committed = FIXTURE / path.relative_to(tmp_path)
+        if path.suffix == ".png":
+            # zlib builds compress differently (CPython 3.14's Windows build uses
+            # zlib-ng), so compare the header and the decompressed pixel rows.
+            assert png_content(path.read_bytes()) == png_content(committed.read_bytes()), path.name
+            continue
         if path.suffix != ".npz":
             assert path.read_bytes() == committed.read_bytes(), path.name
             continue
@@ -63,6 +70,21 @@ def test_one_event_regenerates_byte_for_byte(tmp_path):
             assert a.namelist() == b.namelist()
             for member in b.namelist():
                 assert a.read(member) == b.read(member), (path.name, member)
+
+
+def png_content(data):
+    """A PNG's IHDR and its decompressed image data: what any decoder reads."""
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    pos, header, idat = 8, None, b""
+    while pos < len(data):
+        (length,) = struct.unpack(">I", data[pos:pos + 4])
+        kind, body = data[pos + 4:pos + 8], data[pos + 8:pos + 8 + length]
+        if kind == b"IHDR":
+            header = body
+        elif kind == b"IDAT":
+            idat += body
+        pos += 12 + length
+    return header, zlib.decompress(idat)
 
 
 def _inside_or_near(points, rings, tolerance):

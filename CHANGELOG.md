@@ -15,7 +15,7 @@ and a plan written by any release opens in every later one.
   (`schema/flame-*-1.0.0.schema.json`, CONVENTIONS section 13). In Python,
   `fireplan.flame_analysis.FlameAnalysis` reads and checks a folder. A synthetic test
   with two events (`fixtures/flame-analysis/`, from
-  `tools/build_synthetic_flame_event.py`) regenerates byte for byte. No plan format
+  `tools/build_synthetic_flame_event.py`) regenerates exactly. No plan format
   change.
 - **Flame analysis board.** **Flame analysis…** in the toolbar opens a read-only
   workspace for such a folder: each camera's synchronised picture (close-up or whole,

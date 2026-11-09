@@ -1421,4 +1421,6 @@ schemas, unknown or duplicate ids, cameras missing from the site plan, instants 
 order, quality indices out of range, close-ups outside the picture, unreadable or
 out-of-order series, and missing files; `deep` also opens every outline and hull. The
 synthetic test in `fixtures/flame-analysis/` is built by
-`tools/build_synthetic_flame_event.py` and regenerates byte for byte.
+`tools/build_synthetic_flame_event.py` and regenerates exactly: the same bytes for its
+text files, the same pixels for its PNGs and the same arrays for its NPZ files (their
+compressed bytes vary with the zlib build).

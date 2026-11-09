@@ -33,8 +33,9 @@ board and its tests run on data that can be published.
   test and are not anyone's method.
 
 Only + - * / and square roots are used on floats (no sin, exp or pow), so the
-files are the same on every platform; camera poses are rounded in the plan and the
-pictures are rendered from the rounded plan.
+content is the same on every platform (the PNG and NPZ compressed bytes vary with the
+zlib build, the pixels and arrays do not); camera poses are rounded in the plan and
+the pictures are rendered from the rounded plan.
 """
 
 import csv

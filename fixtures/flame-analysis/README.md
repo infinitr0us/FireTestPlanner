@@ -22,5 +22,7 @@ say nothing about any real fire or about any analysis method.
   averaged over five instants. These coefficients are invented for the test.
 
 Regenerate from the repository root with `python tools/build_synthetic_flame_event.py`
-(NumPy and the standard library). The files come out the same byte for byte on every
-platform; `python/tests/test_flame_analysis.py` rebuilds event E2 and compares.
+(NumPy and the standard library). The content comes out the same on every platform:
+the text files byte for byte, the PNGs pixel for pixel and the NPZ files array for
+array (compressed bytes vary with the zlib build). `python/tests/test_flame_analysis.py`
+rebuilds event E2 and compares.
