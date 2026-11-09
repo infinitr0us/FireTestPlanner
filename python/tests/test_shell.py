@@ -489,6 +489,25 @@ def test_fds_export_save_route(server, tmp_path, monkeypatch):
     assert request(base, '/api/save-fds', 'test-token', body)[1] == {'error': 'Disk full'}
 
 
+def test_a_refused_request_is_read_before_the_refusal(server):
+    """Without the token the server still reads a small body before it answers 403: a
+    reply sent over unread request bytes lets Windows reset the connection, and the
+    caller then saw a broken connection (WinError 10053) instead of the refusal."""
+    import socket
+    _, srv, _, _ = server
+    body = b'{"text": "x", "name": "devices.fds"}'
+    with socket.create_connection(("127.0.0.1", srv.server_address[1]), timeout=5) as s:
+        s.sendall(b"POST /api/save-fds HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+                  b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n\r\n")
+        s.settimeout(0.3)
+        with pytest.raises(socket.timeout):
+            s.recv(1)  # no early reply: the server is waiting for the body
+        s.settimeout(5)
+        s.sendall(body)
+        reply = s.recv(4096)
+    assert reply.split(b"\r\n", 1)[0].split(b" ")[1] == b"403"
+
+
 def test_save_over_the_api_writes_back_only_with_the_token(server, plan_file):
     """The whole contract, end to end over HTTP: open hands out a token, save with it
     writes back with no dialog, save without it (or with a wrong one) asks."""

@@ -830,6 +830,17 @@ class Handler(SimpleHTTPRequestHandler):
     def _authorised(self) -> bool:
         return self.headers.get("X-Shell-Token") == self.token
 
+    def _discard_body(self, limit: int = 1 << 20) -> None:
+        """Read and drop a small request body before refusing the request. A reply sent
+        over unread request bytes lets Windows reset the connection, and the caller then
+        sees a broken connection (WinError 10053) instead of the refusal. A larger or
+        malformed body is not read; the connection closes after the reply."""
+        lengths = self.headers.get_all("Content-Length", [])
+        if len(lengths) == 1 and re.fullmatch(r"[0-9]{1,8}", lengths[0]) and int(lengths[0]) <= limit:
+            self.rfile.read(int(lengths[0]))
+        else:
+            self.close_connection = True
+
     def _read_json(self) -> Dict[str, Any]:
         lengths = self.headers.get_all("Content-Length", [])
         if len(lengths) != 1 or not re.fullmatch(r"[0-9]+", lengths[0]):
@@ -855,6 +866,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's naming
         route = urlparse(self.path).path
         if not self._authorised():
+            self._discard_body()
             self._send_json({"error": "bad token"}, 403)
             return
         if route == "/api/save-media":
