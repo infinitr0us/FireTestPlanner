@@ -118,6 +118,9 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   check('the 3-D view draws cubes', (workspace as unknown as { scene: { cubeCount: number } }).scene.cubeCount > 0);
   check('a format 1.0 event offers no surfaces and no hood response, and falls back to cubes',
     !$('.flame-analysis__look') && !toggles().some((b) => b.textContent === 'As the hood sees it') && scene.flameLook === 'cubes');
+  // The captions come with the pictures of the instant the board seeks to, which a
+  // slow machine draws after the first instant's (no flame, so no caption).
+  await wait(() => caption().filter(Boolean).length === 2, 'E2 hull check captions').catch(() => undefined);
   check('the hull check carries over to E2', caption().filter(Boolean).length === 2, caption());
 
   // Export: a PNG of the composition, and a short H.264 MP4 Chromium itself plays.
