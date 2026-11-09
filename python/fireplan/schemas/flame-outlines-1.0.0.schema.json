@@ -11,6 +11,7 @@
     "version": { "const": "1.0.0" },
     "camera": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$" },
     "size_px": {
+      "description": "Must equal images.<camera>.size_px in the event manifest.",
       "type": "array",
       "prefixItems": [
         { "type": "integer", "minimum": 1 },

@@ -1,0 +1,110 @@
+[
+  {
+    "name": "comment",
+    "accept": false
+  },
+  {
+    "name": "crlf",
+    "accept": false
+  },
+  {
+    "name": "different_names",
+    "accept": false
+  },
+  {
+    "name": "fake_format",
+    "accept": false
+  },
+  {
+    "name": "huge_count",
+    "accept": false
+  },
+  {
+    "name": "inf_vertex",
+    "accept": false
+  },
+  {
+    "name": "long_comment",
+    "accept": false
+  },
+  {
+    "name": "nan_vertex",
+    "accept": false
+  },
+  {
+    "name": "negative_index",
+    "accept": false
+  },
+  {
+    "name": "not_triangle",
+    "accept": false
+  },
+  {
+    "name": "past_end_index",
+    "accept": false
+  },
+  {
+    "name": "reordered",
+    "accept": false
+  },
+  {
+    "name": "standard",
+    "accept": true
+  },
+  {
+    "name": "trailing",
+    "accept": false
+  },
+  {
+    "name": "truncated",
+    "accept": false
+  },
+  {
+    "name": "vertex_index",
+    "accept": false
+  },
+  {
+    "name": "writer_bad_face",
+    "accept": false
+  },
+  {
+    "name": "writer_fractional_faces",
+    "accept": true
+  },
+  {
+    "name": "writer_nonfinite",
+    "accept": false
+  },
+  {
+    "name": "wrong_version",
+    "accept": false
+  },
+  {
+    "name": "header_64k",
+    "accept": true
+  },
+  {
+    "name": "header_over_64k",
+    "accept": false
+  },
+  {
+    "name": "bom_header",
+    "accept": false
+  },
+  {
+    "name": "unicode_header",
+    "accept": false
+  },
+  {
+    "name": "face_before_vertex",
+    "accept": false
+  },
+  {
+    "name": "count_signed",
+    "accept": false
+  },
+  {
+    "name": "count_fractional",
+    "accept": false
+  }
+]

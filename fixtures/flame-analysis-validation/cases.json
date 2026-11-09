@@ -1,0 +1,365 @@
+[
+  {
+    "name": "baseline",
+    "accept": true,
+    "files": []
+  },
+  {
+    "name": "csv_bom_crlf",
+    "accept": true,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_whitespace",
+    "accept": true,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_quoted",
+    "accept": true,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_empty_value",
+    "accept": true,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_empty_time",
+    "accept": false,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_nan",
+    "accept": false,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_inf",
+    "accept": false,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_overflow",
+    "accept": false,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_negative_zero",
+    "accept": true,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_duplicate_time",
+    "accept": false,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_decreasing_time",
+    "accept": false,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_header_only",
+    "accept": false,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_extra_column",
+    "accept": true,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_missing_column",
+    "accept": false,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_blank_row",
+    "accept": true,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_empty_row",
+    "accept": false,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_underscores",
+    "accept": false,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_unicode_digits",
+    "accept": false,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_unclosed_quote",
+    "accept": false,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_quote_spaces",
+    "accept": true,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_bare_cr",
+    "accept": true,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "csv_hex",
+    "accept": false,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "duplicate_series",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "instant_decreasing",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "instant_duplicate",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "negative_volume",
+    "accept": false,
+    "files": [
+      "volume.csv"
+    ]
+  },
+  {
+    "name": "quality_range",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "event_id_mismatch",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "closeup_outside",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "path_double_slash",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "path_newline_parent",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "path_braces",
+    "accept": false,
+    "files": [
+      "analysis.json",
+      "site{literal}.ftp.json"
+    ]
+  },
+  {
+    "name": "manifest_bom",
+    "accept": true,
+    "files": [
+      "analysis.json"
+    ]
+  },
+  {
+    "name": "nonfinite_manifest",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "wrong_version_type",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "unknown_field",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "wrong_type",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "duplicate_camera",
+    "accept": false,
+    "files": [
+      "analysis.json"
+    ]
+  },
+  {
+    "name": "duplicate_event",
+    "accept": false,
+    "files": [
+      "analysis.json"
+    ]
+  },
+  {
+    "name": "template_unknown",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "v10",
+    "accept": true,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "v10_mesh",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "v10_response",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "v11_response",
+    "accept": true,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "v11_wrong_response",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "wrong_unit",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "wrong_basis",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "path_parent",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "unreadable_csv",
+    "accept": false,
+    "files": [
+      "series.csv"
+    ]
+  },
+  {
+    "name": "corrupt_hull",
+    "accept": false,
+    "files": [
+      "hull/0.npz"
+    ]
+  },
+  {
+    "name": "outlines_size",
+    "accept": false,
+    "files": [
+      "outlines/camA.json"
+    ]
+  }
+]

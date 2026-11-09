@@ -1,0 +1,26 @@
+{
+  "format": "fireplan-flame-analysis",
+  "version": "1.0.0",
+  "title": "Probe",
+  "sitePlan": "site.ftp.json",
+  "timeBase": {
+    "label": "t"
+  },
+  "cameras": [
+    {
+      "id": "camA",
+      "planCameraId": "camA"
+    },
+    {
+      "id": "camA",
+      "planCameraId": "camA"
+    }
+  ],
+  "events": [
+    {
+      "id": "E",
+      "label": "Probe",
+      "path": "event.json"
+    }
+  ]
+}

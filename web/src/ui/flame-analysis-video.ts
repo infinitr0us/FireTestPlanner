@@ -13,8 +13,8 @@
 import { instantAt, type EventImage, type HullProjection } from '../core/flame-analysis';
 import { muxMp4, type Mp4Sample } from '../core/mp4';
 import type { AnalysisScene } from '../scene/flame-analysis';
-import { drawOutline, hullSquares, placement, type PictureMode } from './flame-analysis-cameras';
-import { colourOf, dashOf, type Band, type Moment, type PlotLine, type PlotSpec } from './flame-analysis-plots';
+import { coverage, coverageCaption, drawOutline, hullSquares, placement, type PictureMode } from './flame-analysis-cameras';
+import { colourOf, dashOf, qualityKey, type Band, type Moment, type PlotLine, type PlotSpec } from './flame-analysis-plots';
 import * as i18n from './i18n';
 import { fmt, niceTicks, runs, valueAt, valueExtent } from './plot-svg';
 
@@ -41,7 +41,10 @@ export interface CompositionSource {
   pictureMode: PictureMode;
   /** Outlines per camera, or null when the board hides them. */
   outlines: Map<string, Float32Array[][]> | null;
+  /** Coverage uses outlines even when the visible outline overlay is off. */
+  coverageOutlines?: Map<string, Float32Array[][]>;
   outsideFrame: Record<string, number[]>;
+  /** Transfers bitmap ownership to the composer, which closes it after the draw. */
   picture(camera: string, index: number): Promise<ImageBitmap>;
   /** The hull check (the 3-D flame through each camera), or null when the board hides it. */
   hull: ((camera: string, index: number) => HullProjection | null) | null;
@@ -100,14 +103,18 @@ export class Composer {
     const pictures = rects.cameras
       ? await Promise.all(source.cameras.map((c) => source.picture(c.id, index).catch(() => null)))
       : [];
-    if (rects.scene && source.scene) await source.scene.prepareFrame(index);
-    ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
-    ctx.fillStyle = k.panel;
-    ctx.fillRect(0, 0, W, H);
-    this.header(index);
-    if (rects.cameras) this.cameras(rects.cameras, index, pictures);
-    if (rects.scene) this.scene(rects.scene, index);
-    if (rects.plots) this.plots(rects.plots, source.times[index]);
+    try {
+      if (rects.scene && source.scene) await source.scene.prepareFrame(index);
+      ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
+      ctx.fillStyle = k.panel;
+      ctx.fillRect(0, 0, W, H);
+      this.header(index);
+      if (rects.cameras) this.cameras(rects.cameras, index, pictures);
+      if (rects.scene) this.scene(rects.scene, index);
+      if (rects.plots) this.plots(rects.plots, source.times[index]);
+    } finally {
+      for (const picture of pictures) picture?.close();
+    }
   }
 
   private header(index: number): void {
@@ -120,7 +127,7 @@ export class Composer {
     ctx.fillText(source.title, M, 48, 1200);
     ctx.fillStyle = k.dim;
     ctx.font = this.font(20);
-    const moment = [...source.plots.moments].reverse().find((m) => m.t <= t && t - m.t < 1.5);
+    const moment = latestMoment(source.plots.moments, t, source.plots.window);
     ctx.fillText(source.eventLabel + (moment ? `  ·  ${moment.label}` : ''), M, 80, 1200);
     ctx.textAlign = 'right';
     ctx.fillStyle = k.text;
@@ -150,7 +157,7 @@ export class Composer {
   private cameras(r: Rect, index: number, pictures: (ImageBitmap | null)[]): void {
     const { ctx, k, source } = this;
     const inner = this.panel(r, i18n.t("Cameras"));
-    const caption = 24, gap = 12;
+    const caption = source.hull ? 68 : 46, gap = 12;
     const aspects = source.cameras.map((c) => { const p = placement(c.image, source.pictureMode); return p.width / p.height; });
     let height = inner.h - caption;
     const total = aspects.reduce((a, b) => a + b, 0);
@@ -162,9 +169,7 @@ export class Composer {
       ctx.fillStyle = k.panel;
       ctx.fillRect(x, inner.y, w, height);
       if (bitmap) {
-        try {
-          ctx.drawImage(bitmap, x, inner.y, w, height);
-        } catch { /* a picture evicted mid-draw: the tile stays empty this frame */ }
+        ctx.drawImage(bitmap, x, inner.y, w, height);
         const projection = source.hull?.(camera.id, index);
         if (projection?.uv.length) this.hull(projection, placement(camera.image, source.pictureMode), x, inner.y, w, height);
         const rings = source.outlines?.get(camera.id)?.[index];
@@ -175,6 +180,11 @@ export class Composer {
           drawOutline(ctx, rings, place, w / place.width, 2.5);
           ctx.restore();
         }
+      } else {
+        ctx.fillStyle = k.text;
+        ctx.font = this.font(18, 600);
+        ctx.textAlign = 'center';
+        ctx.fillText(i18n.t("Picture missing"), x + w / 2, inner.y + height / 2, w - 12);
       }
       ctx.fillStyle = k.dim;
       ctx.font = this.font(16);
@@ -182,8 +192,13 @@ export class Composer {
       ctx.fillText(camera.label, x, inner.y + height + 19, w);
       if (source.outsideFrame[camera.id]?.includes(index)) {
         ctx.fillStyle = k.warn;
-        ctx.textAlign = 'right';
-        ctx.fillText(i18n.t("flame at the picture's edge"), x + w, inner.y + height + 19, w / 2);
+        ctx.fillText(i18n.t("flame at the picture's edge"), x, inner.y + height + 39, w);
+      }
+      if (source.hull) {
+        const projection = source.hull(camera.id, index);
+        const rings = (source.coverageOutlines ?? source.outlines)?.get(camera.id)?.[index] ?? [];
+        ctx.fillStyle = k.dim;
+        ctx.fillText(coverageCaption(projection ? coverage(rings, projection) : null), x, inner.y + height + 59, w);
       }
       x += w + gap;
     });
@@ -237,9 +252,22 @@ export class Composer {
     const { specs, bands, moments, window } = this.source.plots;
     const inner = this.panel(r, i18n.t("Plots"));
     if (!specs.length) return;
-    const each = inner.h / specs.length;
+    const keys = (['noHull', 'outsideFrame'] as const).filter((kind) => bands.some((b) => b.kind === kind));
+    const reserved = keys.length * 24 + (keys.length ? 8 : 0);
+    const each = (inner.h - reserved) / specs.length;
     specs.forEach((spec, n) => this.plot({ x: inner.x, y: inner.y + n * each, w: inner.w, h: each - 8 }, spec, bands, moments,
       window, time, n === 0, n === specs.length - 1));
+    const { ctx } = this;
+    keys.forEach((kind, n) => {
+      const key = qualityKey(kind), y = inner.y + inner.h - reserved + 12 + n * 24;
+      const colour = getComputedStyle(document.documentElement).getPropertyValue(key.token).trim();
+      ctx.fillStyle = colour;
+      ctx.globalAlpha = kind === 'noHull' ? 0.4 : 0.45;
+      ctx.fillRect(inner.x, y - 10, 16, 14);
+      ctx.globalAlpha = 1;
+      ctx.font = this.font(14); ctx.textAlign = 'left'; ctx.fillStyle = this.k.dim;
+      ctx.fillText(key.text, inner.x + 24, y + 2, inner.w - 24);
+    });
   }
 
   private plot(r: Rect, spec: PlotSpec, bands: Band[], moments: Moment[], window: [number, number], time: number,
@@ -370,7 +398,17 @@ async function pickCodec(width: number, height: number, bitrate: number): Promis
 export function videoFrames(times: number[], options: Pick<VideoOptions, 'from' | 'to' | 'speed'>): number[] {
   const duration = Math.max(0, (options.to - options.from) / options.speed);
   const count = Math.max(1, Math.round(duration * VIDEO_FPS) + 1);
-  return Array.from({ length: count }, (_, k) => Math.max(0, instantAt(times, options.from + (k / VIDEO_FPS) * options.speed)));
+  return Array.from({ length: count }, (_, k) => Math.max(0,
+    instantAt(times, (k === count - 1 ? options.to : options.from + (k / VIDEO_FPS) * options.speed) + 1e-6)));
+}
+
+export function latestMoment(moments: Moment[], t: number, window: [number, number]): Moment | undefined {
+  return moments.filter((m) => m.t >= window[0] && m.t <= window[1] && m.t <= t && t - m.t < 1.5)
+    .reduce<Moment | undefined>((best, m) => !best || m.t > best.t ? m : best, undefined);
+}
+
+export function checkExportSignal(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException(i18n.t("The export was cancelled."), 'AbortError');
 }
 
 /**
@@ -384,12 +422,17 @@ export async function encodeVideo(
   const { width, height } = composer.canvas;
   const bitrate = width >= 1920 ? 10_000_000 : 5_000_000;
   const codec = await pickCodec(width, height, bitrate);
+  checkExportSignal(signal);
   const frames = videoFrames(times, options);
   const samples: Mp4Sample[] = [];
   let avcC: Uint8Array | null = null;
   let failure: Error | null = null;
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {
+      if (samples.length && chunk.timestamp <= samples[samples.length - 1].timestamp_us) {
+        failure = new Error(i18n.t("The video encoder reordered frames. This export cannot be written as a playable MP4."));
+        return;
+      }
       const data = new Uint8Array(chunk.byteLength);
       chunk.copyTo(data);
       samples.push({ data, timestamp_us: chunk.timestamp, key: chunk.type === 'key' });
@@ -406,26 +449,37 @@ export async function encodeVideo(
   try {
     let drawn = -1;
     for (let k = 0; k < frames.length; k++) {
-      if (signal?.aborted) throw new DOMException(i18n.t("The export was cancelled."), 'AbortError');
+      checkExportSignal(signal);
       if (failure) throw failure;
       if (frames[k] !== drawn) { await composer.draw(frames[k]); drawn = frames[k]; }
+      checkExportSignal(signal);
       const frame = new VideoFrame(composer.canvas, { timestamp: Math.round((k * 1e6) / VIDEO_FPS), duration: Math.round(1e6 / VIDEO_FPS) });
       encoder.encode(frame, { keyFrame: k % (2 * VIDEO_FPS) === 0 });
       frame.close();
-      while (encoder.encodeQueueSize > 6) await new Promise((r) => setTimeout(r, 2));
+      while (encoder.encodeQueueSize > 6) {
+        await new Promise((r) => setTimeout(r, 2));
+        checkExportSignal(signal);
+        if (failure) throw failure;
+      }
       progress(k + 1, frames.length);
     }
     await encoder.flush();
+    checkExportSignal(signal);
   } finally {
     if (encoder.state !== 'closed') encoder.close();
   }
   if (failure) throw failure;
   if (!avcC) throw new Error(i18n.t("The video encoder gave no decoder configuration."));
-  samples.sort((a, b) => a.timestamp_us - b.timestamp_us);
-  return muxMp4({ width, height, avcC, fps: VIDEO_FPS, samples });
+  const bytes = muxMp4({ width, height, avcC, fps: VIDEO_FPS, samples });
+  checkExportSignal(signal);
+  return bytes;
 }
 
-export async function encodePng(composer: Composer, index: number): Promise<Blob> {
+export async function encodePng(composer: Composer, index: number, signal?: AbortSignal): Promise<Blob> {
+  checkExportSignal(signal);
   await composer.draw(index);
-  return new Promise((resolve, reject) => composer.canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('PNG'))), 'image/png'));
+  checkExportSignal(signal);
+  const blob = await new Promise<Blob>((resolve, reject) => composer.canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('PNG'))), 'image/png'));
+  checkExportSignal(signal);
+  return blob;
 }

@@ -1370,20 +1370,28 @@ nothing in it changes the plan format.
 plan, the cameras (`id`, the site plan's `planCameraId`, an optional `label`), the time
 base (`label`, optional `description`), optional step texts and the events.
 Each event's manifest (`format` `fireplan-flame-event`) names its cameras in display
-order, its instants (`t_s` strictly increasing, a unique file `stem` each), path
+order, its instants (`t_s` finite and strictly increasing, a unique file `stem` each), path
 templates, picture sizes, the hull's voxel size, its series and optional quality
 indices, key moments and notes. `analysis.json` is version `1.0.0`. An event is
 `1.0.0` or `1.1.0` and is checked against the schema of its own version, so a folder
 may mix them; 1.1 adds only optional fields (`files.mesh`, `series[].responseTime_s`),
 a 1.0 event carrying one is an error, and a reader shows a 1.0 event without what 1.1
 adds. Every schema closes every object: an unknown field is an error, not something to
-keep.
+keep. JSON files are UTF-8, with an optional BOM. Invalid UTF-8 and the
+non-JSON constants `NaN`, `Infinity` and `-Infinity` are refused, as are numeric
+values outside the finite range. Each event id must equal its entry in
+`analysis.json`. Series ids must be unique within each event; duplicate ids are
+refused with the event and the repeated id in the problem message.
 
-**Paths** are relative to the manifest that holds them, use `/`, and may not be
-absolute, contain `.` or `..` segments, or resolve outside the folder that holds
-`analysis.json`. **Templates** substitute `{cam}` and `{stem}` and nothing else:
-`display` and `frame` (and `closeup`) need both, `outlines` needs `{cam}` only, `hull`
-and `mesh` `{stem}` only.
+**Paths** are relative to the manifest that holds them, and are validated before
+normalization. A path consists of `/`-separated segments: none may be empty, `.` or
+`..`. Absolute paths, drives, backslashes, colons and control characters U+0000
+through U+001F or U+007F are refused. Resolving a path must keep it inside the folder
+that holds `analysis.json`. Literal `{` and `}` are refused outside templates.
+**Templates** permit only `{cam}` and `{stem}`: `display`, `frame` and `closeup`
+need both, `outlines` needs `{cam}` only, and `hull` and `mesh` need `{stem}` only.
+Other characters are permitted by the format; the host filesystem must also be
+able to represent the name.
 
 **Time.** Every time in a folder is seconds on its test's time base, the same clock for
 every event and file. `onset_s` marks the event's start; the board shows time from it,
@@ -1395,35 +1403,68 @@ site plan camera's `resolution_px` for the hull to be drawn over the picture (a
 warning otherwise, since the pictures are still worth showing). `display_px` is the
 size of the display copies. An optional `closeup` is a fixed rectangle `rect_px`
 (`x, y, w, h` of the full-resolution picture) with its own copies (`files.closeup`,
-`closeup.display_px`); a closeup on one camera requires one on all.
+`closeup.display_px`). The `images` keys must equal the event cameras exactly.
+`files.closeup` is present if and only if every camera has `images.<cam>.closeup`;
+partial close-ups are refused. Each rectangle must stay inside `size_px`, including
+its right and bottom edges. Quality indices are zero-based integers within the
+instants, and `quality.outsideFrame` may name only event cameras.
 
 **Outlines** (`fireplan-flame-outlines`) give each camera's flame as closed rings, one
 list per instant in instant order. A ring is a flat `[x0, y0, x1, y1, ...]` of at least
 three points in full-resolution pixel coordinates: x right, y down, the centre of a
 pixel at integer coordinates, the convention of `Camera.project`. Rings are filled
 even-odd, so a ring inside another is a hole. A region one pixel wide has no area and
-no ring.
+no ring. The document's `size_px` must equal `images.<cam>.size_px`; a mismatch is
+an error, never an implicit rescaling.
 
 **Hulls** use the section 11 frame format (`voxels` M x 3 float64, metres, and
 `voxel_size`) in the plan frame (`hull.frame` is `plan`). The instant's time comes from
-`instants`, not the file name.
+`instants`, not the file name. Every hull's stored `voxel_size`, including an empty
+hull's, must equal `hull.voxelSize_m` with relative tolerance 1e-9 and zero absolute
+tolerance. This checks the recorded size, separately from inferred lattice pitch
+(section 11). Python's deep check and the board's hull reads refuse a mismatch.
 
 **Meshes** (event 1.1, optional) are a smoothed surface of the same 3-D flame, one file
 per instant (`files.mesh`), for drawing only: volume and area come from the series, not
 from the mesh. The file is a binary little-endian PLY in metres in the plan frame, with
-exactly this layout: the header `ply`, `format binary_little_endian 1.0`,
-`element vertex N` with `property float x`, `y` and `z`, `element face M` with
-`property list uchar int vertex_indices`, `end_header`; then N records of three float32
-and M records of one byte 3 and three int32 indices of existing vertices, nothing after
-them (`N x 12 + M x 13` bytes). An instant without a flame has an empty mesh (N and M
-zero), not a missing file. `fireplan.flame_analysis.write_mesh` writes this layout and
-`read_mesh` refuses anything else.
+exactly these nine header lines in this order, with LF endings only:
+
+```text
+ply
+format binary_little_endian 1.0
+element vertex N
+property float x
+property float y
+property float z
+element face M
+property list uchar int vertex_indices
+end_header
+```
+
+N and M are unsigned decimal integers (ASCII digits, leading zeros accepted).
+The terminating LF of `end_header` must be within the first 65,536 bytes.
+Comments, extra lines, CRLF, other declarations or property orders are refused.
+The body is N records of three finite float32 coordinates and M records of one
+byte 3 and three int32 indices of existing vertices, with no trailing bytes
+(`N x 12 + M x 13` bytes). An instant without a flame has an empty mesh (N and M
+zero), not a missing file. `write_mesh` also refuses non-finite float32 coordinates,
+out-of-range faces and non-integer indices before writing anything.
 
 **Series** name a CSV file and two of its columns: `time` (strictly increasing, no
 gaps) and `value`. The file is UTF-8 (a BOM is accepted), comma separated, with one
-header row and then numbers only; an empty value cell is a missing sample, any other
-text is an error with its row number. `quantity` fixes the unit: `hrr` kW, `volume`
-m3, `area` m2, `height` m. `role` is `measured`, `reconstructed` or `estimated`;
+header row and at least one data row. A file without data rows is an error
+("no samples"). CRLF, LF and CR line endings are accepted. Completely empty lines
+are skipped; whitespace-only lines, comma-only records and quoted empty records
+are data rows, so a missing time in them is an error. Diagnostics give physical
+line numbers, including skipped lines and line breaks inside quoted fields.
+Numbers use `[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?` and must be finite;
+underscores, non-ASCII digits, hexadecimal, `inf` and `nan` are refused. Values may
+be quoted with whitespace outside the quotes, and doubled quotes escape a quote
+inside a field. Quotes in unquoted text, text after a closing quote, and unclosed
+quotes are errors. An empty value cell is a missing sample and breaks the line;
+an empty time is an error. Column names and values are trimmed. `quantity` fixes
+the unit: `hrr` kW, `volume` m3, `area` m2, `height` m. `role` is `measured`,
+`reconstructed` or `estimated`;
 `basis` (`convective` or `total`) is for heat release rate only. Volume and area may
 not be negative. `responseTime_s` (event 1.1, a positive number of seconds) is the
 first-order response time of a `measured` heat release rate, the hood's lag; the

@@ -1,0 +1,66 @@
+{
+  "format": "fireplan-flame-event",
+  "version": "1.1.0",
+  "id": "E",
+  "label": "Probe",
+  "onset_s": 0,
+  "cameras": [
+    "camA"
+  ],
+  "instants": {
+    "t_s": [
+      0,
+      1,
+      2
+    ],
+    "stem": [
+      "0",
+      "1",
+      "2"
+    ]
+  },
+  "files": {
+    "display": "frames/{cam}/{stem}.png",
+    "outlines": "outlines/{cam}.json",
+    "hull": "hull/{stem}.npz"
+  },
+  "images": {
+    "camA": {
+      "size_px": [
+        240,
+        180
+      ],
+      "display_px": [
+        240,
+        180
+      ]
+    }
+  },
+  "hull": {
+    "voxelSize_m": 0.03,
+    "frame": "plan"
+  },
+  "series": [
+    {
+      "id": "hood",
+      "label": "Hood",
+      "role": "measured",
+      "quantity": "hrr",
+      "unit": "kW",
+      "basis": "convective",
+      "file": "../series.csv",
+      "time": "t",
+      "value": "v"
+    },
+    {
+      "id": "volume",
+      "label": "Volume",
+      "role": "reconstructed",
+      "quantity": "volume",
+      "unit": "m3",
+      "file": "volume.csv",
+      "time": "t",
+      "value": "v"
+    }
+  ]
+}

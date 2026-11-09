@@ -8,6 +8,9 @@
  */
 
 import * as i18n from '../ui/i18n';
+import { checkEvent, fillTemplate, FlameAnalysisError, joinPath, parseOutlines,
+  type AnalysisManifest, type EventManifest, type Series } from '../core/flame-analysis';
+import { readFrameVoxelSize } from '../core/flame';
 import { closeShellAnalysis, readShellAnalysisFile, type OpenedAnalysis } from './files';
 
 export interface AnalysisSource {
@@ -18,8 +21,41 @@ export interface AnalysisSource {
   close(): void;
 }
 
+function decodeText(bytes: Uint8Array, path: string): string {
+  // Let the JSON/CSV parser consume the optional BOM exactly once.
+  try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+  catch { throw new FlameAnalysisError(i18n.t("{p1}: not readable as UTF-8", { p1: path })); }
+}
+
 export const readText = async (source: AnalysisSource, path: string): Promise<string> =>
-  new TextDecoder().decode(await source.read(path));
+  decodeText(await source.read(path), path);
+
+/** Run the semantic check and enforce file metadata at the existing read boundary.
+ * Local to one event selection; no global state or extra file reads. */
+export function checkedEventSource(source: AnalysisSource, event: EventManifest,
+  entry: AnalysisManifest['events'][number], series: ReadonlyMap<string, Series>, folder: string): AnalysisSource {
+  const problems = checkEvent(event, entry, series);
+  if (problems.length) throw new FlameAnalysisError(problems.map(p => p.message).join('\n'));
+  const outlines = new Map(event.cameras.map(cam => [joinPath(folder, fillTemplate(event.files.outlines, cam)), cam]));
+  const hulls = new Set(event.instants.stem.map(stem => joinPath(folder, fillTemplate(event.files.hull, undefined, stem))));
+  return {
+    name: source.name,
+    close: () => source.close(),
+    blob: path => source.blob(path),
+    read: async path => {
+      const bytes = await source.read(path);
+      const cam = outlines.get(path);
+      if (cam !== undefined) parseOutlines(decodeText(bytes, path), cam, event.instants.t_s.length, path, event.images[cam].size_px);
+      if (hulls.has(path)) {
+        const size = await readFrameVoxelSize(bytes, path), expected = event.hull.voxelSize_m;
+        if (Math.abs(size - expected) > 1e-9 * Math.max(Math.abs(size), Math.abs(expected))) {
+          throw new FlameAnalysisError(i18n.t("{p1}: voxel_size {p2} does not equal hull.voxelSize_m {p3}", { p1: path, p2: size, p3: expected }));
+        }
+      }
+      return bytes;
+    },
+  };
+}
 
 /** A source over files already in hand, by their path inside the analysis folder. */
 export function entriesSource(name: string, entries: Map<string, Blob>): AnalysisSource {

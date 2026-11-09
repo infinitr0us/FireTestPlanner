@@ -16,6 +16,7 @@ import * as i18n from './i18n';
 
 export interface PlotLine {
   label: string;
+  note?: string;
   t: Float64Array;
   v: Float64Array;
   /** `predicted`: a correlation's value (Heskestad), in the planned-value style. */
@@ -35,6 +36,11 @@ export interface PlotSpec {
 }
 export interface Band { from: number; to: number; kind: 'noHull' | 'outsideFrame' }
 export interface Moment { t: number; label: string }
+
+/** Shared text and colour meaning on the board and in exported compositions. */
+export const qualityKey = (kind: Band['kind']): { text: string; token: string } => kind === 'noHull'
+  ? { text: i18n.t("a camera sees flame but there is no 3-D flame"), token: '--warn' }
+  : { text: i18n.t("flame at a picture's edge"), token: '--text-dim' };
 
 const LEFT = 44, RIGHT = 10, TOP = 8, AXIS = 30;
 
@@ -79,7 +85,7 @@ export class AnalysisPlots {
         h('tbody', {}, spec.lines.map((line) => {
           const cell = h('td', { class: 'flame-analysis__value' }, ['–']);
           this.readouts.push({ cell, line, scale });
-          return h('tr', {}, [h('td', {}, [this.key(line)]), h('th', { scope: 'row' }, [line.label]), cell]);
+          return h('tr', {}, [h('td', {}, [this.key(line)]), h('th', { scope: 'row', title: line.note }, [line.label]), cell]);
         })),
       ]);
       const section = h('section', { class: 'flame-analysis__plot', dataset: { plot: spec.id } }, [host, legend]);
@@ -90,8 +96,8 @@ export class AnalysisPlots {
     });
     if (bands.length) {
       this.element.append(h('p', { class: 'flame-analysis__bands' }, [
-        bands.some((b) => b.kind === 'noHull') ? h('span', { class: 'flame-analysis__band-key flame-analysis__band-key--nohull' }, [i18n.t("a camera sees flame but there is no 3-D flame")]) : null,
-        bands.some((b) => b.kind === 'outsideFrame') ? h('span', { class: 'flame-analysis__band-key flame-analysis__band-key--edge' }, [i18n.t("flame at a picture's edge")]) : null,
+        bands.some((b) => b.kind === 'noHull') ? h('span', { class: 'flame-analysis__band-key flame-analysis__band-key--nohull' }, [qualityKey('noHull').text]) : null,
+        bands.some((b) => b.kind === 'outsideFrame') ? h('span', { class: 'flame-analysis__band-key flame-analysis__band-key--edge' }, [qualityKey('outsideFrame').text]) : null,
       ]));
     }
   }

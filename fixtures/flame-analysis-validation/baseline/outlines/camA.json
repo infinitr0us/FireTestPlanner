@@ -1,0 +1,14 @@
+{
+  "format": "fireplan-flame-outlines",
+  "version": "1.0.0",
+  "camera": "camA",
+  "size_px": [
+    240,
+    180
+  ],
+  "outlines": [
+    [],
+    [],
+    []
+  ]
+}

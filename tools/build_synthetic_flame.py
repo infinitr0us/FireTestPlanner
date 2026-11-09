@@ -183,9 +183,9 @@ def large_rows():
                           nz * 0.005, np.sqrt((nz**2 - 1) / 12) * 0.01 if n else 0.0)
 
 
-def write_npz(path, voxels):
+def write_npz(path, voxels, voxel_size=SIZE):
     with zipfile.ZipFile(path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
-        for name, value in [('voxels', voxels), ('voxel_size', np.array(SIZE, dtype='<f8'))]:
+        for name, value in [('voxels', voxels), ('voxel_size', np.array(voxel_size, dtype='<f8'))]:
             member = zipfile.ZipInfo(name + '.npy', date_time=(1980, 1, 1, 0, 0, 0))
             member.create_system = 0
             member.external_attr = 0o600 << 16

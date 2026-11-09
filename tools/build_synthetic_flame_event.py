@@ -401,7 +401,7 @@ def build_event(root, plan, cameras, spec, rng):
             masks.append(mask)
         hull = carve(cams, masks) if any(m.any() for m in masks) else np.zeros(GRID_N, bool)
         (folder / "hull").mkdir(parents=True, exist_ok=True)
-        write_npz(folder / "hull" / (stem + ".npz"), centres(hull))
+        write_npz(folder / "hull" / (stem + ".npz"), centres(hull), voxel_size=VOXEL)
         if meshes:
             (folder / "mesh").mkdir(parents=True, exist_ok=True)
             write_mesh(str(folder / "mesh" / (stem + ".ply")), *surface_mesh(hull))

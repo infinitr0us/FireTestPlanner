@@ -24,8 +24,6 @@ See CONVENTIONS.md section 13 and docs/flame-analysis-board-design.md.
 
 from __future__ import annotations
 
-import csv
-import io
 import json
 import math
 import os
@@ -63,6 +61,10 @@ class FlameAnalysisError(Exception):
     """A folder, manifest or data file that cannot be read as format 1.0 or 1.1."""
 
 
+class _SeriesTimeError(FlameAnalysisError):
+    """Keep the check API's series-time code while reporting physical CSV lines."""
+
+
 def localized(value: Any, language: str = "en") -> str:
     """The text of a localised field: a plain string, or {en, fr?} (English when
     the language is missing)."""
@@ -78,7 +80,8 @@ def _validate(kind: str, data: Any, where: str) -> None:
     import jsonschema
 
     version = data.get("version") if isinstance(data, dict) else None
-    filename = _SCHEMA_FILES.get((kind, version)) or _SCHEMA_FILES[(kind, "1.0.0")]
+    filename = (_SCHEMA_FILES.get((kind, version)) if isinstance(version, str) else None)
+    filename = filename or _SCHEMA_FILES[(kind, "1.0.0")]
     schema = json.loads(_schema_text(filename))
     validator = jsonschema.Draft202012Validator(schema)
     errors = sorted(validator.iter_errors(data), key=lambda e: list(e.absolute_path))
@@ -92,20 +95,38 @@ def _validate(kind: str, data: Any, where: str) -> None:
             where, more, "\n  ".join(lines)))
 
 
+def _reject_constant(value: str) -> None:
+    raise ValueError("non-JSON number {}".format(value))
+
+
+def _finite_json_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("non-finite JSON number {}".format(value))
+    return number
+
+
 def _read_json(path: str) -> Any:
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            return json.load(fh)
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            return json.load(fh, parse_constant=_reject_constant, parse_float=_finite_json_float)
     except FileNotFoundError:
         raise FlameAnalysisError("{}: no such file".format(path))
     except (OSError, ValueError) as exc:
         raise FlameAnalysisError("{}: not readable as JSON ({})".format(path, exc))
 
 
+def _path(relative: str, template: bool = False) -> None:
+    """Validate the spelling before any filesystem normalization."""
+    body = re.sub(r"\{cam\}|\{stem\}", "x", relative) if template else relative
+    if (not body or re.search(r"[\\:{}\x00-\x1f\x7f]", body)
+            or any(part in ("", ".", "..") for part in body.split("/"))):
+        raise FlameAnalysisError("{!r} is not a relative '/' path with nonempty, non-dotted segments".format(relative))
+
+
 def _inside(root: str, base: str, relative: str) -> str:
     """`relative` joined to the folder `base`, refused if it leaves `root`."""
-    if "\\" in relative or os.path.isabs(relative) or re.match(r"^[A-Za-z]:", relative):
-        raise FlameAnalysisError("{!r} is not a relative '/' path".format(relative))
+    _path(relative)
     path = os.path.normpath(os.path.join(base, *relative.split("/")))
     real_root = os.path.normcase(os.path.realpath(root))
     real_path = os.path.normcase(os.path.realpath(path))
@@ -116,6 +137,7 @@ def _inside(root: str, base: str, relative: str) -> str:
 
 def fill_template(template: str, cam: Optional[str] = None, stem: Optional[str] = None) -> str:
     """Substitute {cam} and {stem}; any other field, or a missing value, is refused."""
+    _path(template, template=True)
     values = {"cam": cam, "stem": stem}
 
     def field(match: "re.Match[str]") -> str:
@@ -124,7 +146,66 @@ def fill_template(template: str, cam: Optional[str] = None, stem: Optional[str] 
             raise FlameAnalysisError("template {!r} needs {{{}}}".format(template, name))
         return values[name]
 
-    return _TEMPLATE_FIELD.sub(field, template)
+    result = _TEMPLATE_FIELD.sub(field, template)
+    _path(result)
+    return result
+
+
+# ECMAScript String.trim whitespace, shared with the TypeScript tokenizer.
+_CSV_SPACE = "\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+_DECIMAL = re.compile(r"[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?\Z")
+
+
+def _csv_rows(text: str, path: str) -> List[Tuple[int, List[str]]]:
+    """Port of delimited.ts quoting, with physical lines and only empty lines skipped."""
+    rows: List[Tuple[int, List[str]]] = []
+    row: List[str] = []
+    cell = ""
+    quoted = closed = content = False
+    line = start = 1
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        newline = ch in "\r\n"
+        if quoted:
+            if ch == '"':
+                if i + 1 < len(text) and text[i + 1] == '"':
+                    cell += '"'
+                    i += 1
+                else:
+                    quoted, closed = False, True
+            else:
+                cell += ch
+                if ch == "\r" and i + 1 < len(text) and text[i + 1] == "\n":
+                    cell += "\n"
+                    i += 1
+        elif ch == ",":
+            row.append(cell.strip(_CSV_SPACE))
+            cell, closed = "", False
+        elif newline:
+            if content:
+                rows.append((start, row + [cell.strip(_CSV_SPACE)]))
+            row, cell, closed, content = [], "", False, False
+            if ch == "\r" and i + 1 < len(text) and text[i + 1] == "\n":
+                i += 1
+        elif ch == '"' and not cell.strip(_CSV_SPACE) and not closed:
+            cell, quoted = "", True
+        elif ch == '"' or (closed and ch.strip(_CSV_SPACE)):
+            raise FlameAnalysisError("{} row {}: malformed CSV quoting".format(path, line))
+        else:
+            cell += ch
+        if newline:
+            line += 1
+            if not quoted:
+                start = line
+        else:
+            content = True
+        i += 1
+    if quoted:
+        raise FlameAnalysisError("{} row {}: unclosed quoted field".format(path, start))
+    if content:
+        rows.append((start, row + [cell.strip(_CSV_SPACE)]))
+    return rows
 
 
 def read_series_csv(path: str, time_column: str, value_column: str) -> Tuple[np.ndarray, np.ndarray]:
@@ -136,32 +217,35 @@ def read_series_csv(path: str, time_column: str, value_column: str) -> Tuple[np.
     """
     try:
         with open(path, "r", encoding="utf-8-sig", newline="") as fh:
-            rows = list(csv.reader(fh))
+            rows = _csv_rows(fh.read(), path)
     except FileNotFoundError:
         raise FlameAnalysisError("{}: no such file".format(path))
+    except (OSError, UnicodeError) as exc:
+        raise FlameAnalysisError("{}: not readable as CSV ({})".format(path, exc))
     if not rows:
-        raise FlameAnalysisError("{}: empty".format(path))
-    header = [name.strip() for name in rows[0]]
+        raise FlameAnalysisError("{}: no samples".format(path))
+    header = rows[0][1]
     columns = []
     for name in (time_column, value_column):
         if name not in header:
             raise FlameAnalysisError("{}: no column {!r}".format(os.path.basename(path), name))
         columns.append(header.index(name))
+    if len(rows) == 1:
+        raise FlameAnalysisError("{}: no samples".format(path))
     out = np.full((len(rows) - 1, 2), np.nan)
-    for r, row in enumerate(rows[1:]):
+    for r, (line, row) in enumerate(rows[1:]):
         for k, c in enumerate(columns):
-            cell = row[c].strip() if c < len(row) else ""
+            cell = row[c] if c < len(row) else ""
             if cell == "":
                 continue
-            try:
-                value = float(cell)
-            except ValueError:
-                raise FlameAnalysisError("{} row {}: {!r} in column {!r} is not a number".format(
-                    os.path.basename(path), r + 2, cell, header[c]))
+            value = float(cell) if _DECIMAL.fullmatch(cell) else float("nan")
             if not math.isfinite(value):
                 raise FlameAnalysisError("{} row {}: {!r} in column {!r} is not finite".format(
-                    os.path.basename(path), r + 2, cell, header[c]))
+                    path, line, cell, header[c]))
             out[r, k] = value
+    for r, value in enumerate(out[:, 0]):
+        if not math.isfinite(value) or (r and value <= out[r - 1, 0]):
+            raise _SeriesTimeError("{}: times must be present and strictly increasing (row {})".format(path, rows[r + 1][0]))
     return out[:, 0], out[:, 1]
 
 
@@ -239,6 +323,9 @@ class FlameEvent:
         _validate(OUTLINES_FORMAT, data, path)
         if data["camera"] != cam:
             raise FlameAnalysisError("{}: holds camera {!r}, not {!r}".format(path, data["camera"], cam))
+        image = self.data["images"].get(cam)
+        if image is None or data["size_px"] != image["size_px"]:
+            raise FlameAnalysisError("{}: size_px does not equal images.{}.size_px".format(path, cam))
         rings = data["outlines"]
         if len(rings) != len(self.stems):
             raise FlameAnalysisError("{}: {} instants, the event has {}".format(
@@ -270,6 +357,10 @@ class FlameEvent:
     def check(self, deep: bool = True) -> List[Issue]:
         """Problems the board would refuse or show wrongly. `deep` also opens every
         outline, hull and display file (slow on a large event)."""
+        try:
+            _validate(EVENT_FORMAT, self.data, self.path)
+        except FlameAnalysisError as exc:
+            return [Issue("error", "event", str(exc), self.entry["id"])]
         issues: List[Issue] = []
         where = self.id
 
@@ -323,11 +414,15 @@ class FlameEvent:
                         "{}: pictures are {} x {} px, the site plan's camera {} x {}: the 3-D "
                         "flame cannot be drawn over them".format(cam, size[0], size[1], *plan_cam.resolution))
 
+        seen = set()
         for s in self.series:
+            if s.id in seen:
+                add("error", "series-duplicate", "event {!r}: series id {!r} repeats".format(self.id, s.id))
+            seen.add(s.id)
             try:
-                t, v = self.read_series(s.id)
+                t, v = read_series_csv(_inside(self.analysis.folder, self.folder, s.file), s.time, s.value)
             except FlameAnalysisError as exc:
-                add("error", "series", "{}: {}".format(s.id, exc))
+                add("error", "series-time" if isinstance(exc, _SeriesTimeError) else "series", "{}: {}".format(s.id, exc))
                 continue
             finite = np.isfinite(t)
             if not finite.any():
@@ -368,9 +463,12 @@ class FlameEvent:
                 continue
             if deep:
                 try:
-                    read_frame(path)
-                except ValueError as exc:
-                    problems.append(str(exc))
+                    _, size = read_frame(path)
+                    if not math.isclose(size, self.data["hull"]["voxelSize_m"], rel_tol=1e-9, abs_tol=0):
+                        problems.append("{}: voxel_size {} does not equal hull.voxelSize_m {}".format(
+                            path, size, self.data["hull"]["voxelSize_m"]))
+                except (ValueError, OSError) as exc:
+                    problems.append("{}: {}".format(path, exc))
         if "mesh" in self.data["files"]:
             missing = []
             for stem in self.stems:
@@ -403,8 +501,16 @@ _PLY_HEADER = (
 def write_mesh(path: str, vertices: np.ndarray, faces: np.ndarray) -> None:
     """A mesh file of format 1.1: binary little-endian PLY, float32 vertices,
     triangles as (uchar 3, int32 x 3) records. Empty arrays write an empty mesh."""
-    vertices = np.ascontiguousarray(vertices, dtype="<f4").reshape(-1, 3)
-    faces = np.ascontiguousarray(faces, dtype="<i4").reshape(-1, 3)
+    with np.errstate(over="ignore", invalid="ignore"):
+        vertices = np.ascontiguousarray(vertices, dtype="<f4").reshape(-1, 3)
+    if not np.isfinite(vertices).all():
+        raise FlameAnalysisError("{}: vertices must be finite float32 coordinates".format(path))
+    faces = np.asarray(faces).reshape(-1, 3)
+    if (faces.dtype.kind not in "iuf" or not np.isfinite(faces).all()
+            or np.any(faces != np.floor(faces)) or np.any(faces < 0)
+            or np.any(faces >= len(vertices)) or np.any(faces > np.iinfo(np.int32).max)):
+        raise FlameAnalysisError("{}: faces must be integer indices of existing vertices".format(path))
+    faces = np.ascontiguousarray(faces, dtype="<i4")
     records = np.empty(len(faces), dtype=[("n", "u1"), ("i", "<i4", (3,))])
     records["n"], records["i"] = 3, faces
     with open(path, "wb") as fh:
@@ -415,24 +521,33 @@ def write_mesh(path: str, vertices: np.ndarray, faces: np.ndarray) -> None:
 
 def read_mesh(path: str) -> Tuple[np.ndarray, np.ndarray]:
     """Read a format 1.1 mesh file (the exact layout `write_mesh` writes)."""
-    with open(path, "rb") as fh:
-        data = fh.read()
-    end = data.find(b"end_header\n")
-    name = os.path.basename(path)
-    if not data.startswith(b"ply\n") or end < 0:
-        raise FlameAnalysisError("{}: not a PLY file".format(name))
-    header = data[:end].decode("ascii", "replace")
-    v = re.search(r"element vertex (\d+)", header)
-    f = re.search(r"element face (\d+)", header)
-    if ("binary_little_endian" not in header or not v or not f or "property list uchar int" not in header
-            or header.count("property float") != 3):
-        raise FlameAnalysisError("{}: not a binary little-endian triangle PLY with float x, y, z".format(name))
-    nv, nf = int(v.group(1)), int(f.group(1))
-    body = data[end + len(b"end_header\n"):]
+    name = str(path)
+    # Nine complete LF-terminated lines, bounded before reading the payload.
+    expected = _PLY_HEADER.format(v="[0-9]+", f="[0-9]+").encode("ascii").splitlines(keepends=True)
+    counts = []
+    try:
+        with open(path, "rb") as fh:
+            remaining = 64 * 1024
+            for i, pattern in enumerate(expected):
+                line = fh.readline(remaining) if remaining else b""
+                remaining -= len(line)
+                if not re.fullmatch(pattern.replace(b".", b"\\."), line):
+                    raise FlameAnalysisError("{}: not an exact-layout PLY header within 64 KiB".format(name))
+                if i in (2, 6):
+                    digits = line.split(b" ")[-1].strip().lstrip(b"0") or b"0"
+                    if len(digits) > 16:
+                        raise FlameAnalysisError("{}: PLY count exceeds the file size".format(name))
+                    counts.append(int(digits))
+            body = fh.read()
+    except OSError as exc:
+        raise FlameAnalysisError("{}: not readable as PLY ({})".format(name, exc))
+    nv, nf = counts
     if len(body) != nv * 12 + nf * 13:
         raise FlameAnalysisError("{}: {} bytes after the header, {} vertices and {} triangles need {}".format(
             name, len(body), nv, nf, nv * 12 + nf * 13))
     vertices = np.frombuffer(body[:nv * 12], dtype="<f4").reshape(nv, 3).astype(np.float64)
+    if not np.isfinite(vertices).all():
+        raise FlameAnalysisError("{}: vertices must be finite".format(name))
     records = np.frombuffer(body[nv * 12:], dtype=[("n", "u1"), ("i", "<i4", (3,))])
     if nf and (np.any(records["n"] != 3) or records["i"].min() < 0 or records["i"].max() >= nv):
         raise FlameAnalysisError("{}: faces must be triangles of existing vertices".format(name))
@@ -495,6 +610,10 @@ class FlameAnalysis:
 
     def check(self, deep: bool = True) -> List[Issue]:
         """Every problem the board would refuse or show wrongly, over all events."""
+        try:
+            _validate(ANALYSIS_FORMAT, self.data, self.path)
+        except FlameAnalysisError as exc:
+            return [Issue("error", "analysis", str(exc))]
         issues: List[Issue] = []
         ids = [c["id"] for c in self.data["cameras"]]
         if len(set(ids)) != len(ids):

@@ -368,17 +368,60 @@ plot. The flame outline over a camera picture is `--flame-outline`, stroked with
 light even-odd fill, kept apart from the accent and every instrument colour. The hull
 check draws the 3-D flame through the camera as `--hull-check` squares, a second data
 colour beside the lime outline, and states its agreement in words under the tile ("3-D
-flame covers 92 % of the outline"), so the overlay is never the only carrier. A value
+flame covers 92 % of the outline"), so the overlay is never the only carrier.
+Coverage has its own mask in full-resolution pixel coordinates over the outline's
+bounding box plus a two-pixel margin. It scales down only above about one million
+pixels. Each cube fills the axis-aligned rectangle enclosing its eight projected
+corners, using both focal lengths and each corner's depth; a cube crossing the
+camera plane is skipped. The outline is filled even-odd on the same mask, including
+holes. Coverage divides covered outline pixels by all outline pixels, with
+antialiased edge pixels weighted by their area. There is no marker enlargement or
+minimum footprint, and picture cropping and display-copy size do not affect it.
+The rectangle approximates the cube's true, generally hexagonal silhouette and
+can overestimate it. The visible squares keep their existing enlargement for
+legibility; they are not the quantitative mask.
+
+A tile's accessible picture label names the instant actually drawn, and its caption
+names the camera. While a newer picture is decoding, the caption also gives the held
+instant's time with a neutral **loading** marker, cleared on draw. The edge flag also belongs to
+the drawn picture. Captions wrap so the loading marker stays visible at laptop
+size. Full-size pictures return focus to the tile that opened them. Surface read
+failures hide the surface and name the instant and file in the board's load status.
+
+A value
 predicted by a correlation (the Heskestad height from the hood) is the plan's Planned
 style, `--plot-planned` in the long dash, labelled with the correlation's name, and a
 note under the plots says what it assumed. "As the hood sees it" changes the
 estimates' values and labels, never their dash, and Heat released changes the first
-plot's title and unit (kW to MJ); both are pressed toggles on the plot bar. The 3-D
+plot's title and unit (kW to MJ); both are pressed toggles on the plot bar. Together
+they apply the response first and then integrate, retaining the response label.
+Heat curves start at zero at the event's first instant, use clipped trapezoids with
+interpolated boundaries, and break across missing intervals before resuming the
+known total. Key numbers retain the raw series. Heat with no covered interval is
+shown as **–**; below 99.5 % coverage it is marked **partial** with its covered
+share. Percentages require both series to cover at least 99.5 % and to declare the
+same basis. Otherwise cards explain the missing comparison. Mixed or unstated
+bases appear on each heat-series legend label, and delivered notes are tooltips
+on legend labels and cards.
+
+The 3-D
 flame's smoothed surface takes the cubes' height ramp on the sequence's fixed scale,
 so switching **Cubes | Surface** changes only the shape. A step
 button outlines the panel it explains with the accent. Escape closes the innermost
 layer first (full-size picture, then step text, then the board), handled on the key
 itself so Chromium's close-request rules cannot close the board early.
+
+The export panel makes the rest of the board inert, takes and contains focus, and
+returns it to Export on close. During encoding only Cancel remains enabled;
+Escape cancels. Event changes, board closure and language changes abort and await
+the running composition before replacing its resources. PNG and video restore
+the live scene to the board's current instant on completion, cancellation or error.
+The composition reserves camera-caption rows and space below plots at both export
+sizes: quality bands carry the board's text keys and tokens from `qualityKey` in
+`ui/flame-analysis-plots.ts`, and hull check carries each camera's coverage caption
+from `coverageCaption` in `ui/flame-analysis-cameras.ts`, even when the visible
+outline is off. Unreadable pictures have visible **Picture missing** text and keep
+their camera caption.
 
 The result scene keeps its unlit fields, translucent context geometry, free orbit
 and existing camera fit. FDS coordinates can be negative and are not constrained
@@ -468,6 +511,7 @@ Token reuse alone is not an accessibility or scientific-validation claim.
 | Flame analysis 3-D labels | Only the cameras (by the folder's short names) and the fire are labelled | A label on every plate and pole of a real site hides the flame the view is for | Keep |
 | Flame analysis plots | Drawn in screen pixels at their laid-out size and redrawn on resize, not a fixed `viewBox` scaled to fit | Each plot gets a share of the column whose shape changes with the window; a fixed aspect left the text a few pixels high | Keep |
 | Flame analysis video and PNG | A fixed 16:9 composition (1920 x 1080 or 1280 x 720) drawn on canvas for slides, with larger type (30 px title, 14 to 18 px labels at 1080p), not a capture of the window; plots redrawn on canvas from the same data, tokens, dashes and bands | A slide needs one layout at one size whatever the window was, and text legible from the back of a room | Keep |
+| Flame analysis hull coverage | Physical cube rectangles on a separate mask; the overlay retains enlarged squares | Visibility marks must remain legible without inflating the quantitative coverage. A rectangle can exceed the cube's true hexagonal silhouette | Keep |
 
 The editor's scene materials and furniture remain in `scene/builders.ts` and
 `scene/viewport.ts`; object defaults and camera modality colors are in

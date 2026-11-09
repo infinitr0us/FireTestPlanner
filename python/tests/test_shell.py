@@ -8,7 +8,9 @@ covered by `app.py --selftest`, which drives the real thing.
 from __future__ import annotations
 
 import json
+import http.client
 import os
+from pathlib import Path
 import sys
 import time
 import urllib.error
@@ -482,7 +484,7 @@ def test_fds_export_save_route(server, tmp_path, monkeypatch):
     assert not shell.dirty and not shell.recent_files()
     monkeypatch.setattr(shell, '_ask_save', lambda *_: None)
     assert request(base, '/api/save-fds', 'test-token', body)[1] is None
-    monkeypatch.setattr(shell, '_ask_save', choose)
+    monkeypatch.setattr(shell, '_ask_save', lambda *_: str(destination) + '.fds')
     monkeypatch.setattr(shell, '_write', lambda *_: 'Disk full')
     assert request(base, '/api/save-fds', 'test-token', body)[1] == {'error': 'Disk full'}
 
@@ -1017,6 +1019,124 @@ def test_save_media_checks_what_it_is_given(server, monkeypatch):
     with pytest.raises(urllib.error.HTTPError) as error:
         _post_bytes(base, "/api/save-media?kind=png", b"")
     assert error.value.code == 400
+
+
+@pytest.mark.parametrize("kind, extension", [("png", ".png"), ("video", ".mp4"), ("fds", ".fds"), ("csv", ".csv")])
+@pytest.mark.parametrize("chosen_name", ["slides", "slides.txt"])
+def test_appended_save_extension_never_overwrites_unconfirmed_file(server, tmp_path, monkeypatch, kind, extension, chosen_name):
+    shell, _, base, _ = server
+    chosen = tmp_path / chosen_name
+    final = Path(str(chosen) + extension)
+    chosen.write_bytes(b"chosen file")
+    final.write_bytes(b"unconfirmed existing file")
+    monkeypatch.setattr(shell, "_ask_save", lambda *args: str(chosen))
+    if kind in ("png", "video"):
+        data = b"\x89PNG\r\n\x1a\nnew" if kind == "png" else b"\x00\x00\x00\x18ftypisomnew"
+        result = _post_bytes(base, "/api/save-media?kind=" + kind, data)
+    else:
+        _, result = request(base, "/api/save-" + kind, "test-token", {"text": "new", "name": "slides"})
+    assert "Choose the name with its extension" in result["error"]
+    assert final.read_bytes() == b"unconfirmed existing file"
+    assert chosen.read_bytes() == b"chosen file"
+    assert sorted(p.name for p in tmp_path.iterdir() if p.is_file()) == sorted([chosen.name, final.name])
+
+
+@pytest.mark.parametrize("kind, extension", [("png", ".png"), ("video", ".mp4"), ("fds", ".fds"), ("csv", ".csv")])
+def test_explicit_save_extension_allows_the_dialogs_destination(tmp_path, monkeypatch, kind, extension):
+    shell = shell_app.Shell()
+    target = tmp_path / ("slides" + extension.upper())
+    target.write_bytes(b"old")
+    monkeypatch.setattr(shell, "_ask_save", lambda *args: str(target))
+    if kind in ("png", "video"):
+        data = b"\x89PNG\r\n\x1a\nnew" if kind == "png" else b"\x00\x00\x00\x18ftypisomnew"
+        result = shell.save_media(data, "slides", kind)
+    else:
+        data = b"new"
+        result = getattr(shell, "save_" + kind)("new", "slides")
+    assert result == {"path": str(target)}
+    assert target.read_bytes() == data
+
+
+def test_analysis_read_refuses_the_reviewers_injected_open_swap(server, tmp_path, monkeypatch):
+    from urllib.parse import urlencode
+    shell, _, base, _ = server
+    folder = _analysis_folder(tmp_path)
+    target = folder / "race.txt"
+    target.write_bytes(b"inside")
+    outside = tmp_path / "outside.txt"
+    # Check privileges before injecting the scheduling point.
+    probe = folder / "probe-link"
+    try:
+        probe.symlink_to(outside)
+        probe.unlink()
+    except OSError:
+        pytest.skip("symbolic links need privileges here")
+    token = shell.analyses.open(str(folder / "analysis.json"))["token"]
+    original = Path.open
+    def swapped(path, *args, **kwargs):
+        if path == target:
+            target.unlink()
+            target.symlink_to(outside)
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "open", swapped)
+    route = "/api/flame-analysis/file?" + urlencode({"token": token, "path": "race.txt"})
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        request(base, route, "test-token")
+    assert caught.value.code == 400
+    assert "leads out" in caught.value.read().decode("utf-8")
+
+
+def test_analysis_read_requires_handle_and_resolved_path_to_match(tmp_path, monkeypatch):
+    folder = _analysis_folder(tmp_path)
+    other = folder / "other.txt"
+    other.write_bytes(b"wrong opened object")
+    target = folder / "race.txt"
+    target.write_bytes(b"right pathname")
+    analyses = shell_app.AnalysisFolders()
+    token = analyses.open(str(folder / "analysis.json"))["token"]
+    original = Path.open
+    monkeypatch.setattr(Path, "open", lambda path, *args, **kwargs: original(other if path == target else path, *args, **kwargs))
+    with pytest.raises(ValueError, match="changed while opening"):
+        analyses.read(token, "race.txt")
+
+
+@pytest.mark.parametrize("length, body, expected", [
+    (str(shell_app.MAX_BODY_BYTES + 1), b"", 413), ("9" * 100, b"", 413),
+    ("bad", b"", 400), ("-1", b"", 400), ("+2", b"", 400), ("1.5", b"", 400), ("0", b"", 400),
+    ("2", b"[]", 400), ("4", b"null", 400), ("4", b"true", 400), ("1", b"0", 400),
+    ("3", b'"x"', 400), ("1", b"{", 400), ("1", b"\xff", 400),
+])
+def test_json_body_rejection_precedes_route_dispatch(server, monkeypatch, length, body, expected):
+    shell, srv, _, _ = server
+    monkeypatch.setattr(shell, "open_analysis", lambda: pytest.fail("route must not run"))
+    connection = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
+    try:
+        connection.request("POST", "/api/flame-analysis/open", body, {
+            "X-Shell-Token": "test-token", "Content-Length": length,
+        })
+        response = connection.getresponse()
+        assert response.status == expected
+        assert "error" in json.loads(response.read())
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("lengths", [[], ["2", "2"], ["2", "3"]])
+def test_json_missing_or_multiple_lengths_are_refused(server, monkeypatch, lengths):
+    shell, srv, _, _ = server
+    monkeypatch.setattr(shell, "open_analysis", lambda: pytest.fail("route must not run"))
+    connection = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
+    try:
+        connection.putrequest("POST", "/api/flame-analysis/open")
+        connection.putheader("X-Shell-Token", "test-token")
+        for length in lengths:
+            connection.putheader("Content-Length", length)
+        connection.endheaders()  # refusal must arrive before a body is sent
+        response = connection.getresponse()
+        assert response.status == 400
+        response.read()
+    finally:
+        connection.close()
 
 
 # -- native dialogs ------------------------------------------------------

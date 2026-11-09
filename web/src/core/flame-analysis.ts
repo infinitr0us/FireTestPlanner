@@ -10,7 +10,7 @@
  */
 
 import * as i18n from '../ui/i18n';
-import { delimitedRows } from './delimited';
+import { DelimitedError, delimitedRows } from './delimited';
 import { quatToColumns } from './math';
 import { fxOf, fyOf, positionOf, principalPointOf, quatOf } from './plan';
 import type { CameraObject } from './types';
@@ -95,7 +95,7 @@ export function localText(value: LocalText | undefined, language: 'en' | 'fr' = 
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 const STEM = /^[A-Za-z0-9_.+-]{1,64}$/;
 const DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
-const FORBIDDEN = /[\\:*?"<>|]/;
+const FORBIDDEN = /[\\:\x00-\x1f\x7f]/;
 
 /** Collects problems with their place in the file, like the schema validator. */
 class Problems {
@@ -325,7 +325,53 @@ export function parseEventManifest(textValue: string, where = 'event.json'): Eve
   if (event.instants.t_s.length !== event.instants.stem.length) {
     throw new FlameAnalysisError(i18n.t("{p1}: {p2} times but {p3} stems", { p1: where, p2: event.instants.t_s.length, p3: event.instants.stem.length }));
   }
+  if (event.instants.t_s.some((t, i, times) => !Number.isFinite(t) || (i > 0 && t <= times[i - 1]))) {
+    throw new FlameAnalysisError(i18n.t("{p1}: instant times must be finite and strictly increasing", { p1: event.id }));
+  }
+  const seen = new Set<string>();
+  for (const s of event.series) {
+    if (seen.has(s.id)) throw new FlameAnalysisError(i18n.t("Event {p1}: series id '{p2}' repeats", { p1: event.id, p2: s.id }));
+    seen.add(s.id);
+  }
   return event;
+}
+
+/** File-independent event consistency, after parsing. Codes mirror FlameEvent.check. */
+export function checkEvent(event: EventManifest, entry: Pick<AnalysisManifest['events'][number], 'id'>,
+  series: ReadonlyMap<string, Series> = new Map()): { code: string; message: string }[] {
+  const problems: { code: string; message: string }[] = [];
+  const add = (code: string, message: string): void => { problems.push({ code, message: `${event.id}: ${message}` }); };
+  if (event.id !== entry.id) add('event-id', i18n.t("event.json says '{p1}', analysis.json lists '{p2}'", { p1: event.id, p2: entry.id }));
+  const cameras = new Set(event.cameras), images = Object.keys(event.images);
+  if (images.length !== cameras.size || images.some(cam => !cameras.has(cam))) {
+    add('images-cameras', i18n.t("images must list exactly the event's cameras"));
+  }
+  for (const [cam, image] of Object.entries(event.images)) {
+    if (Boolean(event.files.closeup) !== Boolean(image.closeup)) {
+      add('closeup', i18n.t("{p1}: files.closeup and images close-up rectangles must be present together", { p1: cam }));
+    }
+    if (image.closeup) {
+      const [x, y, w, h] = image.closeup.rect_px;
+      if (x < 0 || y < 0 || x + w > image.size_px[0] || y + h > image.size_px[1]) {
+        add('closeup', i18n.t("{p1}: the close-up leaves the picture", { p1: cam }));
+      }
+    }
+  }
+  const n = event.instants.t_s.length;
+  const bad = [...(event.quality?.noHull ?? [])];
+  for (const [cam, indices] of Object.entries(event.quality?.outsideFrame ?? {})) {
+    if (!cameras.has(cam)) add('quality-camera', i18n.t("outsideFrame names camera '{p1}' outside the event", { p1: cam }));
+    bad.push(...indices);
+  }
+  if (bad.some(i => !Number.isInteger(i) || i < 0 || i >= n)) {
+    add('quality-index', i18n.t("quality indices must be within the {p1} instants", { p1: n }));
+  }
+  for (const s of event.series) {
+    if ((s.quantity === 'volume' || s.quantity === 'area') && series.get(s.id)?.v.some(v => Number.isFinite(v) && v < 0)) {
+      add('series-negative', i18n.t("Series '{p1}' contains negative {p2}", { p1: s.id, p2: s.quantity }));
+    }
+  }
+  return problems;
 }
 
 // -- paths ------------------------------------------------------------------------
@@ -340,11 +386,16 @@ export function joinPath(folder: string, relative: string): string {
 export const folderOf = (path: string): string => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
 
 export function fillTemplate(template: string, cam?: string, stem?: string): string {
-  return template.replace(/\{([a-z]+)\}/g, (_, name: string) => {
+  const problem = pathProblem(template, true);
+  if (problem) throw new FlameAnalysisError(`${template}: ${problem}`);
+  const result = template.replace(/\{([a-z]+)\}/g, (_, name: string) => {
     const value = name === 'cam' ? cam : name === 'stem' ? stem : undefined;
     if (value === undefined) throw new FlameAnalysisError(i18n.t("template {p1} needs {{p2}}", { p1: template, p2: name }));
     return value;
   });
+  const filledProblem = pathProblem(result);
+  if (filledProblem) throw new FlameAnalysisError(`${result}: ${filledProblem}`);
+  return result;
 }
 
 // -- data files -------------------------------------------------------------------
@@ -354,8 +405,14 @@ export interface Series { t: Float64Array; v: Float64Array }
 /** Two columns of a series CSV; an empty value cell is NaN. Anything else that is
  *  not a finite number is refused with its row, as fireplan does. */
 export function parseSeriesCsv(textValue: string, timeColumn: string, valueColumn: string, where = 'series'): Series {
-  const rows = delimitedRows(textValue, ',', true);
-  if (!rows.length) throw new FlameAnalysisError(i18n.t("{p1}: empty", { p1: where }));
+  const lines: number[] = [];
+  let rows: string[][];
+  try { rows = delimitedRows(textValue, ',', 'empty-lines', Infinity, lines); }
+  catch (error) {
+    if (error instanceof DelimitedError) throw new FlameAnalysisError(i18n.t("{p1} row {p2}: {p3}", { p1: where, p2: error.line, p3: error.message }));
+    throw error;
+  }
+  if (!rows.length) throw new FlameAnalysisError(i18n.t("{p1}: no samples", { p1: where }));
   const names = rows[0].map((n) => n.trim());
   const columns = [timeColumn, valueColumn].map((name) => {
     const index = names.indexOf(name);
@@ -363,6 +420,7 @@ export function parseSeriesCsv(textValue: string, timeColumn: string, valueColum
     return index;
   });
   const n = rows.length - 1;
+  if (!n) throw new FlameAnalysisError(i18n.t("{p1}: no samples", { p1: where }));
   const t = new Float64Array(n).fill(NaN), v = new Float64Array(n).fill(NaN);
   for (let r = 1; r < rows.length; r++) {
     columns.forEach((c, k) => {
@@ -370,27 +428,30 @@ export function parseSeriesCsv(textValue: string, timeColumn: string, valueColum
       if (cell === '') return;
       const value = Number(cell);
       if (!Number.isFinite(value) || !/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(cell)) {
-        throw new FlameAnalysisError(i18n.t("{p1} row {p2}: '{p3}' in column '{p4}' is not a finite number", { p1: where, p2: r + 1, p3: cell, p4: names[c] }));
+        throw new FlameAnalysisError(i18n.t("{p1} row {p2}: '{p3}' in column '{p4}' is not a finite number", { p1: where, p2: lines[r], p3: cell, p4: names[c] }));
       }
       (k === 0 ? t : v)[r - 1] = value;
     });
   }
   for (let i = 0; i < n; i++) {
     if (!Number.isFinite(t[i]) || (i > 0 && !(t[i] > t[i - 1]))) {
-      throw new FlameAnalysisError(i18n.t("{p1}: times must be present and strictly increasing (row {p2})", { p1: where, p2: i + 2 }));
+      throw new FlameAnalysisError(i18n.t("{p1}: times must be present and strictly increasing (row {p2})", { p1: where, p2: lines[i + 1] }));
     }
   }
   return { t, v };
 }
 
 /** One camera's outlines: per instant, rings as flat `[x0, y0, ...]` pixel arrays. */
-export function parseOutlines(textValue: string, camera: string, instants: number, where = 'outlines'): Float32Array[][] {
+export function parseOutlines(textValue: string, camera: string, instants: number, where = 'outlines', expectedSize?: Size): Float32Array[][] {
   const data = parseJson(textValue, where);
   const p = new Problems();
   if (closed(p, '', data, ['format', 'version', 'camera', 'size_px', 'outlines'], [])) {
     header(p, data, OUTLINES_FORMAT);
     if (data.camera !== camera) p.add('camera', i18n.t("holds camera {p1}, not {p2}", { p1: String(data.camera), p2: camera }));
     size(p, 'size_px', data.size_px);
+    if (expectedSize && (!Array.isArray(data.size_px) || data.size_px.some((v, i) => v !== expectedSize[i]))) {
+      p.add('size_px', i18n.t("must equal images.{p1}.size_px", { p1: camera }));
+    }
     if (!Array.isArray(data.outlines)) p.add('outlines', i18n.t("must be a list"));
     else if (data.outlines.length !== instants) p.add('outlines', i18n.t("{p1} instants, the event has {p2}", { p1: data.outlines.length, p2: instants }));
   }
@@ -447,23 +508,33 @@ export function peakOf({ t, v }: { t: ArrayLike<number>; v: ArrayLike<number> },
  * seconds (kW s = kJ for heat release rate). Intervals with a missing end are left
  * out; the series is not extended past its own first and last samples.
  */
-export function integrate({ t, v }: Series, from: number, to: number): number {
-  let total = 0;
+export interface Integral { value: number; covered_s: number; coverage: number }
+
+/** Shared clipped, interpolated trapezoids for totals and running heat. */
+function* trapezoids({ t, v }: Series, from: number, to: number): Generator<{ a: number; b: number; area: number }> {
   for (let i = 1; i < t.length; i++) {
     const a = Math.max(t[i - 1], from), b = Math.min(t[i], to);
     if (!(b > a) || !Number.isFinite(v[i - 1]) || !Number.isFinite(v[i])) continue;
     const span = t[i] - t[i - 1];
     const va = v[i - 1] + ((v[i] - v[i - 1]) * (a - t[i - 1])) / span;
     const vb = v[i - 1] + ((v[i] - v[i - 1]) * (b - t[i - 1])) / span;
-    total += ((va + vb) / 2) * (b - a);
+    yield { a, b, area: ((va + vb) / 2) * (b - a) };
   }
-  return total;
+}
+
+// Keep the scalar API for numerical consumers; callers displaying heat request coverage.
+export function integrate(data: Series, from: number, to: number): number;
+export function integrate(data: Series, from: number, to: number, report: true): Integral;
+export function integrate(data: Series, from: number, to: number, report = false): number | Integral {
+  let value = 0, covered_s = 0;
+  for (const part of trapezoids(data, from, to)) { value += part.area; covered_s += part.b - part.a; }
+  return report ? { value, covered_s, coverage: to > from ? Math.min(1, covered_s / (to - from)) : 0 } : value;
 }
 
 export interface KeyNumbers {
   window: [number, number];
-  hood?: { id: string; peak: Peak; heat_kJ: number };
-  estimates: { id: string; peak: Peak; heat_kJ: number; peakRatio: number | null; heatRatio: number | null }[];
+  hood?: { id: string; peak: Peak; heat_kJ: number; coverage: number };
+  estimates: { id: string; peak: Peak; heat_kJ: number; coverage: number; comparison: 'same' | 'different' | 'unstated'; peakRatio: number | null; heatRatio: number | null }[];
   volume?: { peakMean: Peak };
   height?: { peak: Peak };
 }
@@ -481,18 +552,20 @@ export function keyNumbers(event: EventManifest, series: Map<string, Series>): K
   const measured = hrr.find((s) => s.role === 'measured');
   if (measured) {
     const data = series.get(measured.id)!;
-    const peak = peakOf(data, ...window);
-    if (peak) out.hood = { id: measured.id, peak, heat_kJ: integrate(data, ...window) };
+    const peak = peakOf(data, ...window) ?? { value: NaN, t: NaN };
+    const heat = integrate(data, ...window, true);
+    out.hood = { id: measured.id, peak, heat_kJ: heat.value, coverage: heat.coverage };
   }
   for (const s of hrr.filter((x) => x.role === 'estimated')) {
     const data = series.get(s.id)!;
-    const peak = peakOf(data, ...window);
-    if (!peak) continue;
-    const heat = integrate(data, ...window);
+    const peak = peakOf(data, ...window) ?? { value: NaN, t: NaN };
+    const heat = integrate(data, ...window, true);
+    const comparison = !s.basis || !measured?.basis ? 'unstated' : s.basis === measured.basis ? 'same' : 'different';
+    const comparable = comparison === 'same' && heat.coverage >= 0.995 && (out.hood?.coverage ?? 0) >= 0.995;
     out.estimates.push({
-      id: s.id, peak, heat_kJ: heat,
-      peakRatio: out.hood && out.hood.peak.value > 0 ? peak.value / out.hood.peak.value : null,
-      heatRatio: out.hood && out.hood.heat_kJ > 0 ? heat / out.hood.heat_kJ : null,
+      id: s.id, peak, heat_kJ: heat.value, coverage: heat.coverage, comparison,
+      peakRatio: comparable && out.hood && out.hood.peak.value > 0 && Number.isFinite(peak.value) ? peak.value / out.hood.peak.value : null,
+      heatRatio: comparable && out.hood && out.hood.heat_kJ > 0 ? heat.value / out.hood.heat_kJ : null,
     });
   }
   const volume = event.series.find((s) => s.quantity === 'volume' && series.has(s.id));
@@ -516,29 +589,37 @@ export interface Mesh { positions: Float32Array; indices: Uint32Array }
 /** A format 1.1 mesh file: binary little-endian PLY, float x y z vertices, triangles
  *  as (uchar 3, int32 x 3). Mirror of `read_mesh` in fireplan. */
 export function parseMesh(bytes: Uint8Array, where = 'mesh'): Mesh {
-  const marker = new TextEncoder().encode('end_header\n');
-  let end = -1;
-  outer: for (let i = 0; i + marker.length <= Math.min(bytes.length, 4096); i++) {
-    for (let k = 0; k < marker.length; k++) if (bytes[i + k] !== marker[k]) continue outer;
-    end = i;
-    break;
+  const expected = [/^ply$/, /^format binary_little_endian 1\.0$/, /^element vertex ([0-9]+)$/,
+    /^property float x$/, /^property float y$/, /^property float z$/, /^element face ([0-9]+)$/,
+    /^property list uchar int vertex_indices$/, /^end_header$/];
+  const counts: number[] = [];
+  let start = 0;
+  for (let i = 0; i < expected.length; i++) {
+    let end = start;
+    while (end < Math.min(bytes.length, 64 * 1024) && bytes[end] !== 10) end++;
+    const rawLine = bytes.subarray(start, end);
+    const line = new TextDecoder().decode(rawLine);
+    const match = expected[i].exec(line);
+    if (end >= Math.min(bytes.length, 64 * 1024) || rawLine.some(byte => byte > 127 || byte === 13) || !match) {
+      throw new FlameAnalysisError(i18n.t("{p1}: not an exact-layout PLY header within 64 KiB", { p1: where }));
+    }
+    if (i === 2 || i === 6) counts.push(Number(match[1]));
+    start = end + 1;
   }
-  const header = new TextDecoder().decode(bytes.subarray(0, Math.max(end, 0)));
-  if (!header.startsWith('ply\n') || end < 0) throw new FlameAnalysisError(i18n.t("{p1}: not a PLY file", { p1: where }));
-  const nv = Number(/element vertex (\d+)/.exec(header)?.[1]);
-  const nf = Number(/element face (\d+)/.exec(header)?.[1]);
-  if (!header.includes('binary_little_endian') || !Number.isInteger(nv) || !Number.isInteger(nf)
-    || !header.includes('property list uchar int') || (header.match(/property float/g) ?? []).length !== 3) {
-    throw new FlameAnalysisError(i18n.t("{p1}: not a binary little-endian triangle PLY with float x, y, z", { p1: where }));
+  const [nv, nf] = counts;
+  if (!Number.isSafeInteger(nv) || !Number.isSafeInteger(nf)) {
+    throw new FlameAnalysisError(i18n.t("{p1}: PLY count exceeds the file size", { p1: where }));
   }
-  const start = end + marker.length;
   if (bytes.length - start !== nv * 12 + nf * 13) {
     throw new FlameAnalysisError(i18n.t("{p1}: {p2} bytes after the header, {p3} vertices and {p4} triangles need {p5}",
       { p1: where, p2: bytes.length - start, p3: nv, p4: nf, p5: nv * 12 + nf * 13 }));
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset + start, bytes.length - start);
   const positions = new Float32Array(nv * 3);
-  for (let i = 0; i < nv * 3; i++) positions[i] = view.getFloat32(i * 4, true);
+  for (let i = 0; i < nv * 3; i++) {
+    positions[i] = view.getFloat32(i * 4, true);
+    if (!Number.isFinite(positions[i])) throw new FlameAnalysisError(i18n.t("{p1}: vertices must be finite", { p1: where }));
+  }
   const indices = new Uint32Array(nf * 3);
   for (let f = 0; f < nf; f++) {
     const at = nv * 12 + f * 13;
@@ -555,7 +636,7 @@ export function parseMesh(bytes: Uint8Array, where = 'mesh'): Mesh {
 /**
  * A series as an instrument with a first-order response time `tau` would record it:
  * y' = (x - y) / tau, stepped exactly between samples (the input held over each
- * step). Starts at the first sample; a missing sample holds the response.
+ * step). Starts at the first finite sample; a missing sample holds the last input.
  */
 export function firstOrderResponse({ t, v }: Series, tau: number): Series {
   const out = new Float64Array(v.length).fill(NaN);
@@ -573,16 +654,26 @@ export function firstOrderResponse({ t, v }: Series, tau: number): Series {
   return { t, v: out };
 }
 
-/** The running integral from the series' first sample (value x seconds; kJ from
- *  kW), by trapezoids; an interval with a missing end adds nothing. */
-export function cumulative({ t, v }: Series): Series {
-  const out = new Float64Array(v.length);
-  let total = 0;
-  for (let i = 0; i < t.length; i++) {
-    if (i > 0 && Number.isFinite(v[i]) && Number.isFinite(v[i - 1])) total += ((v[i] + v[i - 1]) / 2) * (t[i] - t[i - 1]);
-    out[i] = total;
+/** Running heat on the event window, with the same trapezoids as integrate.
+ * Missing intervals break the line; the total resumes without inventing heat. */
+export function cumulative(data: Series, from = data.t[0], to = data.t[data.t.length - 1]): Series {
+  const times: number[] = [], values: number[] = [];
+  const add = (t: number, v: number): void => {
+    if (times.at(-1) === t) values[values.length - 1] = v;
+    else { times.push(t); values.push(v); }
+  };
+  for (const t of data.t) if (t < from) add(t, NaN);
+  add(from, 0);
+  let total = 0, end = from;
+  for (const { a, b, area } of trapezoids(data, from, to)) {
+    if (a > end) add((end + a) / 2, NaN);
+    add(a, total);
+    total += area;
+    add(b, total);
+    end = b;
   }
-  return { t, v: out };
+  if (to > end) { add((end + to) / 2, NaN); add(to, total); }
+  return { t: Float64Array.from(times), v: Float64Array.from(values) };
 }
 
 /**
@@ -610,6 +701,8 @@ export interface HullProjection {
   uv: Float32Array;
   /** About how many pixels one cube spans in that picture, at the points' distance. */
   size: number;
+  /** Quantitative footprints: minU, minV, maxU, maxV per cube, without display inflation. */
+  rectangles?: Float64Array;
 }
 
 /** Project points (x, y, z flat, metres) through a plan camera: `projectToPixels`
@@ -622,6 +715,7 @@ export function projectHull(camera: CameraObject, points: ArrayLike<number>, pit
   const [cx, cy] = principalPointOf(camera);
   const fx = fxOf(camera), fy = fyOf(camera);
   const uv = new Float32Array((points.length / 3) * 2);
+  const rectangles: number[] = [];
   let n = 0, depth = 0;
   for (let i = 0; i < points.length; i += 3) {
     const dx = points[i] - px, dy = points[i + 1] - py, dz = points[i + 2] - pz;
@@ -632,7 +726,17 @@ export function projectHull(camera: CameraObject, points: ArrayLike<number>, pit
     uv[n++] = (fx * x) / z + cx;
     uv[n++] = (fy * y) / z + cy;
     depth += z;
+    let u0 = Infinity, v0 = Infinity, u1 = -Infinity, v1 = -Infinity, valid = true;
+    for (const ox of [-pitch / 2, pitch / 2]) for (const oy of [-pitch / 2, pitch / 2]) for (const oz of [-pitch / 2, pitch / 2]) {
+      const qx = dx + ox, qy = dy + oy, qz = dz + oz;
+      const cz = qx * fwd[0] + qy * fwd[1] + qz * fwd[2];
+      if (cz <= 0) { valid = false; continue; }
+      const u = fx * (qx * right[0] + qy * right[1] + qz * right[2]) / cz + cx;
+      const v = fy * (qx * down[0] + qy * down[1] + qz * down[2]) / cz + cy;
+      u0 = Math.min(u0, u); v0 = Math.min(v0, v); u1 = Math.max(u1, u); v1 = Math.max(v1, v);
+    }
+    if (valid) rectangles.push(u0, v0, u1, v1);
   }
   const count = n / 2;
-  return { uv: uv.subarray(0, n), size: count ? (fx * pitch) / (depth / count) : 0 };
+  return { uv: uv.subarray(0, n), size: count ? (fx * pitch) / (depth / count) : 0, rectangles: Float64Array.from(rectangles) };
 }

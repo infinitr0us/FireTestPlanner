@@ -63,6 +63,9 @@ export class AnalysisScene {
   private surface = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.55, metalness: 0, side: THREE.DoubleSide }));
   private surfaceLoader: ((index: number) => Promise<SurfaceMesh>) | null = null;
+  private surfaceGeneration = 0;
+  private surfaceError: (error: Error) => void = () => {};
+  private disposed = false;
   private surfaces = new Map<number, Promise<THREE.BufferGeometry>>();
   private surfaceIndex = -1;
   /** The surface on screen has left the cache, so replacing it must free it. */
@@ -186,15 +189,22 @@ export class AnalysisScene {
   setFrame(index: number): void {
     this.frameIndex = index;
     if (this.flame.setFrame(index)) this.dirty = true;
-    if (this.look === 'surface') void this.showSurface(index);
+    if (this.look === 'surface') this.interactiveSurface(index);
   }
 
   /** Where the event's smoothed surfaces come from (format 1.1), or null. */
-  setSurfaces(loader: ((index: number) => Promise<SurfaceMesh>) | null, zRange?: [number, number]): void {
+  setSurfaces(loader: ((index: number) => Promise<SurfaceMesh>) | null, zRange?: [number, number], onError: (error: Error) => void = () => {}): void {
+    ++this.surfaceGeneration;
+    this.surfaceError = onError;
     this.surfaceLoader = loader;
+    if (this.surfaceIndex < 0 || this.surfaceEvicted) this.surface.geometry.dispose();
     for (const pending of this.surfaces.values()) void pending.then((g) => g.dispose(), () => undefined);
     this.surfaces.clear();
+    this.surface.geometry = new THREE.BufferGeometry();
+    this.surface.visible = false;
+    this.surfaceEvicted = false;
     this.surfaceIndex = -1;
+    this.dirty = true;
     if (zRange) this.zRange = zRange;
     if (!loader) this.setLook('cubes');
   }
@@ -204,16 +214,24 @@ export class AnalysisScene {
     if (look === 'surface' && !this.surfaceLoader) look = 'cubes';
     this.look = look;
     this.flame.group.visible = look === 'cubes';
-    this.surface.visible = look === 'surface';
-    if (look === 'surface') void this.showSurface(this.frameIndex);
+    this.surface.visible = look === 'surface' && this.surfaceIndex >= 0;
+    if (look === 'surface') this.interactiveSurface(this.frameIndex);
     this.dirty = true;
   }
   get flameLook(): FlameLook { return this.look; }
 
   /** Resolves once instant `index` is ready to draw (a surface may still be loading). */
   async prepareFrame(index: number): Promise<void> {
-    this.setFrame(index);
+    this.frameIndex = index;
+    if (this.flame.setFrame(index)) this.dirty = true;
     if (this.look === 'surface') await this.showSurface(index);
+  }
+
+  private interactiveSurface(index: number): void {
+    const generation = this.surfaceGeneration;
+    void this.showSurface(index).catch((error: Error) => {
+      if (generation === this.surfaceGeneration && this.frameIndex === index && !this.disposed) this.surfaceError(error);
+    });
   }
 
   private geometry(index: number): Promise<THREE.BufferGeometry> {
@@ -223,7 +241,9 @@ export class AnalysisScene {
       this.surfaces.set(index, pending);
       return pending;
     }
-    pending = this.surfaceLoader!(index).then((mesh) => {
+    const zRange = this.zRange;
+    const loader = this.surfaceLoader!;
+    pending = Promise.resolve().then(() => loader(index)).then((mesh) => {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(mesh.positions, 3));
       geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
@@ -232,7 +252,7 @@ export class AnalysisScene {
       // the sequence's fixed height scale (sRGB, as the voxel shader decodes it).
       const colours = new Float32Array(mesh.positions.length);
       const colour = new THREE.Color();
-      const [lo, hi] = this.zRange;
+      const [lo, hi] = zRange;
       for (let i = 0; i < mesh.positions.length; i += 3) {
         const t = Math.min(Math.max((mesh.positions[i + 2] - lo) / Math.max(hi - lo, 1e-6), 0), 1);
         colour.setRGB(Math.min(t * 2, 1), Math.max(0, 1 - Math.abs(t - 0.5) * 2), Math.max(0, 1 - t), THREE.SRGBColorSpace);
@@ -242,6 +262,7 @@ export class AnalysisScene {
       return geometry;
     });
     this.surfaces.set(index, pending);
+    void pending.catch(() => { if (this.surfaces.get(index) === pending) this.surfaces.delete(index); });
     while (this.surfaces.size > SURFACE_CACHE) {
       const [oldest, geometry] = this.surfaces.entries().next().value as [number, Promise<THREE.BufferGeometry>];
       this.surfaces.delete(oldest);
@@ -253,25 +274,38 @@ export class AnalysisScene {
   }
 
   private async showSurface(index: number): Promise<void> {
+    const generation = this.surfaceGeneration;
     if (!this.surfaceLoader || index < 0) {
-      this.replaceSurface(new THREE.BufferGeometry(), -1);
+      this.surface.visible = false;
+      this.dirty = true;
       return;
     }
-    const geometry = await this.geometry(index);
-    if (this.frameIndex !== index || this.look !== 'surface') return;
-    this.replaceSurface(geometry, index);
+    const pending = this.geometry(index);
+    try {
+      const geometry = await pending;
+      // Replaced caches own disposal of obsolete completions. Never reattach them.
+      if (generation !== this.surfaceGeneration || this.disposed || this.surfaces.get(index) !== pending) return;
+      if (this.frameIndex !== index || this.look !== 'surface') return;
+      this.replaceSurface(geometry, index);
+    } catch (error) {
+      if (generation !== this.surfaceGeneration || this.disposed) return;
+      if (this.frameIndex === index) { this.surface.visible = false; this.dirty = true; }
+      throw error;
+    }
   }
 
   private replaceSurface(geometry: THREE.BufferGeometry, index: number): void {
-    if (this.surfaceEvicted) {
+    if (this.surfaceEvicted || this.surfaceIndex < 0) {
       this.surface.geometry.dispose();
       this.surfaceEvicted = false;
     }
     this.surface.geometry = geometry;
     this.surfaceIndex = index;
+    this.surface.visible = this.look === 'surface';
     this.dirty = true;
   }
   get cubeCount(): number { return this.flame.cubeCount; }
+  get currentFrame(): number { return this.frameIndex; }
 
   /** Frame the whole site, or the flame from the side of the first camera. */
   setView(view: SceneView): void {
@@ -361,6 +395,8 @@ export class AnalysisScene {
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     cancelAnimationFrame(this.request);
     this.observer.disconnect();
     this.controls.dispose();

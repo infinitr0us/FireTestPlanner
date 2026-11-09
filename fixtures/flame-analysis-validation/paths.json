@@ -1,0 +1,214 @@
+[
+  {
+    "path": "a",
+    "accept": true
+  },
+  {
+    "path": "a/b.txt",
+    "accept": true
+  },
+  {
+    "path": ".hidden/a..b",
+    "accept": true
+  },
+  {
+    "path": "a b/c",
+    "accept": true
+  },
+  {
+    "path": "a?b/*<>|\"",
+    "accept": true
+  },
+  {
+    "path": "",
+    "accept": false
+  },
+  {
+    "path": "/",
+    "accept": false
+  },
+  {
+    "path": "/a",
+    "accept": false
+  },
+  {
+    "path": "a/",
+    "accept": false
+  },
+  {
+    "path": "a//b",
+    "accept": false
+  },
+  {
+    "path": ".",
+    "accept": false
+  },
+  {
+    "path": "..",
+    "accept": false
+  },
+  {
+    "path": "a/./b",
+    "accept": false
+  },
+  {
+    "path": "a/../b",
+    "accept": false
+  },
+  {
+    "path": "C:/a",
+    "accept": false
+  },
+  {
+    "path": "a:b",
+    "accept": false
+  },
+  {
+    "path": "a\\b",
+    "accept": false
+  },
+  {
+    "path": "a{literal}",
+    "accept": false
+  },
+  {
+    "path": "a}",
+    "accept": false
+  },
+  {
+    "path": "x\n/../a",
+    "accept": false
+  },
+  {
+    "path": "a\u0000/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0001/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0002/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0003/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0004/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0005/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0006/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0007/b",
+    "accept": false
+  },
+  {
+    "path": "a\b/b",
+    "accept": false
+  },
+  {
+    "path": "a\t/b",
+    "accept": false
+  },
+  {
+    "path": "a\n/b",
+    "accept": false
+  },
+  {
+    "path": "a\u000b/b",
+    "accept": false
+  },
+  {
+    "path": "a\f/b",
+    "accept": false
+  },
+  {
+    "path": "a\r/b",
+    "accept": false
+  },
+  {
+    "path": "a\u000e/b",
+    "accept": false
+  },
+  {
+    "path": "a\u000f/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0010/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0011/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0012/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0013/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0014/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0015/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0016/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0017/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0018/b",
+    "accept": false
+  },
+  {
+    "path": "a\u0019/b",
+    "accept": false
+  },
+  {
+    "path": "a\u001a/b",
+    "accept": false
+  },
+  {
+    "path": "a\u001b/b",
+    "accept": false
+  },
+  {
+    "path": "a\u001c/b",
+    "accept": false
+  },
+  {
+    "path": "a\u001d/b",
+    "accept": false
+  },
+  {
+    "path": "a\u001e/b",
+    "accept": false
+  },
+  {
+    "path": "a\u001f/b",
+    "accept": false
+  },
+  {
+    "path": "a\u007f/b",
+    "accept": false
+  }
+]

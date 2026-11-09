@@ -35,7 +35,7 @@ export function placement(image: EventImage, mode: PictureMode): Placement {
 
 export class CameraTiles {
   readonly element = h('div', { class: 'flame-analysis__tiles' });
-  private tiles = new Map<string, { figure: HTMLElement; canvas: HTMLCanvasElement; caption: HTMLElement; flag: HTMLElement; agreement: HTMLElement; drawn: number }>();
+  private tiles = new Map<string, { figure: HTMLElement; canvas: HTMLCanvasElement; caption: HTMLElement; flag: HTMLElement; agreement: HTMLElement; drawn: number; drawnPath: string; dirty: boolean }>();
   private cache = new Map<string, Promise<ImageBitmap>>();
   private bitmaps = new Map<string, ImageBitmap>();
   private index = -1;
@@ -63,13 +63,13 @@ export class CameraTiles {
           type: 'button', class: 'flame-analysis__tile-open',
           title: i18n.t("Show {p1} at full resolution", { p1: camera.label }),
           'aria-label': i18n.t("Show {p1} at full resolution", { p1: camera.label }),
-          onclick: () => this.onOpen(camera.id),
+          dataset: { camera: camera.id }, onclick: () => this.onOpen(camera.id),
         }, [canvas]),
         h('figcaption', {}, [caption, agreement, flag]),
       ]);
       const image = event.images[camera.id];
       figure.style.setProperty('--tile-aspect', String(image.size_px[0] / image.size_px[1]));
-      this.tiles.set(camera.id, { figure, canvas, caption, flag, agreement, drawn: -1 });
+      this.tiles.set(camera.id, { figure, canvas, caption, flag, agreement, drawn: -1, drawnPath: '', dirty: true });
       this.element.append(figure);
     }
     this.element.dataset.count = String(cameras.length);
@@ -82,7 +82,7 @@ export class CameraTiles {
     if (mode === 'closeup' && !this.hasCloseups) mode = 'whole';
     if (mode === this.mode) return;
     this.mode = mode;
-    for (const tile of this.tiles.values()) tile.drawn = -1;
+    for (const tile of this.tiles.values()) tile.dirty = true;
     this.show(this.index);
   }
 
@@ -90,7 +90,7 @@ export class CameraTiles {
   setHullCheck(projection: ((camera: string, index: number) => HullProjection | null) | null): void {
     if (projection === this.hull) return;
     this.hull = projection;
-    for (const tile of this.tiles.values()) { tile.drawn = -1; tile.agreement.textContent = ''; }
+    for (const tile of this.tiles.values()) tile.dirty = true;
     this.show(this.index);
   }
   get hullCheckOn(): boolean { return this.hull !== null; }
@@ -98,7 +98,7 @@ export class CameraTiles {
   setOutlines(shown: boolean): void {
     if (shown === this.outlinesShown) return;
     this.outlinesShown = shown;
-    for (const tile of this.tiles.values()) tile.drawn = -1;
+    for (const tile of this.tiles.values()) tile.dirty = true;
     this.show(this.index);
   }
 
@@ -116,11 +116,11 @@ export class CameraTiles {
       return pending;
     }
     pending = this.source.blob(path).then((blob) => createImageBitmap(blob)).then((bitmap) => {
-      if (this.disposed || !this.cache.has(path)) { bitmap.close(); throw new Error('evicted'); }
+      if (this.disposed || this.cache.get(path) !== pending) { bitmap.close(); throw new Error('evicted'); }
       this.bitmaps.set(path, bitmap);
       return bitmap;
     });
-    pending.catch(() => this.cache.delete(path));
+    void pending.catch(() => { if (this.cache.get(path) === pending) this.cache.delete(path); });
     this.cache.set(path, pending);
     while (this.cache.size > CACHE_LIMIT) {
       const oldest = this.cache.keys().next().value as string;
@@ -135,20 +135,23 @@ export class CameraTiles {
   show(index: number): void {
     this.index = index;
     if (index < 0) return;
-    const t = this.event.instants.t_s[index] - this.event.onset_s;
     for (const camera of this.cameras) {
       const tile = this.tiles.get(camera.id)!;
-      const outside = this.event.quality?.outsideFrame?.[camera.id]?.includes(index) ?? false;
-      tile.flag.textContent = outside ? i18n.t("flame at the picture's edge") : '';
-      tile.canvas.setAttribute('aria-label', i18n.t("{p1} at {p2} s from the onset", {
-        p1: camera.label, p2: i18n.formatNumber(t, 1),
-      }));
-      const path = this.picturePath(camera.id, index);
+      const mode = this.mode;
+      const path = this.picturePath(camera.id, index, mode);
+      const place = placement(this.event.images[camera.id], mode);
+      if (!tile.dirty && tile.drawnPath === path) continue;
+      tile.caption.textContent = `${this.caption(camera, tile.drawn)} · ${i18n.t("loading")}`;
       this.bitmap(path).then((bitmap) => {
-        if (this.disposed || this.index !== index || tile.drawn === index) return;
-        this.draw(camera.id, index, bitmap);
+        if (this.disposed || this.index !== index || this.mode !== mode || this.picturePath(camera.id, this.index) !== path) return;
+        if (!tile.dirty && tile.drawnPath === path) return;
+        this.draw(camera.id, index, bitmap, place);
+        tile.drawnPath = path;
+        tile.dirty = false;
       }).catch((err: Error) => {
-        if (err.message !== 'evicted' && !this.disposed) tile.flag.textContent = err.message;
+        if (err.message !== 'evicted' && !this.disposed && this.index === index && this.mode === mode) {
+          tile.caption.textContent = `${this.caption(camera, tile.drawn)} · ${err.message}`;
+        }
       });
     }
   }
@@ -161,10 +164,14 @@ export class CameraTiles {
     }
   }
 
-  private draw(camera: string, index: number, bitmap: ImageBitmap): void {
+  private caption(camera: TileCamera, index: number): string {
+    return index < 0 ? camera.label : i18n.t("{p1} at {p2} s from the onset", {
+      p1: camera.label, p2: i18n.formatNumber(this.event.instants.t_s[index] - this.event.onset_s, 1),
+    });
+  }
+
+  private draw(camera: string, index: number, bitmap: ImageBitmap, place: Placement): void {
     const tile = this.tiles.get(camera)!;
-    const image = this.event.images[camera];
-    const place = placement(image, this.mode);
     const canvas = tile.canvas;
     if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
       canvas.width = bitmap.width;
@@ -177,21 +184,27 @@ export class CameraTiles {
     const projection = this.hull?.(camera, index) ?? null;
     if (projection) {
       drawHull(ctx, projection, place, bitmap.width / place.width);
-      const share = coverage(rings, projection, place, bitmap.width / place.width, bitmap.width, bitmap.height);
-      tile.agreement.textContent = share === null ? '' : i18n.t("3-D flame covers {p1} of the outline", { p1: i18n.formatQuantity(Math.round(share * 100), '%') });
     }
+    tile.agreement.textContent = this.hull ? coverageCaption(projection ? coverage(rings, projection) : null) : '';
     if (this.outlinesShown) drawOutline(ctx, rings, place, bitmap.width / place.width, lineWidthFor(canvas));
     tile.drawn = index;
+    const named = this.cameras.find((c) => c.id === camera)!;
+    tile.canvas.setAttribute('aria-label', this.caption(named, index));
+    // The board's readout gives the time of a current picture; the caption names the
+    // camera, and says which instant it holds only while a newer one is loading.
+    tile.caption.textContent = named.label;
+    tile.flag.textContent = this.event.quality?.outsideFrame?.[camera]?.includes(index) ? i18n.t("flame at the picture's edge") : '';
   }
 
   /** A camera's picture at any instant, as the tiles show it (close-up or whole),
-   *  from the same cache: what a video frame or a PNG is composed from. */
-  picture(camera: string, index: number): Promise<ImageBitmap> {
-    return this.bitmap(this.picturePath(camera, index));
+   *  owned by the caller, which closes it after composing the frame. */
+  picture(camera: string, index: number, mode = this.mode): Promise<ImageBitmap> {
+    return this.source.blob(this.picturePath(camera, index, mode)).then((blob) => createImageBitmap(blob));
   }
   get outlinesOn(): boolean { return this.outlinesShown; }
 
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
     for (const bitmap of this.bitmaps.values()) bitmap.close();
     this.bitmaps.clear();
@@ -274,38 +287,57 @@ function scratchCanvas(width: number, height: number): HTMLCanvasElement {
   return scratch;
 }
 
-/**
- * How much of the camera's flame outline the 3-D flame covers in that picture: both
- * drawn on a small grid (at most 240 px wide), the outline even-odd, the hull as its
- * cells. Null when the outline is empty.
+/** Shared caption on camera tiles and in exports, independent of picture crop. */
+export function coverageCaption(share: number | null): string {
+  return share === null ? i18n.t("3-D flame coverage unavailable")
+    : i18n.t("3-D flame covers {p1} of the outline", { p1: i18n.formatQuantity(Math.round(share * 100), '%') });
+}
+
+/** Quantitative mask in full-resolution coordinates over the outline's bounds.
+ * Cube rectangles use all eight corners, both focal lengths and each corner's
+ * depth. The display squares never enter this calculation. Antialiased pixels
+ * contribute their fractional area; only boxes above one million pixels shrink.
  */
-export function coverage(rings: Float32Array[], projection: HullProjection, place: Placement, extra: number,
-  width: number, height: number): number | null {
+export function coverage(rings: Float32Array[], projection: HullProjection): number | null {
   if (!rings.length) return null;
-  const f = Math.min(1, 240 / width);
-  const w = Math.max(1, Math.round(width * f)), h = Math.max(1, Math.round(height * f));
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const ring of rings) for (let i = 0; i < ring.length; i += 2) {
+    x0 = Math.min(x0, ring[i]); y0 = Math.min(y0, ring[i + 1]);
+    x1 = Math.max(x1, ring[i]); y1 = Math.max(y1, ring[i + 1]);
+  }
+  x0 = Math.floor(x0) - 2; y0 = Math.floor(y0) - 2;
+  x1 = Math.ceil(x1) + 2; y1 = Math.ceil(y1) + 2;
+  const scale = Math.min(1, Math.sqrt(1_000_000 / ((x1 - x0) * (y1 - y0))));
+  const w = Math.max(1, Math.ceil((x1 - x0) * scale)), h = Math.max(1, Math.ceil((y1 - y0) * scale));
   const grid = document.createElement('canvas');
   grid.width = w; grid.height = h;
   const g = grid.getContext('2d', { willReadFrequently: true })!;
-  const k = place.scale * extra * f;
   const path = new Path2D();
   for (const ring of rings) {
     for (let i = 0; i < ring.length; i += 2) {
-      const x = (ring[i] - place.x + 0.5) * k, y = (ring[i + 1] - place.y + 0.5) * k;
+      // Stored pixel centres are integers; canvas pixel centres are half-integers.
+      const x = (ring[i] - x0 + 0.5) * scale, y = (ring[i + 1] - y0 + 0.5) * scale;
       if (i === 0) path.moveTo(x, y); else path.lineTo(x, y);
     }
     path.closePath();
   }
-  g.fillStyle = 'white'; // a mask, never shown
+  g.fillStyle = 'white'; // numerical mask, never shown
   g.fill(path, 'evenodd');
   const outline = g.getImageData(0, 0, w, h).data;
   g.clearRect(0, 0, w, h);
-  g.fillStyle = 'white'; // a mask, never shown
-  hullSquares(g, projection, place, extra * f);
+  // One union path avoids repeated antialias blending of overlapping rectangles.
+  const hullPath = new Path2D();
+  const rectangles = projection.rectangles ?? [];
+  for (let i = 0; i < rectangles.length; i += 4) {
+    hullPath.rect((rectangles[i] - x0 + 0.5) * scale, (rectangles[i + 1] - y0 + 0.5) * scale,
+      (rectangles[i + 2] - rectangles[i]) * scale, (rectangles[i + 3] - rectangles[i + 1]) * scale);
+  }
+  g.fill(hullPath);
+  // Intersect the masks before counting: fractional edges stay fractional.
   const hull = g.getImageData(0, 0, w, h).data;
   let inside = 0, both = 0;
   for (let i = 3; i < outline.length; i += 4) {
-    if (outline[i] > 127) { inside++; if (hull[i] > 127) both++; }
+    inside += outline[i]; both += Math.min(outline[i], hull[i]);
   }
   return inside ? both / inside : null;
 }

@@ -49,6 +49,32 @@ and a plan written by any release opens in every later one.
 ### Changed
 - A failed call to the desktop app's shell says why (the shell's own message after the
   status code), not only the status.
+- **The flame analysis board after an independent review.**
+  - **Numbers:** the Heat released curve starts at the event's first instant, so it
+    ends on the key number; with As the hood sees it on, it totals the lagged estimates.
+    An estimate is compared with the hood in percent only when both state the same
+    basis and both cover the event; a total with missing samples says it is partial.
+    Delivered series notes appear as tooltips.
+  - **Hull check:** the percentage is measured from each cube's projected extent at
+    full resolution, apart from the overlay's drawn squares.
+  - **Pictures and the clock:** a tile that still holds an older picture says so, and
+    a picture, mesh or close-up read for an earlier choice never replaces the current
+    one. A mesh that cannot be read is reported instead of leaving an older surface.
+  - **Export:** while the panel is open the rest of the board is out of reach, so an
+    export cannot mix events or run twice. Cancel is final, the last frame lands
+    exactly on the range's end, a missing picture is marked in the frame, the quality
+    keys and the hull check's captions are drawn, and an encoder that reorders frames
+    stops the export rather than writing a file that may not play.
+- **Flame analysis folders are checked alike by Python and the board:** duplicate
+  series ids, unordered instants, an outline size or hull voxel size that disagrees with
+  the event, and the close-up, quality and event-id rules the board did not check
+  before. One series CSV dialect, one path rule, exactly one PLY header layout, and
+  JSON with an optional BOM and no NaN are documented in CONVENTIONS section 13 and
+  shared as a test corpus (`fixtures/flame-analysis-validation/`). The synthetic
+  test's hulls now store their real voxel size.
+- **Desktop app:** adding the file extension after a save dialog never overwrites
+  another file (MP4, PNG, FDS and CSV), the analysis folder reader checks the file it
+  actually opened, and request bodies that are oversized or not JSON objects are refused.
 
 ## [0.9.0] - 2026-11-02
 

@@ -84,9 +84,14 @@ can be deleted once the board shows the same thing.
 
 ## 5. Format 1.0
 
-Two JSON manifests and two kinds of data file. Paths are relative to the manifest that
-names them, use `/`, and may not leave the analysis folder. Text shown to people is a
-*localised text*: a string, or `{"en": "...", "fr": "..."}` with English required.
+Two JSON manifests and the data files they name. JSON is UTF-8 with an optional BOM;
+invalid UTF-8 and non-finite numbers, including `NaN` and infinities, are refused.
+Paths are validated before normalization: `/`-separated, nonempty segments, none `.`
+or `..`, no control characters (U+0000 to U+001F, U+007F), backslash, colon, drive or
+absolute path, and no resolution outside the analysis folder. Braces are forbidden
+outside templates; templates permit only the specified `{cam}` and `{stem}` fields.
+Text shown to people is a *localised text*: a string, or `{"en": "...", "fr": "..."}`
+with English required.
 
 **`analysis.json`** (`"format": "fireplan-flame-analysis"`, `"version": "1.0.0"`)
 
@@ -106,7 +111,7 @@ names them, use `/`, and may not leave the analysis folder. Text shown to people
 | `id`, `label` | As listed in `analysis.json` |
 | `onset_s` | The onset on the time base. The board shows time from the onset first, negative before it |
 | `cameras` | The event's camera ids, in display order (2 to 4 in practice) |
-| `instants` | `{t_s: [...], stem: [...]}`: the instants with pictures and a hull, strictly increasing, and a file stem for each |
+| `instants` | `{t_s: [...], stem: [...]}`: the instants with pictures and a hull, finite and strictly increasing, and a unique file stem for each |
 | `files` | Path templates with `{cam}` and `{stem}`: `display` (required), `frame` (full resolution, optional), `closeup` (optional), `outlines` (per camera), `hull` (per instant) |
 | `images` | Per camera `{size_px, display_px, closeup?}`: the full-resolution size, which must equal the plan camera's resolution for the hull to be drawn over the picture; the display size; and an optional close-up, a fixed rectangle of the full-resolution picture around the flame over the whole event, with the size of its copies. In a wide view the flame can be a few dozen pixels of a display copy, so the close-up is cut from the full-resolution frames |
 | `hull` | `{voxelSize_m, frame: "plan"}` |
@@ -120,25 +125,38 @@ with `{stem}` naming a smoothed surface of the 3-D flame per instant, and
 `responseTime_s` on the measured heat release rate. CONVENTIONS section 13 has the
 mesh file's exact layout.
 
-**Series CSV**: UTF-8, comma separated, one header row, then numbers; an empty cell is
-a missing value and breaks the line. `time` and `value` name columns, so a file can
-serve several series. Times are on the test's time base.
+**Series CSV**: UTF-8 with optional BOM, comma separated, one header row and at least
+one data row (otherwise "no samples"). CRLF, LF and CR endings are accepted; only
+completely empty lines are skipped, and errors name physical line numbers. The
+finite decimal grammar, quoting with whitespace outside quotes and strict quote
+errors are defined in CONVENTIONS section 13; underscores, non-ASCII digits, hex,
+`inf` and `nan` are refused. An empty value breaks the line; an empty time is an
+error. `time` and `value` name columns, so a file can serve several series. Times
+are on the test's time base. Series ids are unique within each event.
 
 **Outlines** (`fireplan-flame-outlines` 1.0.0): `{camera, size_px, outlines}`, where
 `outlines` holds, for every instant, a list of closed rings, each a flat
 `[x0, y0, x1, y1, ...]` in full-resolution pixel coordinates (x right, y down, the
 pixel centre at integer coordinates, as in `Camera.project`). Filled even-odd, so a
-ring inside another is a hole.
+ring inside another is a hole. Its `size_px` must equal `images.<cam>.size_px`;
+otherwise loading fails.
 
 **Hull**: the format of [flame playback](flame-playback.md), one NPZ per instant
 (`voxels` M x 3 in metres, plan frame; `voxel_size`). Time comes from `instants`, not
-from the file name, so instants before the onset are allowed.
+from the file name, so instants before the onset are allowed. Each stored
+`voxel_size` must equal `hull.voxelSize_m` with relative tolerance 1e-9 and zero
+absolute tolerance, including empty hulls. A mismatch is an error.
 
 Validation (`fireplan.flame_analysis`, and the board when it reads): the schemas;
-unique ids; every event camera listed in `analysis.json` and in the site plan; times
-strictly increasing; templates resolving inside the folder; one outline list per
-instant; series columns present and numeric. A folder that fails says what failed, and
-nothing is half shown.
+unique ids (including series ids within an event); event id matching its analysis
+entry; every event camera listed in `analysis.json` and in the site plan; `images`
+keys equal to event cameras; finite, strictly increasing instants; templates
+resolving inside the folder; one outline list per instant with matching picture
+size; series columns present and numeric, with nonnegative volume and area.
+`files.closeup` and every camera's close-up rectangle must be present together,
+and each rectangle must stay inside its full-resolution picture. Quality indices
+must be within the instants and quality cameras must belong to the event. A folder
+that fails says what failed, and nothing is half shown.
 
 ## 6. The board
 
@@ -270,17 +288,31 @@ the board leaves out what it cannot show for it.
 
 - **Hull check** (camera bar) draws the 3-D flame at the instant through each camera's
   calibrated projection over its picture, one square per cube, and says under each
-  tile how much of the flame outline the projection covers. The hull is carved from
-  the outlines, so it never reaches outside them; what it covers says how much of what
-  this camera saw the other cameras confirmed. The synthetic test reads 100 % in every
-  camera, and the export draws the same overlay.
+  tile how much of the flame outline the projection covers. The percentage is
+  measured separately from those enlarged display squares, in a mask over the
+  outline's bounding box plus a two-pixel margin in full-resolution coordinates.
+  Only boxes exceeding about one million pixels are scaled down. Each cube fills
+  the axis-aligned rectangle enclosing its eight projected corners, using both
+  focal lengths and each corner's own depth; a cube with a corner behind the camera
+  is skipped. The outline uses even-odd fill on the same mask. Covered outline
+  pixels divided by outline pixels gives the share; antialiased edge pixels carry
+  fractional area. There is no enlargement or minimum cube size in this mask.
+  Rectangles approximate true, generally hexagonal cube silhouettes and can
+  overestimate coverage. The synthetic E1 still reads 100 % in each camera at its
+  largest flame; a test camera in which a small cube spans a few pixels tells the two
+  methods apart (about 35 % against the former 100 %). The browser regression checks
+  both with the real canvas rasterizer. The overlay
+  look is unchanged, and both board and export use the same coverage caption.
 - **As the hood sees it** (plot bar, 1.1 with a response time) passes the estimates
   through the hood's first-order lag, stepped exactly between samples, and relabels
   them, so the timing of an estimate compares with the hood's rather than with the
-  flame's. The hood's own line is never changed.
+  flame's. With Heat released selected, response is applied before integration and
+  the response label remains. The hood's own line and all key numbers remain raw.
 - **Heat released** switches the heat release rate plot between the rate (kW) and its
-  running integral (MJ, trapezoids from the first instant); the key numbers already
-  gave the totals.
+  running integral (MJ, zero at the first instant, missing before it). The same
+  clipped trapezoids and interpolated boundaries as the key numbers make the final
+  raw heat equal its key number. Missing intervals break the curve; accumulation
+  resumes after them without adding unknown heat.
 - **Heskestad height** adds L = 0.235 Q^0.4 - 1.02 D to the flame height plot, from
   the hood's record and the site plan's fire: D its effective diameter, and a
   convective hood rate divided by 1 minus the fire's radiative fraction to give the
@@ -291,9 +323,44 @@ the board leaves out what it cannot show for it.
 - **Cubes | Surface** (3-D bar, 1.1 with meshes) draws the flame as its smoothed
   surface, coloured by height like the cubes. An instant's mesh is read when it is
   first shown and the last 40 are kept; playback shows the latest one read, and the
-  export waits for each. The synthetic
+  export waits for each through one load path. Replacing the surface loader clears
+  the shown surface and advances its generation; obsolete completions are disposed
+  and cannot replace the current event's geometry. Failed entries leave the cache,
+  hide the old surface and name the instant and file in the board's load status;
+  export propagates that failure once. The synthetic
   generator makes its meshes from the hull itself (surface nets on a coarsened grid);
   the internal converter takes the pipeline's own meshes, which line up with its hull.
+
+**After the review of 2026-11-09.** A heat total carries the share of the window
+its samples cover: none is a dash, and less than 99.5 % is marked partial with the
+covered share. Both peak and heat percentages require at least 99.5 % coverage on both series and the same
+explicit basis. A different or unstated basis instead gets a short explanation on
+the estimate's card. Mixed bases are named per legend label; delivered series notes
+are tooltips on the labels and cards. Held camera pictures retain their drawn time
+and edge flag, with a visible loading marker until the requested picture is drawn.
+Changing picture mode invalidates pending pictures from the old mode. Full-size
+pictures return focus to their opening tile. View and look buttons have independent
+pressed states, and full workspace disposal also disconnects the plots.
+
+The export panel makes the board inert and contains focus. During encoding
+only Cancel is enabled, including Escape. A single operation owns the composition;
+changing events, closing the board or changing language aborts it and awaits its
+completion. Cancellation is checked after drawing, after flush and before returning
+bytes, and an obsolete operation cannot start a save. PNG and video restore the
+live scene to the board's current instant in their completion path. A missing
+picture is explicitly labelled in its tile, and decoded export pictures remain
+owned by the composer until the whole draw finishes. Quality bands retain the
+board's text keys and tokens, and hull check retains each camera's coverage caption
+with space reserved at 720p and 1080p. The header selects the greatest key-moment
+time at or before the frame, inside the event and the existing 1.5 s label window,
+irrespective of file order.
+
+Output frame k has timestamp k/30 s. The count is
+`round((to - from) / speed * 30) + 1`; its source time is
+`from + k / 30 * speed`, with the last frame exactly at `to`. Instant lookup allows
+1e-6 s floating-point error. Encoded chunks must arrive in presentation order;
+reordered output fails with an explanation instead of being sorted into an invalid
+MP4. The inclusive endpoint frame remains part of the video duration.
 
 ## 10. Conventions this will touch
 
@@ -309,6 +376,6 @@ the board leaves out what it cannot show for it.
 
 ## 11. Open questions
 
-1. Are the estimates convective heat release rates too (the earlier tests compared
-   against the same kind of hood value)? The plot puts them on one axis titled by the
-   basis, so a mixed basis has to be said.
+1. A delivery must state the basis of each heat release rate if it is to be compared
+   with the hood in percent. The board does not infer or convert an unstated basis;
+   it names mixed bases and explains why no percentage is shown.

@@ -474,7 +474,7 @@ function renderToolbar(): void {
           h('button', { type: 'button', class: 'toolbar__btn', lang: i18n.language(),
             'aria-label': value === 'en' ? i18n.t('EN: English') : i18n.t('FR: French'),
             'aria-pressed': String(i18n.language() === value),
-            dataset: { language: value }, onclick: () => chooseLanguage(value),
+            dataset: { language: value }, onclick: async () => { await flameAnalysis.stopExport(); chooseLanguage(value); },
           }, [value.toUpperCase()]),
         ])),
     ]),
@@ -905,12 +905,12 @@ window.addEventListener('beforeunload', (e) => {
 
 // -- boot -----------------------------------------------------------------
 
-i18n.subscribeLanguage(() => {
+i18n.subscribeLanguage(async () => {
+  await flameAnalysis.dispose();
   document.documentElement.lang = i18n.language();
   document.title = i18n.t('Fire Test Plan Editor');
   fdsResults.close();
   fdsResults = new FdsResultsDialog(open => viewport.setSuspended(open));
-  flameAnalysis.dispose();
   flameAnalysis = newFlameAnalysis();
   palette.render();
   inspector.render();

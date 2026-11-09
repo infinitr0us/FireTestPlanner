@@ -85,6 +85,17 @@ export interface ShellBridge {
 /** What the shell's save routes answer: a destination, a reason, or null for cancel. */
 type SaveResult = { path?: string; token?: string; error?: string } | null;
 
+function shellError(message: string): string {
+  switch (message) {
+    case 'The name with its extension already exists. Choose the name with its extension.':
+      return i18n.t("The name with its extension already exists. Choose the name with its extension.");
+    case 'Invalid JSON request body.': return i18n.t("Invalid JSON request body.");
+    case 'JSON request body exceeds the size limit.': return i18n.t("JSON request body exceeds the size limit.");
+  }
+  const changed = /^(.*) changed while opening the file\.$/.exec(message);
+  return changed ? i18n.t("{p1} changed while opening the file.", { p1: changed[1] }) : message;
+}
+
 /**
  * Cancel and failure look the same from the outside -- both leave the file unwritten
  * -- but they are opposites to the user: one is what they asked for, the other is
@@ -93,7 +104,7 @@ type SaveResult = { path?: string; token?: string; error?: string } | null;
  */
 function unwrapSave(result: SaveResult): SavedPlan | null {
   if (!result) return null;
-  if (result.error) throw new Error(result.error);
+  if (result.error) throw new Error(shellError(result.error));
   if (!result.path) return null;
   return { path: result.path, token: typeof result.token === 'string' ? result.token : null };
 }
@@ -127,7 +138,7 @@ async function call<T>(route: string, body?: unknown): Promise<T | null> {
     // The shell says what went wrong in the body ({"error": ...}); pass it on, or a
     // failure in the shell reaches the user as a bare status code.
     const detail = await response.json().then(
-      (b: { error?: unknown } | null) => (typeof b?.error === 'string' ? b.error : ''), () => '');
+      (b: { error?: unknown } | null) => (typeof b?.error === 'string' ? shellError(b.error) : ''), () => '');
     throw new Error(detail
       ? i18n.t("Shell call {p1} failed: {p2} ({p3})", { p1: route, p2: response.status, p3: detail })
       : i18n.t("Shell call {p1} failed: {p2}", { p1: route, p2: response.status }));
@@ -705,7 +716,7 @@ export async function readShellAnalysisFile(token: string, path: string): Promis
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { error?: string } | null;
-    throw new Error(body?.error ?? i18n.t("Could not read {p1}: HTTP {p2}.", { p1: path, p2: response.status }));
+    throw new Error(body?.error ? shellError(body.error) : i18n.t("Could not read {p1}: HTTP {p2}.", { p1: path, p2: response.status }));
   }
   return response;
 }
@@ -758,7 +769,7 @@ export async function saveMedia(blob: Blob, name: string, kind: 'video' | 'png')
     headers: { 'X-Shell-Token': shellToken ?? '', 'Content-Type': 'application/octet-stream' },
   });
   const result = await response.json().catch(() => null) as { path?: string; error?: string } | null;
-  if (!response.ok || result?.error) throw new Error(result?.error ?? i18n.t("Could not save {p1}: HTTP {p2}.", { p1: name, p2: response.status }));
+  if (!response.ok || result?.error) throw new Error(result?.error ? shellError(result.error) : i18n.t("Could not save {p1}: HTTP {p2}.", { p1: name, p2: response.status }));
   return result?.path ?? null;
 }
 

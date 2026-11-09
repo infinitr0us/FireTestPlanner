@@ -5,6 +5,12 @@
  */
 
 import type { FlameAnalysisWorkspace } from '../src/ui/flame-analysis';
+import type { EventManifest } from '../src/core/flame-analysis';
+import type { AnalysisSource } from '../src/io/flame-analysis-source';
+import { setLanguage } from '../src/ui/i18n';
+import { projectHull } from '../src/core/flame-analysis';
+import type { CameraObject } from '../src/core/types';
+import { coverage } from '../src/ui/flame-analysis-cameras';
 
 type Check = { name: string; passed: boolean; detail?: string };
 
@@ -84,19 +90,40 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   $$<HTMLButtonElement>('.flame-analysis__moments button').find((b) => b.textContent === 'Largest flame')!.click();
   press('.flame-analysis__hull-toggle');
   await wait(() => caption().filter(Boolean).length === 3, 'hull check captions');
-  check('hull check: every E1 camera says how much of its outline the 3-D flame covers (all of it: the hull contains the flame)',
-    caption().every((c) => c === '3-D flame covers 100 % of the outline'), caption());
+  // Independent scanline masks in flame-analysis-coverage.test.ts predict these
+  // rounded E1 values. They remain 100/100/100 at this key moment under the new
+  // physical rectangles; the R14 pinhole below exposes the former inflation.
+  const expectedCoverage = [100, 100, 100];
+  check('E1 quantitative cube-rectangle coverage at Largest flame: camA 100 %, camB 100 %, camC 100 %',
+    caption().every((c, i) => c === `3-D flame covers ${expectedCoverage[i]} % of the outline`), caption());
+  const r14 = { transform: { position_m: [0, 0, 0] }, camera: { resolution_px: [200, 200], sensor_mm: [2, 4], focalLength_mm: 10 } } as CameraObject;
+  const r14Coverage = coverage([Float32Array.from([93.5, 93.5, 105.5, 93.5, 105.5, 105.5, 93.5, 105.5])], projectHull(r14, [0, 0, -10], 0.1));
+  check('R14 coverage is about 35.07 %, independent of the enlarged display square',
+    r14Coverage !== null && Math.abs(r14Coverage - 0.35072066) < 0.01, r14Coverage);
   const scene = (workspace as unknown as { scene: { flameLook: string } }).scene;
   press('.flame-analysis__look[data-look="surface"]');
   check('the 3-D flame switches to its smoothed surface', scene.flameLook === 'surface');
+  press('[data-view="site"]');
+  check('view selection preserves the independently pressed Surface button',
+    $('[data-look="surface"]')!.getAttribute('aria-pressed') === 'true' && $('[data-view="site"]')!.getAttribute('aria-pressed') === 'true');
+  press('[data-view="flame"]');
   const plotCaptions = (): string[] => $$('.flame-analysis__plot caption').map((c) => c.textContent!);
   press('.flame-analysis__heat[data-mode="heat"]');
   check('Heat released turns the first plot into MJ', plotCaptions()[0] === 'Heat released, convective (MJ)', plotCaptions());
+  press('.flame-analysis__transport button[aria-label="Last frame (End)"]');
+  const heatValues = (): number[] => $$<HTMLElement>('.flame-analysis__plot[data-plot="hrr"] .flame-analysis__value').map((e) => Number(e.textContent));
+  check('E1 final plotted heat equals raw key-number heat per series',
+    heatValues().every((v, i) => Math.abs(v - [0.146585, 0.2043165, 0.214543][i]) < 0.0001), heatValues());
   press('.flame-analysis__heat[data-mode="rate"]');
   const toggles = (): HTMLButtonElement[] => $$<HTMLButtonElement>('.flame-analysis__charts .flame-analysis__toggle');
   toggles().find((b) => b.textContent === 'As the hood sees it')!.click();
   const legend = (): string[] => $$('.flame-analysis__legend th').map((t) => t.textContent!);
   check('As the hood sees it relabels the estimates', legend().filter((l) => l.endsWith(', as the hood sees it')).length === 2, legend());
+  press('.flame-analysis__heat[data-mode="heat"]');
+  check('Heat released retains the hood-response label and integrates the filtered estimates',
+    legend().filter((l) => l.endsWith(', as the hood sees it')).length === 2 && Math.abs(heatValues()[1] - 0.0942522732) < 0.0001,
+    [legend(), heatValues()]);
+  press('.flame-analysis__heat[data-mode="rate"]');
   toggles().find((b) => b.textContent === 'Heskestad height')!.click();
   check('Heskestad height adds a predicted line and says what it assumed',
     legend().includes('Heskestad mean height (pool fire), from the hood') && text('.flame-analysis__plot-note').includes('1 - 0.3'),
@@ -106,13 +133,30 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   await wait(predicted, 'the predicted line drawn').catch(() => undefined);
   check('the predicted line takes the planned-value long dash', predicted());
 
+  // The export panel owns focus and makes all board controls inert.
+  const exportButton = $<HTMLButtonElement>('.flame-analysis__export button')!;
+  exportButton.click();
+  const panel = $<HTMLElement>('.flame-analysis__export-panel')!;
+  check('the export panel takes focus and its board siblings are inert', panel.contains(document.activeElement)
+    && [...panel.parentElement!.children].filter((e) => e !== panel).every((e) => (e as HTMLElement).inert));
+  panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await wait(() => !$('.flame-analysis__export-panel'), 'export panel closes');
+  check('closing export restores focus to Export', document.activeElement === exportButton);
+  check('closing export restores the board interaction', !$<HTMLElement>('.flame-analysis__body')!.inert);
+
+  const zoomTile = $$<HTMLButtonElement>('.flame-analysis__tile-open')[1];
+  zoomTile.click();
+  await wait(() => !!$('.flame-analysis__zoom'), 'full-size second camera');
+  $('.flame-analysis__zoom')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  check('full-size picture returns focus to the camera that opened it', document.activeElement === zoomTile);
+
   // The second event: two cameras, its own clock.
   const select = $('.flame-analysis__event select') as HTMLSelectElement;
   select.value = 'E2';
   select.dispatchEvent(new Event('change'));
   await wait(() => $$('.flame-analysis__tile').length === 2 && painted(), 'E2 board');
   check('E2 shows two cameras', true);
-  check('the drawer closes with the event change', $<HTMLElement>('.flame-analysis__drawer')!.hidden);
+  check('the drawer closes with the event change', $<HTMLElement>('.flame-analysis__drawer')!.hidden === true);
   check('the outline choice carries over', ($('.flame-analysis__outline-toggle') as HTMLButtonElement).getAttribute('aria-pressed') === 'true');
   check('E2 times are its own', /\(t_clock 16\d/.test(text('.flame-analysis__readout')), text('.flame-analysis__readout'));
   check('the 3-D view draws cubes', (workspace as unknown as { scene: { cubeCount: number } }).scene.cubeCount > 0);
@@ -122,14 +166,23 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   // slow machine draws after the first instant's (no flame, so no caption).
   await wait(() => caption().filter(Boolean).length === 2, 'E2 hull check captions').catch(() => undefined);
   check('the hull check carries over to E2', caption().filter(Boolean).length === 2, caption());
+  press('.flame-analysis__transport button[aria-label="Last frame (End)"]');
+  press('.flame-analysis__heat[data-mode="heat"]');
+  check('E2 final plotted heat equals raw key-number heat per series',
+    heatValues().every((v, i) => Math.abs(v - [0.08033, 0.081956, 0.095067][i]) < 0.0001), heatValues());
+  press('.flame-analysis__heat[data-mode="rate"]');
 
   // Export: a PNG of the composition, and a short H.264 MP4 Chromium itself plays.
   const png = await workspace.exportPng(1280);
   const picture = await createImageBitmap(png);
   check('PNG export is a 1280 x 720 picture', png.type === 'image/png' && picture.width === 1280 && picture.height === 720,
     [png.type, picture.width, picture.height]);
+  picture.close();
+  const live = workspace as unknown as { scene: { currentFrame: number }; index: number };
+  check('PNG restores the live scene to the board instant', live.scene.currentFrame === live.index);
   const onset = 160;
   const video = await workspace.exportVideo({ layout: 'board', width: 1280, from: onset, to: onset + 1, speed: 0.5 });
+  check('video restores the live scene to the board instant', live.scene.currentFrame === live.index);
   const player = document.createElement('video');
   player.muted = true;
   player.src = URL.createObjectURL(video);
@@ -144,5 +197,64 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   await new Promise<void>((resolve) => { player.onseeked = () => resolve(); });
   check('video export: seeking into it decodes a frame', player.readyState >= 2);
   URL.revokeObjectURL(player.src);
+  // Exercise the actual selection/load error surface, then restore the fixture
+  // for the runner's pointer, keyboard and screenshot checks.
+  const source = (workspace as unknown as { source: AnalysisSource }).source;
+  const eventErrors: [string, (event: EventManifest) => void, RegExp][] = [
+    ['duplicate series', event => { event.series[1].id = event.series[0].id; }, /series id.*repeats/],
+    ['unordered instants', event => { event.instants.t_s.reverse(); }, /strictly increasing/],
+    ['event identity', event => { event.id = 'different'; }, /analysis.json lists 'E1'/],
+    ['extra image camera', event => { event.images.extra = event.images.camA; }, /exactly the event's cameras/],
+    ['quality outside event', event => { event.quality = { noHull: [999], outsideFrame: { camZ: [0] } }; }, /quality indices/],
+    ['close-up outside picture', event => { event.images.camA.closeup = { rect_px: [999, 0, 10, 10], display_px: [10, 10] }; }, /close-up/],
+    ['stored hull size mismatch', event => { event.hull.voxelSize_m *= 2; }, /voxel_size.*hull.voxelSize_m/],
+  ];
+  for (const [name, mutate, expected] of eventErrors) {
+    const faulty: AnalysisSource = { ...source, close() {}, read: async path => {
+      const bytes = await source.read(path);
+      if (path !== 'E1/event.json') return bytes;
+      const event = JSON.parse(new TextDecoder().decode(bytes)) as EventManifest;
+      mutate(event);
+      return new TextEncoder().encode(JSON.stringify(event));
+    } };
+    await workspace.load(faulty);
+    const message = text('.flame-analysis__status--error');
+    check(`${name} is a visible load error before board construction`, expected.test(message) && !$('.flame-analysis__tile'), message);
+  }
+  const event = JSON.parse(new TextDecoder().decode(await source.read('E1/event.json'))) as EventManifest;
+  const volume = event.series.find(s => s.quantity === 'volume')!;
+  const fileErrors: [string, string, (text: string) => string, RegExp][] = [
+    ['outline size mismatch', 'E1/outlines/camA.json', value => {
+      const data = JSON.parse(value); data.size_px = [120, 90]; return JSON.stringify(data);
+    }, /size_px/],
+    ['negative volume', `E1/${volume.file}`, value => {
+      const rows = value.trimEnd().split('\n').map(line => line.split(','));
+      rows[1][rows[0].indexOf(volume.value)] = '-1';
+      return rows.map(row => row.join(',')).join('\n');
+    }, /negative/],
+  ];
+  for (const [name, target, mutate, expected] of fileErrors) {
+    const faulty: AnalysisSource = { ...source, close() {}, read: async path => {
+      const bytes = await source.read(path);
+      if (path !== target) return bytes;
+      return new TextEncoder().encode(mutate(new TextDecoder().decode(bytes)));
+    } };
+    await workspace.load(faulty);
+    const message = text('.flame-analysis__status--error');
+    check(`${name} prevents the board from showing`, expected.test(message) && !$('.flame-analysis__tile'), message);
+  }
+  setLanguage('fr');
+  const french: AnalysisSource = { ...source, close() {}, read: async path => {
+    const bytes = await source.read(path);
+    if (path !== 'E1/event.json') return bytes;
+    const event = JSON.parse(new TextDecoder().decode(bytes)); event.id = 'different';
+    return new TextEncoder().encode(JSON.stringify(event));
+  } };
+  await workspace.load(french);
+  check('event errors are translated into French', text('.flame-analysis__status--error').includes('analysis.json indique « E1 »'));
+  setLanguage('en');
+  await workspace.load(source);
+  await workspace.selectEvent('E2');
+  await wait(() => $$('.flame-analysis__tile').length === 2 && painted(), 'valid board after refused folders');
   return { passed: checks.every((c) => c.passed), checks };
 }

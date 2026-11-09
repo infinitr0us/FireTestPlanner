@@ -961,7 +961,7 @@ dialog.report-overlay { padding: 0; }
 .flame-analysis__numbers { flex: none; display: flex; gap: 8px; padding: 8px 16px; overflow-x: auto; }
 .flame-analysis__number { flex: 1 1 0; min-width: 140px; display: flex; flex-direction: column; gap: 1px; padding: 6px 10px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); }
 .flame-analysis__number-label, .flame-analysis__number-detail { font-size: 11px; color: var(--text-dim); }
-.flame-analysis__number strong { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.flame-analysis__number strong { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
 .flame-analysis__main { flex: 1; min-height: 0; position: relative; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 10px; padding: 0 16px 8px; }
 .flame-analysis__left { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
@@ -984,9 +984,9 @@ dialog.report-overlay { padding: 0; }
 .flame-analysis__tile figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; column-gap: 6px; font-size: 11px; color: var(--text-dim); white-space: nowrap; overflow: hidden; }
 .flame-analysis__tile figcaption > * { min-width: 0; }
 .flame-analysis__tile-agreement { order: 3; flex-basis: 100%; }
-.flame-analysis__tile-name { overflow: hidden; text-overflow: ellipsis; }
+.flame-analysis__tile-name { white-space: normal; overflow-wrap: anywhere; }
 .flame-analysis__tile-flag { color: var(--warn); }
-.flame-analysis__tile-agreement { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+.flame-analysis__tile-agreement { color: var(--text); white-space: normal; } /* the measurement: wrap, never cut */
 .flame-analysis__tile-agreement:empty, .flame-analysis__tile-flag:empty { display: none; }
 .flame-analysis__plot-note { margin: 4px 0 0; font-size: 11px; line-height: 1.45; }
 .flame-analysis__charts > .flame-analysis__panel-bar { padding: 0 0 6px; }

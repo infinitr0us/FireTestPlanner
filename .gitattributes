@@ -28,6 +28,10 @@
 # detection can take for text and normalise.
 *.ply binary
 
+# The shared flame analysis validation corpus tests line endings (CRLF, bare CR) and
+# byte-exact headers: store every file exactly as written.
+fixtures/flame-analysis-validation/** -text
+
 # FDS Fortran records and RLE payloads must never undergo line-ending conversion.
 *.sf binary
 *.bf binary

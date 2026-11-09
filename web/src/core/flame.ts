@@ -170,6 +170,24 @@ const readFloats = (array: NpyArray, what: string): Float64Array => {
   return out;
 };
 
+function parseVoxelSize(bytes: Uint8Array, name: string): number {
+  const size = readFloats(parseNpy(bytes), `${name}: voxel_size`);
+  if (size.length !== 1 || !(size[0] > 0) || !Number.isFinite(size[0])) {
+    throw new Error(i18n.t("{p1}: voxel_size must be a positive number", { p1: name }));
+  }
+  return size[0];
+}
+
+/** Read just the stored size for an event contract check, without inflating voxels. */
+export async function readFrameVoxelSize(bytes: Uint8Array, name: string): Promise<number> {
+  try {
+    const entries = listZip(bytes);
+    const entry = entries.get('voxel_size.npy') ?? entries.get('voxel_size');
+    if (!entry) throw new Error(i18n.t("{p1}: not a reconstruction frame (needs voxels and voxel_size)", { p1: name }));
+    return parseVoxelSize(await entry.extract(), name);
+  } catch (error) { throw new Error(`${name}: ${(error as Error).message}`); }
+}
+
 /** The timestamp a frame file name carries, or null for any other file. */
 export function frameTimestamp(name: string): number | null {
   const m = FRAME_NAME.exec(name.split(/[\\/]/).pop() ?? '');
@@ -214,11 +232,7 @@ export async function parseFrameData(name: string, bytes: Uint8Array, timestamp:
   for (let i = 0; i < voxels.length; i += 1) {
     if (!Number.isFinite(voxels[i])) throw new Error(i18n.t("{p1}: voxel coordinates must be finite", { p1: name }));
   }
-  const size = readFloats(parseNpy(sizeEntry), `${name}: voxel_size`);
-  if (size.length !== 1 || !(size[0] > 0) || !Number.isFinite(size[0])) {
-    throw new Error(i18n.t("{p1}: voxel_size must be a positive number", { p1: name }));
-  }
-  return { timestamp_s: timestamp, voxels, voxelSize_m: size[0], name };
+  return { timestamp_s: timestamp, voxels, voxelSize_m: parseVoxelSize(sizeEntry, name), name };
 }
 
 // -- lattice ----------------------------------------------------------------

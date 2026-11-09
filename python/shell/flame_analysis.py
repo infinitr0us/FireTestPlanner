@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import secrets
+import stat
 from typing import Any, Dict
 
 MAX_FILE = 64 * 1024 * 1024
@@ -21,7 +22,7 @@ def analysis_path(name: str):
     The same rule as `pathProblem` in web/src/core/flame-analysis.ts."""
     if not isinstance(name, str) or not name or name.startswith('/'):
         return None
-    if any(ch in name for ch in '\\:*?"<>|\x00'):
+    if any(ch in '\\:{}' or ord(ch) < 32 or ord(ch) == 127 for ch in name):
         return None
     if any(part in ('', '.', '..') for part in name.split('/')):
         return None
@@ -53,14 +54,17 @@ class AnalysisFolders:
         if relative is None:
             raise ValueError('Not a path inside the analysis folder: {!r}'.format(name))
         path = root.joinpath(*relative.split('/'))
-        resolved = path.resolve(strict=True)
-        if not resolved.is_relative_to(root):
-            raise ValueError('{} leads out of the analysis folder.'.format(relative))
-        if not resolved.is_file():
-            raise ValueError('{} is not a file.'.format(relative))
-        with resolved.open('rb') as stream:
-            size = os.fstat(stream.fileno()).st_size
-            if size > MAX_FILE:
+        with path.open('rb') as stream:
+            # Bind the confinement check to the same handle that supplies the bytes.
+            resolved = path.resolve(strict=True)
+            if not resolved.is_relative_to(root):
+                raise ValueError('{} leads out of the analysis folder.'.format(relative))
+            opened = os.fstat(stream.fileno())
+            if not stat.S_ISREG(opened.st_mode):
+                raise ValueError('{} is not a file.'.format(relative))
+            if not os.path.samestat(opened, os.stat(resolved)):
+                raise ValueError('{} changed while opening the file.'.format(relative))
+            if opened.st_size > MAX_FILE:
                 raise ValueError('{} exceeds the 64 MiB limit.'.format(relative))
             data = stream.read(MAX_FILE + 1)
         if len(data) > MAX_FILE:

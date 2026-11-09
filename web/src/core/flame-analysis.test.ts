@@ -189,7 +189,7 @@ describe('what the board derives from the series', () => {
   });
   it('integrates heat released as it goes', () => {
     const ramp: Series = { t: Float64Array.from([0, 1, 2, 3]), v: Float64Array.from([0, 10, 10, NaN]) };
-    expect([...cumulative(ramp).v]).toEqual([0, 5, 15, 15]);
+    expect([...cumulative(ramp).v]).toEqual([0, 5, 15, NaN, 15]);
   });
   it('turns a convective hood record into a Heskestad height through the radiative fraction', () => {
     const hood: Series = { t: Float64Array.from([0, 1]), v: Float64Array.from([70, NaN]) };

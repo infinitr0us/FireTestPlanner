@@ -21,7 +21,7 @@ import type { CameraObject, LengthUnit, PlanDocument } from '../core/types';
 import { parseAndValidatePlan } from '../core/validate';
 import { openShellAnalysis, saveMedia, shell } from '../io/files';
 import {
-  pickedAnalysisSource, readText, shellAnalysisSource, type AnalysisSource,
+  checkedEventSource, pickedAnalysisSource, readText, shellAnalysisSource, type AnalysisSource,
 } from '../io/flame-analysis-source';
 import { AnalysisScene, type FlameLook, type SceneView } from '../scene/flame-analysis';
 import { ANALYSIS_DEFAULT_SPEED, ANALYSIS_SPEEDS, Playhead } from '../state/playhead';
@@ -29,7 +29,7 @@ import { h } from './dom';
 import { CameraTiles, drawHull, drawOutline, placement, type PictureMode } from './flame-analysis-cameras';
 import { AnalysisPlots, type Band, type Moment, type PlotLine, type PlotSpec } from './flame-analysis-plots';
 import {
-  Composer, encodePng, encodeVideo, VIDEO_FPS, videoFrames, type VideoLayout, type VideoOptions,
+  checkExportSignal, Composer, encodePng, encodeVideo, VIDEO_FPS, videoFrames, type VideoLayout, type VideoOptions,
 } from './flame-analysis-video';
 import * as i18n from './i18n';
 import { fmt } from './plot-svg';
@@ -105,8 +105,14 @@ export class FlameAnalysisWorkspace {
     ANALYSIS_SPEEDS.map((s) => h('option', { value: String(s), selected: s === ANALYSIS_DEFAULT_SPEED }, [`×${i18n.numberText(s)}`])));
   private loop = h('input', { type: 'checkbox' });
   private zoom?: HTMLElement;
+  private zoomFocus?: HTMLElement;
   private exportPanel?: HTMLElement;
   private exportAbort?: () => void;
+  private exportTask?: Promise<Blob>;
+  private exportController?: AbortController;
+  private exportId = 0;
+  private exportBackground = new Map<HTMLElement, boolean>();
+  private disposal?: Promise<void>;
   /** The last video the export panel made (for hosts and tests). */
   lastVideo?: Blob;
   private focusBefore?: HTMLElement;
@@ -130,7 +136,7 @@ export class FlameAnalysisWorkspace {
     );
     this.dialog.addEventListener('cancel', (e) => {
       e.preventDefault();
-      if (this.exportPanel) this.closeExport();
+      if (this.exportPanel) this.escapeExport();
       else if (this.zoom) this.closeZoom();
       else if (this.drawerStep) this.closeDrawer();
       else this.close();
@@ -142,7 +148,7 @@ export class FlameAnalysisWorkspace {
       // Escape without asking, taking the board down with the full-size picture.
       if (e.key === 'Escape' && (this.exportPanel || this.zoom || this.drawerStep)) {
         e.preventDefault();
-        if (this.exportPanel) this.closeExport();
+        if (this.exportPanel) this.escapeExport();
         else if (this.zoom) this.closeZoom();
         else this.closeDrawer();
         return;
@@ -181,9 +187,10 @@ export class FlameAnalysisWorkspace {
     this.tick(performance.now());
   }
 
-  close(): void {
+  async close(): Promise<void> {
     if (!this.isOpen) return;
-    this.closeExport();
+    await this.closeExport();
+    if (!this.isOpen) return;
     this.playhead.pause();
     cancelAnimationFrame(this.raf);
     this.dialog.close();
@@ -193,12 +200,19 @@ export class FlameAnalysisWorkspace {
   }
 
   /** Release everything: the session, the scene and its pictures. */
-  dispose(): void {
-    this.close();
+  dispose(): Promise<void> {
+    if (this.disposal) return this.disposal;
     ++this.epoch;
-    this.loaded?.tiles.dispose();
-    this.scene?.dispose();
-    this.source?.close();
+    this.disposal = (async () => {
+      await this.closeExport();
+      await this.close();
+      this.unloadEvent();
+      this.scene?.dispose();
+      this.scene = undefined;
+      this.source?.close();
+      this.source = undefined;
+    })();
+    return this.disposal;
   }
 
   private welcome(message = ''): void {
@@ -247,6 +261,7 @@ export class FlameAnalysisWorkspace {
 
   /** Open a folder. Public so tests and hosts can hand over a source directly. */
   async load(source: AnalysisSource): Promise<void> {
+    await this.closeExport();
     this.playhead.pause();
     const epoch = ++this.epoch;
     this.source?.close();
@@ -283,8 +298,10 @@ export class FlameAnalysisWorkspace {
   }
 
   async selectEvent(id: string): Promise<void> {
-    const analysis = this.analysis, source = this.source, plan = this.plan;
-    if (!analysis || !source || !plan) return;
+    await this.closeExport();
+    const analysis = this.analysis, plan = this.plan;
+    if (!analysis || !this.source || !plan) return;
+    let source = this.source;
     this.playhead.pause();
     const epoch = ++this.epoch;
     const entry = analysis.events.find((e) => e.id === id);
@@ -311,6 +328,7 @@ export class FlameAnalysisWorkspace {
         series.set(s.id, parseSeriesCsv(await textOf(file), s.time, s.value, file));
       }
       const outlines = new Map<string, Float32Array[][]>();
+      source = checkedEventSource(source, event, entry, series, folder);
       for (const cam of event.cameras) {
         const file = joinPath(folder, fillTemplate(event.files.outlines, cam));
         outlines.set(cam, parseOutlines(await textOf(file), cam, event.instants.t_s.length, file));
@@ -369,7 +387,7 @@ export class FlameAnalysisWorkspace {
     const sceneHost = h('div', { class: 'flame-analysis__scene-host' });
     const viewButtons = (['site', 'flame'] as SceneView[]).map((view) => h('button', {
       type: 'button', class: 'btn flame-analysis__toggle', 'aria-pressed': String(view === this.sceneView),
-      onclick: () => this.setSceneView(view),
+      dataset: { view }, onclick: () => this.setSceneView(view),
     }, [view === 'site' ? i18n.t("Whole site") : i18n.t("Flame close-up")]));
     const pictureButtons = (['closeup', 'whole'] as PictureMode[]).map((mode) => h('button', {
       type: 'button', class: 'btn flame-analysis__toggle', 'aria-pressed': String(mode === tiles.pictureMode),
@@ -443,8 +461,11 @@ export class FlameAnalysisWorkspace {
     const meshTemplate = event.files.mesh;
     this.scene.setSurfaces(meshTemplate && sequence ? (index) => {
       const file = joinPath(folder, fillTemplate(meshTemplate, undefined, event.instants.stem[index]));
-      return source.read(file).then((bytes) => parseMesh(bytes, file));
-    } : null, sequence ? [sequence.bounds[0][2], sequence.bounds[1][2]] : undefined);
+      return source.read(file).then((bytes) => parseMesh(bytes, file)).catch((error: Error) => {
+        throw new Error(i18n.t("Surface at {p1} s, {p2}: {p3}", { p1: event.instants.t_s[index], p2: file, p3: error.message }));
+      });
+    } : null, sequence ? [sequence.bounds[0][2], sequence.bounds[1][2]] : undefined,
+    (error) => this.setStatus(error.message, 'error'));
     this.scene.setLook(this.flameLook);
     this.setSceneView(this.sceneView, viewButtons);
 
@@ -495,7 +516,7 @@ export class FlameAnalysisWorkspace {
   private setLook(look: FlameLook): void {
     this.flameLook = look;
     this.scene?.setLook(look);
-    this.body.querySelectorAll<HTMLButtonElement>('.flame-analysis__look').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.look === look)));
+    this.body.querySelectorAll<HTMLButtonElement>('[data-look]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.look === look)));
   }
 
   /** The measured heat release rate's response time (format 1.1), if the folder gives one. */
@@ -574,8 +595,8 @@ export class FlameAnalysisWorkspace {
   private setSceneView(view: SceneView, buttons?: HTMLButtonElement[]): void {
     this.sceneView = view;
     this.scene?.setView(view);
-    const list = buttons ?? [...this.body.querySelectorAll<HTMLButtonElement>('.flame-analysis__scene .flame-analysis__toggle')];
-    list.forEach((b, k) => b.setAttribute('aria-pressed', String((['site', 'flame'] as SceneView[])[k] === view)));
+    const list = buttons ?? [...this.body.querySelectorAll<HTMLButtonElement>('[data-view]')];
+    list.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
   }
 
   private units(): { volume: [number, string]; area: [number, string]; height: [number, string] } {
@@ -590,7 +611,7 @@ export class FlameAnalysisWorkspace {
     const line = (id: string, role: PlotLine['role'], nth: number, extra: Partial<PlotLine> = {}): PlotLine => {
       const s = event.series.find((x) => x.id === id)!;
       const data = series.get(id)!;
-      return { label: localText(s.label), t: data.t, v: data.v, role, nth, ...extra };
+      return { label: localText(s.label), note: localText(s.note), t: data.t, v: data.v, role, nth, ...extra };
     };
     const plots: PlotSpec[] = [];
     const hrr = event.series.filter((s) => s.quantity === 'hrr');
@@ -603,11 +624,15 @@ export class FlameAnalysisWorkspace {
       for (const s of [...hrr.filter((x) => x.role === 'measured'), ...hrr.filter((x) => x.role !== 'measured')]) {
         const estimated = s.role === 'estimated';
         const base = line(s.id, estimated ? 'estimated' : 'measured', estimated ? nEstimated++ : 0);
-        const data = series.get(s.id)!;
-        if (this.plotOptions.heat) lines.push({ ...base, v: cumulative(data).v });
-        else if (estimated && this.plotOptions.hoodResponse && tau) {
-          lines.push({ ...base, v: firstOrderResponse(data, tau).v, label: i18n.t("{p1}, as the hood sees it", { p1: base.label }) });
-        } else lines.push(base);
+        if (!basis) base.label = i18n.t("{p1} ({p2})", { p1: base.label,
+          p2: s.basis === 'convective' ? i18n.t("convective") : s.basis === 'total' ? i18n.t("total") : i18n.t("basis not stated") });
+        let data = series.get(s.id)!;
+        if (estimated && this.plotOptions.hoodResponse && tau) {
+          data = firstOrderResponse(data, tau);
+          base.label = i18n.t("{p1}, as the hood sees it", { p1: base.label });
+        }
+        if (this.plotOptions.heat) data = cumulative(data, event.instants.t_s[0], event.instants.t_s.at(-1)!);
+        lines.push({ ...base, ...data });
       }
       plots.push(this.plotOptions.heat ? {
         id: 'hrr', unit: 'MJ', scale: 0.001, lines,
@@ -667,13 +692,20 @@ export class FlameAnalysisWorkspace {
     const window = i18n.t("Between the first and last instant, {p1} s to {p2} s from the onset", {
       p1: fmt(numbers.window[0] - event.onset_s), p2: fmt(numbers.window[1] - event.onset_s),
     });
-    const at = (t: number): string => i18n.t("at {p1} s", { p1: `${t - event.onset_s > 0 ? '+' : ''}${fmt(t - event.onset_s)}` });
+    const at = (t: number): string => Number.isFinite(t) ? i18n.t("at {p1} s", { p1: `${t - event.onset_s > 0 ? '+' : ''}${fmt(t - event.onset_s)}` }) : '';
     const percent = (ratio: number | null): string => {
       if (ratio === null) return '';
       const p = Math.round((ratio - 1) * 100);
       return ` (${p > 0 ? '+' : p < 0 ? '−' : ''}${i18n.formatQuantity(Math.abs(p), '%')})`;
     };
-    const quantity = (value: number, unit: string): string => i18n.formatQuantity(Number(value.toPrecision(3)), unit);
+    const quantity = (value: number, unit: string): string => Number.isFinite(value) ? i18n.formatQuantity(Number(value.toPrecision(3)), unit) : '–';
+    const heatText = (heat: { heat_kJ: number; coverage: number }): string => {
+      if (!heat.coverage) return '–';
+      const value = quantity(heat.heat_kJ / 1000, 'MJ');
+      return heat.coverage >= 0.995 ? value : i18n.t("{p1} (partial, {p2} covered)", {
+        p1: value, p2: i18n.formatQuantity(100 * heat.coverage, '%', 1),
+      });
+    };
     const tile = (label: string, value: string, detail: string, tip: string): HTMLElement =>
       h('div', { class: 'flame-analysis__number', title: tip }, [
         h('span', { class: 'flame-analysis__number-label' }, [label]),
@@ -683,17 +715,21 @@ export class FlameAnalysisWorkspace {
     const tiles: HTMLElement[] = [];
     const hood = numbers.hood;
     if (hood) {
+      const note = localText(event.series.find((s) => s.id === hood.id)?.note);
       tiles.push(tile(i18n.t("Hood peak"), quantity(hood.peak.value, 'kW'), at(hood.peak.t),
-        i18n.t("The largest measured heat release rate. {p1}.", { p1: window })));
-      tiles.push(tile(i18n.t("Heat released, hood"), quantity(hood.heat_kJ / 1000, 'MJ'), '',
-        i18n.t("The measured heat release rate integrated over time. {p1}.", { p1: window })));
+        [note, i18n.t("The largest measured heat release rate. {p1}.", { p1: window })].filter(Boolean).join('\n')));
+      tiles.push(tile(i18n.t("Heat released, hood"), heatText(hood), '',
+        [note, i18n.t("The measured heat release rate integrated over time. {p1}.", { p1: window })].filter(Boolean).join('\n')));
     }
     for (const estimate of numbers.estimates) {
       const s = event.series.find((x) => x.id === estimate.id)!;
+      const comparison = estimate.comparison === 'different' ? i18n.t("Bases differ; not compared.")
+        : estimate.comparison === 'unstated' ? i18n.t("A basis is not stated; not compared.")
+        : estimate.coverage < 0.995 || (hood?.coverage ?? 0) < 0.995 ? i18n.t("Incomplete coverage; not compared.") : '';
       tiles.push(tile(localText(s.label),
         `${quantity(estimate.peak.value, 'kW')}${percent(estimate.peakRatio)}`,
-        i18n.t("heat {p1}{p2}", { p1: quantity(estimate.heat_kJ / 1000, 'MJ'), p2: percent(estimate.heatRatio) }),
-        i18n.t("Peak and heat released of this estimate, and how far each is from the hood's. {p1}.", { p1: window })));
+        [i18n.t("heat {p1}{p2}", { p1: heatText(estimate), p2: percent(estimate.heatRatio) }), comparison].filter(Boolean).join(' · '),
+        [localText(s.note), i18n.t("Peak and heat released of this estimate. Comparisons require the same stated basis and at least 99.5 % coverage on both series. {p1}.", { p1: window })].filter(Boolean).join('\n')));
     }
     if (numbers.volume) {
       const [scale, unit] = units.volume;
@@ -734,6 +770,7 @@ export class FlameAnalysisWorkspace {
     const loaded = this.loaded, analysis = this.analysis;
     if (!loaded || !analysis) return null;
     const { event, tiles } = loaded;
+    const pictureMode = tiles.pictureMode;
     return new Composer({
       title: localText(analysis.title),
       eventLabel: localText(event.label),
@@ -743,8 +780,9 @@ export class FlameAnalysisWorkspace {
       cameras: event.cameras.map((id) => ({ id, label: this.cameraLabel(id), image: event.images[id] })),
       pictureMode: tiles.pictureMode,
       outlines: tiles.outlinesOn ? loaded.outlines : null,
+      coverageOutlines: loaded.outlines,
       outsideFrame: event.quality?.outsideFrame ?? {},
-      picture: (camera, index) => tiles.picture(camera, index),
+      picture: (camera, index) => tiles.picture(camera, index, pictureMode),
       hull: tiles.hullCheckOn ? this.hullProjection : null,
       scene: this.scene ?? null,
       plots: loaded.plotData,
@@ -757,19 +795,53 @@ export class FlameAnalysisWorkspace {
     const composer = this.composer(options.layout, options.width);
     if (!composer || !this.loaded) throw new Error(i18n.t("No event is open."));
     this.playhead.pause();
-    try {
-      const bytes = await encodeVideo(composer, this.loaded.event.instants.t_s, options, progress, signal);
+    const times = this.loaded.event.instants.t_s;
+    return this.runExport(async (ownedSignal) => {
+      const bytes = await encodeVideo(composer, times, options, progress, ownedSignal);
       return new Blob([bytes as BlobPart], { type: 'video/mp4' });
-    } finally {
-      this.scene?.setFrame(this.loaded?.sequence ? this.index : -1);
-    }
+    }, signal);
   }
 
   /** The board at the playback instant as a PNG, in the full-board layout. */
   async exportPng(width: 1920 | 1280 = 1920, layout: VideoLayout = 'board'): Promise<Blob> {
     const composer = this.composer(layout, width);
     if (!composer || this.index < 0) throw new Error(i18n.t("No event is open."));
-    return encodePng(composer, this.index);
+    const index = this.index;
+    return this.runExport((signal) => encodePng(composer, index, signal));
+  }
+
+  /** One owner for every asynchronous composition, including direct host calls. */
+  private runExport(work: (signal: AbortSignal) => Promise<Blob>, signal?: AbortSignal): Promise<Blob> {
+    if (this.exportTask) return Promise.reject(new Error(i18n.t("An export is already running.")));
+    const controller = new AbortController();
+    this.exportController = controller;
+    ++this.exportId;
+    const abort = (): void => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    const task = Promise.resolve().then(async () => {
+      try {
+        checkExportSignal(controller.signal);
+        const blob = await work(controller.signal);
+        checkExportSignal(controller.signal);
+        return blob;
+      } finally {
+        signal?.removeEventListener('abort', abort);
+        const current = this.loaded?.sequence ? this.index : -1;
+        if (this.scene && this.scene.currentFrame !== current) this.scene.setFrame(current);
+        if (this.exportTask === task) { this.exportTask = undefined; this.exportController = undefined; }
+      }
+    });
+    this.exportTask = task;
+    return task;
+  }
+
+  /** Stop before replacing the event, scene, or language-owned interface. */
+  async stopExport(): Promise<void> {
+    ++this.exportId;
+    this.exportAbort?.();
+    this.exportController?.abort();
+    try { await this.exportTask; } catch { /* The owning export reports its result. */ }
   }
 
   private async savePng(): Promise<void> {
@@ -778,7 +850,10 @@ export class FlameAnalysisWorkspace {
     const relative = event.instants.t_s[Math.max(this.index, 0)] - event.onset_s;
     const name = `${event.id}_${relative >= 0 ? '+' : '-'}${Math.abs(relative).toFixed(1)}s.png`;
     try {
-      const saved = await saveMedia(await this.exportPng(), name, 'png');
+      const pending = this.exportPng(), id = this.exportId;
+      const blob = await pending;
+      if (id !== this.exportId || !this.isOpen || this.loaded?.event !== event) return;
+      const saved = await saveMedia(blob, name, 'png');
       this.setStatus(saved ? i18n.t("Saved {p1}.", { p1: saved }) : '');
     } catch (error) {
       this.setStatus((error as Error).message, 'error');
@@ -787,7 +862,7 @@ export class FlameAnalysisWorkspace {
 
   private openExport(): void {
     const loaded = this.loaded;
-    if (!loaded || this.exportPanel) return;
+    if (!loaded || this.exportPanel || this.exportTask) return;
     this.playhead.pause();
     const { event } = loaded;
     const times = event.instants.t_s;
@@ -827,7 +902,7 @@ export class FlameAnalysisWorkspace {
     const update = (): void => {
       const o = options();
       const valid = o.to > o.from;
-      go.disabled = !valid;
+      go.disabled = !!controller || !valid;
       to.setAttribute('aria-invalid', String(!valid));
       const frames = valid ? videoFrames(times, o).length : 0;
       summary.textContent = valid
@@ -837,18 +912,27 @@ export class FlameAnalysisWorkspace {
     for (const el of [layout, size, from, to, speed]) el.onchange = update;
     let controller: AbortController | null = null;
     go.onclick = async () => {
+      if (controller || this.exportTask) return;
       const o = options();
-      controller = new AbortController();
+      const ownController = new AbortController();
+      controller = ownController;
+      const panel = this.exportPanel;
+      for (const el of [layout, size, from, to, speed]) el.disabled = true;
       go.disabled = true;
       close.textContent = i18n.t("Cancel");
+      close.focus();
       bar.hidden = false;
       status.classList.remove('flame-analysis__status--error');
       const t0 = performance.now();
       try {
-        const blob = await this.exportVideo(o, (done, total) => {
+        const pending = this.exportVideo(o, (done, total) => {
           bar.value = done / total;
           status.textContent = i18n.t("Encoding frame {p1} of {p2}…", { p1: done, p2: total });
-        }, controller.signal);
+        }, ownController.signal);
+        const operation = this.exportId;
+        const blob = await pending;
+        checkExportSignal(ownController.signal);
+        if (operation !== this.exportId || panel !== this.exportPanel || !this.isOpen) return;
         status.textContent = i18n.t("Encoded in {p1} s; choose where to save it.", { p1: i18n.formatNumber((performance.now() - t0) / 1000, 0) });
         this.lastVideo = blob;
         const saved = await saveMedia(blob, `${event.id}_${o.layout}_${o.width}.mp4`, 'video');
@@ -859,12 +943,13 @@ export class FlameAnalysisWorkspace {
         status.classList.toggle('flame-analysis__status--error', !aborted);
       } finally {
         controller = null;
-        go.disabled = false;
+        for (const el of [layout, size, from, to, speed]) el.disabled = false;
+        update();
         close.textContent = i18n.t("Close");
         bar.hidden = true;
       }
     };
-    close.onclick = () => { if (controller) controller.abort(); else this.closeExport(); };
+    close.onclick = () => { if (controller) controller.abort(); else void this.closeExport(); };
     this.exportAbort = () => controller?.abort();
     this.exportPanel = h('div', { class: 'flame-analysis__zoom flame-analysis__export-panel', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'flame-analysis-export-title' }, [
       h('div', { class: 'flame-analysis__drawer-bar' }, [h('h2', { id: 'flame-analysis-export-title' }, [i18n.t("Export video")]), close]),
@@ -876,16 +961,38 @@ export class FlameAnalysisWorkspace {
       summary, h('div', { class: 'flame-analysis__export-actions' }, [go, bar]), status,
     ]);
     this.dialog.append(this.exportPanel);
+    for (const child of this.dialog.children) {
+      if (child instanceof HTMLElement && child !== this.exportPanel) {
+        this.exportBackground.set(child, child.inert);
+        child.inert = true;
+      }
+    }
+    this.exportPanel.addEventListener('keydown', (e) => {
+      if (e.key !== 'Tab') return;
+      const controls = [...this.exportPanel!.querySelectorAll<HTMLElement>('button:not(:disabled), select:not(:disabled)')];
+      const next = controls[e.shiftKey ? controls.length - 1 : 0];
+      const boundary = controls[e.shiftKey ? 0 : controls.length - 1];
+      if (document.activeElement === boundary) { e.preventDefault(); next?.focus(); }
+    });
     update();
     layout.focus();
   }
 
-  private closeExport(): void {
-    if (!this.exportPanel) return;
-    this.exportAbort?.();
-    this.exportPanel.remove();
+  private escapeExport(): void {
+    if (this.exportController) this.exportController.abort();
+    else if (this.exportTask) this.exportAbort?.();
+    else void this.closeExport();
+  }
+
+  private async closeExport(): Promise<void> {
+    await this.stopExport();
+    const panel = this.exportPanel;
+    if (!panel) return;
+    panel.remove();
     this.exportPanel = undefined;
     this.exportAbort = undefined;
+    for (const [child, inert] of this.exportBackground) child.inert = inert;
+    this.exportBackground.clear();
     this.body.querySelector<HTMLElement>('.flame-analysis__export button')?.focus();
   }
 
@@ -1000,6 +1107,7 @@ export class FlameAnalysisWorkspace {
     if (!loaded || !source || this.index < 0) return;
     this.playhead.pause();
     const { event, folder } = loaded;
+    this.zoomFocus = this.body.querySelector<HTMLElement>(`.flame-analysis__tile-open[data-camera="${cam}"]`) ?? undefined;
     const index = this.index;
     const canvas = h('canvas', { class: 'flame-analysis__zoom-picture', width: 0, height: 0, role: 'img', 'aria-label': this.cameraLabel(cam) });
     const close = h('button', { type: 'button', class: 'btn', onclick: () => this.closeZoom() }, [i18n.t("Close")]);
@@ -1036,6 +1144,7 @@ export class FlameAnalysisWorkspace {
     if (!this.zoom) return;
     this.zoom.remove();
     this.zoom = undefined;
-    this.body.querySelector<HTMLElement>('.flame-analysis__tile-open')?.focus();
+    this.zoomFocus?.focus();
+    this.zoomFocus = undefined;
   }
 }

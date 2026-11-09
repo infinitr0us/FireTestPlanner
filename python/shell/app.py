@@ -639,6 +639,8 @@ class Shell:
             return None
         if not path.lower().endswith('.fds'):
             path += '.fds'
+            if os.path.lexists(path):
+                return {"error": "The name with its extension already exists. Choose the name with its extension."}
         error = self._write(path, text)
         return {"error": error} if error else {"path": path}
 
@@ -648,6 +650,8 @@ class Shell:
             return None
         if not path.lower().endswith(".csv"):
             path += ".csv"
+            if os.path.lexists(path):
+                return {"error": "The name with its extension already exists. Choose the name with its extension."}
         error = self._write(path, text)
         return {"error": error} if error else {"path": path}
 
@@ -701,6 +705,8 @@ class Shell:
             return None
         if not path.lower().endswith(extension):
             path += extension
+            if os.path.lexists(path):
+                return {"error": "The name with its extension already exists. Choose the name with its extension."}
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(dir=os.path.dirname(os.path.abspath(path)), prefix=".flame-analysis-",
@@ -825,10 +831,24 @@ class Handler(SimpleHTTPRequestHandler):
         return self.headers.get("X-Shell-Token") == self.token
 
     def _read_json(self) -> Dict[str, Any]:
-        length = int(self.headers.get("Content-Length") or 0)
-        if length <= 0 or length > MAX_BODY_BYTES:
-            return {}
-        return json.loads(self.rfile.read(length).decode("utf-8"))
+        lengths = self.headers.get_all("Content-Length", [])
+        if len(lengths) != 1 or not re.fullmatch(r"[0-9]+", lengths[0]):
+            raise ValueError("invalid Content-Length")
+        # Compare before int conversion, including arbitrarily long declarations.
+        digits = lengths[0].lstrip("0") or "0"
+        cap = str(MAX_BODY_BYTES)
+        if len(digits) > len(cap) or (len(digits) == len(cap) and digits > cap):
+            raise OverflowError("JSON body exceeds the size limit")
+        length = int(digits)
+        if length <= 0:
+            raise ValueError("empty JSON body")
+        raw = self.rfile.read(length)
+        if len(raw) != length:
+            raise ValueError("incomplete JSON body")
+        body = json.loads(raw.decode("utf-8"))
+        if not isinstance(body, dict):
+            raise ValueError("JSON body must be an object")
+        return body
 
     # -- routes --------------------------------------------------------
 
@@ -842,8 +862,11 @@ class Handler(SimpleHTTPRequestHandler):
             return
         try:
             body = self._read_json()
+        except OverflowError:
+            self._send_json({"error": "JSON request body exceeds the size limit."}, 413)
+            return
         except ValueError:
-            self._send_json({"error": "bad json"}, 400)
+            self._send_json({"error": "Invalid JSON request body."}, 400)
             return
 
         try:
