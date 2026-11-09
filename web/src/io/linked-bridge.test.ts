@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { connectShell, shell, saveNextTestText } from './files';
+import { connectShell, openShellAnalysis, shell, saveNextTestText } from './files';
 import { readFileSync } from 'node:fs';
 import { serializePlan } from '../core/serialize';
 
@@ -91,5 +91,16 @@ describe('desktop link/save bridge', () => {
     const { api } = bridge([{ path: 'E:/p.json', token: 'chosen' }, { error: 'disk full' }, { error: 'File missing. Relink.' }]);
     await expect(api.savePlan('{}', 'p.json', true, null)).rejects.toThrow('disk full');
     await expect(api.linkedFileAction('E:/missing.csv', 'spreadsheet', 'open')).rejects.toThrow('Relink');
+  });
+  it("says why a shell call failed, not only its status", async () => {
+    vi.stubGlobal('window', { location: { search: '?shell=test-token' } });
+    const failing = (status: number, body: () => Promise<unknown>) =>
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status, json: body })));
+    connectShell(() => {});
+    failing(500, async () => ({ error: 'Flame analysis (analysis.json) is not a valid file filter' }));
+    await expect(openShellAnalysis()).rejects.toThrow(
+      'Shell call /api/flame-analysis/open failed: 500 (Flame analysis (analysis.json) is not a valid file filter)');
+    failing(502, async () => { throw new SyntaxError('not JSON'); });
+    await expect(openShellAnalysis()).rejects.toThrow(/^Shell call \/api\/flame-analysis\/open failed: 502$/);
   });
 });

@@ -123,7 +123,15 @@ async function call<T>(route: string, body?: unknown): Promise<T | null> {
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  if (!response.ok) throw new Error(i18n.t("Shell call {p1} failed: {p2}", { p1: route, p2: response.status }));
+  if (!response.ok) {
+    // The shell says what went wrong in the body ({"error": ...}); pass it on, or a
+    // failure in the shell reaches the user as a bare status code.
+    const detail = await response.json().then(
+      (b: { error?: unknown } | null) => (typeof b?.error === 'string' ? b.error : ''), () => '');
+    throw new Error(detail
+      ? i18n.t("Shell call {p1} failed: {p2} ({p3})", { p1: route, p2: response.status, p3: detail })
+      : i18n.t("Shell call {p1} failed: {p2}", { p1: route, p2: response.status }));
+  }
   return (await response.json()) as T | null;
 }
 

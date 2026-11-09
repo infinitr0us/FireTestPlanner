@@ -1017,3 +1017,63 @@ def test_save_media_checks_what_it_is_given(server, monkeypatch):
     with pytest.raises(urllib.error.HTTPError) as error:
         _post_bytes(base, "/api/save-media?kind=png", b"")
     assert error.value.code == 400
+
+
+# -- native dialogs ------------------------------------------------------
+
+#: pywebview 6.2's own check (`webview.util.parse_file_type`), which
+#: `create_file_dialog` runs on every filter before it opens anything: a filter
+#: it refuses is a ValueError, a 500 to the page, and no dialog at all.
+PYWEBVIEW_FILTER = r'^([\w ]+)\((\*(?:\.(?:\w+|\*))*(?:;\*(?:\.(?:\w+|\*))*)*)\)$'
+try:
+    from webview.util import parse_file_type as pywebview_parse_file_type
+except Exception:  # noqa: BLE001 - pywebview is optional here
+    pywebview_parse_file_type = None
+
+
+class CheckingDialogs:
+    """A window whose file dialogs check their filters as pywebview does, then
+    report a cancel."""
+
+    def __init__(self):
+        self.filters = []
+        self.calls = 0
+
+    def create_file_dialog(self, dialog_type=None, directory="", allow_multiple=False, save_filename="", file_types=()):
+        import re
+        self.calls += 1
+        for file_type in file_types:
+            assert re.search(PYWEBVIEW_FILTER, file_type), "pywebview refuses the file filter {!r}".format(file_type)
+            if pywebview_parse_file_type is not None:
+                pywebview_parse_file_type(file_type)
+        self.filters.extend(file_types)
+        return None
+
+
+def test_every_native_dialog_passes_pywebviews_filter_check(monkeypatch):
+    import base64
+    import types
+    dialogs = CheckingDialogs()
+    monkeypatch.setitem(sys.modules, "webview", types.SimpleNamespace(
+        OPEN_DIALOG=10, FOLDER_DIALOG=20, SAVE_DIALOG=30, FileDialog=types.SimpleNamespace(OPEN=10, FOLDER=20, SAVE=30)))
+    shell = shell_app.Shell()
+    shell.window = dialogs
+    png = bytes([137, 80, 78, 71, 13, 10, 26, 10]) + b"picture"
+    # Every caller of create_file_dialog in app.py, and every caller of _ask_save.
+    assert shell.pick_linked_files("spreadsheet") == {"files": []}
+    assert shell.pick_linked_files("video") == {"files": []}
+    assert shell.open_results() is None
+    assert shell.open_analysis() is None
+    assert shell.pick_folder() is None
+    assert shell.open_plan() is None
+    assert shell.open_fds() is None
+    assert shell.save_target("a.ftp.json", save_as=True) is None
+    assert shell.save_plan("{}", "a.ftp.json", save_as=True) is None
+    assert shell.save_html("<p>", "a.html") is None
+    assert shell.save_fds("&HEAD /", "a.fds") is None
+    assert shell.save_csv("a,b", "a.csv") is None
+    assert shell.save_results_png("data:image/png;base64," + base64.b64encode(png).decode("ascii")) is None
+    assert shell.save_media(b"\x00\x00\x00\x18ftypisom", "a.mp4", "video") is None
+    assert shell.save_media(png, "a.png", "png") is None
+    assert dialogs.calls == 15
+    assert "Flame analysis (*.json)" in dialogs.filters

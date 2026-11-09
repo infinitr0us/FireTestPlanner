@@ -55,6 +55,9 @@ PLAN_FILTER = ("Fire test plan (*.ftp.json;*.json)", "All files (*.*)")
 #: plan is what gets saved. So there is no matching save filter.
 FDS_FILTER = ("FDS input (*.fds)", "All files (*.*)")
 HTML_FILTER = ("Web page (*.html)", "All files (*.*)")
+#: pywebview refuses a filter that is not a wildcard pattern (a plain name such as
+#: "analysis.json" raises before the dialog opens), so the name is checked after.
+ANALYSIS_FILTER = ("Flame analysis (*.json)", "All files (*.*)")
 MAX_BODY_BYTES = 256 * 1024 * 1024  # a plan with an embedded viewer can be large
 MAX_MEDIA_BYTES = 1024 * 1024 * 1024  # an exported flame analysis video
 MAX_TEST_DATA_BYTES = 64 * 1024 * 1024
@@ -376,7 +379,7 @@ class Shell:
         import webview
         selected = self.window.create_file_dialog(
             webview.OPEN_DIALOG, allow_multiple=False,
-            file_types=("Flame analysis (analysis.json)",), directory=self._last_directory())
+            file_types=ANALYSIS_FILTER, directory=self._last_directory())
         if not selected:
             return None
         path = selected[0] if isinstance(selected, (list, tuple)) else selected

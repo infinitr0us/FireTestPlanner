@@ -909,6 +909,7 @@ export const fr: Readonly<Record<string, string>> = {
   "Sheet \"{p1}\" was not found.": "La feuille « {p1} » est introuvable.",
   "Sheet preview, {p1} rows": "Aperçu de la feuille, {p1} lignes",
   "Shell call {p1} failed: {p2}": "L’appel au shell {p1} a échoué : {p2}",
+  "Shell call {p1} failed: {p2} ({p3})": "L’appel au shell {p1} a échoué : {p2} ({p3})",
   "Shell could not read {p1}: {p2}": "Le shell n’a pas pu lire {p1} : {p2}",
   "Show devices": "Afficher les dispositifs",
   "Show in folder": "Afficher dans le dossier",

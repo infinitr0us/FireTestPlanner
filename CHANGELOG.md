@@ -46,6 +46,10 @@ and a plan written by any release opens in every later one.
   a note on what it assumed; **Cubes | Surface** draws the 3-D flame as its smoothed
   surface. The video and PNG export draw the same.
 
+### Changed
+- A failed call to the desktop app's shell says why (the shell's own message after the
+  status code), not only the status.
+
 ## [0.9.0] - 2026-11-02
 
 No plan format change (still 1.7.0 at most): every addition is derived from what a plan
