@@ -43,14 +43,19 @@ export const qualityKey = (kind: Band['kind']): { text: string; token: string } 
   : { text: i18n.t("flame at a picture's edge"), token: '--text-dim' };
 
 const LEFT = 44, RIGHT = 10, TOP = 8, AXIS = 30;
+/** Each drawing's clip needs an id of its own in the document. */
+let clips = 0;
 
 /** A line's colour token: measured and reconstructed primary, estimated in the
  *  simulated family, a correlation's prediction in the planned-value neutral. */
 export const colourOf = (line: Pick<PlotLine, 'role'>): string =>
   line.role === 'predicted' ? 'var(--plot-planned)' : line.role === 'estimated' ? roleColor('simulated') : roleColor('measured');
-/** Measured and reconstructed solid, estimated dashed, predicted long dashes. */
+/** Measured and reconstructed solid, estimated dashed, predicted long dashes. A
+ *  second measured line on a plot (a total beside a convective hood record) takes
+ *  the measured family's next pattern, so the two can be told apart. */
 export const dashOf = (line: Pick<PlotLine, 'role' | 'nth'>): string =>
-  line.role === 'predicted' ? PLANNED_DASH : line.role === 'estimated' ? seriesDash('simulated', line.nth) : '';
+  line.role === 'predicted' ? PLANNED_DASH : line.role === 'estimated' ? seriesDash('simulated', line.nth)
+    : line.role === 'measured' ? seriesDash('measured', line.nth) : '';
 
 interface Drawn { spec: PlotSpec; host: HTMLElement; svg?: SVGSVGElement; cursor?: SVGLineElement; x0: number; x1: number; last: boolean }
 
@@ -163,11 +168,17 @@ export class AnalysisPlots {
         labelEnd = start + width + 3;
       }
     }
+    // A series may run past the event's instants (a hood record of the whole test):
+    // its line stops at the plot's edge, as in the exported composition.
+    const clip = `flame-analysis-clip-${++clips}`;
+    const clipPath = svgElement('clipPath', { id: clip });
+    clipPath.append(svgElement('rect', { x: X0, y: Y0 - 2, width: Math.max(X1 - X0, 0), height: Math.max(Y1 - Y0 + 4, 0) }));
+    svg.append(clipPath);
     for (const line of spec.lines) {
       const d = this.path(line, scale, x, y);
       if (!d) continue;
       svg.append(svgElement('path', {
-        d, fill: 'none', stroke: this.colour(line),
+        d, fill: 'none', stroke: this.colour(line), 'clip-path': `url(#${clip})`,
         'stroke-width': line.thin ? 0.8 : line.role === 'measured' || line.role === 'reconstructed' ? 2 : 1.6,
         'stroke-opacity': line.thin ? 0.5 : 1,
         'stroke-dasharray': dashOf(line),

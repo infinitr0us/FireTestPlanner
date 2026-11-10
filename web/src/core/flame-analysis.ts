@@ -177,7 +177,8 @@ export function parseAnalysisManifest(textValue: string, where = 'analysis.json'
     if ('sitePlan' in data) path(p, 'sitePlan', data.sitePlan);
     if ('timeBase' in data && closed(p, 'timeBase', data.timeBase, ['label'], ['description'])) {
       const tb = data.timeBase;
-      if (typeof tb.label !== 'string' || !tb.label || tb.label.length > 40) p.add('timeBase/label', i18n.t("must be a short non-empty string"));
+      // Characters, as the schema's maxLength counts them, not UTF-16 units.
+      if (typeof tb.label !== 'string' || !tb.label || [...tb.label].length > 40) p.add('timeBase/label', i18n.t("must be a short non-empty string"));
       if ('description' in tb) text(p, 'timeBase/description', tb.description);
     }
     if ('cameras' in data) {
@@ -531,17 +532,32 @@ export function integrate(data: Series, from: number, to: number, report = false
   return report ? { value, covered_s, coverage: to > from ? Math.min(1, covered_s / (to - from)) : 0 } : value;
 }
 
+export interface EstimateNumbers {
+  id: string;
+  peak: Peak;
+  heat_kJ: number;
+  coverage: number;
+  comparison: 'same' | 'different' | 'unstated';
+  /** The raw estimate against the hood; null when the two cannot be compared. */
+  peakRatio: number | null;
+  heatRatio: number | null;
+  /** With a hood response time (event 1.1): the estimate as the hood would record
+   *  it, and that against the hood. A hood averages over its response time, so at
+   *  a peak it reads lower than the flame; this is the like-for-like comparison. */
+  asHood?: { peak: Peak; heat_kJ: number; peakRatio: number | null; heatRatio: number | null };
+}
 export interface KeyNumbers {
   window: [number, number];
-  hood?: { id: string; peak: Peak; heat_kJ: number; coverage: number };
-  estimates: { id: string; peak: Peak; heat_kJ: number; coverage: number; comparison: 'same' | 'different' | 'unstated'; peakRatio: number | null; heatRatio: number | null }[];
+  hood?: { id: string; peak: Peak; heat_kJ: number; coverage: number; responseTime_s?: number };
+  estimates: EstimateNumbers[];
   volume?: { peakMean: Peak };
   height?: { peak: Peak };
 }
 
 /**
  * The numbers above the board, over the event's instants (first to last): the
- * measured heat release rate's peak and heat, each estimate's against it, the
+ * measured heat release rate's peak and heat, each estimate's against it (raw, and
+ * as the hood would record it when the folder gives the hood's response time), the
  * largest one-second mean flame volume and the tallest flame.
  */
 export function keyNumbers(event: EventManifest, series: Map<string, Series>): KeyNumbers {
@@ -554,19 +570,28 @@ export function keyNumbers(event: EventManifest, series: Map<string, Series>): K
     const data = series.get(measured.id)!;
     const peak = peakOf(data, ...window) ?? { value: NaN, t: NaN };
     const heat = integrate(data, ...window, true);
-    out.hood = { id: measured.id, peak, heat_kJ: heat.value, coverage: heat.coverage };
+    out.hood = { id: measured.id, peak, heat_kJ: heat.value, coverage: heat.coverage,
+      ...(measured.responseTime_s ? { responseTime_s: measured.responseTime_s } : {}) };
   }
+  const hood = out.hood;
   for (const s of hrr.filter((x) => x.role === 'estimated')) {
     const data = series.get(s.id)!;
     const peak = peakOf(data, ...window) ?? { value: NaN, t: NaN };
     const heat = integrate(data, ...window, true);
     const comparison = !s.basis || !measured?.basis ? 'unstated' : s.basis === measured.basis ? 'same' : 'different';
-    const comparable = comparison === 'same' && heat.coverage >= 0.995 && (out.hood?.coverage ?? 0) >= 0.995;
-    out.estimates.push({
-      id: s.id, peak, heat_kJ: heat.value, coverage: heat.coverage, comparison,
-      peakRatio: comparable && out.hood && out.hood.peak.value > 0 && Number.isFinite(peak.value) ? peak.value / out.hood.peak.value : null,
-      heatRatio: comparable && out.hood && out.hood.heat_kJ > 0 ? heat.value / out.hood.heat_kJ : null,
+    const comparable = comparison === 'same' && heat.coverage >= 0.995 && (hood?.coverage ?? 0) >= 0.995;
+    const against = (p: Peak, heat_kJ: number): { peakRatio: number | null; heatRatio: number | null } => ({
+      peakRatio: comparable && hood && hood.peak.value > 0 && Number.isFinite(p.value) ? p.value / hood.peak.value : null,
+      heatRatio: comparable && hood && hood.heat_kJ > 0 ? heat_kJ / hood.heat_kJ : null,
     });
+    const estimate: EstimateNumbers = { id: s.id, peak, heat_kJ: heat.value, coverage: heat.coverage, comparison, ...against(peak, heat.value) };
+    if (hood?.responseTime_s) {
+      const seen = firstOrderResponse(data, hood.responseTime_s);
+      const seenPeak = peakOf(seen, ...window) ?? { value: NaN, t: NaN };
+      const seenHeat = integrate(seen, ...window);
+      estimate.asHood = { peak: seenPeak, heat_kJ: seenHeat, ...against(seenPeak, seenHeat) };
+    }
+    out.estimates.push(estimate);
   }
   const volume = event.series.find((s) => s.quantity === 'volume' && series.has(s.id));
   if (volume) {

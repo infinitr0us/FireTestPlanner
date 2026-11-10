@@ -75,15 +75,36 @@ def localized(value: Any, language: str = "en") -> str:
     return value.get(language) or value["en"]
 
 
+#: An unescaped `$` in a schema pattern, and what it means in Python's syntax.
+_PATTERN_END = re.compile(r"(?<!\\)\$")
+_END_OF_TEXT = r"\\Z"
+_VALIDATOR: Any = None
+
+
+def _validator_class() -> Any:
+    """Draft 2020-12 with `pattern` read as the schema means it. A JSON Schema pattern
+    is ECMAScript's, where `$` is the end of the text; Python's `$` also matches before
+    a final line break, which would pass an id or a date with a line break after it.
+    The board (ECMAScript) refuses both, and so must this reader."""
+    global _VALIDATOR
+    if _VALIDATOR is None:
+        import jsonschema
+
+        def pattern(validator: Any, wanted: str, instance: Any, schema: Any) -> Any:
+            if isinstance(instance, str) and not re.search(_PATTERN_END.sub(_END_OF_TEXT, wanted), instance):
+                yield jsonschema.ValidationError("{!r} does not match {!r}".format(instance, wanted))
+
+        _VALIDATOR = jsonschema.validators.extend(jsonschema.Draft202012Validator, {"pattern": pattern})
+    return _VALIDATOR
+
+
 def _validate(kind: str, data: Any, where: str) -> None:
     """Schema validation; the first few violations name their place in the file."""
-    import jsonschema
-
     version = data.get("version") if isinstance(data, dict) else None
     filename = (_SCHEMA_FILES.get((kind, version)) if isinstance(version, str) else None)
     filename = filename or _SCHEMA_FILES[(kind, "1.0.0")]
     schema = json.loads(_schema_text(filename))
-    validator = jsonschema.Draft202012Validator(schema)
+    validator = _validator_class()(schema)
     errors = sorted(validator.iter_errors(data), key=lambda e: list(e.absolute_path))
     if errors:
         lines = []
@@ -106,10 +127,22 @@ def _finite_json_float(value: str) -> float:
     return number
 
 
+def _finite_json_int(value: str) -> int:
+    """A whole number too large for a float is as far outside the finite range as
+    1e999: JavaScript reads both as infinity, so neither is a number here."""
+    number = int(value)
+    try:
+        float(number)
+    except OverflowError:
+        raise ValueError("non-finite JSON number {}...".format(value[:24]))
+    return number
+
+
 def _read_json(path: str) -> Any:
     try:
         with open(path, "r", encoding="utf-8-sig") as fh:
-            return json.load(fh, parse_constant=_reject_constant, parse_float=_finite_json_float)
+            return json.load(fh, parse_constant=_reject_constant, parse_float=_finite_json_float,
+                             parse_int=_finite_json_int)
     except FileNotFoundError:
         raise FlameAnalysisError("{}: no such file".format(path))
     except (OSError, ValueError) as exc:
@@ -355,8 +388,9 @@ class FlameEvent:
     # -- checks ----------------------------------------------------------
 
     def check(self, deep: bool = True) -> List[Issue]:
-        """Problems the board would refuse or show wrongly. `deep` also opens every
-        outline, hull and display file (slow on a large event)."""
+        """Problems the board would refuse or show wrongly. Pictures are checked for
+        being there, not opened; `deep` also opens every outline, hull and mesh (slow
+        on a large event)."""
         try:
             _validate(EVENT_FORMAT, self.data, self.path)
         except FlameAnalysisError as exc:

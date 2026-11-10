@@ -19,7 +19,7 @@ import {
 import { burnerDiameterM, cameras as planCameras, displayName, primaryBurner, radiativeFractionOf } from '../core/plan';
 import type { CameraObject, LengthUnit, PlanDocument } from '../core/types';
 import { parseAndValidatePlan } from '../core/validate';
-import { openShellAnalysis, saveMedia, shell } from '../io/files';
+import { closeShellAnalysis, openShellAnalysis, saveMedia, shell } from '../io/files';
 import {
   checkedEventSource, pickedAnalysisSource, readText, shellAnalysisSource, type AnalysisSource,
 } from '../io/flame-analysis-source';
@@ -80,11 +80,19 @@ export class FlameAnalysisWorkspace {
   private readout = h('output', { class: 'flame-analysis__readout', 'aria-live': 'off' });
   private body = h('div', { class: 'flame-analysis__body' });
   private status = h('p', { class: 'flame-analysis__status', role: 'status' });
+  /** Shown once a folder is open; the welcome screen has its own button. */
+  private another = h('button', { type: 'button', class: 'btn flame-analysis__another', hidden: true, onclick: () => { void this.choose(); } },
+    [i18n.t("Open another analysis…")]);
+  private chooseRequest = 0;
   private source?: AnalysisSource;
   private analysis?: AnalysisManifest;
   private plan?: PlanDocument;
   private loaded?: LoadedEvent;
   private scene?: AnalysisScene;
+  /** The site plan the scene shows: another folder brings another site. */
+  private sitePlan?: PlanDocument;
+  /** Whether the plots and cards were built in imperial units. */
+  private builtImperial?: boolean;
   private sceneView: SceneView = 'flame';
   private playhead = new Playhead();
   private index = -1;
@@ -106,12 +114,13 @@ export class FlameAnalysisWorkspace {
   private loop = h('input', { type: 'checkbox' });
   private zoom?: HTMLElement;
   private zoomFocus?: HTMLElement;
+  private zoomRestore?: () => void;
   private exportPanel?: HTMLElement;
   private exportAbort?: () => void;
   private exportTask?: Promise<Blob>;
   private exportController?: AbortController;
   private exportId = 0;
-  private exportBackground = new Map<HTMLElement, boolean>();
+  private exportRestore?: () => void;
   private disposal?: Promise<void>;
   /** The last video the export panel made (for hosts and tests). */
   lastVideo?: Blob;
@@ -130,6 +139,7 @@ export class FlameAnalysisWorkspace {
         this.title,
         h('label', { class: 'flame-analysis__event' }, [i18n.t("Event"), this.eventSelect]),
         this.readout,
+        this.another,
         h('button', { type: 'button', class: 'btn', onclick: () => this.close() }, [i18n.t("Back to plan")]),
       ]),
       this.body,
@@ -184,6 +194,9 @@ export class FlameAnalysisWorkspace {
     this.dialog.showModal();
     this.onOpenChange(true);
     if (!this.analysis) this.welcome();
+    this.scene?.setActive(true);
+    // The editor's length unit may have changed while the board was closed.
+    if (this.loaded && this.builtImperial !== this.imperial()) this.refreshUnits();
     this.tick(performance.now());
   }
 
@@ -191,8 +204,10 @@ export class FlameAnalysisWorkspace {
     if (!this.isOpen) return;
     await this.closeExport();
     if (!this.isOpen) return;
+    this.closeZoom();
     this.playhead.pause();
     cancelAnimationFrame(this.raf);
+    this.scene?.setActive(false);
     this.dialog.close();
     this.dialog.remove();
     this.onOpenChange(false);
@@ -209,6 +224,7 @@ export class FlameAnalysisWorkspace {
       this.unloadEvent();
       this.scene?.dispose();
       this.scene = undefined;
+      this.sitePlan = undefined;
       this.source?.close();
       this.source = undefined;
     })();
@@ -218,6 +234,7 @@ export class FlameAnalysisWorkspace {
   private welcome(message = ''): void {
     this.title.textContent = i18n.t("Flame analysis");
     this.eventSelect.parentElement!.hidden = true;
+    this.another.hidden = true;
     this.readout.textContent = '';
     this.body.replaceChildren(h('div', { class: 'flame-analysis__welcome' }, [
       h('h2', {}, [i18n.t("Review a fire filmed by several cameras")]),
@@ -235,12 +252,27 @@ export class FlameAnalysisWorkspace {
     this.status.classList.toggle('flame-analysis__status--error', tone === 'error');
   }
 
+  /** An event of an open folder that could not be read: the folder stays open, with
+   *  its other events in the selector and the way to another folder beside it. */
+  private eventFailed(message: string): void {
+    this.readout.textContent = '';
+    this.body.replaceChildren(h('div', { class: 'flame-analysis__welcome' }, [
+      h('h2', {}, [i18n.t("This event could not be opened")]),
+      this.status,
+    ]));
+    this.setStatus(message, 'error');
+  }
+
+  /** Ask for a folder and open it. What is on screen stays until a folder is chosen:
+   *  cancelling the dialog changes nothing, not even a load that is still running. */
   private async choose(): Promise<void> {
-    const epoch = ++this.epoch;
+    const request = ++this.chooseRequest;
+    const stale = (): boolean => request !== this.chooseRequest || !!this.disposal;
     try {
       if (shell()) {
         const opened = await openShellAnalysis();
-        if (!opened || epoch !== this.epoch) return;
+        if (!opened) return;
+        if (stale()) { closeShellAnalysis(opened.token); return; }
         await this.load(shellAnalysisSource(opened));
         return;
       }
@@ -252,10 +284,10 @@ export class FlameAnalysisWorkspace {
         input.addEventListener('cancel', () => { resolve([]); input.remove(); }, { once: true });
         input.click();
       });
-      if (!files.length || epoch !== this.epoch) return;
+      if (!files.length || stale()) return;
       await this.load(pickedAnalysisSource(files));
     } catch (error) {
-      if (epoch === this.epoch) this.setStatus((error as Error).message, 'error');
+      if (!stale()) this.setStatus((error as Error).message, 'error');
     }
   }
 
@@ -283,6 +315,7 @@ export class FlameAnalysisWorkspace {
       this.title.textContent = localText(analysis.title);
       this.eventSelect.replaceChildren(...analysis.events.map((e) => h('option', { value: e.id }, [localText(e.label)])));
       this.eventSelect.parentElement!.hidden = analysis.events.length < 2;
+      this.another.hidden = false;
       await this.selectEvent(analysis.events[0].id);
     } catch (error) {
       if (epoch === this.epoch) this.welcome((error as Error).message);
@@ -338,21 +371,25 @@ export class FlameAnalysisWorkspace {
       this.setStatus('');
       this.build(analysis, plan, event, folder, series, outlines, sequence, source);
     } catch (error) {
-      if (epoch === this.epoch) this.welcome((error as Error).message);
+      if (epoch === this.epoch) this.eventFailed((error as Error).message);
     }
   }
 
   private async readHull(source: AnalysisSource, event: EventManifest, folder: string, epoch: number): Promise<FlameSequence | null> {
     const { t_s, stem } = event.instants;
     const raw: RawFrame[] = new Array(t_s.length);
-    let next = 0, done = 0;
+    let next = 0, done = 0, failed = false;
+    // One file that cannot be read ends the reading: the others stop asking for more,
+    // and none reports progress over the message that names the file.
+    const live = (): boolean => !failed && epoch === this.epoch;
     const worker = async (): Promise<void> => {
-      while (next < t_s.length && epoch === this.epoch) {
+      while (next < t_s.length && live()) {
         const i = next++;
         const file = joinPath(folder, fillTemplate(event.files.hull, undefined, stem[i]));
-        raw[i] = await parseFrameData(file, await source.read(file), t_s[i]);
+        try { raw[i] = await parseFrameData(file, await source.read(file), t_s[i]); }
+        catch (error) { failed = true; throw error; }
         done += 1;
-        if (done % 20 === 0 || done === t_s.length) this.setStatus(i18n.t("Reading the 3-D flame… {p1} of {p2} instants", { p1: done, p2: t_s.length }));
+        if (live() && (done % 20 === 0 || done === t_s.length)) this.setStatus(i18n.t("Reading the 3-D flame… {p1} of {p2} instants", { p1: done, p2: t_s.length }));
       }
     };
     await Promise.all(Array.from({ length: READ_CONCURRENCY }, worker));
@@ -381,8 +418,9 @@ export class FlameAnalysisWorkspace {
     const numbers = keyNumbers(event, series);
     const tiles = new CameraTiles(source, event, folder,
       event.cameras.map((id) => ({ id, label: this.cameraLabel(id) })), outlines, (cam) => { void this.openZoom(cam); });
-    const { plots, plotData } = this.makePlots(event, series);
+    const { plots, plotData, note } = this.makePlots(event, series);
     this.loaded = { event, folder, series, outlines, sequence, numbers, tiles, plots, plotData };
+    this.builtImperial = this.imperial();
 
     const sceneHost = h('div', { class: 'flame-analysis__scene-host' });
     const viewButtons = (['site', 'flame'] as SceneView[]).map((view) => h('button', {
@@ -433,10 +471,7 @@ export class FlameAnalysisWorkspace {
       sequence ? null : h('p', { class: 'flame-analysis__note' }, [i18n.t("This event has no 3-D flame at any instant.")]),
     ]);
     const plotPanel = h('section', { class: 'flame-analysis__panel flame-analysis__charts', 'aria-label': i18n.t("Plots") },
-      [this.plotBar(event, series), plots.element, ...(() => {
-        const note = this.plotOptions.heskestad ? this.heskestad(event, series)?.note : undefined;
-        return note ? [h('p', { class: 'flame-analysis__note flame-analysis__plot-note' }, [note])] : [];
-      })()]);
+      [this.plotBar(event, series), plots.element, note ? h('p', { class: 'flame-analysis__note flame-analysis__plot-note' }, [note]) : null]);
     const main = h('div', { class: 'flame-analysis__main' }, [
       h('div', { class: 'flame-analysis__left' }, [cameraPanel, scenePanel]),
       plotPanel,
@@ -453,9 +488,14 @@ export class FlameAnalysisWorkspace {
 
     if (!this.scene) {
       this.scene = new AnalysisScene(sceneHost);
-      this.scene.setSite(plan, new Map(analysis.cameras.map((c) => [c.planCameraId, this.cameraLabel(c.id)])));
+      if (!this.isOpen) this.scene.setActive(false);
     } else {
       this.scene.attach(sceneHost);
+    }
+    // The site belongs to the folder, not to the scene: another folder brings its own.
+    if (this.sitePlan !== plan) {
+      this.scene.setSite(plan, new Map(analysis.cameras.map((c) => [c.planCameraId, this.cameraLabel(c.id)])));
+      this.sitePlan = plan;
     }
     this.scene.setFlame(sequence, this.planCamera(event.cameras[0]));
     const meshTemplate = event.files.mesh;
@@ -573,13 +613,13 @@ export class FlameAnalysisWorkspace {
   private rebuildPlots(): void {
     const loaded = this.loaded;
     if (!loaded) return;
-    const { plots, plotData } = this.makePlots(loaded.event, loaded.series);
+    const { plots, plotData, note } = this.makePlots(loaded.event, loaded.series);
     const old = loaded.plots.element;
     loaded.plots.dispose();
     old.replaceWith(plots.element);
     loaded.plots = plots;
     loaded.plotData = plotData;
-    const note = this.plotOptions.heskestad ? this.heskestad(loaded.event, loaded.series)?.note : undefined;
+    this.builtImperial = this.imperial();
     const charts = plots.element.parentElement;
     charts?.querySelector('.flame-analysis__plot-note')?.remove();
     if (note) plots.element.after(h('p', { class: 'flame-analysis__note flame-analysis__plot-note' }, [note]));
@@ -599,15 +639,25 @@ export class FlameAnalysisWorkspace {
     list.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
   }
 
+  private imperial(): boolean { return IMPERIAL.has(this.options.lengthUnit?.() ?? 'm'); }
+
+  /** Redraw what carries a unit, for a unit changed in the editor since the event was built. */
+  private refreshUnits(): void {
+    const loaded = this.loaded;
+    if (!loaded) return;
+    this.body.querySelector('.flame-analysis__numbers')?.replaceWith(this.numbersRow(loaded.numbers, loaded.event));
+    this.rebuildPlots();
+  }
+
   private units(): { volume: [number, string]; area: [number, string]; height: [number, string] } {
-    const unit = this.options.lengthUnit?.() ?? 'm';
-    return IMPERIAL.has(unit)
+    return this.imperial()
       ? { volume: [35.3146667, 'ft³'], area: [10.7639104, 'ft²'], height: [1 / 0.3048, 'ft'] }
       : { volume: [1000, 'L'], area: [1, 'm²'], height: [1, 'm'] };
   }
 
-  private makePlots(event: EventManifest, series: Map<string, Series>): { plots: AnalysisPlots; plotData: LoadedEvent['plotData'] } {
+  private makePlots(event: EventManifest, series: Map<string, Series>): { plots: AnalysisPlots; plotData: LoadedEvent['plotData']; note?: string } {
     const units = this.units();
+    let note: string | undefined;
     const line = (id: string, role: PlotLine['role'], nth: number, extra: Partial<PlotLine> = {}): PlotLine => {
       const s = event.series.find((x) => x.id === id)!;
       const data = series.get(id)!;
@@ -619,11 +669,11 @@ export class FlameAnalysisWorkspace {
       const bases = new Set(hrr.map((s) => s.basis));
       const basis = bases.size === 1 && hrr[0].basis ? hrr[0].basis : null;
       const lines: PlotLine[] = [];
-      let nEstimated = 0;
+      let nEstimated = 0, nMeasured = 0;
       const tau = this.responseTime(event);
       for (const s of [...hrr.filter((x) => x.role === 'measured'), ...hrr.filter((x) => x.role !== 'measured')]) {
         const estimated = s.role === 'estimated';
-        const base = line(s.id, estimated ? 'estimated' : 'measured', estimated ? nEstimated++ : 0);
+        const base = line(s.id, estimated ? 'estimated' : 'measured', estimated ? nEstimated++ : nMeasured++);
         if (!basis) base.label = i18n.t("{p1} ({p2})", { p1: base.label,
           p2: s.basis === 'convective' ? i18n.t("convective") : s.basis === 'total' ? i18n.t("total") : i18n.t("basis not stated") });
         let data = series.get(s.id)!;
@@ -660,7 +710,10 @@ export class FlameAnalysisWorkspace {
     if (height) {
       const lines = [line(height.id, 'reconstructed', 0)];
       const predicted = this.plotOptions.heskestad ? this.heskestad(event, series) : null;
-      if (predicted) lines.push({ label: i18n.t("Heskestad mean height (pool fire), from the hood"), t: predicted.t, v: predicted.v, role: 'predicted', nth: 0 });
+      if (predicted) {
+        lines.push({ label: i18n.t("Heskestad mean height (pool fire), from the hood"), t: predicted.t, v: predicted.v, role: 'predicted', nth: 0 });
+        note = predicted.note; // the note goes with the line it explains
+      }
       plots.push({ id: 'height', title: localText(height.label), unit: units.height[1], scale: units.height[0], lines });
     }
 
@@ -684,6 +737,7 @@ export class FlameAnalysisWorkspace {
     return {
       plots: new AnalysisPlots(plots, window, event.onset_s, bands, moments, (t) => this.seekTime(t)),
       plotData: { specs: plots, bands, moments, window },
+      note,
     };
   }
 
@@ -693,11 +747,12 @@ export class FlameAnalysisWorkspace {
       p1: fmt(numbers.window[0] - event.onset_s), p2: fmt(numbers.window[1] - event.onset_s),
     });
     const at = (t: number): string => Number.isFinite(t) ? i18n.t("at {p1} s", { p1: `${t - event.onset_s > 0 ? '+' : ''}${fmt(t - event.onset_s)}` }) : '';
-    const percent = (ratio: number | null): string => {
-      if (ratio === null) return '';
+    const signed = (ratio: number | null): string => {
+      if (ratio === null) return '–';
       const p = Math.round((ratio - 1) * 100);
-      return ` (${p > 0 ? '+' : p < 0 ? '−' : ''}${i18n.formatQuantity(Math.abs(p), '%')})`;
+      return `${p > 0 ? '+' : p < 0 ? '−' : ''}${i18n.formatQuantity(Math.abs(p), '%')}`;
     };
+    const percent = (ratio: number | null): string => (ratio === null ? '' : ` (${signed(ratio)})`);
     const quantity = (value: number, unit: string): string => Number.isFinite(value) ? i18n.formatQuantity(Number(value.toPrecision(3)), unit) : '–';
     const heatText = (heat: { heat_kJ: number; coverage: number }): string => {
       if (!heat.coverage) return '–';
@@ -706,10 +761,14 @@ export class FlameAnalysisWorkspace {
         p1: value, p2: i18n.formatQuantity(100 * heat.coverage, '%', 1),
       });
     };
-    const tile = (label: string, value: string, detail: string, tip: string): HTMLElement =>
+    // `aside` sits beside the value, for a second number that needs no line of its own.
+    const tile = (label: string, value: string, detail: string, tip: string, aside = ''): HTMLElement =>
       h('div', { class: 'flame-analysis__number', title: tip }, [
         h('span', { class: 'flame-analysis__number-label' }, [label]),
-        h('strong', {}, [value]),
+        h('span', { class: 'flame-analysis__number-value' }, [
+          h('strong', {}, [value]),
+          aside ? h('span', { class: 'flame-analysis__number-detail' }, [aside]) : null,
+        ]),
         h('span', { class: 'flame-analysis__number-detail' }, [detail]),
       ]);
     const tiles: HTMLElement[] = [];
@@ -726,10 +785,23 @@ export class FlameAnalysisWorkspace {
       const comparison = estimate.comparison === 'different' ? i18n.t("Bases differ; not compared.")
         : estimate.comparison === 'unstated' ? i18n.t("A basis is not stated; not compared.")
         : estimate.coverage < 0.995 || (hood?.coverage ?? 0) < 0.995 ? i18n.t("Incomplete coverage; not compared.") : '';
+      // Like for like where the folder gives the hood's response time: a hood averages
+      // over seconds, so the raw peak of a 10 Hz estimate against it says little.
+      const seen = estimate.asHood && (estimate.asHood.peakRatio !== null || estimate.asHood.heatRatio !== null) ? estimate.asHood : null;
+      const compared = estimate.peakRatio !== null || estimate.heatRatio !== null;
+      const how = seen
+        ? i18n.t("The percentages compare the estimate as the hood would record it (response time {p1} s: peak {p2}, heat {p3}) with the hood. A hood averages over its response time, so at a peak it reads lower than the flame.", {
+          p1: i18n.formatNumber(hood?.responseTime_s ?? 0), p2: quantity(seen.peak.value, 'kW'), p3: quantity(seen.heat_kJ / 1000, 'MJ'),
+        })
+        : compared ? i18n.t("A hood averages over its response time, so at a peak it reads lower than the flame: a higher estimate there is expected.") : '';
       tiles.push(tile(localText(s.label),
-        `${quantity(estimate.peak.value, 'kW')}${percent(estimate.peakRatio)}`,
-        [i18n.t("heat {p1}{p2}", { p1: heatText(estimate), p2: percent(estimate.heatRatio) }), comparison].filter(Boolean).join(' · '),
-        [localText(s.note), i18n.t("Peak and heat released of this estimate. Comparisons require the same stated basis and at least 99.5 % coverage on both series. {p1}.", { p1: window })].filter(Boolean).join('\n')));
+        seen ? quantity(estimate.peak.value, 'kW') : `${quantity(estimate.peak.value, 'kW')}${percent(estimate.peakRatio)}`,
+        seen
+          ? i18n.t("as the hood sees it: peak {p1}, heat {p2}", { p1: signed(seen.peakRatio), p2: signed(seen.heatRatio) })
+          : [i18n.t("heat {p1}{p2}", { p1: heatText(estimate), p2: percent(estimate.heatRatio) }), comparison].filter(Boolean).join(' · '),
+        [localText(s.note), i18n.t("Peak and heat released of this estimate. Comparisons require the same stated basis and at least 99.5 % coverage on both series. {p1}.", { p1: window }), how].filter(Boolean).join('\n'),
+        // The raw heat beside the raw peak; the line below is the comparison.
+        seen ? i18n.t("heat {p1}{p2}", { p1: heatText(estimate), p2: '' }) : ''));
     }
     if (numbers.volume) {
       const [scale, unit] = units.volume;
@@ -784,6 +856,7 @@ export class FlameAnalysisWorkspace {
       outsideFrame: event.quality?.outsideFrame ?? {},
       picture: (camera, index) => tiles.picture(camera, index, pictureMode),
       hull: tiles.hullCheckOn ? this.hullProjection : null,
+      coverage: tiles.hullCheckOn ? (camera, index) => tiles.coverageAt(camera, index) : undefined,
       scene: this.scene ?? null,
       plots: loaded.plotData,
     }, layout, width);
@@ -961,21 +1034,29 @@ export class FlameAnalysisWorkspace {
       summary, h('div', { class: 'flame-analysis__export-actions' }, [go, bar]), status,
     ]);
     this.dialog.append(this.exportPanel);
+    this.exportRestore = this.holdBoard(this.exportPanel);
+    update();
+    layout.focus();
+  }
+
+  /** Make `panel` the only part of the board that can be reached: everything else in
+   *  the dialog is inert and Tab stays inside the panel. The returned function undoes it. */
+  private holdBoard(panel: HTMLElement): () => void {
+    const before = new Map<HTMLElement, boolean>();
     for (const child of this.dialog.children) {
-      if (child instanceof HTMLElement && child !== this.exportPanel) {
-        this.exportBackground.set(child, child.inert);
+      if (child instanceof HTMLElement && child !== panel) {
+        before.set(child, child.inert);
         child.inert = true;
       }
     }
-    this.exportPanel.addEventListener('keydown', (e) => {
+    panel.addEventListener('keydown', (e) => {
       if (e.key !== 'Tab') return;
-      const controls = [...this.exportPanel!.querySelectorAll<HTMLElement>('button:not(:disabled), select:not(:disabled)')];
+      const controls = [...panel.querySelectorAll<HTMLElement>('button:not(:disabled), select:not(:disabled)')];
       const next = controls[e.shiftKey ? controls.length - 1 : 0];
       const boundary = controls[e.shiftKey ? 0 : controls.length - 1];
       if (document.activeElement === boundary) { e.preventDefault(); next?.focus(); }
     });
-    update();
-    layout.focus();
+    return () => { for (const [child, inert] of before) child.inert = inert; };
   }
 
   private escapeExport(): void {
@@ -991,8 +1072,8 @@ export class FlameAnalysisWorkspace {
     panel.remove();
     this.exportPanel = undefined;
     this.exportAbort = undefined;
-    for (const [child, inert] of this.exportBackground) child.inert = inert;
-    this.exportBackground.clear();
+    this.exportRestore?.();
+    this.exportRestore = undefined;
     this.body.querySelector<HTMLElement>('.flame-analysis__export button')?.focus();
   }
 
@@ -1105,6 +1186,7 @@ export class FlameAnalysisWorkspace {
   private async openZoom(cam: string): Promise<void> {
     const loaded = this.loaded, source = this.source;
     if (!loaded || !source || this.index < 0) return;
+    this.closeZoom(); // one full-size picture at a time
     this.playhead.pause();
     const { event, folder } = loaded;
     this.zoomFocus = this.body.querySelector<HTMLElement>(`.flame-analysis__tile-open[data-camera="${cam}"]`) ?? undefined;
@@ -1117,6 +1199,8 @@ export class FlameAnalysisWorkspace {
       note, canvas,
     ]);
     this.dialog.append(this.zoom);
+    // A dialog over the board, like the export panel: the board behind is out of reach.
+    this.zoomRestore = this.holdBoard(this.zoom);
     close.focus();
     try {
       const template = event.files.frame ?? event.files.display;
@@ -1144,6 +1228,8 @@ export class FlameAnalysisWorkspace {
     if (!this.zoom) return;
     this.zoom.remove();
     this.zoom = undefined;
+    this.zoomRestore?.();
+    this.zoomRestore = undefined;
     this.zoomFocus?.focus();
     this.zoomFocus = undefined;
   }

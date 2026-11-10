@@ -361,5 +361,62 @@
     "files": [
       "outlines/camA.json"
     ]
+  },
+  {
+    "name": "id_newline_series",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "id_newline_event",
+    "accept": false,
+    "files": [
+      "analysis.json",
+      "event.json"
+    ]
+  },
+  {
+    "name": "date_newline",
+    "accept": false,
+    "files": [
+      "analysis.json"
+    ]
+  },
+  {
+    "name": "number_huge_onset",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "number_huge_instant",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "number_huge_voxel",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "number_huge_moment",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "label_astral",
+    "accept": true,
+    "files": [
+      "analysis.json"
+    ]
   }
 ]

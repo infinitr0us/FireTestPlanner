@@ -49,7 +49,13 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   const numbers = $$('.flame-analysis__number').map((n) => n.textContent!.replace(/ | /g, ' '));
   check('key numbers: hood peak 109 kW at +3 s', numbers.some((n) => n.startsWith('Hood peak109 kWat +3 s')), numbers);
   check('key numbers: hood heat 0.147 MJ', numbers.some((n) => n.includes('Heat released, hood0.147 MJ')), numbers);
-  check('key numbers: an estimate against the hood in percent', numbers.some((n) => /^Estimate from flame volume\d+ kW \([+−]\d+ %\)heat [\d.]+ MJ \([+−]\d+ %\)$/.test(n)), numbers);
+  check('key numbers: an estimate is compared with the hood like for like, as the hood sees it',
+    numbers.includes('Estimate from flame volume111 kWheat 0.204 MJas the hood sees it: peak −50 %, heat −36 %'), numbers);
+  check('a loaded board offers another folder', !!$<HTMLElement>('.flame-analysis__another') && !$<HTMLElement>('.flame-analysis__another')!.hidden);
+  check('plot lines are clipped to their plot area', $$('.flame-analysis__plot-svg').every((svg) => {
+    const clip = svg.querySelector('clipPath'), paths = [...svg.querySelectorAll('path')];
+    return !!clip && paths.length > 0 && paths.every((p) => p.getAttribute('clip-path') === `url(#${clip.id})`);
+  }));
   check('the board opens on the largest flame', /^\+\d/.test(text('.flame-analysis__readout').replace('t = ', '')), text('.flame-analysis__readout'));
 
   // The clock: every follower reads one time.
@@ -89,7 +95,9 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   const caption = (): string[] => $$('.flame-analysis__tile-agreement').map((e) => e.textContent!.replace(/ | /g, ' '));
   $$<HTMLButtonElement>('.flame-analysis__moments button').find((b) => b.textContent === 'Largest flame')!.click();
   press('.flame-analysis__hull-toggle');
-  await wait(() => caption().filter(Boolean).length === 3, 'hull check captions');
+  // The share is measured once the clock rests on an instant, a moment after the picture.
+  const measured = (count: number) => (): boolean => caption().length === count && caption().every((c) => /\d %/.test(c));
+  await wait(measured(3), 'hull check captions');
   // Independent scanline masks in flame-analysis-coverage.test.ts predict these
   // rounded E1 values. They remain 100/100/100 at this key moment under the new
   // physical rectangles; the R14 pinhole below exposes the former inflation.
@@ -147,8 +155,16 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   const zoomTile = $$<HTMLButtonElement>('.flame-analysis__tile-open')[1];
   zoomTile.click();
   await wait(() => !!$('.flame-analysis__zoom'), 'full-size second camera');
+  const behindZoom = (): HTMLElement[] => [...$('.flame-analysis__zoom')!.parentElement!.children]
+    .filter((e) => !e.classList.contains('flame-analysis__zoom')) as HTMLElement[];
+  check('the full-size picture takes focus and the board behind it is out of reach',
+    $('.flame-analysis__zoom')!.contains(document.activeElement) && behindZoom().every((e) => e.inert));
+  // A host, or an activation that slips through, asks for the picture again.
+  await (workspace as unknown as { openZoom(camera: string): Promise<void> }).openZoom(zoomTile.dataset.camera!);
+  check('one full-size picture at a time', $$('.flame-analysis__zoom').length === 1 && behindZoom().every((e) => e.inert));
   $('.flame-analysis__zoom')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   check('full-size picture returns focus to the camera that opened it', document.activeElement === zoomTile);
+  check('closing the full-size picture gives the board back', !$('.flame-analysis__zoom') && !$<HTMLElement>('.flame-analysis__body')!.inert);
 
   // The second event: two cameras, its own clock.
   const select = $('.flame-analysis__event select') as HTMLSelectElement;
@@ -159,13 +175,16 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   check('the drawer closes with the event change', $<HTMLElement>('.flame-analysis__drawer')!.hidden === true);
   check('the outline choice carries over', ($('.flame-analysis__outline-toggle') as HTMLButtonElement).getAttribute('aria-pressed') === 'true');
   check('E2 times are its own', /\(t_clock 16\d/.test(text('.flame-analysis__readout')), text('.flame-analysis__readout'));
+  const e2Numbers = $$('.flame-analysis__number').map((n) => n.textContent!.replace(/ | /g, ' '));
+  check('a format 1.0 event has no hood response time, so its estimates keep the raw percentages',
+    e2Numbers.some((n) => /^Estimate from flame volume[\d.]+ kW \([+−]?\d+ %\)heat [\d.]+ MJ \([+−]?\d+ %\)$/.test(n)), e2Numbers);
   check('the 3-D view draws cubes', (workspace as unknown as { scene: { cubeCount: number } }).scene.cubeCount > 0);
   check('a format 1.0 event offers no surfaces and no hood response, and falls back to cubes',
     !$('.flame-analysis__look') && !toggles().some((b) => b.textContent === 'As the hood sees it') && scene.flameLook === 'cubes');
   // The captions come with the pictures of the instant the board seeks to, which a
   // slow machine draws after the first instant's (no flame, so no caption).
-  await wait(() => caption().filter(Boolean).length === 2, 'E2 hull check captions').catch(() => undefined);
-  check('the hull check carries over to E2', caption().filter(Boolean).length === 2, caption());
+  await wait(measured(2), 'E2 hull check captions').catch(() => undefined);
+  check('the hull check carries over to E2', measured(2)(), caption());
   press('.flame-analysis__transport button[aria-label="Last frame (End)"]');
   press('.flame-analysis__heat[data-mode="heat"]');
   check('E2 final plotted heat equals raw key-number heat per series',
@@ -177,6 +196,15 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   const picture = await createImageBitmap(png);
   check('PNG export is a 1280 x 720 picture', png.type === 'image/png' && picture.width === 1280 && picture.height === 720,
     [png.type, picture.width, picture.height]);
+  // The composition's panel colour, at a point clear of every text and frame.
+  const pixel = (source: CanvasImageSource): number[] => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1280; canvas.height = 720;
+    const g = canvas.getContext('2d', { willReadFrequently: true })!;
+    g.drawImage(source, 0, 0, 1280, 720);
+    return [...g.getImageData(8, 8, 1, 1).data.slice(0, 3)];
+  };
+  const pngPanel = pixel(picture);
   picture.close();
   const live = workspace as unknown as { scene: { currentFrame: number }; index: number };
   check('PNG restores the live scene to the board instant', live.scene.currentFrame === live.index);
@@ -196,6 +224,12 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   player.currentTime = 1.5;
   await new Promise<void>((resolve) => { player.onseeked = () => resolve(); });
   check('video export: seeking into it decodes a frame', player.readyState >= 2);
+  // A player reads a stream that says nothing about its range as limited range. The
+  // frames are encoded that way, so what plays is what the PNG shows: a full-range
+  // stream would come out darker here (19, 28, 49 against 3, 15, 36 before the fix).
+  const videoPanel = pixel(player);
+  check('video export: the played video has the colours of the PNG, neither darker nor harsher',
+    pngPanel.every((v, i) => Math.abs(v - videoPanel[i]) <= 6), [pngPanel, videoPanel]);
   URL.revokeObjectURL(player.src);
   // Exercise the actual selection/load error surface, then restore the fixture
   // for the runner's pointer, keyboard and screenshot checks.
@@ -243,6 +277,94 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
     const message = text('.flame-analysis__status--error');
     check(`${name} prevents the board from showing`, expected.test(message) && !$('.flame-analysis__tile'), message);
   }
+
+  // One 3-D flame file among many cannot be read: the message naming it stays, whatever
+  // the readers still at work finish afterwards.
+  const pause = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  const hullFile = `E1/${event.files.hull.replace('{stem}', event.instants.stem[5])}`;
+  const brokenHull: AnalysisSource = { ...source, close() {}, read: async path => {
+    if (path === hullFile) throw new Error(`Missing file: ${path}`);
+    return source.read(path);
+  } };
+  await workspace.load(brokenHull);
+  await pause(1500);
+  check('an unreadable 3-D flame file stays named on screen after the other files are read',
+    text('.flame-analysis__status--error').includes(hullFile) && !$('.flame-analysis__tile'), text('.flame-analysis__status'));
+  check('a failed event keeps its folder open: its other events and another folder are still offered',
+    !$<HTMLElement>('.flame-analysis__event')!.hidden && !$<HTMLElement>('.flame-analysis__another')!.hidden);
+  select.value = 'E2';
+  select.dispatchEvent(new Event('change'));
+  await wait(() => $$('.flame-analysis__tile').length === 2 && painted(), 'E2 after a failed E1');
+  check('the other event of that folder opens from the selector', true);
+
+  // Another folder in the same workspace: its own site and camera names in the 3-D view.
+  const json = (bytes: Uint8Array): any => JSON.parse(new TextDecoder().decode(bytes));
+  const bytesOf = (data: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(data));
+  const site = (workspace as unknown as { scene: { site: { children: unknown[]; traverse(f: (o: any) => void): void } } }).scene.site;
+  const siteLabels = (): string[] => {
+    const labels: string[] = [];
+    site.traverse((o) => { if (o.isCSS2DObject && o.visible) labels.push(o.element.textContent); });
+    return labels;
+  };
+  const objectsBefore = site.children.length;
+  const second: AnalysisSource = { ...source, close() {}, read: async path => {
+    const bytes = await source.read(path);
+    if (path === 'analysis.json') {
+      const data = json(bytes);
+      data.cameras.forEach((c: { label?: string }, i: number) => { c.label = `Second ${i + 1}`; });
+      return bytesOf(data);
+    }
+    if (path === 'site.ftp.json') {
+      const plan = json(bytes);
+      plan.objects = plan.objects.filter((o: { type: string }) => o.type !== 'hood');
+      return bytesOf(plan);
+    }
+    return bytes;
+  } };
+  await workspace.load(second);
+  await wait(() => $$('.flame-analysis__tile').length === 3 && painted(), 'second folder');
+  check('another folder brings its own site and camera names into the 3-D view',
+    siteLabels().filter((l) => l.startsWith('Second ')).length === 3 && site.children.length === objectsBefore - 1,
+    [siteLabels(), site.children.length, objectsBefore]);
+
+  // Eight cameras, the most the format allows: the tiles keep the clock's instant.
+  const ids = Array.from({ length: 8 }, (_, i) => `cam${i + 1}`);
+  const asCamA = (path: string): string => path.replace(/^E1\/frames\/cam\d+\//, 'E1/frames/camA/').replace(/^E1\/outlines\/cam\d+\.json$/, 'E1/outlines/camA.json');
+  const eight: AnalysisSource = { ...source, close() {}, blob: path => source.blob(asCamA(path)), read: async path => {
+    const data = await source.read(asCamA(path));
+    if (path === 'analysis.json') {
+      const manifest = json(data);
+      manifest.cameras = ids.map((id) => ({ id, planCameraId: 'camA' }));
+      manifest.events = manifest.events.filter((e: { id: string }) => e.id === 'E1');
+      return bytesOf(manifest);
+    }
+    if (path === 'E1/event.json') {
+      const manifest = json(data);
+      manifest.cameras = ids;
+      manifest.images = Object.fromEntries(ids.map((id) => [id, manifest.images.camA]));
+      return bytesOf(manifest);
+    }
+    const outline = /^E1\/outlines\/(cam\d+)\.json$/.exec(path);
+    return outline ? bytesOf({ ...json(data), camera: outline[1] }) : data;
+  } };
+  await workspace.load(eight);
+  await wait(() => $$('.flame-analysis__tile').length === 8 && painted(), 'eight cameras');
+  const inner = workspace as unknown as {
+    index: number; playhead: { play(): void; pause(): void; setLoop(loop: boolean): void };
+    loaded: { tiles: { tiles: Map<string, { drawn: number; caption: HTMLElement }> } };
+  };
+  inner.playhead.setLoop(true);
+  ($('.flame-analysis__transport button[aria-label="First frame (Home)"]') as HTMLButtonElement).click();
+  inner.playhead.play();
+  await pause(2500);
+  inner.playhead.pause();
+  inner.playhead.setLoop(false);
+  const settled = (): boolean => [...inner.loaded.tiles.tiles.values()].every((t) => t.drawn === inner.index);
+  await wait(settled, 'eight tiles on the clock').catch(() => undefined);
+  const eightTiles = [...inner.loaded.tiles.tiles.values()];
+  check('eight cameras: after playback every tile shows the instant on the clock, with no error in a caption',
+    settled() && eightTiles.every((t) => !t.caption.textContent!.includes('·')),
+    [inner.index, eightTiles.map((t) => t.drawn), eightTiles.map((t) => t.caption.textContent)]);
   setLanguage('fr');
   const french: AnalysisSource = { ...source, close() {}, read: async path => {
     const bytes = await source.read(path);

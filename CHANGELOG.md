@@ -82,6 +82,42 @@ and a plan written by any release opens in every later one.
 - **Desktop app:** adding the file extension after a save dialog never overwrites
   another file (MP4, PNG, FDS and CSV), the analysis folder reader checks the file it
   actually opened, and request bodies that are oversized or not JSON objects are refused.
+- **The flame analysis board after a second review.**
+  - **Estimates against the hood:** a hood averages over its response time, so at a
+    peak it reads lower than the flame. Where a folder gives the hood's response
+    time, an estimate's percentages now compare the estimate as the hood would record
+    it with the hood, and the card says so ("as the hood sees it: peak …, heat …");
+    the raw peak and heat stay the card's numbers. Folders without a response time
+    keep the raw percentages, with a tooltip saying a higher peak is expected.
+  - **Another folder:** **Open another analysis…** in the board's header. The 3-D view
+    shows the site and camera names of the folder that is open; it used to keep those
+    of the first folder.
+  - **More cameras:** with six to eight cameras the pictures fell a second behind the
+    clock during playback and stayed on a wrong instant; the pictures on screen are
+    now kept whatever is read ahead.
+  - **A second measured line** on the heat release rate plot (a total beside a
+    convective record) is drawn with its own dash, and plot lines stop at the plot's
+    edge when a series is longer than the event.
+  - The cards and plots follow the editor's length unit when the board is reopened.
+
+### Fixed
+- **The exported video was darker and harsher than the board and the PNG.** The
+  browser engine encoded the canvas as full-range video and said so only beside the
+  stream, so a player read it as limited range and stretched it. Frames are now
+  encoded as limited-range BT.709, what a player assumes for HD video, and the MP4
+  states its colour.
+- **Flame analysis board:** a 3-D flame file that could not be read left "Reading the
+  3-D flame…" on screen instead of the message naming the file; an event that cannot
+  be read now leaves its folder, its other events and the way to another folder in
+  place. A full-size picture is a proper dialog: the board behind it is out of reach,
+  and a second one can no longer open behind the first and stay on screen. The
+  Heskestad note no longer appears without its line. The hull check's percentage is
+  worked out once the clock rests on an instant, and kept, so playing with the hull
+  check on no longer pays for it at every instant.
+- **Flame analysis folders:** both readers refuse a whole number too large for a
+  float (`fireplan` raised an exception, or accepted it) and an id, stem or date
+  followed by a line break (`fireplan` accepted it); a time base label is limited to
+  40 characters in both. Eight cases join the shared corpus.
 
 ## [0.9.0] - 2026-11-02
 

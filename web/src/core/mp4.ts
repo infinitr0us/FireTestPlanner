@@ -6,7 +6,9 @@
  * writing a file is only the container: `ftyp`, then `moov` (the index, placed first
  * so a player can start at once), then `mdat` with every sample in one chunk.
  * Constant frame duration, frames in presentation order (no B-frames), no audio:
- * the shape PowerPoint and every desktop player read.
+ * the shape PowerPoint and every desktop player read. The sample entry also carries a
+ * `colr` box when the encoder says what colour its stream is, since the stream itself
+ * may not.
  */
 
 export interface Mp4Sample {
@@ -16,6 +18,9 @@ export interface Mp4Sample {
   key: boolean;
 }
 
+/** The colour of the video as the code points of ISO/IEC 23091-2 (the `colr` box). */
+export interface Mp4Colour { primaries: number; transfer: number; matrix: number; fullRange: boolean }
+
 export interface Mp4Track {
   width: number;
   height: number;
@@ -24,6 +29,22 @@ export interface Mp4Track {
   /** Frames per second; every sample lasts 1/fps. */
   fps: number;
   samples: Mp4Sample[];
+  /** What the encoder says the stream's colour is. Written beside the stream, which
+   *  itself may say nothing; without it a player has to guess. */
+  colour?: Mp4Colour;
+}
+
+const PRIMARIES: Record<string, number> = { bt709: 1, bt470bg: 5, smpte170m: 6, bt2020: 9, smpte432: 12 };
+const TRANSFER: Record<string, number> = { bt709: 1, smpte170m: 6, linear: 8, 'iec61966-2-1': 13, pq: 16, hlg: 18 };
+const MATRIX_COEFFICIENTS: Record<string, number> = { rgb: 0, bt709: 1, bt470bg: 5, smpte170m: 6, 'bt2020-ncl': 9 };
+
+/** WebCodecs' colour space (`decoderConfig.colorSpace`) as `colr` code points, or
+ *  undefined when any part of it is missing or not one this writer knows. */
+export function mp4Colour(space: { primaries?: string | null; transfer?: string | null; matrix?: string | null; fullRange?: boolean | null } | null | undefined): Mp4Colour | undefined {
+  if (!space || typeof space.fullRange !== 'boolean') return undefined;
+  const primaries = PRIMARIES[space.primaries ?? ''], transfer = TRANSFER[space.transfer ?? ''], matrix = MATRIX_COEFFICIENTS[space.matrix ?? ''];
+  if (primaries === undefined || transfer === undefined || matrix === undefined) return undefined;
+  return { primaries, transfer, matrix, fullRange: space.fullRange };
 }
 
 const TIMESCALE = 90000; // the usual video media timescale; whole ticks for 24, 25, 30, 60 fps
@@ -61,7 +82,7 @@ function fullBox(type: string, version: number, flags: number, body: Uint8Array)
 const MATRIX = [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000];
 
 export function muxMp4(track: Mp4Track): Uint8Array {
-  const { width, height, avcC, fps, samples } = track;
+  const { width, height, avcC, fps, samples, colour } = track;
   if (!samples.length) throw new Error('no frames to write');
   if (!samples[0].key) throw new Error('the first frame must be a key frame');
   for (let i = 1; i < samples.length; i++) {
@@ -89,6 +110,11 @@ export function muxMp4(track: Mp4Track): Uint8Array {
     const avc1 = new Writer().zeros(6).u16(1).u16(0).u16(0).zeros(12).u16(width).u16(height)
       .u32(0x00480000).u32(0x00480000).u32(0).u16(1).zeros(32).u16(0x0018).u16(0xffff)
       .bytes(box('avcC', avcC));
+    // 'nclx': primaries, transfer and matrix code points, then the full-range flag in the top bit.
+    if (colour) {
+      avc1.bytes(box('colr', new Writer().ascii('nclx').u16(colour.primaries).u16(colour.transfer).u16(colour.matrix)
+        .u8(colour.fullRange ? 0x80 : 0).join()));
+    }
     const stsd = new Writer().u32(1).bytes(box('avc1', avc1.join()));
     const stts = new Writer().u32(1).u32(samples.length).u32(delta);
     const keys = samples.map((s, i) => (s.key ? i + 1 : 0)).filter((n) => n > 0);
@@ -109,7 +135,8 @@ export function muxMp4(track: Mp4Track): Uint8Array {
   // The index's size does not depend on the offset it records, so measure, then write.
   const moovSize = moov(0).length;
   const offset = ftyp.length + moovSize + 8;
-  const mdat = new Writer().u32(8 + dataSize).ascii('mdat');
-  samples.forEach((s) => mdat.bytes(s.data));
-  return new Writer().bytes(ftyp).bytes(moov(offset)).bytes(mdat.join()).join();
+  // The samples go straight into the file: a video is large, so no second copy of them.
+  const file = new Writer().bytes(ftyp).bytes(moov(offset)).u32(8 + dataSize).ascii('mdat');
+  samples.forEach((s) => file.bytes(s.data));
+  return file.join();
 }

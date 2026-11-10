@@ -1379,7 +1379,11 @@ a 1.0 event carrying one is an error, and a reader shows a 1.0 event without wha
 adds. Every schema closes every object: an unknown field is an error, not something to
 keep. JSON files are UTF-8, with an optional BOM. Invalid UTF-8 and the
 non-JSON constants `NaN`, `Infinity` and `-Infinity` are refused, as are numeric
-values outside the finite range. Each event id must equal its entry in
+values outside the finite range, a whole number too large for a float included
+(JavaScript reads it as infinity). A pattern in the schemas ends at the end of the
+text, as in ECMAScript: an id, a stem or a date followed by a line break is refused
+by both readers, although Python's own `$` would let it pass. The time base label's
+limit of 40 counts characters, not UTF-16 units. Each event id must equal its entry in
 `analysis.json`. Series ids must be unique within each event; duplicate ids are
 refused with the event and the repeated id in the problem message.
 
@@ -1469,7 +1473,9 @@ the unit: `hrr` kW, `volume` m3, `area` m2, `height` m. `role` is `measured`,
 not be negative. `responseTime_s` (event 1.1, a positive number of seconds) is the
 first-order response time of a `measured` heat release rate, the hood's lag; the
 board uses it to pass the estimates through the same lag (`y' = (x - y) / tau`, stepped
-exactly between samples), and no other series may carry it.
+exactly between samples), on the plot when asked and for the percentages that
+compare an estimate with the hood, and no other series may carry it. It is a lag
+only: the format has no transport delay.
 
 **Text** is a string or `{"en": ..., "fr": ...}` with English required. Step ids are
 `cameras`, `frames`, `segmentation`, `reconstruction`, `size`, `hrr` and

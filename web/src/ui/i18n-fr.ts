@@ -1752,4 +1752,9 @@ export const fr: Readonly<Record<string, string>> = {
   "Picture missing": "Image manquante",
   "The video encoder reordered frames. This export cannot be written as a playable MP4.": "L’encodeur vidéo a réordonné les images. Cet export ne peut pas être écrit en MP4 lisible.",
   "An export is already running.": "Un export est déjà en cours.",
+  "Open another analysis…": "Ouvrir une autre analyse…",
+  "This event could not be opened": "Impossible d’ouvrir cet événement",
+  "as the hood sees it: peak {p1}, heat {p2}": "vu par la hotte : maximum {p1}, chaleur {p2}",
+  "The percentages compare the estimate as the hood would record it (response time {p1} s: peak {p2}, heat {p3}) with the hood. A hood averages over its response time, so at a peak it reads lower than the flame.": "Les pourcentages comparent l’estimation telle que la hotte l’enregistrerait (temps de réponse {p1} s : maximum {p2}, chaleur {p3}) à la hotte. Une hotte fait la moyenne sur son temps de réponse; à un maximum, elle indique donc moins que la flamme.",
+  "A hood averages over its response time, so at a peak it reads lower than the flame: a higher estimate there is expected.": "Une hotte fait la moyenne sur son temps de réponse; à un maximum, elle indique donc moins que la flamme : une estimation plus élevée y est attendue.",
 };

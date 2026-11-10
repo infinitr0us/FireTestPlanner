@@ -187,7 +187,8 @@ Target 1920 x 1080; everything stays usable at 1280 x 720.
   limitations.
 - **Key numbers.** Computed by the board from the series, each defined in its tooltip:
   hood peak and its time; heat released (hood and each estimate, over the instants);
-  the estimates' peak and heat released relative to the hood; the largest
+  the estimates' peak and heat released relative to the hood (as the hood would
+  record them, where the folder gives its response time); the largest
   one-second-mean volume and the tallest flame.
 - **Cameras.** One tile per camera, aspect preserved (portrait and landscape mixed),
   showing the close-up by default and the whole picture on request.
@@ -307,7 +308,8 @@ the board leaves out what it cannot show for it.
   through the hood's first-order lag, stepped exactly between samples, and relabels
   them, so the timing of an estimate compares with the hood's rather than with the
   flame's. With Heat released selected, response is applied before integration and
-  the response label remains. The hood's own line and all key numbers remain raw.
+  the response label remains. The hood's own line remains raw. (The key numbers were
+  all raw at first; see the second review below for what an estimate's card compares.)
 - **Heat released** switches the heat release rate plot between the rate (kW) and its
   running integral (MJ, zero at the first instant, missing before it). The same
   clipped trapezoids and interpolated boundaries as the key numbers make the final
@@ -361,6 +363,66 @@ Output frame k has timestamp k/30 s. The count is
 1e-6 s floating-point error. Encoded chunks must arrive in presentation order;
 reordered output fails with an explanation instead of being sorted into an invalid
 MP4. The inclusive endpoint frame remains part of the video duration.
+
+**After the second review of 2026-11-09.**
+
+- **What an estimate's card compares.** A hood averages over its response time, so
+  at a peak it reads lower than the flame; the raw peak of an estimate sampled ten
+  times a second is expected to be higher and says little about the estimate. Where
+  the folder gives the hood's response time, the card's percentages therefore
+  compare the estimate as the hood would record it (the same first-order response
+  as **As the hood sees it**) with the hood, and say so; the raw peak and heat stay
+  the card's numbers, and the filtered values are in the tooltip. The two
+  comparisons can differ in sign. On the synthetic E1 the raw peak is level with
+  the hood (2 % above) and the like-for-like one half of it; the hood is still
+  rising at the event's last instant there, so the heat percentage changes too
+  (39 % above raw, 36 % below like for like). When an event's window holds the
+  whole decay, the lag moves heat in time without changing its total, and the two
+  heat percentages agree.
+  A folder without a response time keeps the raw percentages, and the tooltip says
+  a higher estimate at the peak is expected. The format has one time constant and
+  no transport delay, so timing is compared only as far as the lag goes.
+- **Video colour.** A frame taken from the canvas is encoded as full-range BT.709,
+  and the engine says so only beside the stream (`decoderConfig.colorSpace`), not
+  in it. A player takes such a stream as limited range and shows it darker and
+  harsher: the panel background went from 19, 28, 49 to 3, 15, 36. Frames are now
+  converted to limited-range BT.709 before encoding (`core/yuv.ts`), the colour
+  every player assumes for HD, and the MP4 states the colour the encoder reports in
+  a `colr` box. The browser regression plays the export and compares it with the PNG.
+- **Errors while reading.** One 3-D flame file that cannot be read stops the other
+  readers, and nothing is written over the message that names it. An event that
+  cannot be read leaves its folder open: the message, the event selector and the
+  way to another folder stay.
+- **Another folder.** **Open another analysis…** in the header, once a folder is
+  open. The 3-D view takes the site plan and camera names of the folder it shows;
+  before, it kept those of the first folder opened.
+- **More cameras.** The pictures of the instant on screen are never evicted by the
+  pictures read ahead, and the read-ahead shrinks with the number of cameras (eight
+  instants up to five cameras, five instants at eight), so the cache of 48 pictures
+  holds what is shown and what comes next. With six cameras or more the tiles used
+  to fall a second behind and stay on a wrong instant.
+- **Full-size picture.** A dialog over the board like the export panel: the board
+  behind is inert, one picture at a time, closed with the board.
+- **Plots.** Lines are clipped to the plot rectangle on screen as in the export, so
+  a series longer than the event stops at the axis. A second measured line takes
+  the measured family's next dash. The Heskestad note appears only with its line.
+- **Hull check.** The coverage percentage is worked out once a picture has stayed
+  on screen for a moment (longer than an instant at real time) and kept per camera
+  and instant; the caption holds its place meanwhile. Playback therefore draws the
+  overlay at every instant without measuring it, and the export, which is not in
+  real time, asks the board for every frame's percentage.
+- **Smaller.** The cards and plots follow the editor's length unit when the board is
+  reopened; the 3-D view's render loop stops while the board is closed; the MP4
+  writer no longer holds a second copy of the samples.
+- **Readers.** Both refuse a whole number too large for a float and an id, stem or
+  date followed by a line break; the time base label's limit counts characters in
+  both. The shared corpus has the eight cases.
+
+Left as they are: overlays use one scale for both axes, which assumes a display copy
+keeps the aspect ratio of what it copies (the format does not say so; the first
+delivery does to 0.03 %); key-moment labels can sit on the peak of the curve they
+name; a full event exported at ×0.25 and 1080p still needs a few hundred megabytes
+of memory.
 
 ## 10. Conventions this will touch
 

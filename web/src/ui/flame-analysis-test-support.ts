@@ -78,7 +78,7 @@ export function fakeDocument() {
   return { all, doc, element: doc.createElement };
 }
 
-export function fakeEncoder(options: { flush?: () => Promise<void>; order?: number[] } = {}) {
+export function fakeEncoder(options: { flush?: () => Promise<void>; order?: number[]; colorSpace?: Record<string, unknown> } = {}) {
   const instances: any[] = [];
   class Encoder {
     static async isConfigSupported() { return { supported: true }; }
@@ -87,7 +87,7 @@ export function fakeEncoder(options: { flush?: () => Promise<void>; order?: numb
     configure() {}
     emit(timestamp: number) {
       this.handlers.output({ byteLength: 1, copyTo: (b: Uint8Array) => b.set([1]), timestamp, type: 'key' },
-        { decoderConfig: { description: Uint8Array.of(1, 100, 0, 40) } });
+        { decoderConfig: { description: Uint8Array.of(1, 100, 0, 40), ...(options.colorSpace ? { colorSpace: options.colorSpace } : {}) } });
     }
     encode(frame: any) { this.timestamps.push(frame.timestamp); if (!options.order) this.emit(frame.timestamp); }
     async flush() { if (options.order) options.order.forEach((k) => this.emit(this.timestamps[k])); await options.flush?.(); }

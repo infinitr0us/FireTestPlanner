@@ -18,7 +18,11 @@ import * as i18n from './i18n';
 export type PictureMode = 'closeup' | 'whole';
 export interface TileCamera { id: string; label: string }
 
+/** Decoded pictures kept at once: the instant on screen and those ahead of the clock. */
 const CACHE_LIMIT = 48;
+/** How long a picture must stay on screen before its hull-check share is measured:
+ *  longer than an instant at real time, so playback never pays for it. */
+const SHARE_DELAY_MS = 120;
 
 /** Where a picture's pixels sit in the full-resolution frame. */
 interface Placement { x: number; y: number; scale: number; width: number; height: number }
@@ -38,6 +42,12 @@ export class CameraTiles {
   private tiles = new Map<string, { figure: HTMLElement; canvas: HTMLCanvasElement; caption: HTMLElement; flag: HTMLElement; agreement: HTMLElement; drawn: number; drawnPath: string; dirty: boolean }>();
   private cache = new Map<string, Promise<ImageBitmap>>();
   private bitmaps = new Map<string, ImageBitmap>();
+  /** The pictures of the instant on screen: never evicted, whatever is read ahead. */
+  private pinned = new Set<string>();
+  /** The hull check's share of the outline per camera and instant: it costs a mask
+   *  each, and playback asks for the same ones again. */
+  private shares = new Map<string, number | null>();
+  private shareTimer: ReturnType<typeof setTimeout> | undefined;
   private index = -1;
   private mode: PictureMode;
   private outlinesShown = false;
@@ -90,6 +100,7 @@ export class CameraTiles {
   setHullCheck(projection: ((camera: string, index: number) => HullProjection | null) | null): void {
     if (projection === this.hull) return;
     this.hull = projection;
+    this.shares.clear();
     for (const tile of this.tiles.values()) tile.dirty = true;
     this.show(this.index);
   }
@@ -123,7 +134,10 @@ export class CameraTiles {
     void pending.catch(() => { if (this.cache.get(path) === pending) this.cache.delete(path); });
     this.cache.set(path, pending);
     while (this.cache.size > CACHE_LIMIT) {
-      const oldest = this.cache.keys().next().value as string;
+      // The least recently used that is neither on screen nor the one just asked for.
+      let oldest: string | undefined;
+      for (const key of this.cache.keys()) if (key !== path && !this.pinned.has(key)) { oldest = key; break; }
+      if (oldest === undefined) break;
       this.cache.delete(oldest);
       this.bitmaps.get(oldest)?.close();
       this.bitmaps.delete(oldest);
@@ -135,6 +149,7 @@ export class CameraTiles {
   show(index: number): void {
     this.index = index;
     if (index < 0) return;
+    this.pinned = new Set(this.cameras.map((camera) => this.picturePath(camera.id, index)));
     for (const camera of this.cameras) {
       const tile = this.tiles.get(camera.id)!;
       const mode = this.mode;
@@ -156,9 +171,11 @@ export class CameraTiles {
     }
   }
 
-  /** Decode the pictures of the next instants ahead of the clock. */
+  /** Decode the pictures of the next instants ahead of the clock: as many instants
+   *  as the cache holds beside the one on screen, so more cameras read less far ahead. */
   prefetch(indices: number[]): void {
-    for (const i of indices) {
+    const ahead = Math.max(1, Math.floor(CACHE_LIMIT / this.cameras.length) - 1);
+    for (const i of indices.slice(0, ahead)) {
       if (i < 0 || i >= this.event.instants.stem.length) continue;
       for (const camera of this.cameras) void this.bitmap(this.picturePath(camera.id, i)).catch(() => undefined);
     }
@@ -185,7 +202,15 @@ export class CameraTiles {
     if (projection) {
       drawHull(ctx, projection, place, bitmap.width / place.width);
     }
-    tile.agreement.textContent = this.hull ? coverageCaption(projection ? coverage(rings, projection) : null) : '';
+    // A share already worked out is shown at once; a new one waits until the clock
+    // rests on the instant, with a caption of the same length meanwhile.
+    const known = this.shares.get(`${camera}/${index}`);
+    if (!this.hull) tile.agreement.textContent = '';
+    else if (known !== undefined) tile.agreement.textContent = coverageCaption(known);
+    else {
+      tile.agreement.textContent = i18n.t("3-D flame covers {p1} of the outline", { p1: '…' });
+      this.measureSoon();
+    }
     if (this.outlinesShown) drawOutline(ctx, rings, place, bitmap.width / place.width, lineWidthFor(canvas));
     tile.drawn = index;
     const named = this.cameras.find((c) => c.id === camera)!;
@@ -203,9 +228,35 @@ export class CameraTiles {
   }
   get outlinesOn(): boolean { return this.outlinesShown; }
 
+  private measureSoon(): void {
+    clearTimeout(this.shareTimer);
+    this.shareTimer = setTimeout(() => {
+      if (this.disposed || !this.hull) return;
+      for (const camera of this.cameras) {
+        const tile = this.tiles.get(camera.id)!;
+        if (tile.drawn >= 0 && tile.drawn === this.index) tile.agreement.textContent = coverageCaption(this.coverageAt(camera.id, tile.drawn));
+      }
+    }, SHARE_DELAY_MS);
+  }
+
+  /** How much of a camera's flame outline the 3-D flame covers at an instant, or
+   *  null when the two cannot be compared; worked out once per camera and instant. */
+  coverageAt(camera: string, index: number): number | null {
+    if (!this.hull) return null;
+    const key = `${camera}/${index}`;
+    let share = this.shares.get(key);
+    if (share === undefined) {
+      const projection = this.hull(camera, index);
+      share = projection ? coverage(this.outlines.get(camera)?.[index] ?? [], projection) : null;
+      this.shares.set(key, share);
+    }
+    return share;
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    clearTimeout(this.shareTimer);
     for (const bitmap of this.bitmaps.values()) bitmap.close();
     this.bitmaps.clear();
     this.cache.clear();

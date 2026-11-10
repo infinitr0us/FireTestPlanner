@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { muxMp4, type Mp4Sample } from './mp4';
+import { mp4Colour, muxMp4, type Mp4Sample } from './mp4';
 
 /** Boxes as [type, start, size] down a path of container types. */
 function boxes(bytes: Uint8Array, start = 0, end = bytes.length): { type: string; start: number; size: number }[] {
@@ -86,5 +86,40 @@ describe('the MP4 writer', () => {
     expect(() => muxMp4({ width: 2, height: 2, avcC: AVCC, fps: 30, samples: [] })).toThrow(/no frames/);
     expect(() => muxMp4({ width: 2, height: 2, avcC: AVCC, fps: 30, samples: [{ ...samples[1] }] })).toThrow(/key frame/);
     expect(() => muxMp4({ width: 2, height: 2, avcC: AVCC, fps: 30, samples: [samples[0], { ...samples[1], timestamp_us: 0 }] })).toThrow(/order/);
+  });
+});
+
+describe('the colour of the video', () => {
+  const find = (bytes: Uint8Array, text: string): number => {
+    const code = [...text].map((c) => c.charCodeAt(0));
+    for (let i = 0; i + code.length <= bytes.length; i++) if (code.every((c, k) => bytes[i + k] === c)) return i;
+    return -1;
+  };
+  it('reads what the encoder reports and refuses to guess', () => {
+    expect(mp4Colour({ primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false }))
+      .toEqual({ primaries: 1, transfer: 1, matrix: 1, fullRange: false });
+    expect(mp4Colour({ primaries: 'bt709', transfer: 'iec61966-2-1', matrix: 'bt709', fullRange: true }))
+      .toEqual({ primaries: 1, transfer: 13, matrix: 1, fullRange: true });
+    expect(mp4Colour(undefined)).toBeUndefined();
+    expect(mp4Colour({ primaries: 'bt709', transfer: 'bt709', matrix: null, fullRange: false })).toBeUndefined();
+    expect(mp4Colour({ primaries: 'bt709', transfer: 'bt709', matrix: 'bt709' })).toBeUndefined();
+    expect(mp4Colour({ primaries: 'martian', transfer: 'bt709', matrix: 'bt709', fullRange: false })).toBeUndefined();
+  });
+  it('states it in a colr box inside the sample entry, after avcC', () => {
+    const plain = muxMp4({ width: 1280, height: 720, avcC: AVCC, fps: 30, samples });
+    expect(find(plain, 'colr')).toBe(-1);
+    for (const fullRange of [false, true]) {
+      const file = muxMp4({ width: 1280, height: 720, avcC: AVCC, fps: 30, samples, colour: { primaries: 1, transfer: 1, matrix: 1, fullRange } });
+      const at = find(file, 'colrnclx');
+      expect(at).toBeGreaterThan(find(file, 'avcC'));
+      expect(at).toBeLessThan(find(file, 'stts'));
+      expect(new DataView(file.buffer).getUint32(at - 4)).toBe(19);
+      expect([...file.subarray(at + 8, at + 15)]).toEqual([0, 1, 0, 1, 0, 1, fullRange ? 0x80 : 0]);
+      // The index grew by the box and still points at the first sample.
+      expect(file.length).toBe(plain.length + 19);
+      const top = boxes(file);
+      expect(top.map((b) => b.type)).toEqual(['ftyp', 'moov', 'mdat']);
+      expect([...file.subarray(top[2].start + 8, top[2].start + 18)]).toEqual([...samples[0].data]);
+    }
   });
 });

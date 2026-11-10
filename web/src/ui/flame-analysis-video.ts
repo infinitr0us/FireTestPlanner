@@ -8,10 +8,16 @@
  * board shows them (close-up or whole, outline on or off), the 3-D view from the
  * board's camera, and the board's plots redrawn on canvas with the same scales,
  * dashes, bands and key moments. Instants are held, never interpolated.
+ *
+ * Frames go to the encoder as limited-range BT.709 (`core/yuv.ts`), the colour every
+ * player assumes for HD video, and the file states it: a frame taken straight from
+ * the canvas is encoded full range with nothing in the stream to say so, and plays
+ * darker and harsher than the board.
  */
 
 import { instantAt, type EventImage, type HullProjection } from '../core/flame-analysis';
-import { muxMp4, type Mp4Sample } from '../core/mp4';
+import { mp4Colour, muxMp4, type Mp4Colour, type Mp4Sample } from '../core/mp4';
+import { I420_COLOUR, rgbaToI420 } from '../core/yuv';
 import type { AnalysisScene } from '../scene/flame-analysis';
 import { coverage, coverageCaption, drawOutline, hullSquares, placement, type PictureMode } from './flame-analysis-cameras';
 import { colourOf, dashOf, qualityKey, type Band, type Moment, type PlotLine, type PlotSpec } from './flame-analysis-plots';
@@ -48,6 +54,9 @@ export interface CompositionSource {
   picture(camera: string, index: number): Promise<ImageBitmap>;
   /** The hull check (the 3-D flame through each camera), or null when the board hides it. */
   hull: ((camera: string, index: number) => HullProjection | null) | null;
+  /** The share of a camera's outline the 3-D flame covers at an instant, as the
+   *  board's tiles have it (kept per camera and instant); computed here when absent. */
+  coverage?: (camera: string, index: number) => number | null;
   scene: AnalysisScene | null;
   plots: { specs: PlotSpec[]; bands: Band[]; moments: Moment[]; window: [number, number] };
 }
@@ -92,10 +101,14 @@ export class Composer {
     this.scale = width / W;
     this.canvas.width = width;
     this.canvas.height = Math.round(H * this.scale);
-    this.ctx = this.canvas.getContext('2d', { alpha: false })!;
+    // Read back once per instant for the encoder, so kept in memory.
+    this.ctx = this.canvas.getContext('2d', { alpha: false, willReadFrequently: true })!;
   }
 
   private font(size: number, weight = 400): string { return `${weight} ${size}px ${this.k.font}`; }
+
+  /** The composition's pixels as drawn, RGBA rows. */
+  pixels(): Uint8ClampedArray { return this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height).data; }
 
   async draw(index: number): Promise<void> {
     const { ctx, k, source } = this;
@@ -195,10 +208,15 @@ export class Composer {
         ctx.fillText(i18n.t("flame at the picture's edge"), x, inner.y + height + 39, w);
       }
       if (source.hull) {
-        const projection = source.hull(camera.id, index);
-        const rings = (source.coverageOutlines ?? source.outlines)?.get(camera.id)?.[index] ?? [];
+        let share: number | null;
+        if (source.coverage) share = source.coverage(camera.id, index);
+        else {
+          const projection = source.hull(camera.id, index);
+          const rings = (source.coverageOutlines ?? source.outlines)?.get(camera.id)?.[index] ?? [];
+          share = projection ? coverage(rings, projection) : null;
+        }
         ctx.fillStyle = k.dim;
-        ctx.fillText(coverageCaption(projection ? coverage(rings, projection) : null), x, inner.y + height + 59, w);
+        ctx.fillText(coverageCaption(share), x, inner.y + height + 59, w);
       }
       x += w + gap;
     });
@@ -429,6 +447,7 @@ export async function encodeVideo(
   const frames = videoFrames(times, options);
   const samples: Mp4Sample[] = [];
   let avcC: Uint8Array | null = null;
+  let colour: Mp4Colour | undefined;
   let failure: Error | null = null;
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {
@@ -445,18 +464,28 @@ export async function encodeVideo(
           : new Uint8Array((description as ArrayBufferView).buffer.slice((description as ArrayBufferView).byteOffset,
             (description as ArrayBufferView).byteOffset + (description as ArrayBufferView).byteLength));
       }
+      colour ??= mp4Colour(meta?.decoderConfig?.colorSpace);
     },
     error: (e) => { failure = e instanceof Error ? e : new Error(String(e)); },
   });
   encoder.configure({ codec, width, height, bitrate, framerate: VIDEO_FPS, avc: { format: 'avc' }, latencyMode: 'quality' });
   try {
     let drawn = -1;
+    let planes: Uint8Array | undefined;
     for (let k = 0; k < frames.length; k++) {
       checkExportSignal(signal);
       if (failure) throw failure;
-      if (frames[k] !== drawn) { await composer.draw(frames[k]); drawn = frames[k]; }
+      // An instant is drawn and converted once, however many frames hold it.
+      if (frames[k] !== drawn || !planes) {
+        await composer.draw(frames[k]);
+        drawn = frames[k];
+        planes = rgbaToI420(composer.pixels(), width, height, planes);
+      }
       checkExportSignal(signal);
-      const frame = new VideoFrame(composer.canvas, { timestamp: Math.round((k * 1e6) / VIDEO_FPS), duration: Math.round(1e6 / VIDEO_FPS) });
+      const frame = new VideoFrame(planes, {
+        format: 'I420', codedWidth: width, codedHeight: height, colorSpace: I420_COLOUR,
+        timestamp: Math.round((k * 1e6) / VIDEO_FPS), duration: Math.round(1e6 / VIDEO_FPS),
+      });
       encoder.encode(frame, { keyFrame: k % (2 * VIDEO_FPS) === 0 });
       frame.close();
       while (encoder.encodeQueueSize > 6) {
@@ -473,7 +502,7 @@ export async function encodeVideo(
   }
   if (failure) throw failure;
   if (!avcC) throw new Error(i18n.t("The video encoder gave no decoder configuration."));
-  const bytes = muxMp4({ width, height, avcC, fps: VIDEO_FPS, samples });
+  const bytes = muxMp4({ width, height, avcC, fps: VIDEO_FPS, samples, colour });
   checkExportSignal(signal);
   return bytes;
 }

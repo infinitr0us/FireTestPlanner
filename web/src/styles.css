@@ -943,6 +943,7 @@ dialog.report-overlay { padding: 0; }
 .flame-analysis__title { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flame-analysis__event { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
 .flame-analysis__readout { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.flame-analysis__header .btn { flex: none; white-space: nowrap; } /* the title gives way, not the commands */
 .flame-analysis__body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .flame-analysis__welcome { margin: auto; max-width: 640px; padding: 24px; line-height: 1.7; }
 .flame-analysis__status { margin: 0; padding: 4px 16px; font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere; white-space: pre-line; }
@@ -962,6 +963,7 @@ dialog.report-overlay { padding: 0; }
 .flame-analysis__number { flex: 1 1 0; min-width: 140px; display: flex; flex-direction: column; gap: 1px; padding: 6px 10px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); }
 .flame-analysis__number-label, .flame-analysis__number-detail { font-size: 11px; color: var(--text-dim); }
 .flame-analysis__number strong { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.flame-analysis__number-value { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; } /* an estimate's raw heat beside its raw peak */
 
 .flame-analysis__main { flex: 1; min-height: 0; position: relative; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 10px; padding: 0 16px 8px; }
 .flame-analysis__left { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }

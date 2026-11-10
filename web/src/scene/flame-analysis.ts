@@ -56,6 +56,7 @@ export class AnalysisScene {
   private flameBounds = new THREE.Box3();
   private observer: ResizeObserver;
   private request = 0;
+  private active = true;
   private dirty = true;
   private lookFrom = new THREE.Vector3(0, -1, 0.4);
   private siteSide = new THREE.Vector3(0, -1, 0.55).normalize();
@@ -342,6 +343,14 @@ export class AnalysisScene {
     this.dirty = false;
     this.render();
   };
+
+  /** Run the render loop only while the board is on screen; `renderTo` needs no loop. */
+  setActive(active: boolean): void {
+    if (this.disposed || active === this.active) return;
+    this.active = active;
+    cancelAnimationFrame(this.request);
+    if (active) { this.dirty = true; this.animate(); }
+  }
 
   render(): void {
     this.renderer.render(this.scene, this.camera);

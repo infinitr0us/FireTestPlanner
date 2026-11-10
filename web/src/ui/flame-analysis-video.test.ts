@@ -4,7 +4,7 @@ import { deferred, fakeDocument, fakeEncoder, settle } from './flame-analysis-te
 import { qualityKey } from './flame-analysis-plots';
 afterEach(() => vi.unstubAllGlobals());
 const options: VideoOptions = { layout: 'board', width: 1280, from: 0, to: 0, speed: 1 };
-const composer = (draw = async () => {}): any => ({ canvas: { width: 1280, height: 720 }, draw });
+const composer = (draw = async () => {}): any => ({ canvas: { width: 1280, height: 720 }, draw, pixels: () => new Uint8ClampedArray(1280 * 720 * 4) });
 
 describe('video timing and encoder contract (B11, B13, B17, B20)', () => {
   it.each([1, 0.5, 0.25])('holds source instants at every 30 Hz output sample and includes the endpoint at x%s', (speed) => {
@@ -86,5 +86,45 @@ describe('composition evidence (B10, B19)', () => {
     const plotBottom = c.plot.mock.calls[0][0].y + c.plot.mock.calls[0][0].h;
     const keyY = c.ctx.fillText.mock.calls.find((a: any[]) => a[0] === qualityKey('noHull').text)[2];
     expect(keyY).toBeGreaterThan(plotBottom);
+  });
+  it('takes the coverage the board already worked out instead of measuring it again', async () => {
+    const c = drawing(), hull = vi.fn(() => null), share = vi.fn(() => 0.42);
+    c.source.hull = hull; c.source.coverage = share;
+    await c.draw(0);
+    expect(share).toHaveBeenCalledExactlyOnceWith('C', 0);
+    expect(c.ctx.fillText.mock.calls.map((a: any[]) => a[0])).toContain('3-D flame covers 42 % of the outline');
+  });
+});
+
+describe('the colour of the video', () => {
+  it('hands the encoder limited-range BT.709 frames, one conversion per instant, and states the colour in the file', async () => {
+    const colorSpace = { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false };
+    fakeEncoder({ colorSpace });
+    const made: { data: Uint8Array; init: any }[] = [];
+    vi.stubGlobal('VideoFrame', class {
+      timestamp: number;
+      constructor(data: Uint8Array, init: any) { this.timestamp = init.timestamp; made.push({ data, init }); }
+      close() {}
+    });
+    const pixels = vi.fn(() => new Uint8ClampedArray(1280 * 720 * 4).fill(255)); // a white picture
+    const bytes = await encodeVideo({ canvas: { width: 1280, height: 720 }, draw: async () => {}, pixels } as any,
+      [0, 1], { ...options, to: 1 }, () => {});
+    expect(made).toHaveLength(31);
+    expect(pixels).toHaveBeenCalledTimes(2); // two instants, however many frames hold them
+    for (const frame of [made[0], made[30]]) {
+      expect(frame.init).toMatchObject({ format: 'I420', codedWidth: 1280, codedHeight: 720, colorSpace });
+      expect(frame.data).toHaveLength(1280 * 720 * 1.5);
+      expect(frame.data[0]).toBe(235); // white is 235 in limited range, not 255
+      expect(frame.data.at(-1)).toBe(128);
+    }
+    const text = String.fromCharCode(...bytes.subarray(0, 1200));
+    const at = text.indexOf('colrnclx');
+    expect(at).toBeGreaterThan(0);
+    expect([...bytes.subarray(at + 8, at + 15)]).toEqual([0, 1, 0, 1, 0, 1, 0]);
+  });
+  it('writes no colour box when the encoder reports none', async () => {
+    fakeEncoder();
+    const bytes = await encodeVideo(composer(), [0], options, () => {});
+    expect(String.fromCharCode(...bytes.subarray(0, 1200))).not.toContain('colr');
   });
 });

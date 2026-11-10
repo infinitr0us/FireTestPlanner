@@ -92,3 +92,38 @@ describe('quantitative cube footprints (B14, reviewer R14)', () => {
     expect(p.rectangles![2] - p.rectangles![0]).toBeGreaterThan(2 * (p.rectangles![6] - p.rectangles![4]));
   });
 });
+
+describe('estimates as the hood would record them', () => {
+  it('E1 (a hood response time of 2.3 s): the like-for-like comparison beside the raw one', () => {
+    const { event, series } = fixture('E1'), keys = keyNumbers(event, series);
+    expect(keys.hood!.responseTime_s).toBe(2.3);
+    const [volume, area] = keys.estimates;
+    // Raw, a 10 Hz peak against a hood still rising at the last instant: about level, and more heat.
+    expect(Math.round((volume.peakRatio! - 1) * 100)).toBe(2);
+    expect(Math.round((volume.heatRatio! - 1) * 100)).toBe(39);
+    // Through the hood's own response: half the peak, a third less heat.
+    const seen = firstOrderResponse(series.get(volume.id)!, 2.3);
+    expect(volume.asHood!.heat_kJ).toBeCloseTo(integrate(seen, ...keys.window), 10);
+    expect(volume.asHood!.heat_kJ).toBeCloseTo(94.2522732, 4);
+    expect(Math.round((volume.asHood!.peakRatio! - 1) * 100)).toBe(-50);
+    expect(Math.round((volume.asHood!.heatRatio! - 1) * 100)).toBe(-36);
+    expect(Math.round((area.asHood!.peakRatio! - 1) * 100)).toBe(-48);
+    expect(Math.round((area.asHood!.heatRatio! - 1) * 100)).toBe(-33);
+    expect(volume.asHood!.peak.value).toBeLessThan(volume.peak.value);
+  });
+  it('E2 (format 1.0, no response time) has the raw comparison only', () => {
+    const { event, series } = fixture('E2'), keys = keyNumbers(event, series);
+    expect(keys.hood!.responseTime_s).toBeUndefined();
+    for (const estimate of keys.estimates) {
+      expect(estimate.asHood).toBeUndefined();
+      expect(estimate.peakRatio).not.toBeNull();
+    }
+  });
+  it('gives no like-for-like percentage where the raw one is refused', () => {
+    const { event, series } = fixture('E1');
+    event.series.find((s) => s.role === 'estimated')!.basis = 'total';
+    const estimate = keyNumbers(event, series).estimates[0];
+    expect(estimate.asHood!.peakRatio).toBeNull(); expect(estimate.asHood!.heatRatio).toBeNull();
+    expect(estimate.asHood!.peak.value).toBeGreaterThan(0);
+  });
+});

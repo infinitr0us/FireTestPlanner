@@ -60,3 +60,62 @@ describe('camera draw ownership (B8, B9, reviewer R3/R4)', () => {
     exported.close(); expect(bitmap.close).toHaveBeenCalledOnce();
   });
 });
+
+describe('the picture cache with many cameras', () => {
+  function many(count: number) {
+    fakeDocument();
+    const cameras = Array.from({ length: count }, (_, i) => ({ id: `C${i}`, label: `Camera ${i}` }));
+    const event = {
+      onset_s: 0, cameras: cameras.map((c) => c.id),
+      instants: { t_s: Array.from({ length: 12 }, (_, i) => i / 10), stem: Array.from({ length: 12 }, (_, i) => `s${i}`) },
+      files: { display: 'whole/{cam}/{stem}' },
+      images: Object.fromEntries(cameras.map((c) => [c.id, { size_px: [200, 100], display_px: [100, 50] }])),
+    } as unknown as EventManifest;
+    const made: { path: string; close: ReturnType<typeof vi.fn> }[] = [];
+    const source: any = { blob: async (path: string) => ({ path }) };
+    vi.stubGlobal('createImageBitmap', async (blob: { path: string }) => {
+      const bitmap = { width: 100, height: 50, path: blob.path, close: vi.fn() };
+      made.push(bitmap);
+      return bitmap;
+    });
+    const w: any = new CameraTiles(source, event, '', cameras, new Map(), () => {});
+    return { w, made, cameras };
+  }
+  // The board shows an instant and reads the next eight ahead in the same turn.
+  it.each([4, 6, 8])('%s cameras: every tile draws the instant on screen while the clock reads ahead', async (count) => {
+    const { w, made } = many(count);
+    for (const index of [0, 1, 2, 3]) {
+      w.show(index);
+      w.prefetch(Array.from({ length: 8 }, (_, k) => index + k + 1));
+      await settle();
+      const tiles = [...w.tiles.values()] as any[];
+      expect(tiles.map((t) => t.drawn)).toEqual(new Array(count).fill(index));
+      expect(tiles.every((t) => !t.caption.textContent.includes('·'))).toBe(true); // no loading or error marker left
+      const shown = made.filter((b) => b.path.endsWith(`/s${index}`));
+      expect(shown).toHaveLength(count);
+      expect(shown.every((b) => b.close.mock.calls.length === 0)).toBe(true);
+    }
+    expect(w.cache.size).toBeLessThanOrEqual(48);
+  });
+  it('reads less far ahead with more cameras, so the cache holds what is on screen and what comes next', async () => {
+    const { w, made } = many(8);
+    w.show(0); w.prefetch([1, 2, 3, 4, 5, 6, 7, 8]); await settle();
+    expect(new Set(made.map((b) => b.path.split('/').pop())).size).toBe(6); // the instant shown and five ahead
+  });
+});
+
+describe('the hull check share', () => {
+  it('is worked out once per camera and instant, and again for another projection', () => {
+    const { w } = tiles(), first = vi.fn(() => ({ uv: new Float32Array(0), size: 0 })), second = vi.fn(() => null);
+    w.setHullCheck(first);
+    first.mockClear(); // setting it redraws nothing yet: no instant is shown
+    expect(w.coverageAt('C', 0)).toBeNull(); // no outline at this instant
+    w.coverageAt('C', 0); w.coverageAt('C', 1); w.coverageAt('C', 1);
+    expect(first).toHaveBeenCalledTimes(2);
+    w.setHullCheck(second);
+    w.coverageAt('C', 0);
+    expect(second).toHaveBeenCalledOnce();
+    w.setHullCheck(null);
+    expect(w.coverageAt('C', 0)).toBeNull();
+  });
+});

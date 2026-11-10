@@ -117,7 +117,8 @@ describe('board export ownership and focus (B5, B11, B12, B15, B16, B18)', () =>
     const { w } = workspace(), wait = deferred<void>(), controller = new AbortController();
     fakeEncoder();
     w.scene = { currentFrame: 0, setFrame(i: number) { this.currentFrame = i; } };
-    w.composer = () => ({ async draw(i: number) { await wait.promise; w.scene.currentFrame = i; }, canvas: { width: 1280, height: 720 } });
+    w.composer = () => ({ async draw(i: number) { await wait.promise; w.scene.currentFrame = i; }, canvas: { width: 1280, height: 720 },
+      pixels: () => new Uint8ClampedArray(1280 * 720 * 4) });
     const pending = w.exportVideo({ layout: 'board', width: 1280, from: 99.5, to: 99.5, speed: 1 }, () => {}, controller.signal);
     const outcome = cancelled ? expect(pending).rejects.toMatchObject({ name: 'AbortError' }) : expect(pending).resolves.toBeInstanceOf(Blob);
     await settle(); w.index = 2; w.scene.currentFrame = 2;
@@ -140,7 +141,7 @@ describe('board export ownership and focus (B5, B11, B12, B15, B16, B18)', () =>
   });
   it('disposes plots, tiles, scene and source exactly once', async () => {
     const { w } = workspace(), plots = w.loaded.plots, tiles = w.loaded.tiles;
-    const scene = { dispose: vi.fn() }, source = { close: vi.fn() }; w.scene = scene; w.source = source;
+    const scene = { dispose: vi.fn(), setActive: vi.fn() }, source = { close: vi.fn() }; w.scene = scene; w.source = source;
     await Promise.all([w.dispose(), w.dispose()]); await w.dispose();
     for (const fn of [plots.dispose, tiles.dispose, scene.dispose, source.close]) expect(fn).toHaveBeenCalledOnce();
     expect(w.loaded).toBeUndefined();
@@ -161,5 +162,76 @@ describe('board export ownership and focus (B5, B11, B12, B15, B16, B18)', () =>
     w.source = { blob: async () => new Blob() }; w.cameraLabel = (s: string) => s;
     vi.stubGlobal('createImageBitmap', async () => ({ width: 100, height: 100, close() {} }));
     await w.openZoom('camB'); w.closeZoom(); expect(doc.activeElement).toBe(buttons[1]);
+  });
+  it('keeps the board behind a full-size picture out of reach, and shows one picture at a time', async () => {
+    const { w } = workspace();
+    w.source = { blob: async () => new Blob() }; w.cameraLabel = (s: string) => s;
+    vi.stubGlobal('createImageBitmap', async () => ({ width: 100, height: 100, close() {} }));
+    const overlays = () => w.dialog.children.filter((e: any) => e.className.includes('flame-analysis__zoom'));
+    const behind = () => w.dialog.children.filter((e: any) => !e.className.includes('flame-analysis__zoom'));
+    await w.openZoom('camA');
+    expect(overlays()).toHaveLength(1);
+    expect(behind().every((e: any) => e.inert)).toBe(true);
+    const tab = { key: 'Tab', shiftKey: false, preventDefault: vi.fn() };
+    w.zoom.onkeydown(tab); expect(tab.preventDefault).toHaveBeenCalledOnce(); // Tab stays on Close
+    await w.openZoom('camB'); // a host or a stray activation asks again
+    expect(overlays()).toHaveLength(1);
+    expect(behind().every((e: any) => e.inert)).toBe(true);
+    w.closeZoom();
+    expect(overlays()).toHaveLength(0);
+    expect(behind().some((e: any) => e.inert)).toBe(false);
+  });
+  it('closes a full-size picture with the board', async () => {
+    const { w } = workspace();
+    w.source = { blob: async () => new Blob() }; w.cameraLabel = (s: string) => s;
+    vi.stubGlobal('createImageBitmap', async () => ({ width: 100, height: 100, close() {} }));
+    await w.openZoom('camA'); await w.close();
+    expect(w.zoom).toBeUndefined(); expect(w.body.inert).toBe(false);
+  });
+});
+
+describe('reading the 3-D flame', () => {
+  it('stops at the first unreadable file and says nothing over its message', async () => {
+    const { w, event } = workspace();
+    const hull = new Uint8Array(readFileSync(new URL('../../../fixtures/flame-analysis/E1/hull/t_0099.50.npz', import.meta.url)));
+    const gates = event.instants.stem.map(() => deferred<Uint8Array>());
+    const asked: string[] = [];
+    const source = { read: (path: string) => { asked.push(path); return gates[asked.length - 1].promise; } };
+    const status = vi.spyOn(w, 'setStatus');
+    const pending = w.readHull(source, event, 'E1', w.epoch);
+    const refused = expect(pending).rejects.toThrow('unreadable');
+    await settle();
+    expect(asked).toHaveLength(8); // eight at a time
+    gates[2].reject(new Error('unreadable')); await refused;
+    status.mockClear();
+    gates.forEach((gate, i) => { if (i !== 2) gate.resolve(hull); });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(asked).toHaveLength(8); // the others finished what they had and asked for no more
+    expect(status).not.toHaveBeenCalled();
+  });
+});
+
+describe('what an estimate card claims', () => {
+  const card = (cards: any, label: string) => cards.children.find((c: any) => c.textContent.startsWith(label));
+  it('with a hood response time: raw peak and heat, percentages like for like and named so', () => {
+    const { w, event, series } = workspace();
+    const volume = card(w.numbersRow(keyNumbers(event, series), event), 'Estimate from flame volume');
+    expect(volume.textContent).toBe('Estimate from flame volume111 kWheat 0.204 MJas the hood sees it: peak −50 %, heat −36 %');
+    expect(volume.title).toContain('response time 2.3 s: peak 54.7 kW, heat 0.0943 MJ');
+    expect(volume.title).toContain('at a peak it reads lower than the flame');
+  });
+  it('without one: the raw percentages, and why a higher peak is expected', () => {
+    const { w, event, series } = workspace();
+    delete event.series.find((s) => s.id === 'hood')!.responseTime_s;
+    const volume = card(w.numbersRow(keyNumbers(event, series), event), 'Estimate from flame volume');
+    expect(volume.textContent).toBe('Estimate from flame volume111 kW (+2 %)heat 0.204 MJ (+39 %)');
+    expect(volume.title).toContain('a higher estimate there is expected');
+  });
+  it('says nothing like for like where the two may not be compared', () => {
+    const { w, event, series } = workspace();
+    event.series.find((s) => s.id === 'hrr-from-volume')!.basis = 'total';
+    const volume = card(w.numbersRow(keyNumbers(event, series), event), 'Estimate from flame volume');
+    expect(volume.textContent).toBe('Estimate from flame volume111 kWheat 0.204 MJ · Bases differ; not compared.');
+    expect(volume.title).not.toContain('reads lower');
   });
 });
