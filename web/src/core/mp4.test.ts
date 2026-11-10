@@ -115,11 +115,22 @@ describe('the colour of the video', () => {
       expect(at).toBeLessThan(find(file, 'stts'));
       expect(new DataView(file.buffer).getUint32(at - 4)).toBe(19);
       expect([...file.subarray(at + 8, at + 15)]).toEqual([0, 1, 0, 1, 0, 1, fullRange ? 0x80 : 0]);
-      // The index grew by the box and still points at the first sample.
+      // The index grew by the box, and the offset it records still leads to the samples.
       expect(file.length).toBe(plain.length + 19);
       const top = boxes(file);
       expect(top.map((b) => b.type)).toEqual(['ftyp', 'moov', 'mdat']);
-      expect([...file.subarray(top[2].start + 8, top[2].start + 18)]).toEqual([...samples[0].data]);
+      // stco: type, version and flags, entry count (1), then the chunk's offset in the file.
+      const stco = find(file, 'stco');
+      const view = new DataView(file.buffer);
+      expect(view.getUint32(stco + 8)).toBe(1);
+      const offset = view.getUint32(stco + 12);
+      expect(offset).toBe(top[2].start + 8);
+      let cursor = offset;
+      for (const sample of samples) {
+        expect([...file.subarray(cursor, cursor + sample.data.length)]).toEqual([...sample.data]);
+        cursor += sample.data.length;
+      }
+      expect(cursor).toBe(file.length);
     }
   });
 });

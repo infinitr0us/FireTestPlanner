@@ -3,9 +3,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FlameAnalysisWorkspace } from './flame-analysis';
 import { deferred, fakeDocument, fakeEncoder, settle } from './flame-analysis-test-support';
 import { integrate, firstOrderResponse, joinPath, keyNumbers, localText, parseEventManifest, parseSeriesCsv } from '../core/flame-analysis';
+import { parseAndValidatePlan } from '../core/validate';
 import { saveMedia } from '../io/files';
+import { dashOf } from './flame-analysis-plots';
 
 vi.mock('../io/files', async (original) => ({ ...await original<typeof import('../io/files')>(), saveMedia: vi.fn(async () => 'saved') }));
+// Count the 3-D flame files that were read through to the end, so a test can wait for
+// the readers to finish instead of sleeping.
+const parsed = vi.hoisted(() => ({ count: 0 }));
+vi.mock('../core/flame', async (original) => {
+  const actual = await original<typeof import('../core/flame')>();
+  return { ...actual, parseFrameData: async (...args: Parameters<typeof actual.parseFrameData>) => {
+    const frame = await actual.parseFrameData(...args);
+    parsed.count++;
+    return frame;
+  } };
+});
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 function fixture() {
   const root = new URL('../../../fixtures/flame-analysis/', import.meta.url);
@@ -198,6 +211,7 @@ describe('reading the 3-D flame', () => {
     const asked: string[] = [];
     const source = { read: (path: string) => { asked.push(path); return gates[asked.length - 1].promise; } };
     const status = vi.spyOn(w, 'setStatus');
+    parsed.count = 0;
     const pending = w.readHull(source, event, 'E1', w.epoch);
     const refused = expect(pending).rejects.toThrow('unreadable');
     await settle();
@@ -205,9 +219,100 @@ describe('reading the 3-D flame', () => {
     gates[2].reject(new Error('unreadable')); await refused;
     status.mockClear();
     gates.forEach((gate, i) => { if (i !== 2) gate.resolve(hull); });
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(asked).toHaveLength(8); // the others finished what they had and asked for no more
+    // The seven other readers each finish the file they had, and get their turn to go on.
+    await vi.waitFor(() => expect(parsed.count).toBe(7), { timeout: 10000 });
+    await settle();
+    expect(asked).toHaveLength(8); // none asked for another
     expect(status).not.toHaveBeenCalled();
+  });
+});
+
+describe('panels over the board', () => {
+  const pictures = (w: any): void => {
+    w.source = { blob: async () => new Blob() }; w.cameraLabel = (s: string) => s;
+    vi.stubGlobal('createImageBitmap', async () => ({ width: 100, height: 100, close() {} }));
+  };
+  const inert = (w: any): number => w.dialog.children.filter((e: any) => e.inert).length;
+  it.each([[0, 1], [1, 0]])('gives the board back whatever order two holders let go in: %s then %s', (first, second) => {
+    const { w, element } = workspace();
+    const a = element('div'), b = element('div'); w.dialog.append(a, b);
+    const release = [w.holdBoard(a), w.holdBoard(b)];
+    expect([a.inert, b.inert, w.body.inert]).toEqual([true, false, true]); // the one opened last is on top
+    release[first]();
+    expect(inert(w)).toBe(w.dialog.children.length - 1); // one holder left: still held
+    release[second]();
+    expect(inert(w)).toBe(0);
+  });
+  it("opens no full-size picture behind the export panel, and the export takes a picture's place", async () => {
+    const { w } = workspace(); pictures(w);
+    w.openExport(); await w.openZoom('camA');
+    expect(w.zoom).toBeUndefined();
+    await w.closeExport(); expect(inert(w)).toBe(0);
+    await w.openZoom('camA'); expect(w.zoom).toBeDefined();
+    w.openExport();
+    expect(w.zoom).toBeUndefined(); expect(w.exportPanel).toBeDefined();
+    expect(w.exportPanel.inert).toBe(false); expect(w.body.inert).toBe(true);
+    await w.close();
+    expect(inert(w)).toBe(0); expect(w.exportPanel).toBeUndefined();
+  });
+});
+
+describe('what the plots draw', () => {
+  it('gives a second measured heat release rate its own dash', () => {
+    const { w, event, series } = workspace();
+    const hood = event.series.find((s) => s.id === 'hood')!;
+    event.series.splice(1, 0, { ...hood, id: 'hood-total', basis: 'total', label: 'Hood, total' });
+    series.set('hood-total', series.get('hood')!);
+    const lines = w.makePlots(event, series).plotData.specs[0].lines;
+    const measured = lines.filter((l: any) => l.role === 'measured');
+    expect(measured.map((l: any) => l.nth)).toEqual([0, 1]);
+    expect(dashOf(measured[0])).toBe(''); expect(dashOf(measured[1])).not.toBe('');
+    expect(lines.filter((l: any) => l.role === 'estimated').map((l: any) => l.nth)).toEqual([0, 1]);
+  });
+  it('shows the Heskestad note only with its line', () => {
+    const { w, event, series } = workspace();
+    w.plan = parseAndValidatePlan(readFileSync(new URL('../../../fixtures/flame-analysis/site.ftp.json', import.meta.url), 'utf8'));
+    w.plotOptions = { heat: false, hoodResponse: false, heskestad: true };
+    const withHeight = w.makePlots(event, series);
+    expect(withHeight.note).toContain('Heskestad');
+    expect(withHeight.plotData.specs.find((s: any) => s.id === 'height').lines.some((l: any) => l.role === 'predicted')).toBe(true);
+    event.series = event.series.filter((s) => s.quantity !== 'height');
+    const without = w.makePlots(event, series);
+    expect(without.note).toBeUndefined();
+    expect(without.plotData.specs.some((s: any) => s.id === 'height')).toBe(false);
+  });
+  it('takes the response time from the hood the cards compare with, not from another measurement', () => {
+    const { w, event } = workspace();
+    const hood = event.series.find((s) => s.id === 'hood')!;
+    expect(w.responseTime(event)).toBe(2.3);
+    event.series.splice(1, 0, { ...hood, id: 'hood-total', basis: 'total' });
+    delete hood.responseTime_s;
+    expect(w.responseTime(event)).toBeUndefined();
+  });
+});
+
+describe('reopening the board', () => {
+  it('redraws the cards and plots when the editor changed unit system meanwhile, metric or imperial', () => {
+    fakeDocument();
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    let unit = 'm';
+    const w: any = new FlameAnalysisWorkspace(() => {}, { lengthUnit: () => unit as never });
+    Object.assign(w, { analysis: {}, loaded: { ...fixture(), plots: { dispose: vi.fn() }, tiles: { dispose: vi.fn() } }, builtImperial: false });
+    const refresh = vi.spyOn(w, 'refreshUnits').mockImplementation(() => {});
+    w.open(); expect(refresh).not.toHaveBeenCalled();
+    w.dialog.open = false; unit = 'ft';
+    w.open(); expect(refresh).toHaveBeenCalledOnce();
+    // Metres to millimetres is the same system: the board shows metres either way.
+    refresh.mockClear(); w.dialog.open = false; unit = 'mm';
+    w.open(); expect(refresh).not.toHaveBeenCalled();
+    expect(w.units().height).toEqual([1, 'm']);
+  });
+  it('wakes the 3-D view on opening and rests it on closing', async () => {
+    const { w } = workspace();
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    w.analysis = {}; w.scene = { setActive: vi.fn() }; w.builtImperial = false;
+    await w.close(); expect(w.scene.setActive).toHaveBeenLastCalledWith(false);
+    w.open(); expect(w.scene.setActive).toHaveBeenLastCalledWith(true);
   });
 });
 

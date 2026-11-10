@@ -386,15 +386,16 @@ The rectangle approximates the cube's true, generally hexagonal silhouette and
 can overestimate it. The visible squares keep their existing enlargement for
 legibility; they are not the quantitative mask. The percentage appears once the
 clock has rested on an instant for a moment and is kept; while playing, the caption
-keeps its place with an ellipsis for the number, so the tiles do not jump.
+keeps its place with an ellipsis for the number, so the tiles do not jump. It belongs
+to the picture on the tile, also when a newer picture failed to arrive.
 
 A tile's accessible picture label names the instant actually drawn, and its caption
 names the camera. While a newer picture is decoding, the caption also gives the held
 instant's time with a neutral **loading** marker, cleared on draw. The edge flag also belongs to
 the drawn picture. Captions wrap so the loading marker stays visible at laptop
 size. A full-size picture is a dialog over the board, like the export panel: the
-rest of the board is inert, focus stays on it, only one is open at a time, and it
-returns focus to the tile that opened it. Surface read
+rest of the board is inert, focus stays on it, only one is open at a time and never
+together with the export panel, and it returns focus to the tile that opened it. Surface read
 failures hide the surface and name the instant and file in the board's load status.
 The pictures of the instant on screen are never evicted by the pictures read ahead
 of the clock, and the more cameras an event has, the fewer instants are read ahead,
@@ -412,7 +413,9 @@ interpolated boundaries, and break across missing intervals before resuming the
 known total. A line stops at the plot's edge when its series runs past the event's
 instants (a hood record of the whole test), on screen as in the export. A second
 measured line on one plot takes the measured family's next dash. Key numbers show
-the raw peak and heat of each series. An estimate's percentages against the hood are
+the raw peak and heat of each series; the hood is the event's first measured heat
+release rate, for the cards, the response time and the Heskestad height alike. An
+estimate's percentages against the hood are
 like for like where the folder gives the hood's response time: the estimate as the
 hood would record it, named **as the hood sees it** on the card, with the raw heat
 beside the raw peak and the filtered values in the tooltip. A hood averages over its
@@ -450,8 +453,10 @@ from `coverageCaption` in `ui/flame-analysis-cameras.ts`, even when the visible
 outline is off. Unreadable pictures have visible **Picture missing** text and keep
 their camera caption. A video has the colours of the board and of the PNG: its frames
 are encoded as limited-range BT.709 (`core/yuv.ts`), what a player assumes for HD
-video, and the file states its colour. A frame taken straight from the canvas is
-encoded full range with nothing in the stream to say so, and plays darker.
+video, and the file states its colour. Where the engine draws without a graphics
+processor, a frame taken straight from the canvas is encoded full range with nothing
+in the stream to say so, and plays darker; converting first makes every engine
+give the same video.
 
 The result scene keeps its unlit fields, translucent context geometry, free orbit
 and existing camera fit. FDS coordinates can be negative and are not constrained

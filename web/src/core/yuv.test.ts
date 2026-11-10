@@ -51,7 +51,10 @@ describe('canvas pixels to limited-range BT.709 I420', () => {
   it('reuses a buffer of the right size and refuses odd sizes', () => {
     const buffer = new Uint8Array(i420Size(2, 2));
     expect(rgbaToI420(flat(2, 2, [1, 2, 3]), 2, 2, buffer)).toBe(buffer);
-    expect(rgbaToI420(flat(2, 2, [1, 2, 3]), 2, 2, new Uint8Array(3))).not.toBe(buffer);
+    const wrongSize = new Uint8Array(3);
+    const fresh = rgbaToI420(flat(2, 2, [1, 2, 3]), 2, 2, wrongSize);
+    expect(fresh).not.toBe(wrongSize);
+    expect(fresh).toHaveLength(6);
     expect(() => rgbaToI420(flat(3, 2, [0, 0, 0]), 3, 2)).toThrow(/even/);
     expect(() => rgbaToI420(new Uint8ClampedArray(4), 2, 2)).toThrow(/too few/);
   });

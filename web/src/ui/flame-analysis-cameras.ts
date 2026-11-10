@@ -234,7 +234,8 @@ export class CameraTiles {
       if (this.disposed || !this.hull) return;
       for (const camera of this.cameras) {
         const tile = this.tiles.get(camera.id)!;
-        if (tile.drawn >= 0 && tile.drawn === this.index) tile.agreement.textContent = coverageCaption(this.coverageAt(camera.id, tile.drawn));
+        // The caption belongs to the picture on the tile, also when a newer one never arrived.
+        if (tile.drawn >= 0) tile.agreement.textContent = coverageCaption(this.coverageAt(camera.id, tile.drawn));
       }
     }, SHARE_DELAY_MS);
   }

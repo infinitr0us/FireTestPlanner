@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { AnalysisScene } from './flame-analysis';
 import { deferred, settle } from '../ui/flame-analysis-test-support';
@@ -12,6 +12,29 @@ function scene(): any {
     flame: { setFrame: () => false, group: { visible: false } },
   });
 }
+afterEach(() => vi.unstubAllGlobals());
+
+describe('the render loop', () => {
+  it('stops while the board is closed, and starts again with one fresh frame when it opens', () => {
+    const cancel = vi.fn();
+    vi.stubGlobal('cancelAnimationFrame', cancel);
+    const s: any = Object.assign(Object.create(AnalysisScene.prototype), { active: true, disposed: false, request: 7, dirty: false, animate: vi.fn() });
+    s.setActive(false);
+    expect(cancel).toHaveBeenCalledExactlyOnceWith(7);
+    expect(s.animate).not.toHaveBeenCalled();
+    s.setActive(false); // already resting
+    expect(cancel).toHaveBeenCalledOnce();
+    s.setActive(true);
+    expect(s.animate).toHaveBeenCalledOnce();
+    expect(s.dirty).toBe(true);
+    s.setActive(true); // already running: no second loop
+    expect(s.animate).toHaveBeenCalledOnce();
+    s.disposed = true;
+    s.setActive(false);
+    expect(cancel).toHaveBeenCalledTimes(2); // nothing more after disposal
+  });
+});
+
 describe('surface ownership (B6, B7, reviewer R1/R2)', () => {
   it('clears the old surface and disposes its late completion without replacing the new event', async () => {
     const s = scene(), old = deferred(), current = deferred();

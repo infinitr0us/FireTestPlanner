@@ -100,23 +100,31 @@ describe('the colour of the video', () => {
   it('hands the encoder limited-range BT.709 frames, one conversion per instant, and states the colour in the file', async () => {
     const colorSpace = { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false };
     fakeEncoder({ colorSpace });
-    const made: { data: Uint8Array; init: any }[] = [];
+    // Like the real constructor, the frame copies what it is given: the export reuses one buffer.
+    const made: { data: Uint8Array; init: any; closed: boolean }[] = [];
     vi.stubGlobal('VideoFrame', class {
       timestamp: number;
-      constructor(data: Uint8Array, init: any) { this.timestamp = init.timestamp; made.push({ data, init }); }
-      close() {}
+      private record: { data: Uint8Array; init: any; closed: boolean };
+      constructor(data: Uint8Array, init: any) { this.timestamp = init.timestamp; this.record = { data: data.slice(), init, closed: false }; made.push(this.record); }
+      close() { this.record.closed = true; }
     });
-    const pixels = vi.fn(() => new Uint8ClampedArray(1280 * 720 * 4).fill(255)); // a white picture
-    const bytes = await encodeVideo({ canvas: { width: 1280, height: 720 }, draw: async () => {}, pixels } as any,
+    // A white picture at the first instant, a black one at the second.
+    let drawn = -1;
+    const pixels = vi.fn(() => new Uint8ClampedArray(1280 * 720 * 4).fill(drawn === 0 ? 255 : 0));
+    const bytes = await encodeVideo({ canvas: { width: 1280, height: 720 }, draw: async (index: number) => { drawn = index; }, pixels } as any,
       [0, 1], { ...options, to: 1 }, () => {});
     expect(made).toHaveLength(31);
     expect(pixels).toHaveBeenCalledTimes(2); // two instants, however many frames hold them
-    for (const frame of [made[0], made[30]]) {
+    for (const frame of made) {
       expect(frame.init).toMatchObject({ format: 'I420', codedWidth: 1280, codedHeight: 720, colorSpace });
       expect(frame.data).toHaveLength(1280 * 720 * 1.5);
-      expect(frame.data[0]).toBe(235); // white is 235 in limited range, not 255
       expect(frame.data.at(-1)).toBe(128);
+      expect(frame.closed).toBe(true);
     }
+    // White is 235 and black 16 in limited range; the frames that hold the first
+    // instant keep it after the buffer is reused for the second.
+    expect(made.slice(0, 30).every((frame) => frame.data[0] === 235)).toBe(true);
+    expect(made[30].data[0]).toBe(16);
     const text = String.fromCharCode(...bytes.subarray(0, 1200));
     const at = text.indexOf('colrnclx');
     expect(at).toBeGreaterThan(0);

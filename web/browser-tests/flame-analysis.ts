@@ -165,6 +165,14 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   $('.flame-analysis__zoom')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   check('full-size picture returns focus to the camera that opened it', document.activeElement === zoomTile);
   check('closing the full-size picture gives the board back', !$('.flame-analysis__zoom') && !$<HTMLElement>('.flame-analysis__body')!.inert);
+  // One panel over the board at a time, whatever a host asks for.
+  exportButton.click();
+  await (workspace as unknown as { openZoom(camera: string): Promise<void> }).openZoom(zoomTile.dataset.camera!);
+  check('no full-size picture opens behind the export panel', !$('.flame-analysis__zoom-picture') && !!$('.flame-analysis__export-panel'));
+  $('.flame-analysis__export-panel')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await wait(() => !$('.flame-analysis__export-panel'), 'export panel closes again');
+  check('the board is given back after the export panel', !$<HTMLElement>('.flame-analysis__body')!.inert
+    && !$<HTMLElement>('.flame-analysis__header')!.inert);
 
   // The second event: two cameras, its own clock.
   const select = $('.flame-analysis__event select') as HTMLSelectElement;
@@ -225,11 +233,39 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   await new Promise<void>((resolve) => { player.onseeked = () => resolve(); });
   check('video export: seeking into it decodes a frame', player.readyState >= 2);
   // A player reads a stream that says nothing about its range as limited range. The
-  // frames are encoded that way, so what plays is what the PNG shows: a full-range
-  // stream would come out darker here (19, 28, 49 against 3, 15, 36 before the fix).
+  // frames are encoded that way, so what plays is what the PNG shows. This suite runs
+  // without a graphics processor, where a frame taken from the canvas was encoded full
+  // range and came out darker (19, 28, 49 against 3, 15, 36 before the conversion).
   const videoPanel = pixel(player);
   check('video export: the played video has the colours of the PNG, neither darker nor harsher',
     pngPanel.every((v, i) => Math.abs(v - videoPanel[i]) <= 6), [pngPanel, videoPanel]);
+  // The same instant as a PNG (the frame at 1.5 s shows the source time onset + 0.75 s),
+  // compared over the whole frame: all of it, its dark part and its bright part.
+  const frameOf = (source: CanvasImageSource): Uint8ClampedArray => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1280; canvas.height = 720;
+    const g = canvas.getContext('2d', { willReadFrequently: true })!;
+    g.drawImage(source, 0, 0, 1280, 720);
+    return g.getImageData(0, 0, 1280, 720).data;
+  };
+  const board = workspace as unknown as { loaded: { event: EventManifest }; seekIndex(index: number): void };
+  const shownAt = onset + 1.5 * 0.5;
+  board.seekIndex(board.loaded.event.instants.t_s.filter((t) => t <= shownAt + 1e-6).length - 1);
+  const still = await createImageBitmap(await workspace.exportPng(1280));
+  const a = frameOf(still), b = frameOf(player);
+  still.close();
+  const luma = (d: Uint8ClampedArray, i: number): number => 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+  const sums = { all: [0, 0, 0], dark: [0, 0, 0], bright: [0, 0, 0] };
+  for (let i = 0; i < a.length; i += 4) {
+    const la = luma(a, i), lb = luma(b, i);
+    for (const part of ['all', la < 40 ? 'dark' : '', la > 200 ? 'bright' : ''] as (keyof typeof sums | '')[]) {
+      if (part) { sums[part][0] += la; sums[part][1] += lb; sums[part][2] += 1; }
+    }
+  }
+  const means = Object.fromEntries(Object.entries(sums).map(([part, [pa, pb, n]]) => [part, [pa / n, pb / n, n]]));
+  check('video export: mean luma of the played frame matches the PNG of its instant, overall and in the dark and bright parts',
+    means.dark[2] > 10000 && means.bright[2] > 1000 && Math.abs(means.all[0] - means.all[1]) < 3
+    && Math.abs(means.dark[0] - means.dark[1]) < 3 && Math.abs(means.bright[0] - means.bright[1]) < 8, means);
   URL.revokeObjectURL(player.src);
   // Exercise the actual selection/load error surface, then restore the fixture
   // for the runner's pointer, keyboard and screenshot checks.
@@ -282,14 +318,20 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   // the readers still at work finish afterwards.
   const pause = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
   const hullFile = `E1/${event.files.hull.replace('{stem}', event.instants.stem[5])}`;
+  let reading = 0, finished = 0;
   const brokenHull: AnalysisSource = { ...source, close() {}, read: async path => {
     if (path === hullFile) throw new Error(`Missing file: ${path}`);
-    return source.read(path);
+    if (!path.includes('/hull/')) return source.read(path);
+    reading += 1;
+    try { return await source.read(path); } finally { reading -= 1; finished += 1; }
   } };
   await workspace.load(brokenHull);
-  await pause(1500);
+  // The readers at work finish the file they had; give them their turn to ask for more.
+  await wait(() => reading === 0, 'the other 3-D flame readers');
+  await pause(400);
   check('an unreadable 3-D flame file stays named on screen after the other files are read',
     text('.flame-analysis__status--error').includes(hullFile) && !$('.flame-analysis__tile'), text('.flame-analysis__status'));
+  check('the other readers stop after the first unreadable file', reading === 0 && finished <= 12, [finished, event.instants.stem.length]);
   check('a failed event keeps its folder open: its other events and another folder are still offered',
     !$<HTMLElement>('.flame-analysis__event')!.hidden && !$<HTMLElement>('.flame-analysis__another')!.hidden);
   select.value = 'E2';
@@ -356,15 +398,16 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   inner.playhead.setLoop(true);
   ($('.flame-analysis__transport button[aria-label="First frame (Home)"]') as HTMLButtonElement).click();
   inner.playhead.play();
-  await pause(2500);
+  await wait(() => inner.index >= 8, 'the clock advancing with eight cameras', 60000).catch(() => undefined);
+  const reached = inner.index;
   inner.playhead.pause();
   inner.playhead.setLoop(false);
   const settled = (): boolean => [...inner.loaded.tiles.tiles.values()].every((t) => t.drawn === inner.index);
   await wait(settled, 'eight tiles on the clock').catch(() => undefined);
   const eightTiles = [...inner.loaded.tiles.tiles.values()];
   check('eight cameras: after playback every tile shows the instant on the clock, with no error in a caption',
-    settled() && eightTiles.every((t) => !t.caption.textContent!.includes('·')),
-    [inner.index, eightTiles.map((t) => t.drawn), eightTiles.map((t) => t.caption.textContent)]);
+    reached >= 8 && settled() && eightTiles.every((t) => !t.caption.textContent!.includes('·')),
+    [reached, inner.index, eightTiles.map((t) => t.drawn), eightTiles.map((t) => t.caption.textContent)]);
   setLanguage('fr');
   const french: AnalysisSource = { ...source, close() {}, read: async path => {
     const bytes = await source.read(path);

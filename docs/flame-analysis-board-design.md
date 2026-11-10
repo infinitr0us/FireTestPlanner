@@ -204,8 +204,9 @@ Target 1920 x 1080; everything stays usable at 1280 x 720.
   quality strip under the axis, and the key moments on every plot.
 - **Playback.** The shared transport, keys and Loop, with speeds below real time
   (×0.25, ×0.5) added to the shared `SPEEDS` or kept as a recorded exception.
-- **Units.** Volume in litres (ft³ in imperial), area m² (ft²), heights in the plan's
-  length unit, heat release rate kW, heat MJ.
+- **Units.** Volume in litres (ft³ in imperial), area m² (ft²), heights in metres
+  (feet in imperial), following the editor's unit system, not its exact length unit;
+  heat release rate kW, heat MJ.
 
 ## 7. Export video
 
@@ -378,17 +379,25 @@ MP4. The inclusive endpoint frame remains part of the video duration.
   rising at the event's last instant there, so the heat percentage changes too
   (39 % above raw, 36 % below like for like). When an event's window holds the
   whole decay, the lag moves heat in time without changing its total, and the two
-  heat percentages agree.
+  heat percentages agree closely.
   A folder without a response time keeps the raw percentages, and the tooltip says
   a higher estimate at the peak is expected. The format has one time constant and
   no transport delay, so timing is compared only as far as the lag goes.
-- **Video colour.** A frame taken from the canvas is encoded as full-range BT.709,
-  and the engine says so only beside the stream (`decoderConfig.colorSpace`), not
-  in it. A player takes such a stream as limited range and shows it darker and
-  harsher: the panel background went from 19, 28, 49 to 3, 15, 36. Frames are now
+- **Video colour.** How the engine encodes a frame taken from the canvas depends on
+  how it draws. Without a graphics processor (headless Chrome with a software GPU
+  or with the GPU disabled, as the browser regressions and CI run) the frame is
+  encoded as full-range BT.709, and the engine says so only beside the stream
+  (`decoderConfig.colorSpace`), not in it. A player takes such a stream as limited
+  range and shows it darker and harsher: the panel background went from 19, 28, 49
+  to 3, 15, 36. With a graphics processor (WebView2 155 and Chrome on the
+  development machine) the same call encodes limited range, and the video matched
+  the PNG all along, so the desktop app on an ordinary machine was not affected; a
+  machine or session without graphics acceleration was not tried. Frames are now
   converted to limited-range BT.709 before encoding (`core/yuv.ts`), the colour
-  every player assumes for HD, and the MP4 states the colour the encoder reports in
-  a `colr` box. The browser regression plays the export and compares it with the PNG.
+  every player assumes for HD, so the result no longer depends on the engine's
+  path, and the MP4 states the colour the encoder reports in a `colr` box. The
+  browser regression plays the export and compares it with the PNG. In WebView2 the
+  conversion adds about 8 ms an instant at 1920 x 1080.
 - **Errors while reading.** One 3-D flame file that cannot be read stops the other
   readers, and nothing is written over the message that names it. An event that
   cannot be read leaves its folder open: the message, the event selector and the
@@ -411,12 +420,36 @@ MP4. The inclusive endpoint frame remains part of the video duration.
   and instant; the caption holds its place meanwhile. Playback therefore draws the
   overlay at every instant without measuring it, and the export, which is not in
   real time, asks the board for every frame's percentage.
-- **Smaller.** The cards and plots follow the editor's length unit when the board is
-  reopened; the 3-D view's render loop stops while the board is closed; the MP4
-  writer no longer holds a second copy of the samples.
+- **Smaller.** The cards and plots follow the editor's unit system (metric or
+  imperial) when the board is reopened; the 3-D view's render loop stops while the
+  board is closed; the MP4 writer no longer holds a second copy of the samples.
 - **Readers.** Both refuse a whole number too large for a float and an id, stem or
   date followed by a line break; the time base label's limit counts characters in
   both. The shared corpus has the eight cases.
+
+**After a cross-review of those fixes** (a second reviewer, the same day).
+
+- **History the response may use.** The first-order response holds its last input
+  through a missing sample. Carried across a gap before the event (a series of the
+  whole test, empty between two events), that started the event from an invented
+  state: an estimate of zero throughout an event could read as a peak far above the
+  hood, with full coverage. The response at an event is now worked out from the
+  unbroken run of samples that reaches the event's first instant (`asHoodSees`), on
+  the cards and on the plot alike; a series with a gap before the event starts
+  again after it, as a series that begins at the event does.
+- **One hood.** The cards took the response time of the first measured heat release
+  rate, the plot that of the first one that had any. Both, and the Heskestad
+  height, now refer to the event's first measured heat release rate (`hoodOf`).
+- **Panels over the board.** The export panel and a full-size picture each made
+  the board inert and restored what they had found, so closing them out of order
+  left it inert. The board's state now follows the panels that hold it, and only
+  one is open at a time: no picture opens behind the export panel, and opening the
+  export closes a picture.
+- **A held picture's coverage.** When the next picture failed to arrive, the
+  caption of the picture still on the tile stayed on its placeholder. It is
+  measured for the picture on the tile.
+- **Regressions.** Each fix was broken on purpose (17 mutations) to see its test
+  fail; the tests that passed with their fix removed were replaced.
 
 Left as they are: overlays use one scale for both axes, which assumes a display copy
 keeps the aspect ratio of what it copies (the format does not say so; the first

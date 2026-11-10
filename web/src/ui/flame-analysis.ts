@@ -11,7 +11,7 @@
 import { FlameSequence, parseFrameData, surfaceCells, type RawFrame } from '../core/flame';
 import { flameHeightM } from '../core/correlations';
 import {
-  centredMean, cumulative, fillTemplate, firstOrderResponse, folderOf, heskestadSeries, instantAt, joinPath,
+  asHoodSees, centredMean, cumulative, fillTemplate, folderOf, heskestadSeries, hoodOf, instantAt, joinPath,
   keyNumbers, localText, parseMesh, projectHull, type HullProjection,
   parseAnalysisManifest, parseEventManifest, parseOutlines, parseSeriesCsv, STEP_IDS,
   type AnalysisManifest, type EventManifest, type KeyNumbers, type Series, type StepId,
@@ -115,6 +115,8 @@ export class FlameAnalysisWorkspace {
   private zoom?: HTMLElement;
   private zoomFocus?: HTMLElement;
   private zoomRestore?: () => void;
+  /** The panels that hold the board (export, full-size picture), in opening order. */
+  private holders: HTMLElement[] = [];
   private exportPanel?: HTMLElement;
   private exportAbort?: () => void;
   private exportTask?: Promise<Blob>;
@@ -561,13 +563,13 @@ export class FlameAnalysisWorkspace {
 
   /** The measured heat release rate's response time (format 1.1), if the folder gives one. */
   private responseTime(event: EventManifest): number | undefined {
-    return event.series.find((s) => s.role === 'measured' && s.quantity === 'hrr' && s.responseTime_s)?.responseTime_s;
+    return hoodOf(event)?.responseTime_s;
   }
 
   /** Heskestad's mean height from the measured heat release rate and the site plan's
    *  fire, with what it assumed; null without a hood record or a burner. */
   private heskestad(event: EventManifest, series: Map<string, Series>): (Series & { note: string }) | null {
-    const hood = event.series.find((s) => s.role === 'measured' && s.quantity === 'hrr');
+    const hood = hoodOf(event);
     const burner = this.plan ? primaryBurner(this.plan) : undefined;
     if (!hood || !burner) return null;
     const d = burnerDiameterM(burner), chi = radiativeFractionOf(burner);
@@ -678,7 +680,7 @@ export class FlameAnalysisWorkspace {
           p2: s.basis === 'convective' ? i18n.t("convective") : s.basis === 'total' ? i18n.t("total") : i18n.t("basis not stated") });
         let data = series.get(s.id)!;
         if (estimated && this.plotOptions.hoodResponse && tau) {
-          data = firstOrderResponse(data, tau);
+          data = asHoodSees(data, tau, event.instants.t_s[0]);
           base.label = i18n.t("{p1}, as the hood sees it", { p1: base.label });
         }
         if (this.plotOptions.heat) data = cumulative(data, event.instants.t_s[0], event.instants.t_s.at(-1)!);
@@ -936,6 +938,7 @@ export class FlameAnalysisWorkspace {
   private openExport(): void {
     const loaded = this.loaded;
     if (!loaded || this.exportPanel || this.exportTask) return;
+    this.closeZoom(); // one panel over the board at a time
     this.playhead.pause();
     const { event } = loaded;
     const times = event.instants.t_s;
@@ -1040,15 +1043,11 @@ export class FlameAnalysisWorkspace {
   }
 
   /** Make `panel` the only part of the board that can be reached: everything else in
-   *  the dialog is inert and Tab stays inside the panel. The returned function undoes it. */
+   *  the dialog is inert and Tab stays inside the panel. The returned function undoes it.
+   *  The board's state follows the panels that hold it, not the order they close in. */
   private holdBoard(panel: HTMLElement): () => void {
-    const before = new Map<HTMLElement, boolean>();
-    for (const child of this.dialog.children) {
-      if (child instanceof HTMLElement && child !== panel) {
-        before.set(child, child.inert);
-        child.inert = true;
-      }
-    }
+    this.holders.push(panel);
+    this.applyHold();
     panel.addEventListener('keydown', (e) => {
       if (e.key !== 'Tab') return;
       const controls = [...panel.querySelectorAll<HTMLElement>('button:not(:disabled), select:not(:disabled)')];
@@ -1056,7 +1055,18 @@ export class FlameAnalysisWorkspace {
       const boundary = controls[e.shiftKey ? 0 : controls.length - 1];
       if (document.activeElement === boundary) { e.preventDefault(); next?.focus(); }
     });
-    return () => { for (const [child, inert] of before) child.inert = inert; };
+    return () => {
+      this.holders = this.holders.filter((held) => held !== panel);
+      this.applyHold();
+    };
+  }
+
+  /** Only the panel opened last can be reached; with none, the whole board can. */
+  private applyHold(): void {
+    const top = this.holders.at(-1);
+    for (const child of this.dialog.children) {
+      if (child instanceof HTMLElement) child.inert = top !== undefined && child !== top;
+    }
   }
 
   private escapeExport(): void {
@@ -1185,8 +1195,9 @@ export class FlameAnalysisWorkspace {
 
   private async openZoom(cam: string): Promise<void> {
     const loaded = this.loaded, source = this.source;
-    if (!loaded || !source || this.index < 0) return;
-    this.closeZoom(); // one full-size picture at a time
+    // One panel over the board at a time: not behind the export, and one picture.
+    if (!loaded || !source || this.index < 0 || this.exportPanel) return;
+    this.closeZoom();
     this.playhead.pause();
     const { event, folder } = loaded;
     this.zoomFocus = this.body.querySelector<HTMLElement>(`.flame-analysis__tile-open[data-camera="${cam}"]`) ?? undefined;

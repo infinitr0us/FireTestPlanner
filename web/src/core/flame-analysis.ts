@@ -546,6 +546,13 @@ export interface EstimateNumbers {
    *  a peak it reads lower than the flame; this is the like-for-like comparison. */
   asHood?: { peak: Peak; heat_kJ: number; peakRatio: number | null; heatRatio: number | null };
 }
+/** The event's reference measurement: its first measured heat release rate. The key
+ *  numbers, the response time and the Heskestad height all take this one series, so a
+ *  card, a plot and a note never speak of different hoods. */
+export function hoodOf(event: Pick<EventManifest, 'series'>): EventSeries | undefined {
+  return event.series.find((s) => s.quantity === 'hrr' && s.role === 'measured');
+}
+
 export interface KeyNumbers {
   window: [number, number];
   hood?: { id: string; peak: Peak; heat_kJ: number; coverage: number; responseTime_s?: number };
@@ -565,7 +572,8 @@ export function keyNumbers(event: EventManifest, series: Map<string, Series>): K
   const window: [number, number] = [times[0], times[times.length - 1]];
   const out: KeyNumbers = { window, estimates: [] };
   const hrr = event.series.filter((s) => s.quantity === 'hrr' && series.has(s.id));
-  const measured = hrr.find((s) => s.role === 'measured');
+  const reference = hoodOf(event);
+  const measured = reference && series.has(reference.id) ? reference : undefined;
   if (measured) {
     const data = series.get(measured.id)!;
     const peak = peakOf(data, ...window) ?? { value: NaN, t: NaN };
@@ -586,7 +594,7 @@ export function keyNumbers(event: EventManifest, series: Map<string, Series>): K
     });
     const estimate: EstimateNumbers = { id: s.id, peak, heat_kJ: heat.value, coverage: heat.coverage, comparison, ...against(peak, heat.value) };
     if (hood?.responseTime_s) {
-      const seen = firstOrderResponse(data, hood.responseTime_s);
+      const seen = asHoodSees(data, hood.responseTime_s, window[0]);
       const seenPeak = peakOf(seen, ...window) ?? { value: NaN, t: NaN };
       const seenHeat = integrate(seen, ...window);
       estimate.asHood = { peak: seenPeak, heat_kJ: seenHeat, ...against(seenPeak, seenHeat) };
@@ -677,6 +685,25 @@ export function firstOrderResponse({ t, v }: Series, tau: number): Series {
     out[i] = y;
   }
   return { t, v: out };
+}
+
+/**
+ * A series as the hood would record it over an event that starts at `from`: its
+ * first-order response, worked out from the unbroken run of samples that reaches
+ * `from`. What lies before a missing sample is history the response cannot be
+ * carried across: holding the last value through an unknown stretch would start the
+ * event from an invented state. So a series with a gap before the event starts
+ * again at the first sample after it, as a series that begins at the event does.
+ * Gaps inside the event are held as `firstOrderResponse` holds them; the key numbers
+ * compare only series that cover 99.5 % of it.
+ */
+export function asHoodSees(data: Series, tau: number, from: number): Series {
+  const { t, v } = data;
+  let start = 0;
+  while (start < t.length && t[start] < from) start++;
+  // Back over the finite samples before the event: real history, as far as it is unbroken.
+  if (start < t.length && Number.isFinite(v[start])) while (start > 0 && Number.isFinite(v[start - 1])) start--;
+  return firstOrderResponse(start ? { t: t.subarray(start), v: v.subarray(start) } : data, tau);
 }
 
 /** Running heat on the event window, with the same trapezoids as integrate.

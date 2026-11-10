@@ -88,7 +88,10 @@ and a plan written by any release opens in every later one.
     time, an estimate's percentages now compare the estimate as the hood would record
     it with the hood, and the card says so ("as the hood sees it: peak …, heat …");
     the raw peak and heat stay the card's numbers. Folders without a response time
-    keep the raw percentages, with a tooltip saying a higher peak is expected.
+    keep the raw percentages, with a tooltip saying a higher peak is expected. The
+    hood is the event's first measured heat release rate, for the cards and the plot
+    alike, and the response is worked out from the estimate's unbroken samples up to
+    the event, never across a gap before it.
   - **Another folder:** **Open another analysis…** in the board's header. The 3-D view
     shows the site and camera names of the folder that is open; it used to keep those
     of the first folder.
@@ -98,14 +101,18 @@ and a plan written by any release opens in every later one.
   - **A second measured line** on the heat release rate plot (a total beside a
     convective record) is drawn with its own dash, and plot lines stop at the plot's
     edge when a series is longer than the event.
-  - The cards and plots follow the editor's length unit when the board is reopened.
+  - The cards and plots follow the editor's unit system (metric or imperial) when
+    the board is reopened.
 
 ### Fixed
-- **The exported video was darker and harsher than the board and the PNG.** The
-  browser engine encoded the canvas as full-range video and said so only beside the
-  stream, so a player read it as limited range and stretched it. Frames are now
-  encoded as limited-range BT.709, what a player assumes for HD video, and the MP4
-  states its colour.
+- **The exported video could be darker and harsher than the board and the PNG** where
+  the browser engine draws without a graphics processor (a headless browser, or a
+  machine or session without graphics acceleration). The engine then encoded the
+  canvas as full-range video and said so only beside the stream, so a player read it
+  as limited range and stretched it. With a graphics processor the same engine
+  encodes limited range, so the desktop app on an ordinary machine was not affected.
+  Frames are now converted to limited-range BT.709 before encoding, whatever the
+  engine would do, and the MP4 states its colour.
 - **Flame analysis board:** a 3-D flame file that could not be read left "Reading the
   3-D flame…" on screen instead of the message naming the file; an event that cannot
   be read now leaves its folder, its other events and the way to another folder in

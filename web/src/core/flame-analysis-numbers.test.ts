@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { cumulative, firstOrderResponse, integrate, joinPath, keyNumbers, parseEventManifest, parseSeriesCsv, projectHull, type Series } from './flame-analysis';
+import { asHoodSees, cumulative, firstOrderResponse, hoodOf, integrate, joinPath, keyNumbers, parseEventManifest, parseSeriesCsv, projectHull,
+  type EventManifest, type Series } from './flame-analysis';
 import type { CameraObject } from './types';
 
 const data = (t: number[], v: number[]): Series => ({ t: Float64Array.from(t), v: Float64Array.from(v) });
@@ -118,6 +119,63 @@ describe('estimates as the hood would record them', () => {
       expect(estimate.asHood).toBeUndefined();
       expect(estimate.peakRatio).not.toBeNull();
     }
+  });
+  // A series of the whole test, with a gap between two events: the response at an
+  // event cannot be carried across what is not known.
+  const twoSeries = (estimate: Series, tau: number | undefined = 2.3) => {
+    const event = { instants: { t_s: [0, 1, 2] }, series: [
+      { id: 'hood', role: 'measured', quantity: 'hrr', basis: 'convective', ...(tau ? { responseTime_s: tau } : {}) },
+      { id: 'estimate', role: 'estimated', quantity: 'hrr', basis: 'convective' },
+    ] } as unknown as EventManifest;
+    return keyNumbers(event, new Map([['hood', data([0, 1, 2], [10, 10, 10])], ['estimate', estimate]])).estimates[0];
+  };
+  it('does not carry the response across a gap before the event', () => {
+    const estimate = twoSeries(data([-10, -9, 0, 1, 2], [1000, NaN, 0, 0, 0]));
+    expect(estimate.coverage).toBe(1);
+    // Held through the gap, the old value would read as a 1000 kW peak inside an event
+    // whose every sample is zero.
+    expect(estimate.asHood!.peak.value).toBe(0);
+    expect(estimate.asHood!.heat_kJ).toBe(0);
+    expect(estimate.asHood!.peakRatio).toBe(0);
+  });
+  it('uses the history before the event as far as it is unbroken', () => {
+    const whole = data([-10, -9, 0, 1, 2], [1000, 1000, 0, 0, 0]);
+    const estimate = twoSeries(whole);
+    const expected = firstOrderResponse(whole, 2.3);
+    expect(estimate.asHood!.peak.value).toBe(expected.v[2]);
+    expect(estimate.asHood!.peak.value).toBe(1000); // still settled on the value before the event
+    expect(estimate.asHood!.heat_kJ).toBeCloseTo(integrate(expected, 0, 2), 10);
+  });
+  it('starts the response where the event has its first sample, however the series reaches it', () => {
+    const tau = 2.3;
+    const same = (a: Series, b: Series): void => { expect([...a.t]).toEqual([...b.t]); expect([...a.v]).toEqual([...b.v]); };
+    // The series begins at the event: the whole series, as before.
+    const inside = data([0, 1, 2], [5, 7, 9]);
+    same(asHoodSees(inside, tau, 0), firstOrderResponse(inside, tau));
+    // A gap, then a run that reaches the event: from the first sample after the gap.
+    same(asHoodSees(data([-3, -2, -1, 0, 1], [9, NaN, 4, 5, 6]), tau, 0), firstOrderResponse(data([-1, 0, 1], [4, 5, 6]), tau));
+    // The sample at the event's start is itself missing: nothing before it counts.
+    same(asHoodSees(data([-1, 0, 1, 2], [50, NaN, 5, 6]), tau, 0), firstOrderResponse(data([0, 1, 2], [NaN, 5, 6]), tau));
+    // No sample exactly at the start: the unbroken samples around it.
+    same(asHoodSees(data([-0.5, 0.5, 1.5], [3, 4, 5]), tau, 0), firstOrderResponse(data([-0.5, 0.5, 1.5], [3, 4, 5]), tau));
+    // Entirely before the event: nothing.
+    expect(asHoodSees(data([-3, -2], [1, 2]), tau, 0).t).toHaveLength(0);
+  });
+  it('takes one hood for the numbers and the response time: the first measured heat release rate', () => {
+    const { event, series } = fixture('E1');
+    const first = event.series.find((s) => s.id === 'hood')!;
+    expect(hoodOf(event)).toBe(first);
+    // The response time moves to a second measured series: the reference has none, so
+    // nothing is compared as the hood sees it, by the cards or by anything that asks hoodOf.
+    const second = { ...first, id: 'hood-total', basis: 'total' as const };
+    delete first.responseTime_s;
+    event.series.splice(1, 0, second);
+    series.set('hood-total', series.get('hood')!);
+    expect(hoodOf(event)).toBe(first);
+    expect(hoodOf(event)!.responseTime_s).toBeUndefined();
+    const keys = keyNumbers(event, series);
+    expect(keys.hood!.id).toBe('hood');
+    expect(keys.estimates.every((e) => e.asHood === undefined && e.peakRatio !== null)).toBe(true);
   });
   it('gives no like-for-like percentage where the raw one is refused', () => {
     const { event, series } = fixture('E1');

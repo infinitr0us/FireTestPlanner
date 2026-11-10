@@ -97,6 +97,20 @@ describe('the picture cache with many cameras', () => {
     }
     expect(w.cache.size).toBeLessThanOrEqual(48);
   });
+  it('keeps the pictures on screen when what is read ahead outgrows the cache', async () => {
+    const { w, made } = many(8);
+    w.show(0);
+    // Two rounds of reading ahead before anything is drawn: 8 + 40 + 40 pictures for a cache of 48.
+    w.prefetch([1, 2, 3, 4, 5]); w.prefetch([6, 7, 8, 9, 10]);
+    await settle();
+    const shown = made.filter((b) => b.path.endsWith('/s0'));
+    expect(shown).toHaveLength(8);
+    expect(shown.every((b) => b.close.mock.calls.length === 0)).toBe(true);
+    expect(([...w.tiles.values()] as any[]).map((t) => t.drawn)).toEqual(new Array(8).fill(0));
+    expect(w.cache.size).toBeLessThanOrEqual(48);
+    // The pictures read first, and no longer wanted, made room.
+    expect(made.filter((b) => b.path.endsWith('/s1')).every((b) => b.close.mock.calls.length === 1)).toBe(true);
+  });
   it('reads less far ahead with more cameras, so the cache holds what is on screen and what comes next', async () => {
     const { w, made } = many(8);
     w.show(0); w.prefetch([1, 2, 3, 4, 5, 6, 7, 8]); await settle();
@@ -117,5 +131,58 @@ describe('the hull check share', () => {
     expect(second).toHaveBeenCalledOnce();
     w.setHullCheck(null);
     expect(w.coverageAt('C', 0)).toBeNull();
+  });
+  const ELLIPSIS = '3-D flame covers … of the outline', UNAVAILABLE = '3-D flame coverage unavailable';
+  it('is not measured while the clock moves on, only once a picture has rested 120 ms', async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, tile } = tiles(), hull = vi.fn(() => null);
+      w.bitmap = () => Promise.resolve({ width: 80, height: 40 });
+      w.setHullCheck(hull);
+      const share = vi.spyOn(w, 'coverageAt');
+      w.show(0); await settle();
+      expect(tile.agreement.textContent).toBe(ELLIPSIS); // the caption holds its place
+      await vi.advanceTimersByTimeAsync(100);
+      w.show(1); await settle(); // the clock moved on within the delay: the wait starts again
+      await vi.advanceTimersByTimeAsync(119);
+      expect(share).not.toHaveBeenCalled();
+      expect(tile.agreement.textContent).toBe(ELLIPSIS);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(share).toHaveBeenCalledExactlyOnceWith('C', 1);
+      expect(tile.agreement.textContent).toBe(UNAVAILABLE);
+      // Known now: shown at once when the instant comes round again.
+      share.mockClear();
+      w.show(0); await settle(); w.show(1); await settle();
+      expect(tile.agreement.textContent).toBe(UNAVAILABLE);
+      expect(share).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+  it('settles the caption of a held picture when the next picture never arrives', async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, tile } = tiles();
+      w.bitmap = (path: string) => path.endsWith('/a') ? Promise.resolve({ width: 80, height: 40 }) : Promise.reject(new Error('Missing file'));
+      w.setHullCheck(() => null);
+      w.show(0); await settle();
+      await vi.advanceTimersByTimeAsync(50);
+      w.show(1); await settle(); // the next picture fails within the delay
+      await vi.advanceTimersByTimeAsync(500);
+      expect(tile.drawn).toBe(0);
+      expect(tile.caption.textContent).toContain('Missing file'); // which picture is held, and why
+      expect(tile.agreement.textContent).toBe(UNAVAILABLE); // not an ellipsis for good
+    } finally { vi.useRealTimers(); }
+  });
+  it('measures nothing after the tiles are gone', async () => {
+    vi.useFakeTimers();
+    try {
+      const { w } = tiles();
+      w.bitmap = () => Promise.resolve({ width: 80, height: 40 });
+      w.setHullCheck(() => null);
+      const share = vi.spyOn(w, 'coverageAt');
+      w.show(0); await settle();
+      w.dispose();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(share).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
   });
 });

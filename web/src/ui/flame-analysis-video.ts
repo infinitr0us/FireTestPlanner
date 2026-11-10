@@ -10,9 +10,10 @@
  * dashes, bands and key moments. Instants are held, never interpolated.
  *
  * Frames go to the encoder as limited-range BT.709 (`core/yuv.ts`), the colour every
- * player assumes for HD video, and the file states it: a frame taken straight from
- * the canvas is encoded full range with nothing in the stream to say so, and plays
- * darker and harsher than the board.
+ * player assumes for HD video, and the file states it. An engine that draws without
+ * a graphics processor encodes a frame taken straight from the canvas as full range
+ * with nothing in the stream to say so, which plays darker and harsher than the
+ * board; with one it encodes limited range. Converting first gives one result.
  */
 
 import { instantAt, type EventImage, type HullProjection } from '../core/flame-analysis';
@@ -486,8 +487,8 @@ export async function encodeVideo(
         format: 'I420', codedWidth: width, codedHeight: height, colorSpace: I420_COLOUR,
         timestamp: Math.round((k * 1e6) / VIDEO_FPS), duration: Math.round(1e6 / VIDEO_FPS),
       });
-      encoder.encode(frame, { keyFrame: k % (2 * VIDEO_FPS) === 0 });
-      frame.close();
+      try { encoder.encode(frame, { keyFrame: k % (2 * VIDEO_FPS) === 0 }); }
+      finally { frame.close(); }
       while (encoder.encodeQueueSize > 6) {
         await new Promise((r) => setTimeout(r, 2));
         checkExportSignal(signal);

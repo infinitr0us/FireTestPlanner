@@ -1475,7 +1475,12 @@ first-order response time of a `measured` heat release rate, the hood's lag; the
 board uses it to pass the estimates through the same lag (`y' = (x - y) / tau`, stepped
 exactly between samples), on the plot when asked and for the percentages that
 compare an estimate with the hood, and no other series may carry it. It is a lag
-only: the format has no transport delay.
+only: the format has no transport delay. When an event has several measured heat
+release rates, the first is the hood: the key numbers, the response time and the
+Heskestad height refer to it, and a response time on a later one is not used. The
+response at an event is worked out from the unbroken run of an estimate's samples
+that reaches the event's first instant: what lies before a missing sample is not
+carried across it.
 
 **Text** is a string or `{"en": ..., "fr": ...}` with English required. Step ids are
 `cameras`, `frames`, `segmentation`, `reconstruction`, `size`, `hrr` and

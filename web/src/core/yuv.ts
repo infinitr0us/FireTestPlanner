@@ -2,12 +2,14 @@
  * Canvas pixels as the planar YCbCr a video encoder takes: I420 (4:2:0), BT.709,
  * limited range (luma 16 to 235, chroma 16 to 240).
  *
- * Why not hand the encoder the canvas: the browser engine then converts it to
- * full-range YCbCr and says so only beside the stream, not in it. A player takes an
- * H.264 stream that says nothing as limited range, stretches it, and shows the video
- * darker and harsher than the picture it was made from. Limited-range BT.709 is what
- * every player assumes for HD video, so frames converted here look the same wherever
- * they are played. DOM-free.
+ * Why not hand the encoder the canvas: what the browser engine makes of it depends on
+ * how it draws. With a graphics processor it encodes limited range. Without one (a
+ * headless browser, a machine without graphics acceleration) it converts the canvas
+ * to full-range YCbCr and says so only beside the stream, not in it; a player takes
+ * an H.264 stream that says nothing as limited range, stretches it, and shows the
+ * video darker and harsher than the picture it was made from. Limited-range BT.709
+ * is what every player assumes for HD video, so frames converted here look the same
+ * whatever the engine and wherever they are played. DOM-free.
  */
 
 /** What a frame made by `rgbaToI420` is, in WebCodecs' terms. */
