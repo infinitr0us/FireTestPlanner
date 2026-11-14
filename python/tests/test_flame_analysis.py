@@ -88,6 +88,32 @@ def png_content(data):
     return header, zlib.decompress(idat)
 
 
+def test_hull_regeneration_preserves_equivalent_archives_and_replaces_changed_data(tmp_path):
+    source = FIXTURE / "E1/hull/t_0101.50.npz"
+    target = tmp_path / "hull.npz"
+    # Model another Python/zlib build with a valid but differently encoded archive.
+    with zipfile.ZipFile(source) as original, zipfile.ZipFile(target, "w", compression=zipfile.ZIP_STORED) as kept:
+        for name in original.namelist():
+            kept.writestr(name, original.read(name))
+    before = target.read_bytes()
+    with np.load(source) as data:
+        voxels, size = data["voxels"], float(data["voxel_size"])
+    generator.write_npz(target, voxels, size)
+    assert target.read_bytes() == before
+    changed = voxels.copy()
+    changed[0, 0] += size
+    generator.write_npz(target, changed, size * 2)
+    assert target.read_bytes() != before
+    with np.load(target) as data:
+        assert np.array_equal(data["voxels"], changed)
+        assert float(data["voxel_size"]) == size * 2
+    target.write_bytes(b"damaged archive")
+    generator.write_npz(target, voxels, size)
+    with np.load(target) as data:
+        assert np.array_equal(data["voxels"], voxels)
+        assert float(data["voxel_size"]) == size
+
+
 def _inside_or_near(points, rings, tolerance):
     """Even-odd inside any ring set, or within `tolerance` px of a ring edge."""
     inside = np.zeros(len(points), dtype=bool)
@@ -139,7 +165,7 @@ def test_fewer_cameras_give_a_larger_hull_for_a_similar_flame():
 def test_format_1_1_meshes_and_the_hood_response_time():
     analysis = FlameAnalysis.load(str(FIXTURE))
     e1, e2 = analysis.event("E1"), analysis.event("E2")
-    assert (e1.data["version"], e2.data["version"]) == ("1.1.0", "1.0.0")
+    assert (e1.data["version"], e2.data["version"]) == ("1.2.0", "1.0.0")
     hood = next(s for s in e1.series if s.id == "hood")
     assert hood.responseTime_s == pytest.approx(2.3)
     i = e1.stems.index("t_0101.50")
@@ -150,6 +176,39 @@ def test_format_1_1_meshes_and_the_hood_response_time():
     assert abs(vertices[:, 2].max() - hull[:, 2].max()) < 0.06
     assert abs(vertices[:, 2].min() - hull[:, 2].min()) < 0.06
     assert e1.mesh(0)[0].shape == (0, 3)  # before the onset: an empty mesh
+
+
+def test_synthetic_heat_flux_gauges_and_records():
+    analysis = FlameAnalysis.load(str(FIXTURE))
+    plan, event = analysis.site_plan(), analysis.event("E1")
+    plan.validate_schema()  # sensors and the existing obstruction fit plan 1.2
+    assert plan.format_version == "1.2.0"
+    gauges = {o.id: o for o in plan.objects if o.type == "heatFluxSensor"}
+    assert set(gauges) == {"gauge-near", "gauge-far"}
+    for gid, _, pos in generator.GAUGES:
+        gauge = gauges[gid]
+        assert gauge.position == pytest.approx(pos)
+        delta = generator.FIRE_CENTRE - gauge.position
+        assert gauge.forward == pytest.approx(delta / np.linalg.norm(delta), abs=2e-6)
+        assert gauge.water_cooled is True
+    assert 2 <= np.linalg.norm(gauges["gauge-far"].position - generator.FIRE_CENTRE) <= 3
+    flux = [s for s in event.series if s.quantity == "heatFlux"]
+    assert [(s.id, s.object, s.value) for s in flux] == [
+        ("near", "gauge-near", "near_kW_m2"), ("near2", "gauge-near", "near2_kW_m2"),
+        ("far", "gauge-far", "far_kW_m2"),
+    ]
+    assert all(s.file == "series/heat_flux.csv" and s.time == "t_s" and s.unit == "kW/m2"
+               and s.role == "measured" and "Synthetic" in s.note["en"] for s in flux)
+    t, near = event.read_series("near")
+    _, near2 = event.read_series("near2")
+    _, far = event.read_series("far")
+    assert t.tolist() == list(range(95, 109))
+    assert t[0] < event.times[0] and t[-1] > event.times[-1]
+    assert np.all(np.diff(t) == 1) and np.all(np.isfinite(near)) and np.all(np.isfinite(near2))
+    assert np.any(near2[t < event.onset_s] < 0)
+    assert t[np.isnan(far)].tolist() == [101]
+    assert near.max() > near2.max() > np.nanmax(far) > 0
+    assert all(s.quantity != "heatFlux" and s.object is None for s in analysis.event("E2").series)
 
 
 def test_mesh_files_round_trip_and_refuse_a_wrong_size(tmp_path):
@@ -247,7 +306,7 @@ def test_the_analysis_schema_refuses_an_unknown_step(copy):
 
 
 def test_the_schemas_are_mirrored_in_the_package_byte_for_byte():
-    for name in ("flame-analysis-1.0.0", "flame-event-1.0.0", "flame-event-1.1.0", "flame-outlines-1.0.0"):
+    for name in ("flame-analysis-1.0.0", "flame-event-1.0.0", "flame-event-1.1.0", "flame-event-1.2.0", "flame-outlines-1.0.0"):
         normative = (ROOT / "schema" / (name + ".schema.json")).read_bytes()
         shipped = (ROOT / "python/fireplan/schemas" / (name + ".schema.json")).read_bytes()
         assert normative == shipped, name

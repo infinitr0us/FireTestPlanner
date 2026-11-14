@@ -418,5 +418,57 @@
     "files": [
       "analysis.json"
     ]
+  },
+  {
+    "name": "v12_heat_flux",
+    "accept": true,
+    "files": [
+      "event.json",
+      "site.ftp.json"
+    ]
+  },
+  {
+    "name": "v12_heat_flux_wrong_unit",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "v12_heat_flux_reconstructed",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "v12_object_wrong_quantity",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "v11_object",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "v11_heat_flux",
+    "accept": false,
+    "files": [
+      "event.json"
+    ]
+  },
+  {
+    "name": "v12_heat_flux_negative",
+    "accept": true,
+    "files": [
+      "event.json",
+      "site.ftp.json",
+      "series.csv"
+    ]
   }
 ]

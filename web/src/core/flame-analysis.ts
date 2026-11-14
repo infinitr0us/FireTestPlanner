@@ -1,5 +1,5 @@
 /**
- * Flame analysis folders (format 1.0, events 1.0 and 1.1): the manifests, their files
+ * Flame analysis folders (format 1.0, events 1.0 through 1.2): the manifests, their files
  * and the numbers the board shows. DOM-free; mirror of `python/fireplan/flame_analysis.py`,
  * and the schemas in `schema/flame-*.schema.json` are the normative definition
  * (CONVENTIONS.md section 13). The two engines are held to the same verdicts on
@@ -19,8 +19,8 @@ export const ANALYSIS_FORMAT = 'fireplan-flame-analysis';
 export const EVENT_FORMAT = 'fireplan-flame-event';
 export const OUTLINES_FORMAT = 'fireplan-flame-outlines';
 export const FORMAT_VERSION = '1.0.0';
-/** Event manifests: 1.1 adds `files.mesh` and `series[].responseTime_s`. */
-export const EVENT_VERSIONS = ['1.0.0', '1.1.0'] as const;
+/** Event manifests: 1.1 adds meshes and response times; 1.2 adds heat flux and object links. */
+export const EVENT_VERSIONS = ['1.0.0', '1.1.0', '1.2.0'] as const;
 
 export const STEP_IDS = ['cameras', 'frames', 'segmentation', 'reconstruction', 'size', 'hrr', 'limitations'] as const;
 export type StepId = (typeof STEP_IDS)[number];
@@ -47,13 +47,13 @@ export interface EventImage {
   closeup?: { rect_px: [number, number, number, number]; display_px: Size };
 }
 export type SeriesRole = 'measured' | 'reconstructed' | 'estimated';
-export type SeriesQuantity = 'hrr' | 'volume' | 'area' | 'height';
+export type SeriesQuantity = 'hrr' | 'volume' | 'area' | 'height' | 'heatFlux';
 export interface EventSeries {
   id: string;
   label: LocalText;
   role: SeriesRole;
   quantity: SeriesQuantity;
-  unit: 'kW' | 'm3' | 'm2' | 'm';
+  unit: 'kW' | 'm3' | 'm2' | 'm' | 'kW/m2';
   basis?: 'convective' | 'total';
   file: string;
   time: string;
@@ -61,6 +61,8 @@ export interface EventSeries {
   note?: LocalText;
   /** 1.1: the first-order response time of a measured heat release rate. */
   responseTime_s?: number;
+  /** 1.2: the site plan's heatFluxSensor that recorded this heat flux series. */
+  object?: string;
 }
 export interface EventFiles { display: string; frame?: string; closeup?: string; outlines: string; hull: string; mesh?: string }
 export interface EventManifest {
@@ -213,7 +215,21 @@ export function parseAnalysisManifest(textValue: string, where = 'analysis.json'
   return manifest;
 }
 
-const UNITS: Record<SeriesQuantity, string> = { hrr: 'kW', volume: 'm3', area: 'm2', height: 'm' };
+const UNITS: Record<SeriesQuantity, string> = { hrr: 'kW', volume: 'm3', area: 'm2', height: 'm', heatFlux: 'kW/m2' };
+
+/** Check a parsed event's instrument links after loading the analysis's site plan. */
+export function seriesObjectProblems(event: EventManifest, objects: readonly { id: string; type: string }[]): string[] {
+  const byId = new Map(objects.map(object => [object.id, object]));
+  const problems: string[] = [];
+  for (const series of event.series) {
+    if (series.object === undefined) continue;
+    const object = byId.get(series.object);
+    const params = { p1: event.id, p2: series.id, p3: series.object };
+    if (!object) problems.push(i18n.t("Event {p1}: series '{p2}' names missing site plan object '{p3}'", params));
+    else if (object.type !== 'heatFluxSensor') problems.push(i18n.t("Event {p1}: series '{p2}' object '{p3}' must be a heat flux sensor", params));
+  }
+  return problems;
+}
 
 export function parseEventManifest(textValue: string, where = 'event.json'): EventManifest {
   const data = parseJson(textValue, where);
@@ -237,7 +253,8 @@ export function parseEventManifest(textValue: string, where = 'event.json'): Eve
         p.add('instants/stem', i18n.t("must be a non-empty list of different file stems"));
       }
     }
-    const v11 = data.version === '1.1.0';
+    const v12 = data.version === '1.2.0';
+    const v11 = data.version === '1.1.0' || v12;
     if ('files' in data && closed(p, 'files', data.files, ['display', 'outlines', 'hull'], ['frame', 'closeup', ...(v11 ? ['mesh'] : [])])) {
       const files = data.files;
       for (const key of ['display', 'frame', 'closeup']) {
@@ -279,18 +296,23 @@ export function parseEventManifest(textValue: string, where = 'event.json'): Eve
       if (!Array.isArray(data.series)) p.add('series', i18n.t("must be a list"));
       else data.series.forEach((s, i) => {
         const place = `series/${i}`;
-        if (!closed(p, place, s, ['id', 'label', 'role', 'quantity', 'unit', 'file', 'time', 'value'], ['basis', 'note', ...(v11 ? ['responseTime_s'] : [])])) return;
+        if (!closed(p, place, s, ['id', 'label', 'role', 'quantity', 'unit', 'file', 'time', 'value'], ['basis', 'note', ...(v11 ? ['responseTime_s'] : []), ...(v12 ? ['object'] : [])])) return;
         if ('id' in s) id(p, `${place}/id`, s.id);
         if ('label' in s) text(p, `${place}/label`, s.label);
-        if ('role' in s) oneOf(p, `${place}/role`, s.role, ['measured', 'reconstructed', 'estimated']);
-        if ('quantity' in s) oneOf(p, `${place}/quantity`, s.quantity, Object.keys(UNITS));
-        if ('unit' in s) oneOf(p, `${place}/unit`, s.unit, Object.values(UNITS));
+        if ('role' in s) oneOf(p, `${place}/role`, s.role, s.quantity === 'heatFlux' ? ['measured', 'estimated'] : ['measured', 'reconstructed', 'estimated']);
+        const quantities = Object.keys(UNITS).filter(q => v12 || q !== 'heatFlux') as SeriesQuantity[];
+        if ('quantity' in s) oneOf(p, `${place}/quantity`, s.quantity, quantities);
+        if ('unit' in s) oneOf(p, `${place}/unit`, s.unit, quantities.map(q => UNITS[q]));
         if (typeof s.quantity === 'string' && s.quantity in UNITS && s.unit !== UNITS[s.quantity as SeriesQuantity]) {
           p.add(`${place}/unit`, i18n.t("must be {p1} for {p2}", { p1: UNITS[s.quantity as SeriesQuantity], p2: s.quantity }));
         }
         if ('basis' in s) {
           if (s.quantity !== 'hrr') p.add(`${place}/basis`, i18n.t("is for heat release rate only"));
           oneOf(p, `${place}/basis`, s.basis, ['convective', 'total']);
+        }
+        if ('object' in s) {
+          id(p, `${place}/object`, s.object);
+          if (s.quantity !== 'heatFlux') p.add(`${place}/object`, i18n.t("is for heat flux only"));
         }
         if ('file' in s) path(p, `${place}/file`, s.file);
         for (const key of ['time', 'value']) if (key in s && (typeof s[key] !== 'string' || !s[key])) p.add(`${place}/${key}`, i18n.t("must name a column"));

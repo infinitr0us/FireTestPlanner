@@ -24,7 +24,7 @@ board and its tests run on data that can be published.
 - 3-D flame: the visual hull of the event's cameras, every grid cell whose centre
   projects (nearest pixel) inside every camera's mask. E1 uses all three cameras,
   E2 only camA and camB, so its hull is visibly fatter than its flame.
-- Meshes (event E1, format 1.1): the hull's smoothed surface by naive surface nets,
+- Meshes (event E1, format 1.2): the hull's smoothed surface by naive surface nets,
   on 6 cm cells so the committed files stay small.
   E2 stays format 1.0 (no meshes, no hood response time), so both versions are tested.
 - Series (seconds on the test clock "t_clock"): hull volume, exposed-face surface
@@ -34,10 +34,16 @@ board and its tests run on data that can be published.
   little seeded noise; estimates from the hull volume (700 kW/m3) and area
   (35 kW/m2) averaged over five instants. These coefficients are invented for the
   test and are not anyone's method.
+- Heat flux (E1 only): two water-cooled gauges face the fire at mid flame height.
+  The near gauge is inside the flame close-up, the far gauge is 2.5 m away outside
+  it. Three synthetic records at 1 Hz share a CSV, two on the near mount. A point
+  source uses the baseline-subtracted hood, an invented radiative fraction of 0.3,
+  the distance and facing cosine. Noise, a negative zero drift and a missing far
+  sample exercise the reader; the role is measured to model delivered gauge data.
 
 Only + - * / and square roots are used on floats (no sin, exp or pow), so the
-content is the same on every platform (the PNG and NPZ compressed bytes vary with the
-zlib build, the pixels and arrays do not); camera poses are rounded in the plan and
+content is the same on every platform (compressed bytes and ZIP headers can vary
+with Python and zlib, the pixels and arrays do not); camera poses are rounded in the plan and
 the pictures are rendered from the rounded plan.
 """
 
@@ -47,6 +53,7 @@ import io
 import json
 import struct
 import sys
+import zipfile
 import zlib
 from pathlib import Path
 
@@ -63,7 +70,6 @@ from fireplan.flame_analysis import (  # noqa: E402
 _spec = importlib.util.spec_from_file_location("synthetic_flame", ROOT / "tools/build_synthetic_flame.py")
 _synthetic_flame = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_synthetic_flame)
-write_npz = _synthetic_flame.write_npz  # deterministic NPZ writer of the flame fixture
 
 OUT = "fixtures/flame-analysis"
 SEED = 20261108
@@ -80,13 +86,19 @@ CAMERAS = [
     ("camC", "Front left, high", (-1.9, -2.2, 2.3), (0.0, 0.0, 0.75), (135, 240), 160.0, (1.0, 3.5)),
 ]
 
+FIRE_CENTRE = np.array([0.0, 0.0, 0.85])  # mid flame height above the 0.1 m rim
+GAUGES = [
+    ("gauge-near", "Near gauge (synthetic)", (-0.45, -0.1, 0.8)),
+    ("gauge-far", "Far gauge (synthetic)", (2.5, 0.0, 0.8)),
+]
+
 EVENTS = [
     # id, label, onset, cameras, envelope (rise end, hold end, out), peak scale, lean, meshes
     ("E1", "Synthetic event 1", 100.0, ["camA", "camB", "camC"], (0.8, 2.0, 3.0), 1.0, 0.18, True),
     ("E2", "Synthetic event 2", 160.0, ["camA", "camB"], (0.5, 1.2, 2.2), 0.7, -0.12, False),
 ]
 #: The synthetic hood closes 35 % of its gap each second: a first-order response time
-#: of -1 / ln(0.65) = 2.32 s, which event E1 (format 1.1) records.
+#: of -1 / ln(0.65) = 2.32 s, which event E1 (format 1.2) records.
 HOOD_RESPONSE_S = 2.3
 BEFORE, AFTER, DT = 0.5, 3.0, 0.1           # instants from onset - 0.5 s to onset + 3.0 s
 
@@ -97,6 +109,22 @@ def write_text(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(text)
+
+
+def write_npz(path, voxels, voxel_size):
+    """Keep identical decoded arrays without churning ZIP headers across Pythons."""
+    buffer = io.BytesIO()
+    _synthetic_flame.write_npz(buffer, voxels, voxel_size=voxel_size)
+    content = buffer.getvalue()
+    if path.exists():
+        try:
+            with zipfile.ZipFile(path) as kept, zipfile.ZipFile(io.BytesIO(content)) as fresh:
+                if kept.namelist() == fresh.namelist() and all(
+                        kept.read(name) == fresh.read(name) for name in fresh.namelist()):
+                    return
+        except zipfile.BadZipFile:
+            pass  # replace a damaged fixture with the generated data
+    path.write_bytes(content)
 
 
 def png_bytes(rgb):
@@ -152,6 +180,16 @@ def site_plan():
                        "spectralBand_um": None, "framerate_hz": 10},
             "mount": {"type": "tripod", "height_m": pos[2]},
             "recording": None,
+        })
+    for gid, name, pos in GAUGES:
+        objects.append({
+            "id": gid, "type": "heatFluxSensor", "name": name,
+            "transform": {"position_m": list(pos),
+                          "rotation_quat": [round(float(v), 6) for v in look_at_quat(pos, FIRE_CENTRE)],
+                          "aimTarget_m": FIRE_CENTRE.tolist()},
+            "gauge": {"kind": "schmidt-boelter", "range_kw_m2": 100.0,
+                      "viewAngle_deg": 180.0, "waterCooled": True, "serial": "SYNTH-" + gid},
+            "mount": {"type": "pole", "height_m": pos[2]},
         })
     data = {
         "format": "fire-test-plan", "version": "1.7.0",
@@ -377,6 +415,43 @@ def exposed_faces(occ):
 
 # -- events ------------------------------------------------------------------
 
+def heat_flux_series(folder, plan, hood, onset):
+    """Illustrative gauge records, not a model or a measurement of a real fire."""
+    fraction, baseline, pi = 0.3, 3.0, 3.141592653589793
+    factors = {}
+    for gid, _, _ in GAUGES:
+        gauge = next(obj for obj in plan.objects if obj.id == gid)
+        delta = FIRE_CENTRE - gauge.position
+        distance = float(np.dot(delta, delta)) ** 0.5
+        cosine = max(0.0, min(1.0, float(np.dot(gauge.forward, delta / distance))))
+        factors[gid] = fraction * cosine / ((1.0 - fraction) * 4.0 * pi * distance * distance)
+    rows = []
+    for k, (t, q) in enumerate(hood):
+        power = max(0.0, float(q) - baseline)
+        near = power * factors["gauge-near"] + ((k * 7) % 11 - 5) * 0.003
+        near2 = power * factors["gauge-near"] * 0.94 + ((k * 5) % 13 - 6) * 0.002
+        far = power * factors["gauge-far"] + ((k * 3) % 7 - 3) * 0.001
+        if float(t) == onset - 1:
+            near2 -= 0.025  # a small synthetic zero drift before the onset
+        rows.append([t, num(near), num(near2), "" if float(t) == onset + 1 else num(far)])
+    write_text(folder / "series" / "heat_flux.csv", "t_s,near_kW_m2,near2_kW_m2,far_kW_m2\n"
+               + "".join(",".join(row) + "\n" for row in rows))
+    note = {
+        "en": "Synthetic: point-source estimate from the hood, with made-up constants and noise; not a real measurement.",
+        "fr": "Synthétique : estimation par source ponctuelle à partir de la hotte, avec des constantes inventées et du bruit; ce n'est pas une mesure réelle.",
+    }
+    return [
+        {"id": sid, "label": {"en": en, "fr": fr}, "role": "measured",
+         "quantity": "heatFlux", "unit": "kW/m2", "object": gid,
+         "file": "series/heat_flux.csv", "time": "t_s", "value": sid + "_kW_m2", "note": note}
+        for sid, gid, en, fr in [
+            ("near", "gauge-near", "Near gauge (synthetic)", "Capteur proche (synthétique)"),
+            ("near2", "gauge-near", "Near gauge, second sensor (synthetic)", "Capteur proche, deuxième sonde (synthétique)"),
+            ("far", "gauge-far", "Far gauge (synthetic)", "Capteur éloigné (synthétique)"),
+        ]
+    ]
+
+
 def build_event(root, plan, cameras, spec, rng):
     eid, label, onset, cam_ids, shape, peak, lean, meshes = spec
     folder = root / eid
@@ -460,7 +535,7 @@ def build_event(root, plan, cameras, spec, rng):
         quality["outsideFrame"] = edge
     peak_i = int(np.argmax(vol))
     event = {
-        "format": "fireplan-flame-event", "version": "1.1.0" if meshes else "1.0.0",
+        "format": "fireplan-flame-event", "version": "1.2.0" if eid == "E1" else "1.0.0",
         "id": eid, "label": label, "onset_s": onset, "cameras": cam_ids,
         "instants": {"t_s": times, "stem": stems},
         "files": {"display": "frames/{cam}/{stem}.png", "outlines": "outlines/{cam}.json",
@@ -506,6 +581,8 @@ def build_event(root, plan, cameras, spec, rng):
             },
         },
     }
+    if eid == "E1":
+        event["series"].extend(heat_flux_series(folder, plan, hood, onset))
     write_text(folder / "event.json", json.dumps(event, ensure_ascii=False, indent=1) + "\n")
 
 

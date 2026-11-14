@@ -1,6 +1,6 @@
 {
  "format": "fireplan-flame-event",
- "version": "1.1.0",
+ "version": "1.2.0",
  "id": "E1",
  "label": "Synthetic event 1",
  "onset_s": 100.0,
@@ -212,6 +212,60 @@
    "file": "series/metrics.csv",
    "time": "t_s",
    "value": "top_above_rim_m"
+  },
+  {
+   "id": "near",
+   "label": {
+    "en": "Near gauge (synthetic)",
+    "fr": "Capteur proche (synthétique)"
+   },
+   "role": "measured",
+   "quantity": "heatFlux",
+   "unit": "kW/m2",
+   "object": "gauge-near",
+   "file": "series/heat_flux.csv",
+   "time": "t_s",
+   "value": "near_kW_m2",
+   "note": {
+    "en": "Synthetic: point-source estimate from the hood, with made-up constants and noise; not a real measurement.",
+    "fr": "Synthétique : estimation par source ponctuelle à partir de la hotte, avec des constantes inventées et du bruit; ce n'est pas une mesure réelle."
+   }
+  },
+  {
+   "id": "near2",
+   "label": {
+    "en": "Near gauge, second sensor (synthetic)",
+    "fr": "Capteur proche, deuxième sonde (synthétique)"
+   },
+   "role": "measured",
+   "quantity": "heatFlux",
+   "unit": "kW/m2",
+   "object": "gauge-near",
+   "file": "series/heat_flux.csv",
+   "time": "t_s",
+   "value": "near2_kW_m2",
+   "note": {
+    "en": "Synthetic: point-source estimate from the hood, with made-up constants and noise; not a real measurement.",
+    "fr": "Synthétique : estimation par source ponctuelle à partir de la hotte, avec des constantes inventées et du bruit; ce n'est pas une mesure réelle."
+   }
+  },
+  {
+   "id": "far",
+   "label": {
+    "en": "Far gauge (synthetic)",
+    "fr": "Capteur éloigné (synthétique)"
+   },
+   "role": "measured",
+   "quantity": "heatFlux",
+   "unit": "kW/m2",
+   "object": "gauge-far",
+   "file": "series/heat_flux.csv",
+   "time": "t_s",
+   "value": "far_kW_m2",
+   "note": {
+    "en": "Synthetic: point-source estimate from the hood, with made-up constants and noise; not a real measurement.",
+    "fr": "Synthétique : estimation par source ponctuelle à partir de la hotte, avec des constantes inventées et du bruit; ce n'est pas une mesure réelle."
+   }
   }
  ],
  "quality": {

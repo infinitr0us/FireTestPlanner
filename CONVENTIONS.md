@@ -1355,10 +1355,10 @@ a plan. The session and sharing APIs are documented in
 `docs/test-data-design.md` under Editor plumbing, and the editor's Test data dialog
 and instrument plots, including what each edit does to the manifest, under Editor UI.
 
-## 13. Flame analysis folders (flame analysis 1.0, events 1.0 and 1.1)
+## 13. Flame analysis folders (flame analysis 1.0, events 1.0 through 1.2)
 
 A separate format beside the plan, with its own version and schemas
-(`schema/flame-analysis-1.0.0`, `flame-event-1.0.0`, `flame-event-1.1.0` and
+(`schema/flame-analysis-1.0.0`, `flame-event-1.0.0`, `flame-event-1.1.0`, `flame-event-1.2.0` and
 `flame-outlines-1.0.0`, mirrored in `python/fireplan/schemas/`). It holds one processed test filmed by
 calibrated cameras, for the flame analysis board
 ([design](docs/flame-analysis-board-design.md)); `fireplan.flame_analysis` reads and
@@ -1373,10 +1373,12 @@ Each event's manifest (`format` `fireplan-flame-event`) names its cameras in dis
 order, its instants (`t_s` finite and strictly increasing, a unique file `stem` each), path
 templates, picture sizes, the hull's voxel size, its series and optional quality
 indices, key moments and notes. `analysis.json` is version `1.0.0`. An event is
-`1.0.0` or `1.1.0` and is checked against the schema of its own version, so a folder
+`1.0.0`, `1.1.0` or `1.2.0` and is checked against the schema of its own version, so a folder
 may mix them; 1.1 adds only optional fields (`files.mesh`, `series[].responseTime_s`),
 a 1.0 event carrying one is an error, and a reader shows a 1.0 event without what 1.1
-adds. Every schema closes every object: an unknown field is an error, not something to
+adds. Version 1.2 adds heat flux series and their optional `object` link to a site
+plan gauge. Both additions are errors in 1.0 and 1.1 events. The 1.1 fields remain
+allowed in 1.2. Every schema closes every object: an unknown field is an error, not something to
 keep. JSON files are UTF-8, with an optional BOM. Invalid UTF-8 and the
 non-JSON constants `NaN`, `Infinity` and `-Infinity` are refused, as are numeric
 values outside the finite range, a whole number too large for a float included
@@ -1385,7 +1387,9 @@ text, as in ECMAScript: an id, a stem or a date followed by a line break is refu
 by both readers, although Python's own `$` would let it pass. The time base label's
 limit of 40 counts characters, not UTF-16 units. Each event id must equal its entry in
 `analysis.json`. Series ids must be unique within each event; duplicate ids are
-refused with the event and the repeated id in the problem message.
+refused with the event and the repeated id in the problem message. Ids, including
+`series[].object`, are 1 to 64 characters: an ASCII letter or digit first, then
+ASCII letters, digits, `_`, `.` or `-`.
 
 **Paths** are relative to the manifest that holds them, and are validated before
 normalization. A path consists of `/`-separated segments: none may be empty, `.` or
@@ -1467,10 +1471,12 @@ be quoted with whitespace outside the quotes, and doubled quotes escape a quote
 inside a field. Quotes in unquoted text, text after a closing quote, and unclosed
 quotes are errors. An empty value cell is a missing sample and breaks the line;
 an empty time is an error. Column names and values are trimmed. `quantity` fixes
-the unit: `hrr` kW, `volume` m3, `area` m2, `height` m. `role` is `measured`,
-`reconstructed` or `estimated`;
+the unit: `hrr` kW, `volume` m3, `area` m2, `height` m, and (event 1.2) `heatFlux`
+exactly `kW/m2`. `role` is `measured`, `reconstructed` or `estimated`; heat flux
+permits only `measured` or `estimated`.
 `basis` (`convective` or `total`) is for heat release rate only. Volume and area may
-not be negative. `responseTime_s` (event 1.1, a positive number of seconds) is the
+not be negative. Heat flux may be negative, for example a gauge's zero drift.
+`responseTime_s` (event 1.1, a positive number of seconds) is the
 first-order response time of a `measured` heat release rate, the hood's lag; the
 board uses it to pass the estimates through the same lag (`y' = (x - y) / tau`, stepped
 exactly between samples), on the plot when asked and for the percentages that
@@ -1481,6 +1487,19 @@ Heskestad height refer to it, and a response time on a later one is not used. Th
 response at an event is worked out from the unbroken run of an estimate's samples
 that reaches the event's first instant: what lies before a missing sample is not
 carried across it.
+
+**Series objects** (event 1.2). A heat flux series may carry `object`, the id of
+the object that recorded it in the site plan named by `analysis.json`'s `sitePlan`.
+No other quantity may carry it. Several series may name the same object, for
+example two sensors on one mount. A heat flux series without `object` is valid
+and can be plotted without a 3-D gauge.
+
+The site plan check is separate from manifest parsing: every linked object must
+exist and have `type: "heatFluxSensor"`. TypeScript's pure
+`seriesObjectProblems(event, objects)` returns one translated message per problem,
+or an empty list. The board calls it after reading the site plan and refuses the
+event if it reports problems. Python's `FlameAnalysis.check()` reports errors with
+codes `series-object-missing` and `series-object-type`, respectively.
 
 **Text** is a string or `{"en": ..., "fr": ...}` with English required. Step ids are
 `cameras`, `frames`, `segmentation`, `reconstruction`, `size`, `hrr` and
@@ -1494,4 +1513,5 @@ named); `deep` also opens every outline, hull and mesh. The
 synthetic test in `fixtures/flame-analysis/` is built by
 `tools/build_synthetic_flame_event.py` and regenerates exactly: the same bytes for its
 text files, the same pixels for its PNGs and the same arrays for its NPZ files (their
-compressed bytes vary with the zlib build).
+compressed bytes and ZIP headers vary with the Python and zlib build). The generator
+retains existing NPZ archives when their decoded members are unchanged.

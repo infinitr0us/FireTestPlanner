@@ -15,6 +15,15 @@ date followed by a line break (`id_newline_series`, `id_newline_event`,
 and a time base label of 21 characters outside the Basic Multilingual Plane
 (`label_astral`), accepted because the limit of 40 counts characters.
 
+Seven event 1.2 cases bring the total to 67: `v12_heat_flux` accepts a heat flux
+series linked to a synthetic site-plan gauge; `v12_heat_flux_wrong_unit`,
+`v12_heat_flux_reconstructed`, `v12_object_wrong_quantity`, `v11_object` and
+`v11_heat_flux` refuse unit, role, quantity and version violations;
+`v12_heat_flux_negative` accepts negative heat flux and an empty sample. Both
+readers also directly test missing objects, objects of another type, two series
+sharing a gauge and a series without an object. The TypeScript corpus runner
+checks object references after reading the site plan, separately from parsing.
+
 `meshes.json` covers the 17 original PLY variants, three outputs from the old
 writer probes, two header boundary cases, and five strict-header cases (BOM,
 Unicode, element order and numeric syntax). The old writer's fractional-index

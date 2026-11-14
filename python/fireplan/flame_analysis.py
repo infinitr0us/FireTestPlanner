@@ -41,8 +41,8 @@ EVENT_FORMAT = "fireplan-flame-event"
 OUTLINES_FORMAT = "fireplan-flame-outlines"
 VERSION = "1.0.0"
 #: Event manifests: 1.1 adds files.mesh and series[].responseTime_s. A file
-#: declares the lowest version its contents need.
-EVENT_VERSIONS = ("1.0.0", "1.1.0")
+#: declares the lowest version its contents need. 1.2 adds heat flux and object links.
+EVENT_VERSIONS = ("1.0.0", "1.1.0", "1.2.0")
 
 #: The steps of the explanation, in the order the board shows them.
 STEP_IDS = ("cameras", "frames", "segmentation", "reconstruction", "size", "hrr", "limitations")
@@ -51,6 +51,7 @@ _SCHEMA_FILES = {
     (ANALYSIS_FORMAT, "1.0.0"): "flame-analysis-1.0.0.schema.json",
     (EVENT_FORMAT, "1.0.0"): "flame-event-1.0.0.schema.json",
     (EVENT_FORMAT, "1.1.0"): "flame-event-1.1.0.schema.json",
+    (EVENT_FORMAT, "1.2.0"): "flame-event-1.2.0.schema.json",
     (OUTLINES_FORMAT, "1.0.0"): "flame-outlines-1.0.0.schema.json",
 }
 
@@ -58,7 +59,7 @@ _TEMPLATE_FIELD = re.compile(r"\{([a-z]+)\}")
 
 
 class FlameAnalysisError(Exception):
-    """A folder, manifest or data file that cannot be read as format 1.0 or 1.1."""
+    """A folder, manifest or data file that cannot be read as format 1.0 through 1.2."""
 
 
 class _SeriesTimeError(FlameAnalysisError):
@@ -105,7 +106,10 @@ def _validate(kind: str, data: Any, where: str) -> None:
     filename = filename or _SCHEMA_FILES[(kind, "1.0.0")]
     schema = json.loads(_schema_text(filename))
     validator = _validator_class()(schema)
-    errors = sorted(validator.iter_errors(data), key=lambda e: list(e.absolute_path))
+    # Keep an unsupported version visible even if its newer fields also fail the
+    # fallback schema and would otherwise fill the five diagnostic slots.
+    errors = sorted(validator.iter_errors(data),
+                    key=lambda e: (list(e.absolute_path) != ["version"], list(e.absolute_path)))
     if errors:
         lines = []
         for error in errors[:5]:
@@ -287,8 +291,8 @@ class Series:
     id: str
     label: Any
     role: str          # measured | reconstructed | estimated
-    quantity: str      # hrr | volume | area | height
-    unit: str          # kW | m3 | m2 | m
+    quantity: str      # hrr | volume | area | height | heatFlux
+    unit: str          # kW | m3 | m2 | m | kW/m2
     file: str
     time: str
     value: str
@@ -296,6 +300,8 @@ class Series:
     note: Any = None
     #: 1.1: the first-order response time of a measured heat release rate.
     responseTime_s: Optional[float] = None
+    #: 1.2: the site plan's heatFluxSensor that recorded this heat flux series.
+    object: Optional[str] = None
 
 
 class FlameEvent:
@@ -448,8 +454,17 @@ class FlameEvent:
                         "{}: pictures are {} x {} px, the site plan's camera {} x {}: the 3-D "
                         "flame cannot be drawn over them".format(cam, size[0], size[1], *plan_cam.resolution))
 
+        objects = {obj.id: obj for obj in plan.objects} if plan is not None else {}
         seen = set()
         for s in self.series:
+            if plan is not None and s.object is not None:
+                obj = objects.get(s.object)
+                if obj is None:
+                    add("error", "series-object-missing",
+                        "Event {}: series {!r} names missing site plan object {!r}".format(self.id, s.id, s.object))
+                elif obj.type != "heatFluxSensor":
+                    add("error", "series-object-type",
+                        "Event {}: series {!r} object {!r} must be a heat flux sensor".format(self.id, s.id, s.object))
             if s.id in seen:
                 add("error", "series-duplicate", "event {!r}: series id {!r} repeats".format(self.id, s.id))
             seen.add(s.id)

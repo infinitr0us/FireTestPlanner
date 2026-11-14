@@ -151,6 +151,48 @@
         "height_m": 2.3
       },
       "recording": null
+    },
+    {
+      "id": "gauge-near",
+      "type": "heatFluxSensor",
+      "name": "Near gauge (synthetic)",
+      "transform": {
+        "position_m": [-0.45, -0.1, 0.8],
+        "rotation_quat": [0.58055, -0.465701, -0.41792, 0.520986],
+        "aimTarget_m": [0, 0, 0.85]
+      },
+      "gauge": {
+        "kind": "schmidt-boelter",
+        "range_kw_m2": 100,
+        "viewAngle_deg": 180,
+        "waterCooled": true,
+        "serial": "SYNTH-gauge-near"
+      },
+      "mount": {
+        "type": "pole",
+        "height_m": 0.8
+      }
+    },
+    {
+      "id": "gauge-far",
+      "type": "heatFluxSensor",
+      "name": "Far gauge (synthetic)",
+      "transform": {
+        "position_m": [2.5, 0, 0.8],
+        "rotation_quat": [0.504974, 0.504974, 0.494976, 0.494976],
+        "aimTarget_m": [0, 0, 0.85]
+      },
+      "gauge": {
+        "kind": "schmidt-boelter",
+        "range_kw_m2": 100,
+        "viewAngle_deg": 180,
+        "waterCooled": true,
+        "serial": "SYNTH-gauge-far"
+      },
+      "mount": {
+        "type": "pole",
+        "height_m": 0.8
+      }
     }
   ]
 }

@@ -7,7 +7,7 @@ import { flameHeightM } from './correlations';
 import {
   centredMean, cumulative, fillTemplate, firstOrderResponse, FlameAnalysisError, heskestadSeries, instantAt, integrate,
   joinPath, keyNumbers, localText, parseAnalysisManifest, parseEventManifest, parseMesh, parseOutlines, parseSeriesCsv,
-  type Series,
+  seriesObjectProblems, type Series,
 } from './flame-analysis';
 
 const ROOT = new URL('../../../fixtures/flame-analysis/', import.meta.url);
@@ -63,6 +63,27 @@ describe('the synthetic flame analysis test (mirror of python/tests/test_flame_a
     expect(k.estimates.map((x) => x.id)).toEqual(['hrr-from-volume', 'hrr-from-area']);
     expect(k.estimates[0].peakRatio).toBeCloseTo(k.estimates[0].peak.value / 108.64, 12);
     expect(k.height!.peak.value).toBeGreaterThan(1);
+  });
+
+  it('reads three heat flux records on two gauges, with 1 Hz samples, drift and a gap', () => {
+    const e1 = event('E1'), flux = e1.series.filter(s => s.quantity === 'heatFlux');
+    const site = JSON.parse(read('site.ftp.json'));
+    expect(seriesObjectProblems(e1, site.objects)).toEqual([]);
+    expect(flux.map(s => [s.id, s.object, s.value])).toEqual([
+      ['near', 'gauge-near', 'near_kW_m2'], ['near2', 'gauge-near', 'near2_kW_m2'],
+      ['far', 'gauge-far', 'far_kW_m2'],
+    ]);
+    for (const s of flux) {
+      expect([s.role, s.unit, s.file, s.time]).toEqual(['measured', 'kW/m2', 'series/heat_flux.csv', 't_s']);
+      expect(localText(s.note, 'en')).toMatch(/Synthetic/);
+    }
+    const near = series('E1', 'near'), near2 = series('E1', 'near2'), far = series('E1', 'far');
+    expect([...near.t]).toEqual(Array.from({ length: 14 }, (_, i) => 95 + i));
+    expect([...near2.t]).toEqual([...near.t]); expect([...far.t]).toEqual([...near.t]);
+    expect([...near2.v].some((v, i) => v < 0 && near2.t[i] < e1.onset_s)).toBe(true);
+    expect([...far.t].filter((_, i) => Number.isNaN(far.v[i]))).toEqual([101]);
+    expect(Math.max(...near.v)).toBeGreaterThan(Math.max(...near2.v));
+    expect(event('E2').series.every(s => s.quantity !== 'heatFlux' && s.object === undefined)).toBe(true);
   });
 });
 
@@ -149,9 +170,9 @@ describe('series, outlines and numbers', () => {
 });
 
 describe('format 1.1: meshes and the hood response time (mirror of fireplan)', () => {
-  it('reads E1 at 1.1 with its meshes, and E2 at 1.0', () => {
+  it('reads E1 at 1.2 with its 1.1 meshes and response time, and E2 at 1.0', () => {
     const e1 = event('E1'), e2 = event('E2');
-    expect([e1.version, e2.version]).toEqual(['1.1.0', '1.0.0']);
+    expect([e1.version, e2.version]).toEqual(['1.2.0', '1.0.0']);
     expect(e1.series.find((s) => s.id === 'hood')!.responseTime_s).toBe(2.3);
     const i = e1.instants.t_s.indexOf(101.5);
     const mesh = parseMesh(new Uint8Array(readFileSync(new URL(joinPath('E1', fillTemplate(e1.files.mesh!, undefined, e1.instants.stem[i])), ROOT))));

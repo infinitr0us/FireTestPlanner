@@ -1757,4 +1757,7 @@ export const fr: Readonly<Record<string, string>> = {
   "as the hood sees it: peak {p1}, heat {p2}": "vu par la hotte : maximum {p1}, chaleur {p2}",
   "The percentages compare the estimate as the hood would record it (response time {p1} s: peak {p2}, heat {p3}) with the hood. A hood averages over its response time, so at a peak it reads lower than the flame.": "Les pourcentages comparent l’estimation telle que la hotte l’enregistrerait (temps de réponse {p1} s : maximum {p2}, chaleur {p3}) à la hotte. Une hotte fait la moyenne sur son temps de réponse; à un maximum, elle indique donc moins que la flamme.",
   "A hood averages over its response time, so at a peak it reads lower than the flame: a higher estimate there is expected.": "Une hotte fait la moyenne sur son temps de réponse; à un maximum, elle indique donc moins que la flamme : une estimation plus élevée y est attendue.",
+  "is for heat flux only": "réservé au flux thermique",
+  "Event {p1}: series '{p2}' names missing site plan object '{p3}'": "Événement {p1} : la série « {p2} » désigne l’objet « {p3} », absent du plan d’implantation",
+  "Event {p1}: series '{p2}' object '{p3}' must be a heat flux sensor": "Événement {p1} : l’objet « {p3} » de la série « {p2} » doit être un capteur de flux thermique",
 };

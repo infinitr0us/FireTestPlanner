@@ -67,7 +67,7 @@ def test_shared_paths_in_schemas_and_runtime(folder, case):
     a["sitePlan"] = e["series"][0]["file"] = case["path"]
     operations = [lambda: _inside(str(folder), str(folder), case["path"]),
                   lambda: _validate(ANALYSIS_FORMAT, a, "analysis.json")]
-    for version in ("1.0.0", "1.1.0"):
+    for version in ("1.0.0", "1.1.0", "1.2.0"):
         data = copy.deepcopy(e)
         data["version"] = version
         operations.append(lambda data=data: _validate(EVENT_FORMAT, data, "event.json"))
@@ -84,6 +84,88 @@ def test_shared_paths_in_schemas_and_runtime(folder, case):
 def test_templates_validate_before_substitution(template):
     with pytest.raises(FlameAnalysisError):
         fill_template(template, "camA", "0")
+
+
+def heat_flux_event(folder):
+    data = json.loads((CORPUS / "cases/v12_heat_flux/event.json").read_text(encoding="utf-8"))
+    shutil.copyfile(CORPUS / "cases/v12_heat_flux/site.ftp.json", folder / "site.ftp.json")
+    (folder / "event.json").write_bytes((json.dumps(data) + "\n").encode("utf-8"))
+    return data
+
+
+@pytest.mark.parametrize("role", ["measured", "estimated"])
+def test_heat_flux_with_or_without_object(folder, role):
+    heat_flux_event(folder)
+    edit(folder / "event.json", lambda d: d["series"][-1].update(role=role))
+    analysis = FlameAnalysis.load(str(folder))
+    assert analysis.event("E").series[-1].object == "gauge"
+    assert analysis.check() == []
+    edit(folder / "event.json", lambda d: d["series"][-1].pop("object"))
+    analysis = FlameAnalysis.load(str(folder))
+    assert analysis.event("E").series[-1].object is None
+    assert analysis.check() == []
+
+
+@pytest.mark.parametrize("version", ["1.0.0", "1.1.0"])
+def test_old_events_refuse_both_1_2_additions(folder, version):
+    data = heat_flux_event(folder)
+    data["version"] = version
+    del data["series"][-1]["object"]
+    with pytest.raises(FlameAnalysisError, match="series/2/quantity"):
+        _validate(EVENT_FORMAT, data, "event.json")
+    data["series"].pop()
+    data["series"][0]["object"] = "gauge"
+    with pytest.raises(FlameAnalysisError, match="object.*unexpected"):
+        _validate(EVENT_FORMAT, data, "event.json")
+
+
+@pytest.mark.parametrize("change", [
+    {"unit": "W/m2"}, {"role": "reconstructed"}, {"basis": "total"}, {"responseTime_s": 2},
+    {"quantity": "hrr", "unit": "kW"}, {"object": ""}, {"object": "-gauge"}, {"object": "gauge\n"},
+    {"object": "gauge space"}, {"object": "é"}, {"object": "g" * 65}, {"object": None}, {"object": 1},
+])
+def test_invalid_heat_flux_descriptor(folder, change):
+    data = heat_flux_event(folder)
+    data["series"][-1].update(change)
+    with pytest.raises(FlameAnalysisError, match="series/2"):
+        _validate(EVENT_FORMAT, data, "event.json")
+
+
+def test_heat_flux_object_id_grammar(folder):
+    data = heat_flux_event(folder)
+    for object_id in ("0", "Gauge_1.2-3", "g" * 64):
+        data["series"][-1]["object"] = object_id
+        _validate(EVENT_FORMAT, data, "event.json")
+
+
+def test_1_1_fields_stay_valid_in_1_2(folder):
+    data = json.loads((folder / "event.json").read_text(encoding="utf-8"))
+    data["files"]["mesh"] = "mesh/{stem}.ply"
+    data["series"][0]["responseTime_s"] = 2
+    for version in ("1.1.0", "1.2.0"):
+        data["version"] = version
+        _validate(EVENT_FORMAT, data, "event.json")
+
+
+@pytest.mark.parametrize("deep", [False, True])
+def test_series_objects_checked_separately_once_per_series(folder, deep):
+    heat_flux_event(folder)
+    def shared(d):
+        s = d["series"][-1]
+        d["series"].extend([{**s, "id": "second"}, {k: v for k, v in {**s, "id": "unlinked"}.items() if k != "object"}])
+    edit(folder / "event.json", shared)
+    assert FlameAnalysis.load(str(folder)).check(deep=deep) == []
+    def broken(d):
+        d["series"][-3]["object"] = "missing"
+        d["series"][-2]["object"] = "camA"
+    edit(folder / "event.json", broken)
+    analysis = FlameAnalysis.load(str(folder))
+    assert analysis.event("E").series[-3].object == "missing"  # parsing does not resolve the plan
+    issues = analysis.check(deep=deep)
+    assert [(i.severity, i.code, i.message, i.object_id) for i in issues] == [
+        ("error", "series-object-missing", "Event E: series 'flux' names missing site plan object 'missing'", "E"),
+        ("error", "series-object-type", "Event E: series 'second' object 'camA' must be a heat flux sensor", "E"),
+    ]
 
 
 def test_duplicate_series_checks_each_descriptor(folder):

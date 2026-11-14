@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { checkEvent, fillTemplate, joinPath, parseAnalysisManifest, parseEventManifest, parseMesh,
-  parseOutlines, parseSeriesCsv, pathProblem, type EventManifest, type Series } from './flame-analysis';
+  parseOutlines, parseSeriesCsv, pathProblem, seriesObjectProblems, type EventManifest, type Series } from './flame-analysis';
 import { parseFrameData } from './flame';
 import { checkedEventSource, readText, type AnalysisSource } from '../io/flame-analysis-source';
 import { connectShell, saveMedia, shell, openShellAnalysis, readShellAnalysisFile } from '../io/files';
@@ -23,8 +23,11 @@ const sourceFor = (name = 'baseline', files: string[] = []): AnalysisSource => {
 
 async function load(source: AnalysisSource): Promise<void> {
   const analysis = parseAnalysisManifest(await readText(source, 'analysis.json'));
+  const site = JSON.parse(await readText(source, analysis.sitePlan)) as { objects: { id: string; type: string }[] };
   for (const entry of analysis.events) {
     const event = parseEventManifest(await readText(source, entry.path));
+    const problems = seriesObjectProblems(event, site.objects);
+    if (problems.length) throw new Error(problems.join('\n'));
     const series = new Map<string, Series>();
     for (const s of event.series) series.set(s.id, parseSeriesCsv(await readText(source, s.file), s.time, s.value, s.file));
     const checked = checkedEventSource(source, event, entry, series, '');
@@ -58,9 +61,63 @@ describe('shared reviewer corpus', () => {
     analysis.sitePlan = path;
     const event = baseEvent(); event.series[0].file = path;
     for (const parse of [() => joinPath('', path), () => parseAnalysisManifest(JSON.stringify(analysis)),
-      ...['1.0.0', '1.1.0'].map(version => () => parseEventManifest(JSON.stringify({ ...event, version })))]) {
+      ...['1.0.0', '1.1.0', '1.2.0'].map(version => () => parseEventManifest(JSON.stringify({ ...event, version })))]) {
       if (accept) expect(parse).not.toThrow(); else expect(parse).toThrow();
     }
+  });
+});
+
+describe('event 1.2 heat flux (mirror of fireplan)', () => {
+  const heatFlux = (): EventManifest => json<EventManifest>('cases/v12_heat_flux/event.json');
+  const parse = (event: EventManifest): EventManifest => parseEventManifest(JSON.stringify(event));
+  it.each(['measured', 'estimated'] as const)('accepts %s heat flux with or without an object', role => {
+    const event = heatFlux(), s = event.series.at(-1)!;
+    s.role = role;
+    expect(parse(event).series.at(-1)!.object).toBe('gauge');
+    delete s.object;
+    expect(parse(event).series.at(-1)!.object).toBeUndefined();
+  });
+  it.each(['1.0.0', '1.1.0'])('keeps %s closed to both 1.2 additions', version => {
+    const event = heatFlux(); event.version = version;
+    delete event.series.at(-1)!.object;
+    expect(() => parse(event)).toThrow(/series\/2\/quantity/);
+    event.series.pop(); event.series[0].object = 'gauge';
+    expect(() => parse(event)).toThrow(/unexpected property 'object'/);
+  });
+  it.each([
+    { unit: 'W/m2' }, { role: 'reconstructed' }, { basis: 'total' }, { responseTime_s: 2 },
+    { quantity: 'hrr', unit: 'kW' }, { object: '' }, { object: '-gauge' }, { object: 'gauge\n' },
+    { object: 'gauge space' }, { object: 'é' }, { object: 'g'.repeat(65) }, { object: null }, { object: 1 },
+  ])('refuses invalid heat flux descriptor %j', change => {
+    const event = heatFlux(); Object.assign(event.series.at(-1)!, change);
+    expect(() => parse(event)).toThrow(/series\/2/);
+  });
+  it('accepts the same id grammar as other ids', () => {
+    for (const object of ['0', 'Gauge_1.2-3', 'g'.repeat(64)]) {
+      const event = heatFlux(); event.series.at(-1)!.object = object;
+      expect(parse(event).series.at(-1)!.object).toBe(object);
+    }
+  });
+  it('keeps the 1.1 fields valid at 1.1 and 1.2', () => {
+    for (const version of ['1.1.0', '1.2.0']) {
+      const event = baseEvent(); event.version = version;
+      event.files.mesh = 'mesh/{stem}.ply'; event.series[0].responseTime_s = 2;
+      expect(parse(event)).toEqual(event);
+    }
+  });
+  it('checks references separately, once per series, without changing either input', () => {
+    const event = heatFlux(), s = event.series.at(-1)!;
+    event.series.push({ ...s, id: 'second' }, { ...s, id: 'unlinked', object: undefined });
+    const objects = Object.freeze([Object.freeze({ id: 'gauge', type: 'heatFluxSensor' })]);
+    const before = JSON.stringify(event);
+    expect(seriesObjectProblems(event, objects)).toEqual([]);
+    expect(JSON.stringify(event)).toBe(before);
+    s.object = 'missing'; event.series.at(-2)!.object = 'camA';
+    expect(parse(event)).toEqual(event); // the manifest alone cannot resolve the plan
+    expect(seriesObjectProblems(event, [{ id: 'camA', type: 'camera' }])).toEqual([
+      "Event E: series 'flux' names missing site plan object 'missing'",
+      "Event E: series 'second' object 'camA' must be a heat flux sensor",
+    ]);
   });
 });
 
