@@ -13,8 +13,8 @@ import { flameHeightM } from '../core/correlations';
 import {
   asHoodSees, centredMean, cumulative, fillTemplate, folderOf, heskestadSeries, hoodOf, instantAt, joinPath,
   keyNumbers, localText, parseMesh, projectHull, type HullProjection,
-  parseAnalysisManifest, parseEventManifest, parseOutlines, parseSeriesCsv, STEP_IDS,
-  type AnalysisManifest, type EventManifest, type KeyNumbers, type Series, type StepId,
+  parseAnalysisManifest, parseEventManifest, parseOutlines, parseSeriesCsv, seriesObjectProblems, STEP_IDS,
+  type AnalysisManifest, type EventManifest, type EventSeries, type KeyNumbers, type Series, type StepId,
 } from '../core/flame-analysis';
 import { burnerDiameterM, cameras as planCameras, displayName, primaryBurner, radiativeFractionOf } from '../core/plan';
 import type { CameraObject, LengthUnit, PlanDocument } from '../core/types';
@@ -27,17 +27,31 @@ import { AnalysisScene, type FlameLook, type SceneView } from '../scene/flame-an
 import { ANALYSIS_DEFAULT_SPEED, ANALYSIS_SPEEDS, Playhead } from '../state/playhead';
 import { h } from './dom';
 import { CameraTiles, drawHull, drawOutline, placement, type PictureMode } from './flame-analysis-cameras';
-import { AnalysisPlots, type Band, type Moment, type PlotLine, type PlotSpec } from './flame-analysis-plots';
+import { AnalysisPlots, readoutText, type Band, type Moment, type PlotLine, type PlotSpec } from './flame-analysis-plots';
 import {
   checkExportSignal, Composer, encodePng, encodeVideo, VIDEO_FPS, videoFrames, type VideoLayout, type VideoOptions,
 } from './flame-analysis-video';
 import * as i18n from './i18n';
-import { fmt } from './plot-svg';
+import { fmt, valueAt } from './plot-svg';
 import { handleTransportKey, setTransportPlaying, transportButton } from './transport';
 
 const IMPERIAL = new Set<LengthUnit>(['ft', 'ft-in', 'in']);
 const PREFETCH = 8;
 const READ_CONCURRENCY = 8;
+
+/** The board's view choices, kept for this computer like the interface language:
+ *  whether the plots are shown and whether they draw as the event plays. */
+const VIEW_KEY = 'fire-test-plan.flame-analysis.view';
+interface BoardView { plots: boolean; reveal: boolean }
+function readView(): BoardView {
+  try {
+    const saved = JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}') as Partial<BoardView>;
+    return { plots: saved.plots !== false, reveal: saved.reveal !== false };
+  } catch { return { plots: true, reveal: true }; }
+}
+function writeView(view: BoardView): void {
+  try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch { /* Session-only preference. */ }
+}
 
 /** Generic step titles, used when a folder has no text of its own. */
 const STEP_TITLES = (): Record<StepId, string> => ({
@@ -55,8 +69,13 @@ const STEP_TARGET: Record<StepId, string> = {
   size: 'size', hrr: 'hrr', limitations: '',
 };
 
+/** An event's heat flux records by the gauge that made them (the site plan object they
+ *  name), or one alone where a series names no gauge. Shown and hidden together. */
+interface FluxGauge { key: string; object?: string; name: string; series: EventSeries[] }
+
 interface LoadedEvent {
   event: EventManifest;
+  gauges: FluxGauge[];
   folder: string;
   series: Map<string, Series>;
   outlines: Map<string, Float32Array[][]>;
@@ -65,7 +84,7 @@ interface LoadedEvent {
   tiles: CameraTiles;
   plots: AnalysisPlots;
   /** What the plots draw, for the video and PNG composition. */
-  plotData: { specs: PlotSpec[]; bands: Band[]; moments: Moment[]; window: [number, number] };
+  plotData: { specs: PlotSpec[]; bands: Band[]; moments: Moment[]; window: [number, number]; reveal: boolean };
 }
 
 export interface FlameAnalysisOptions {
@@ -83,6 +102,15 @@ export class FlameAnalysisWorkspace {
   /** Shown once a folder is open; the welcome screen has its own button. */
   private another = h('button', { type: 'button', class: 'btn flame-analysis__another', hidden: true, onclick: () => { void this.choose(); } },
     [i18n.t("Open another analysis…")]);
+  /** Shown with an event: the plots, or the pictures and the 3-D view on the whole board. */
+  private plotsToggle = h('button', {
+    type: 'button', class: 'btn flame-analysis__toggle flame-analysis__plots-toggle', hidden: true,
+    title: i18n.t("Show or hide the plots; without them the pictures and the 3-D view share the board"),
+    onclick: () => this.setPlotsShown(!this.plotsShown),
+  }, [i18n.t("Plots")]);
+  private plotsShown: boolean;
+  private main?: HTMLElement;
+  private layoutObserver?: ResizeObserver;
   private chooseRequest = 0;
   private source?: AnalysisSource;
   private analysis?: AnalysisManifest;
@@ -132,15 +160,23 @@ export class FlameAnalysisWorkspace {
   private hullCache = new Map<string, HullProjection | null>();
   private flameLook: FlameLook = 'cubes';
   /** The plots' choices: heat released instead of its rate, the estimates as the
-   *  hood would record them, and the Heskestad height beside the flame's. */
-  private plotOptions = { heat: false, hoodResponse: false, heskestad: false };
+   *  hood would record them, the Heskestad height beside the flame's, and each line
+   *  drawn only up to the playback time. */
+  private plotOptions = { heat: false, hoodResponse: false, heskestad: false, reveal: true };
+  /** The gauges whose heat flux is plotted: none at first; kept across events. */
+  private fluxShown = new Set<string>();
 
   constructor(private onOpenChange: (open: boolean) => void = () => {}, private options: FlameAnalysisOptions = {}) {
+    const view = readView();
+    this.plotsShown = view.plots;
+    this.plotOptions.reveal = view.reveal;
+    this.plotsToggle.setAttribute('aria-pressed', String(this.plotsShown));
     this.dialog.append(
       h('header', { class: 'flame-analysis__header' }, [
         this.title,
         h('label', { class: 'flame-analysis__event' }, [i18n.t("Event"), this.eventSelect]),
         this.readout,
+        this.plotsToggle,
         this.another,
         h('button', { type: 'button', class: 'btn', onclick: () => this.close() }, [i18n.t("Back to plan")]),
       ]),
@@ -237,6 +273,7 @@ export class FlameAnalysisWorkspace {
     this.title.textContent = i18n.t("Flame analysis");
     this.eventSelect.parentElement!.hidden = true;
     this.another.hidden = true;
+    this.plotsToggle.hidden = true;
     this.readout.textContent = '';
     this.body.replaceChildren(h('div', { class: 'flame-analysis__welcome' }, [
       h('h2', {}, [i18n.t("Review a fire filmed by several cameras")]),
@@ -258,6 +295,7 @@ export class FlameAnalysisWorkspace {
    *  its other events in the selector and the way to another folder beside it. */
   private eventFailed(message: string): void {
     this.readout.textContent = '';
+    this.plotsToggle.hidden = true;
     this.body.replaceChildren(h('div', { class: 'flame-analysis__welcome' }, [
       h('h2', {}, [i18n.t("This event could not be opened")]),
       this.status,
@@ -325,6 +363,10 @@ export class FlameAnalysisWorkspace {
   }
 
   private unloadEvent(): void {
+    this.layoutObserver?.disconnect();
+    this.layoutObserver = undefined;
+    this.main = undefined;
+    this.plotsToggle.hidden = true;
     this.loaded?.tiles.dispose();
     this.loaded?.plots.dispose();
     this.loaded = undefined;
@@ -352,6 +394,9 @@ export class FlameAnalysisWorkspace {
       const listed = new Set(analysis.cameras.map((c) => c.id));
       const unknown = event.cameras.filter((c) => !listed.has(c) || !event.images[c]);
       if (unknown.length) throw new Error(i18n.t("{p1}: cameras {p2} are not in analysis.json or have no picture sizes.", { p1: path, p2: unknown.join(', ') }));
+      // A record's gauge must be a heat flux gauge of the site plan (format 1.2).
+      const objects = seriesObjectProblems(event, plan.objects);
+      if (objects.length) throw new Error(objects.join(' '));
       const texts = new Map<string, Promise<string>>();
       const textOf = (file: string): Promise<string> => {
         if (!texts.has(file)) texts.set(file, readText(source, file));
@@ -420,8 +465,11 @@ export class FlameAnalysisWorkspace {
     const numbers = keyNumbers(event, series);
     const tiles = new CameraTiles(source, event, folder,
       event.cameras.map((id) => ({ id, label: this.cameraLabel(id) })), outlines, (cam) => { void this.openZoom(cam); });
-    const { plots, plotData, note } = this.makePlots(event, series);
-    this.loaded = { event, folder, series, outlines, sequence, numbers, tiles, plots, plotData };
+    const gauges = this.fluxGauges(event, plan);
+    // Plotted gauges carry over to an event that has them; none are plotted at first.
+    this.fluxShown = new Set([...this.fluxShown].filter((key) => gauges.some((g) => g.key === key)));
+    const { plots, plotData, note } = this.makePlots(event, series, gauges);
+    this.loaded = { event, gauges, folder, series, outlines, sequence, numbers, tiles, plots, plotData };
     this.builtImperial = this.imperial();
 
     const sceneHost = h('div', { class: 'flame-analysis__scene-host' });
@@ -435,6 +483,7 @@ export class FlameAnalysisWorkspace {
       onclick: () => {
         tiles.setMode(mode);
         pictureButtons.forEach((b, k) => b.setAttribute('aria-pressed', String((['closeup', 'whole'] as PictureMode[])[k] === tiles.pictureMode)));
+        this.packPictures(); // a close-up and a whole picture have different shapes
       },
     }, [mode === 'closeup' ? i18n.t("Close-up") : i18n.t("Whole picture")]));
     const outlineToggle = h('button', {
@@ -473,12 +522,14 @@ export class FlameAnalysisWorkspace {
       sequence ? null : h('p', { class: 'flame-analysis__note' }, [i18n.t("This event has no 3-D flame at any instant.")]),
     ]);
     const plotPanel = h('section', { class: 'flame-analysis__panel flame-analysis__charts', 'aria-label': i18n.t("Plots") },
-      [this.plotBar(event, series), plots.element, note ? h('p', { class: 'flame-analysis__note flame-analysis__plot-note' }, [note]) : null]);
+      [this.plotBar(event, series), plots.element, note ? h('p', { class: 'flame-analysis__note flame-analysis__plot-note' }, [note]) : null,
+        this.fluxRow(gauges)]);
     const main = h('div', { class: 'flame-analysis__main' }, [
       h('div', { class: 'flame-analysis__left' }, [cameraPanel, scenePanel]),
       plotPanel,
       this.drawer,
     ]);
+    this.main = main;
     this.renderSteps(analysis);
     this.body.replaceChildren(
       this.steps,
@@ -487,6 +538,8 @@ export class FlameAnalysisWorkspace {
       this.transport(event),
       this.status,
     );
+    this.plotsToggle.hidden = false;
+    this.applyLayout();
 
     if (!this.scene) {
       this.scene = new AnalysisScene(sceneHost);
@@ -510,6 +563,7 @@ export class FlameAnalysisWorkspace {
     (error) => this.setStatus(error.message, 'error'));
     this.scene.setLook(this.flameLook);
     this.setSceneView(this.sceneView, viewButtons);
+    this.scene.setGauges(gauges.flatMap((g) => (g.object ? [g.object] : [])), (id) => this.toggleGauge(id));
 
     const times = event.instants.t_s;
     this.slider.max = String(times.length - 1);
@@ -527,6 +581,58 @@ export class FlameAnalysisWorkspace {
     const loaded = this.loaded;
     loaded?.tiles.setHullCheck(on && loaded.sequence ? this.hullProjection : null);
     this.body.querySelector('.flame-analysis__hull-toggle')?.setAttribute('aria-pressed', String(on && !!loaded?.sequence));
+    this.packPictures(); // the coverage line under each picture
+  }
+
+  // -- layout ----------------------------------------------------------------------
+
+  private setPlotsShown(shown: boolean): void {
+    this.plotsShown = shown;
+    writeView({ plots: shown, reveal: this.plotOptions.reveal });
+    this.applyLayout();
+  }
+
+  /** The board with its plots, or without them: the pictures in rows as large as the
+   *  height allows, in a column only as wide as they need, and the 3-D view beside
+   *  them taking the rest of the width. */
+  private applyLayout(): void {
+    this.plotsToggle.setAttribute('aria-pressed', String(this.plotsShown));
+    const main = this.main;
+    if (!main) return;
+    const left = main.querySelector<HTMLElement>('.flame-analysis__left')!;
+    const charts = main.querySelector<HTMLElement>('.flame-analysis__charts');
+    main.classList.toggle('flame-analysis__main--pictures', !this.plotsShown);
+    if (charts) charts.hidden = !this.plotsShown;
+    this.layoutObserver?.disconnect();
+    this.layoutObserver = undefined;
+    if (this.plotsShown) {
+      left.style.removeProperty('--pictures-w');
+      this.loaded?.tiles.pack(null);
+      return;
+    }
+    this.layoutObserver = new ResizeObserver(() => this.packPictures());
+    this.layoutObserver.observe(left);
+    this.packPictures();
+  }
+
+  private packPictures(): void {
+    const loaded = this.loaded, left = this.main?.querySelector<HTMLElement>('.flame-analysis__left');
+    if (!loaded || !left || this.plotsShown) return;
+    // A narrow window keeps the stacked panels of the board's small-screen layout.
+    if (!matchMedia('(min-width: 1101px)').matches || !left.clientWidth) {
+      left.style.removeProperty('--pictures-w');
+      loaded.tiles.pack(null);
+      return;
+    }
+    const bar = left.querySelector<HTMLElement>('.flame-analysis__cameras .flame-analysis__panel-bar')!;
+    // The column is at least as wide as the panel's buttons on one line (measured at
+    // their natural widths: under `nowrap` a button may squeeze and wrap its own text).
+    bar.style.width = 'max-content';
+    const barWidth = bar.offsetWidth + 2, barHeight = bar.offsetHeight;
+    bar.style.width = '';
+    // Panel border 1 + 1 and the tiles' padding: 8 at each side, 8 below.
+    const width = loaded.tiles.pack({ width: Math.floor((left.clientWidth - 10) * 0.55) - 18, height: left.clientHeight - barHeight - 10 });
+    left.style.setProperty('--pictures-w', `${Math.max(width + 18, barWidth)}px`);
   }
 
   /** The 3-D flame at an instant through a camera's calibrated model: its surface
@@ -585,12 +691,13 @@ export class FlameAnalysisWorkspace {
     const hasHrr = event.series.some((s) => s.quantity === 'hrr');
     const tau = this.responseTime(event);
     const canHeskestad = event.series.some((s) => s.quantity === 'height') && this.heskestad(event, series) !== null;
-    const toggle = (label: string, key: 'hoodResponse' | 'heskestad', title: string, disabled = false): HTMLButtonElement =>
+    const toggle = (label: string, key: 'hoodResponse' | 'heskestad' | 'reveal', title: string, disabled = false): HTMLButtonElement =>
       h('button', {
-        type: 'button', class: 'btn flame-analysis__toggle', 'aria-pressed': String(this.plotOptions[key]), title, disabled,
+        type: 'button', class: `btn flame-analysis__toggle flame-analysis__${key}`, 'aria-pressed': String(this.plotOptions[key]), title, disabled,
         onclick: (e: Event) => {
           this.plotOptions[key] = !this.plotOptions[key];
           (e.currentTarget as HTMLElement).setAttribute('aria-pressed', String(this.plotOptions[key]));
+          if (key === 'reveal') writeView({ plots: this.plotsShown, reveal: this.plotOptions.reveal });
           this.rebuildPlots();
         },
       }, [label]);
@@ -609,13 +716,14 @@ export class FlameAnalysisWorkspace {
       tau ? toggle(i18n.t("As the hood sees it"), 'hoodResponse',
         i18n.t("The estimates passed through the hood's own response time ({p1} s), so their timing compares with the hood's", { p1: i18n.formatNumber(tau) })) : null,
       canHeskestad ? toggle(i18n.t("Heskestad height"), 'heskestad', i18n.t("Heskestad's mean flame height from the hood record, beside the 3-D flame's top")) : null,
+      toggle(i18n.t("Draw as it plays"), 'reveal', i18n.t("Each line ends at the playback time, so the plots draw as the event plays; the axes keep the whole event. The exported video draws them the same way")),
     ]);
   }
 
   private rebuildPlots(): void {
     const loaded = this.loaded;
     if (!loaded) return;
-    const { plots, plotData, note } = this.makePlots(loaded.event, loaded.series);
+    const { plots, plotData, note } = this.makePlots(loaded.event, loaded.series, loaded.gauges);
     const old = loaded.plots.element;
     loaded.plots.dispose();
     old.replaceWith(plots.element);
@@ -626,6 +734,68 @@ export class FlameAnalysisWorkspace {
     charts?.querySelector('.flame-analysis__plot-note')?.remove();
     if (note) plots.element.after(h('p', { class: 'flame-analysis__note flame-analysis__plot-note' }, [note]));
     plots.setTime(loaded.event.instants.t_s[Math.max(this.index, 0)]);
+  }
+
+  /** Heat flux records by gauge, in the order the event lists them. */
+  private fluxGauges(event: EventManifest, plan: PlanDocument): FluxGauge[] {
+    const gauges: FluxGauge[] = [];
+    for (const s of event.series) {
+      if (s.quantity !== 'heatFlux') continue;
+      const key = s.object ?? `series:${s.id}`;
+      const known = gauges.find((g) => g.key === key);
+      if (known) { known.series.push(s); continue; }
+      const object = s.object ? plan.objects.find((o) => o.id === s.object) : undefined;
+      gauges.push({ key, object: s.object, name: object ? displayName(object) : localText(s.label), series: [s] });
+    }
+    return gauges;
+  }
+
+  /** One toggle per gauge under the plots: the keyboard's way to what a click on a
+   *  gauge in the 3-D view does, and the way to one outside the view. */
+  private fluxRow(gauges: FluxGauge[]): HTMLElement | null {
+    if (!gauges.length) return null;
+    return h('div', { class: 'flame-analysis__flux', role: 'group', 'aria-label': i18n.t("Heat flux gauges") }, [
+      h('span', { class: 'flame-analysis__flux-title' }, [i18n.t("Heat flux")]),
+      ...gauges.map((g) => h('button', {
+        type: 'button', class: 'btn btn--small flame-analysis__toggle flame-analysis__flux-toggle', dataset: { gauge: g.key },
+        'aria-pressed': String(this.fluxShown.has(g.key)),
+        title: i18n.t("Plot the heat flux of {p1}; a click on the gauge in the 3-D view does the same", { p1: g.name }),
+        onclick: () => this.toggleGauge(g.key),
+      }, [g.name])),
+    ]);
+  }
+
+  /** Plot a gauge's heat flux, or stop; plotting one shows the plots if they are hidden. */
+  private toggleGauge(key: string): void {
+    const loaded = this.loaded;
+    if (!loaded?.gauges.some((g) => g.key === key)) return;
+    if (this.fluxShown.has(key)) this.fluxShown.delete(key);
+    else {
+      this.fluxShown.add(key);
+      if (!this.plotsShown) this.setPlotsShown(true);
+    }
+    this.body.querySelectorAll<HTMLElement>('.flame-analysis__flux-toggle')
+      .forEach((b) => b.setAttribute('aria-pressed', String(this.fluxShown.has(b.dataset.gauge!))));
+    this.rebuildPlots();
+    this.showGauges();
+  }
+
+  /** A gauge's name and its reading at an instant (its first record's last sample). */
+  private gaugeText(gauge: FluxGauge, index: number): string {
+    const loaded = this.loaded;
+    const data = loaded?.series.get(gauge.series[0].id);
+    const value = data && index >= 0 ? valueAt(data.t, data.v, loaded!.event.instants.t_s[index]) : null;
+    return value === null || !Number.isFinite(value) ? gauge.name
+      : i18n.t("{p1}: {p2} kW/m²", { p1: gauge.name, p2: readoutText(value, 1) });
+  }
+
+  /** The gauges' labels in the 3-D view: reading at the playback time, and plotted or not. */
+  private showGauges(): void {
+    const loaded = this.loaded;
+    if (!loaded || !this.scene) return;
+    for (const g of loaded.gauges) {
+      if (g.object) this.scene.setGaugeState(g.object, this.gaugeText(g, this.index), this.fluxShown.has(g.key));
+    }
   }
 
   private setOutlines(shown: boolean): void {
@@ -654,10 +824,10 @@ export class FlameAnalysisWorkspace {
   private units(): { volume: [number, string]; area: [number, string]; height: [number, string] } {
     return this.imperial()
       ? { volume: [35.3146667, 'ft³'], area: [10.7639104, 'ft²'], height: [1 / 0.3048, 'ft'] }
-      : { volume: [1000, 'L'], area: [1, 'm²'], height: [1, 'm'] };
+      : { volume: [1, 'm³'], area: [1, 'm²'], height: [1, 'm'] };
   }
 
-  private makePlots(event: EventManifest, series: Map<string, Series>): { plots: AnalysisPlots; plotData: LoadedEvent['plotData']; note?: string } {
+  private makePlots(event: EventManifest, series: Map<string, Series>, gauges: FluxGauge[] = []): { plots: AnalysisPlots; plotData: LoadedEvent['plotData']; note?: string } {
     const units = this.units();
     let note: string | undefined;
     const line = (id: string, role: PlotLine['role'], nth: number, extra: Partial<PlotLine> = {}): PlotLine => {
@@ -718,6 +888,16 @@ export class FlameAnalysisWorkspace {
       }
       plots.push({ id: 'height', title: localText(height.label), unit: units.height[1], scale: units.height[0], lines });
     }
+    // Heat flux, of the gauges switched on: one plot on one scale, so gauges compare;
+    // records of one gauge (two sensors on one mount) take successive dashes.
+    const flux = gauges.filter((g) => this.fluxShown.has(g.key)).flatMap((g) => g.series);
+    if (flux.length) {
+      let nMeasured = 0, nEstimated = 0;
+      plots.push({
+        id: 'heatFlux', title: i18n.t("Heat flux"), unit: 'kW/m²',
+        lines: flux.map((s) => (s.role === 'estimated' ? line(s.id, 'estimated', nEstimated++) : line(s.id, 'measured', nMeasured++))),
+      });
+    }
 
     const times = event.instants.t_s;
     const step = times.length > 1 ? times[1] - times[0] : 0.1;
@@ -736,9 +916,10 @@ export class FlameAnalysisWorkspace {
     toBands(Object.values(event.quality?.outsideFrame ?? {}).flat(), 'outsideFrame');
     const moments = (event.keyMoments ?? []).map((m) => ({ t: m.t_s, label: localText(m.label) }));
     const window: [number, number] = [times[0], times[times.length - 1]];
+    const reveal = this.plotOptions.reveal;
     return {
-      plots: new AnalysisPlots(plots, window, event.onset_s, bands, moments, (t) => this.seekTime(t)),
-      plotData: { specs: plots, bands, moments, window },
+      plots: new AnalysisPlots(plots, window, event.onset_s, bands, moments, (t) => this.seekTime(t), { reveal }),
+      plotData: { specs: plots, bands, moments, window, reveal },
       note,
     };
   }
@@ -860,6 +1041,10 @@ export class FlameAnalysisWorkspace {
       hull: tiles.hullCheckOn ? this.hullProjection : null,
       coverage: tiles.hullCheckOn ? (camera, index) => tiles.coverageAt(camera, index) : undefined,
       scene: this.scene ?? null,
+      labelText: (id, index) => {
+        const gauge = loaded.gauges.find((g) => g.object === id);
+        return gauge ? this.gaugeText(gauge, index) : undefined;
+      },
       plots: loaded.plotData,
     }, layout, width);
   }
@@ -877,8 +1062,9 @@ export class FlameAnalysisWorkspace {
     }, signal);
   }
 
-  /** The board at the playback instant as a PNG, in the full-board layout. */
-  async exportPng(width: 1920 | 1280 = 1920, layout: VideoLayout = 'board'): Promise<Blob> {
+  /** The board at the playback instant as a PNG, by default in the layout on screen
+   *  (the full board, or the cameras and the 3-D view when the plots are hidden). */
+  async exportPng(width: 1920 | 1280 = 1920, layout: VideoLayout = this.plotsShown ? 'board' : 'cameras'): Promise<Blob> {
     const composer = this.composer(layout, width);
     if (!composer || this.index < 0) throw new Error(i18n.t("No event is open."));
     const index = this.index;
@@ -948,9 +1134,10 @@ export class FlameAnalysisWorkspace {
       return el;
     };
     const hasPlots = loaded.plotData.specs.length > 0;
+    // The board as it is on screen, with or without its plots.
     const layout = select(i18n.t("Layout"), [
       ['board', i18n.t("Full board")], ['cameras', i18n.t("Cameras and 3-D")], ...(hasPlots ? [['plots', i18n.t("3-D and plots")] as [string, string]] : []),
-    ], 'board');
+    ], this.plotsShown && hasPlots ? 'board' : 'cameras');
     const size = select(i18n.t("Size"), [['1920', '1920 × 1080'], ['1280', '1280 × 720']], '1920');
     const moments = (event.keyMoments ?? []).filter((m) => m.t_s > times[0] && m.t_s < times[times.length - 1]);
     const at = (t: number): string => `${t - event.onset_s > 0 ? '+' : ''}${i18n.formatNumber(t - event.onset_s, 1)} s`;
@@ -1123,6 +1310,7 @@ export class FlameAnalysisWorkspace {
       this.slider.value = String(index);
     }
     loaded.plots.setTime(times[index]);
+    this.showGauges();
     const relative = times[index] - event.onset_s;
     const base = this.analysis?.timeBase.label ?? '';
     const text = i18n.t("t = {p1} s from the onset ({p2} {p3} s)", {
@@ -1171,8 +1359,12 @@ export class FlameAnalysisWorkspace {
       button.setAttribute('aria-expanded', String(button.dataset.step === step));
     }
     const target = STEP_TARGET[step];
-    // Over the plots for a step about the pictures or the 3-D view, over those for one about a plot.
-    this.drawer.classList.toggle('flame-analysis__drawer--left', target === 'size' || target === 'hrr');
+    // A step about a plot shows the plots it explains.
+    if ((target === 'size' || target === 'hrr') && !this.plotsShown) this.setPlotsShown(true);
+    // Over the plots for a step about the pictures or the 3-D view, over those for one
+    // about a plot; without plots, over the panel the step is not about.
+    this.drawer.classList.toggle('flame-analysis__drawer--left',
+      this.plotsShown ? target === 'size' || target === 'hrr' : target === 'scene');
     this.body.querySelectorAll('[data-target], [data-plot]').forEach((el) => el.classList.remove('flame-analysis--pointed'));
     if (target === 'cameras' || target === 'scene') this.body.querySelector(`[data-target="${target}"]`)?.classList.add('flame-analysis--pointed');
     else if (target) loaded.plots.section(target === 'size' ? 'volume' : target)?.classList.add('flame-analysis--pointed');

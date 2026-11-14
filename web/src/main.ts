@@ -7,7 +7,7 @@ import { adoptShellLanguage, chooseLanguage, restoreBrowserLanguage } from './ui
 // tools/build_flame_fixture.py, so playback needs no external files.
 import examplePlan from '../../fixtures/flame/flame-test.ftp.json';
 import exampleFlameUrl from '../../fixtures/flame/flame-test.fvs?url';
-
+import appIconUrl from './assets/app-icon.svg?url';
 import { handleTransportKey } from './ui/transport';
 import { nextTest } from './core/asbuilt';
 import { serializePlan } from './core/serialize';
@@ -65,6 +65,10 @@ import './styles.css';
 // Must run before anything mutates the DOM: 'export shareable viewer' hands
 // someone this page with a plan baked in, and it has to be the pristine page.
 captureBootHtml();
+// The app's icon in the tab, after the capture so a shared viewer adds its own once
+// (the exe's, from the same master by tools/build_app_icon.py). Imported, so the
+// single-file build inlines it as a data URL.
+document.head.append(Object.assign(document.createElement('link'), { rel: 'icon', type: 'image/svg+xml', href: appIconUrl }));
 restoreBrowserLanguage();
 document.documentElement.lang = i18n.language();
 

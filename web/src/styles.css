@@ -967,6 +967,11 @@ dialog.report-overlay { padding: 0; }
 
 .flame-analysis__main { flex: 1; min-height: 0; position: relative; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 10px; padding: 0 16px 8px; }
 .flame-analysis__left { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+/* Without the plots: the pictures in a column as wide as their rows need (set by the
+   board), the 3-D view beside them taking the rest. */
+.flame-analysis__main--pictures { grid-template-columns: minmax(0, 1fr); }
+.flame-analysis__main--pictures .flame-analysis__left { grid-template-rows: minmax(0, 1fr); grid-template-columns: var(--pictures-w, minmax(0, 0.4fr)) minmax(0, 1fr); }
+.flame-analysis__panel[hidden] { display: none; }
 .flame-analysis__panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); }
 .flame-analysis__panel-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 8px; }
 .flame-analysis__panel-bar h2 { margin: 0 auto 0 0; font-size: 13px; }
@@ -982,6 +987,10 @@ dialog.report-overlay { padding: 0; }
 .flame-analysis__tile { flex: var(--tile-aspect, 1) 1 0; min-width: 0; margin: 0; display: flex; flex-direction: column; gap: 3px; }
 .flame-analysis__tile-open { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 0; background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px; cursor: zoom-in; }
 .flame-analysis__tile-open:hover { border-color: var(--accent); }
+/* Rows of one picture height (`packTiles`), wrapping at the widest row's width. */
+.flame-analysis__tiles--packed { flex-wrap: wrap; align-content: center; align-self: center; box-sizing: content-box; width: var(--tiles-w); max-width: calc(100% - 16px); }
+.flame-analysis__tiles--packed .flame-analysis__tile { flex: none; width: calc(var(--pack-aspect, 1) * var(--tile-h)); }
+.flame-analysis__tiles--packed .flame-analysis__tile-open { flex: none; height: var(--tile-h); }
 .flame-analysis__picture { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; }
 .flame-analysis__tile figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; column-gap: 6px; font-size: 11px; color: var(--text-dim); white-space: nowrap; overflow: hidden; }
 .flame-analysis__tile figcaption > * { min-width: 0; }
@@ -995,6 +1004,10 @@ dialog.report-overlay { padding: 0; }
 .flame-analysis__scene-host { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 .flame-analysis__scene-host > canvas { display: block; }
 .flame-analysis__labels { position: absolute; inset: 0; pointer-events: none; }
+/* A gauge with records: its label is a toggle for its heat flux plot (accent ring when plotted). */
+.flame-analysis__labels .flame-analysis__gauge-label { cursor: pointer; }
+.flame-analysis__gauge-label:hover { border-color: var(--accent); }
+.flame-analysis__gauge-label--on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); font-weight: 600; }
 
 /* The plots list scrolls if it must, never the panel: a scrollbar beside the plots leaves
    the plot bar its width, so it cannot wrap the bar and keep itself shown. */
@@ -1017,6 +1030,8 @@ dialog.report-overlay { padding: 0; }
 .flame-analysis__legend th { font-weight: normal; color: var(--text-dim); text-align: left; padding: 0 6px 0 4px; }
 .flame-analysis__legend td { padding: 0; vertical-align: middle; }
 .flame-analysis__value { width: 7ch; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; } /* a fixed column: a value changing at the cursor never re-wraps the labels, so a plot (as tall as its legend) keeps its height */
+.flame-analysis__flux { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 6px; font-size: 12px; }
+.flame-analysis__flux-title { color: var(--text-dim); }
 .flame-analysis__bands { display: flex; flex-wrap: wrap; gap: 12px; margin: 2px 0 0; font-size: 11px; color: var(--text-dim); }
 .flame-analysis__band-key::before { content: ''; display: inline-block; width: 12px; height: 9px; margin-right: 5px; vertical-align: -1px; }
 .flame-analysis__band-key--nohull::before { background: color-mix(in srgb, var(--warn) 40%, transparent); }
@@ -1053,6 +1068,6 @@ dialog.report-overlay { padding: 0; }
 
 @media (max-width: 1100px) {
   .flame-analysis__main { grid-template-columns: 1fr; overflow: auto; }
-  .flame-analysis__left { grid-template-rows: 260px 320px; }
+  .flame-analysis__left, .flame-analysis__main--pictures .flame-analysis__left { grid-template-columns: minmax(0, 1fr); grid-template-rows: 260px 320px; }
   .flame-analysis__readout { display: none; }
 }

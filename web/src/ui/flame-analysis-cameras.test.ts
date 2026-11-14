@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CameraTiles, placement } from './flame-analysis-cameras';
+import { CameraTiles, packTiles, placement } from './flame-analysis-cameras';
 import { deferred, fakeDocument, settle } from './flame-analysis-test-support';
 import type { EventManifest } from '../core/flame-analysis';
 
@@ -184,5 +184,28 @@ describe('the hull check share', () => {
       await vi.advanceTimersByTimeAsync(1000);
       expect(share).not.toHaveBeenCalled();
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('pictures in rows of one height (the board without its plots)', () => {
+  // The first delivery's close-ups: three at 3:4 and a wider one third.
+  const four = [0.75, 0.75, 0.907, 0.75];
+  it('puts four portrait pictures two and two where the height allows, with the column only as wide as the rows', () => {
+    const fit = packTiles(four, 1000, 774, 20, 6);
+    expect(fit.perRow).toBe(2);
+    expect(fit.height).toBe(364); // (774 - 6) / 2 - 20, the height binds
+    expect(fit.width).toBe(Math.ceil((0.907 + 0.75) * 364 + 6)); // the second row is the wider
+  });
+  it('keeps one row on a low screen, where two rows would make the pictures smaller', () => {
+    const fit = packTiles(four, 650, 394, 20, 6);
+    expect(fit.perRow).toBe(4);
+    expect(fit.height).toBe(Math.floor((650 - 18) / 3.157));
+  });
+  it('balances the rows, leaves the last one shorter, and handles one picture', () => {
+    expect(packTiles([1, 1, 1], 300, 1000, 0, 0).perRow).toBe(1);
+    expect(packTiles([0.75, 0.75, 0.75], 500, 700, 20, 6).perRow).toBe(2);
+    const one = packTiles([1.5], 600, 300, 20, 6);
+    expect([one.perRow, one.height, one.width]).toEqual([1, 280, 420]);
+    expect(packTiles([], 600, 300, 20, 6).height).toBe(0);
   });
 });

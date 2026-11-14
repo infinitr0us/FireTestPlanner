@@ -1757,7 +1757,12 @@ export const fr: Readonly<Record<string, string>> = {
   "as the hood sees it: peak {p1}, heat {p2}": "vu par la hotte : maximum {p1}, chaleur {p2}",
   "The percentages compare the estimate as the hood would record it (response time {p1} s: peak {p2}, heat {p3}) with the hood. A hood averages over its response time, so at a peak it reads lower than the flame.": "Les pourcentages comparent l’estimation telle que la hotte l’enregistrerait (temps de réponse {p1} s : maximum {p2}, chaleur {p3}) à la hotte. Une hotte fait la moyenne sur son temps de réponse; à un maximum, elle indique donc moins que la flamme.",
   "A hood averages over its response time, so at a peak it reads lower than the flame: a higher estimate there is expected.": "Une hotte fait la moyenne sur son temps de réponse; à un maximum, elle indique donc moins que la flamme : une estimation plus élevée y est attendue.",
+  "Show or hide the plots; without them the pictures and the 3-D view share the board": "Afficher ou masquer les graphiques; sans eux, les images et la vue 3D se partagent le tableau",
+  "Draw as it plays": "Tracer pendant la lecture",
+  "Plot the heat flux of {p1}; a click on the gauge in the 3-D view does the same": "Tracer le flux thermique de {p1}; un clic sur le fluxmètre dans la vue 3D fait de même",
+  "{p1}: {p2} kW/m²": "{p1} : {p2} kW/m²",
   "is for heat flux only": "réservé au flux thermique",
   "Event {p1}: series '{p2}' names missing site plan object '{p3}'": "Événement {p1} : la série « {p2} » désigne l’objet « {p3} », absent du plan d’implantation",
   "Event {p1}: series '{p2}' object '{p3}' must be a heat flux sensor": "Événement {p1} : l’objet « {p3} » de la série « {p2} » doit être un capteur de flux thermique",
+  "Each line ends at the playback time, so the plots draw as the event plays; the axes keep the whole event. The exported video draws them the same way": "Chaque courbe s’arrête au temps de lecture : les graphiques se tracent au fil de l’événement, les axes couvrant tout l’événement. La vidéo exportée les trace de la même façon",
 };

@@ -45,8 +45,32 @@ and a plan written by any release opens in every later one.
   correlation's mean flame height from the hood record, in the plan's Planned style with
   a note on what it assumed; **Cubes | Surface** draws the 3-D flame as its smoothed
   surface. The video and PNG export draw the same.
+- **The flame analysis board after its first users' feedback:**
+  - **Draw as it plays** (on the plot bar, on by default): each plot line ends at the
+    playback time, so the plots draw as the event plays; the axes keep the whole
+    event. The exported video draws them the same way.
+  - **Plots** (in the header) hides the plots: the pictures then stand beside the 3-D
+    view, in rows as large as the board's height allows (two by two for four portrait
+    close-ups on a 1080p screen, one row on a laptop), and the 3-D view takes the
+    rest of the width. **Export video** and **PNG** start from the layout on screen;
+    the export's **Cameras and 3-D** is now side by side too. The board remembers both
+    choices on this computer.
+  - The fire's label in the 3-D view hangs below its rim instead of over the base of
+    the flame, on the board and in the export.
+  - **Heat flux.** Flame analysis event format 1.2 (`schema/flame-event-1.2.0.schema.json`,
+    CONVENTIONS section 13) adds heat flux series, each optionally naming the site
+    plan's heat flux gauge that recorded it; both readers check that it names a gauge.
+    The board labels each gauge with records in the 3-D view with its reading, and a
+    click on it, or its toggle under the plots, plots its records on one heat flux
+    plot. The synthetic test's E1 is 1.2 with two gauges.
+- **An application icon** (a fire on a test plan) for the desktop exe, its window and the
+  taskbar, and for the page in a browser tab. `tools/build_app_icon.py` makes
+  `python/shell/FireTestPlanner.ico` from the SVG masters in `web/src/assets/`.
 
 ### Changed
+- The flame analysis board shows flame volume in m³ (ft³ in imperial), as the cards and
+  readings of its other quantities already were in SI. Plot readings keep one number of
+  decimals per plot, so a reading does not change width as the cursor moves.
 - A failed call to the desktop app's shell says why (the shell's own message after the
   status code), not only the status.
 - **The flame analysis board after an independent review.**

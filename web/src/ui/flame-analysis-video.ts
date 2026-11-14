@@ -20,8 +20,10 @@ import { instantAt, type EventImage, type HullProjection } from '../core/flame-a
 import { mp4Colour, muxMp4, type Mp4Colour, type Mp4Sample } from '../core/mp4';
 import { I420_COLOUR, rgbaToI420 } from '../core/yuv';
 import type { AnalysisScene } from '../scene/flame-analysis';
-import { coverage, coverageCaption, drawOutline, hullSquares, placement, type PictureMode } from './flame-analysis-cameras';
-import { colourOf, dashOf, qualityKey, type Band, type Moment, type PlotLine, type PlotSpec } from './flame-analysis-plots';
+import { coverage, coverageCaption, drawOutline, hullSquares, packTiles, placement, type PictureMode } from './flame-analysis-cameras';
+import {
+  colourOf, dashOf, qualityKey, readoutDecimals, readoutText, type Band, type Moment, type PlotLine, type PlotSpec,
+} from './flame-analysis-plots';
 import * as i18n from './i18n';
 import { fmt, niceTicks, runs, valueAt, valueExtent } from './plot-svg';
 
@@ -59,17 +61,30 @@ export interface CompositionSource {
    *  board's tiles have it (kept per camera and instant); computed here when absent. */
   coverage?: (camera: string, index: number) => number | null;
   scene: AnalysisScene | null;
-  plots: { specs: PlotSpec[]; bands: Band[]; moments: Moment[]; window: [number, number] };
+  /** A 3-D label's text at an instant, where it changes with time (a gauge's reading);
+   *  otherwise the label is drawn as the board shows it. */
+  labelText?: (id: string, index: number) => string | undefined;
+  /** `reveal`: each line ends at the frame's time, as the board draws it with Draw as it plays. */
+  plots: { specs: PlotSpec[]; bands: Band[]; moments: Moment[]; window: [number, number]; reveal?: boolean };
 }
 
 interface Rect { x: number; y: number; w: number; h: number }
 const W = 1920, H = 1080, M = 32, TOP = 104;
 
-function layoutRects(layout: VideoLayout): { cameras?: Rect; scene?: Rect; plots?: Rect } {
+/** Space between pictures, and the text under each row of them (more with the hull check's coverage line). */
+const PICTURE_GAP = 12;
+const pictureCaption = (hull: boolean): number => (hull ? 68 : 46);
+
+function layoutRects(layout: VideoLayout, aspects: number[], caption: number): { cameras?: Rect; scene?: Rect; plots?: Rect } {
   const left: Rect = { x: M, y: TOP, w: 1080, h: H - TOP - M };
   const right: Rect = { x: M + 1080 + 32, y: TOP, w: W - 2 * M - 1080 - 32, h: H - TOP - M };
   if (layout === 'cameras') {
-    return { cameras: { x: M, y: TOP, w: W - 2 * M, h: 520 }, scene: { x: M, y: TOP + 540, w: W - 2 * M, h: H - TOP - 540 - M } };
+    // The cameras beside the 3-D view, as the board shows them without its plots: the
+    // pictures in rows as large as the height allows (a panel's insides are 24 px
+    // narrower and 52 px lower), the 3-D view taking the rest of the width.
+    const full = W - 2 * M, h = H - TOP - M;
+    const w = packTiles(aspects, Math.floor((full - 32) * 0.55) - 24, h - 52, caption, PICTURE_GAP).width + 24;
+    return { cameras: { x: M, y: TOP, w, h }, scene: { x: M + w + 32, y: TOP, w: full - w - 32, h } };
   }
   if (layout === 'plots') return { scene: left, plots: right };
   return { cameras: { ...left, h: 420 }, scene: { ...left, y: TOP + 440, h: left.h - 440 }, plots: right };
@@ -82,7 +97,7 @@ function tokens() {
     bg: t('--bg'), panel: t('--bg-panel'), border: t('--border'), text: t('--text'), dim: t('--text-dim'),
     faint: t('--text-faint'), grid: t('--plot-grid'), cursor: t('--plot-cursor'), warn: t('--warn'),
     label: t('--bg-label'), primary: t('--plot-primary'), secondary: t('--plot-secondary'), font: t('--font'),
-    planned: t('--plot-planned'), hull: t('--hull-check'),
+    planned: t('--plot-planned'), hull: t('--hull-check'), accent: t('--accent'),
   };
 }
 type Tokens = ReturnType<typeof tokens>;
@@ -111,9 +126,13 @@ export class Composer {
   /** The composition's pixels as drawn, RGBA rows. */
   pixels(): Uint8ClampedArray { return this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height).data; }
 
+  private aspects(): number[] {
+    return this.source.cameras.map((c) => { const p = placement(c.image, this.source.pictureMode); return p.width / p.height; });
+  }
+
   async draw(index: number): Promise<void> {
     const { ctx, k, source } = this;
-    const rects = layoutRects(this.layout);
+    const rects = layoutRects(this.layout, this.aspects(), pictureCaption(!!source.hull));
     const pictures = rects.cameras
       ? await Promise.all(source.cameras.map((c) => source.picture(c.id, index).catch(() => null)))
       : [];
@@ -171,26 +190,30 @@ export class Composer {
   private cameras(r: Rect, index: number, pictures: (ImageBitmap | null)[]): void {
     const { ctx, k, source } = this;
     const inner = this.panel(r, i18n.t("Cameras"));
-    const caption = source.hull ? 68 : 46, gap = 12;
-    const aspects = source.cameras.map((c) => { const p = placement(c.image, source.pictureMode); return p.width / p.height; });
-    let height = inner.h - caption;
-    const total = aspects.reduce((a, b) => a + b, 0);
-    if (total * height + gap * (aspects.length - 1) > inner.w) height = (inner.w - gap * (aspects.length - 1)) / total;
-    let x = inner.x + (inner.w - (total * height + gap * (aspects.length - 1))) / 2;
+    const caption = pictureCaption(!!source.hull), gap = PICTURE_GAP;
+    const aspects = this.aspects();
+    // In rows of one height, as large as the panel allows (one row on the full board).
+    const { height, perRow } = packTiles(aspects, inner.w, inner.h, caption, gap);
+    let x = 0, y = inner.y;
     source.cameras.forEach((camera, n) => {
+      if (n % perRow === 0) {
+        if (n) y += height + caption + gap;
+        const row = aspects.slice(n, n + perRow);
+        x = inner.x + (inner.w - (row.reduce((a, b) => a + b, 0) * height + gap * (row.length - 1))) / 2;
+      }
       const w = aspects[n] * height;
       const bitmap = pictures[n];
       ctx.fillStyle = k.panel;
-      ctx.fillRect(x, inner.y, w, height);
+      ctx.fillRect(x, y, w, height);
       if (bitmap) {
-        ctx.drawImage(bitmap, x, inner.y, w, height);
+        ctx.drawImage(bitmap, x, y, w, height);
         const projection = source.hull?.(camera.id, index);
-        if (projection?.uv.length) this.hull(projection, placement(camera.image, source.pictureMode), x, inner.y, w, height);
+        if (projection?.uv.length) this.hull(projection, placement(camera.image, source.pictureMode), x, y, w, height);
         const rings = source.outlines?.get(camera.id)?.[index];
         if (rings?.length) {
           const place = placement(camera.image, source.pictureMode);
           ctx.save();
-          ctx.translate(x, inner.y);
+          ctx.translate(x, y);
           drawOutline(ctx, rings, place, w / place.width, 2.5);
           ctx.restore();
         }
@@ -198,15 +221,15 @@ export class Composer {
         ctx.fillStyle = k.text;
         ctx.font = this.font(18, 600);
         ctx.textAlign = 'center';
-        ctx.fillText(i18n.t("Picture missing"), x + w / 2, inner.y + height / 2, w - 12);
+        ctx.fillText(i18n.t("Picture missing"), x + w / 2, y + height / 2, w - 12);
       }
       ctx.fillStyle = k.dim;
       ctx.font = this.font(16);
       ctx.textAlign = 'left';
-      ctx.fillText(camera.label, x, inner.y + height + 19, w);
+      ctx.fillText(camera.label, x, y + height + 19, w);
       if (source.outsideFrame[camera.id]?.includes(index)) {
         ctx.fillStyle = k.warn;
-        ctx.fillText(i18n.t("flame at the picture's edge"), x, inner.y + height + 39, w);
+        ctx.fillText(i18n.t("flame at the picture's edge"), x, y + height + 39, w);
       }
       if (source.hull) {
         let share: number | null;
@@ -217,7 +240,7 @@ export class Composer {
           share = projection ? coverage(rings, projection) : null;
         }
         ctx.fillStyle = k.dim;
-        ctx.fillText(coverageCaption(share), x, inner.y + height + 59, w);
+        ctx.fillText(coverageCaption(share), x, y + height + 59, w);
       }
       x += w + gap;
     });
@@ -253,16 +276,19 @@ export class Composer {
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     for (const label of scene.labelsAt(pw, ph)) {
-      const x = inner.x + label.x / this.scale, y = inner.y + label.y / this.scale - 16;
-      const w = ctx.measureText(label.text).width + 14;
+      // Above its point, or (the fire's) hanging below it as on the board.
+      const x = inner.x + label.x / this.scale, y = inner.y + label.y / this.scale + (label.below ? 16 : -16);
+      const text = (label.id ? source.labelText?.(label.id, index) : undefined) ?? label.text;
+      const w = ctx.measureText(text).width + 14;
       ctx.fillStyle = k.label;
-      ctx.strokeStyle = k.border;
+      // A gauge whose plot is shown keeps its pressed outline, as on the board.
+      ctx.strokeStyle = label.pressed ? k.accent : k.border;
       ctx.beginPath();
       ctx.roundRect(x - w / 2, y - 11, w, 22, 5);
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = k.text;
-      ctx.fillText(label.text, x - w / 2 + 7, y + 1);
+      ctx.fillText(text, x - w / 2 + 7, y + 1);
     }
     ctx.textBaseline = 'alphabetic';
   }
@@ -301,9 +327,10 @@ export class Composer {
     ctx.fillText(`${spec.title} (${spec.unit})`, r.x, r.y + 16);
     let lx = r.x, ly = r.y + 38;
     ctx.font = this.font(14);
+    const decimals = readoutDecimals(spec, window);
     for (const line of spec.lines) {
       const value = valueAt(line.t, line.v, time);
-      const text = `${line.label}  ${value === null || !Number.isFinite(value) ? '–' : fmt(value * scale)}`;
+      const text = `${line.label}  ${readoutText(value === null ? null : value * scale, decimals)}`;
       const width = 30 + ctx.measureText(text).width + 18;
       if (lx + width > r.x + r.w && lx > r.x) { lx = r.x; ly += 20; }
       this.lineStyle(line);
@@ -324,8 +351,10 @@ export class Composer {
     }
     const extent = valueExtent(lo, Number.isFinite(hi) ? hi : 1, Math.max(2, Math.round((Y1 - Y0) / 34)));
     const y = (v: number) => Y1 - ((v - extent.lo) / Math.max(extent.hi - extent.lo, 1e-12)) * (Y1 - Y0);
+    // Lines and bands end at the frame's time when the board draws them as the event plays.
+    const end = this.source.plots.reveal ? Math.min(Math.max(x(time), X0), X1) : X1;
     for (const band of bands) {
-      const a = Math.max(x(band.from), X0), b = Math.min(x(band.to), X1);
+      const a = Math.max(x(band.from), X0), b = Math.min(x(band.to), end);
       if (b <= a) continue;
       ctx.fillStyle = band.kind === 'noHull' ? k.warn : k.dim;
       ctx.globalAlpha = band.kind === 'noHull' ? 0.16 : 0.2;
@@ -372,7 +401,7 @@ export class Composer {
     }
     ctx.setLineDash([]);
     ctx.save();
-    ctx.beginPath(); ctx.rect(X0 - 2, Y0 - 2, X1 - X0 + 4, Y1 - Y0 + 4); ctx.clip();
+    ctx.beginPath(); ctx.rect(X0 - 2, Y0 - 2, end - X0 + (end < X1 ? 2 : 4), Y1 - Y0 + 4); ctx.clip();
     for (const line of spec.lines) {
       this.lineStyle(line);
       ctx.beginPath();

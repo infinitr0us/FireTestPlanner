@@ -37,6 +37,33 @@ export function placement(image: EventImage, mode: PictureMode): Placement {
   return { x: 0, y: 0, scale: dw / image.size_px[0], width: dw, height: dh };
 }
 
+/** Pictures in rows of one height: the largest height at which pictures of these
+ *  aspects (width / height, in display order) fit `width` x `height`, filling rows in
+ *  order with the same number per row (the last may hold fewer). `caption` is the
+ *  text under each row and `gap` the space between pictures and between rows.
+ *  Returns that height, the widest row's width and the number per row. */
+export function packTiles(aspects: number[], width: number, height: number, caption: number, gap: number): { height: number; width: number; perRow: number } {
+  let best = { height: 0, width: 0, perRow: Math.max(aspects.length, 1) };
+  for (let rows = 1; rows <= aspects.length; rows++) {
+    // As even as the rows can be: four pictures in two rows go two and two.
+    const perRow = Math.ceil(aspects.length / rows);
+    if (Math.ceil(aspects.length / perRow) !== rows) continue; // that many rows cannot all hold a picture
+    let h = (height - (rows - 1) * gap) / rows - caption;
+    const sums: number[] = [];
+    for (let r = 0; r < rows; r++) {
+      const row = aspects.slice(r * perRow, (r + 1) * perRow);
+      const sum = row.reduce((a, b) => a + b, 0);
+      sums.push(sum);
+      h = Math.min(h, (width - (row.length - 1) * gap) / sum);
+    }
+    h = Math.floor(h);
+    if (h > best.height) {
+      best = { height: h, perRow, width: Math.ceil(Math.max(...sums.map((s, r) => s * h + (Math.min(perRow, aspects.length - r * perRow) - 1) * gap))) };
+    }
+  }
+  return best;
+}
+
 export class CameraTiles {
   readonly element = h('div', { class: 'flame-analysis__tiles' });
   private tiles = new Map<string, { figure: HTMLElement; canvas: HTMLCanvasElement; caption: HTMLElement; flag: HTMLElement; agreement: HTMLElement; drawn: number; drawnPath: string; dirty: boolean }>();
@@ -179,6 +206,29 @@ export class CameraTiles {
       if (i < 0 || i >= this.event.instants.stem.length) continue;
       for (const camera of this.cameras) void this.bitmap(this.picturePath(camera.id, i)).catch(() => undefined);
     }
+  }
+
+  /** Lay the pictures out in rows of one height, as large as `box` allows (the board
+   *  without its plots), or back in the one shared row with null. Returns the width
+   *  the rows take, for the column around them. */
+  pack(box: { width: number; height: number } | null): number {
+    const el = this.element;
+    if (!box) {
+      el.classList.remove('flame-analysis__tiles--packed');
+      for (const name of ['--tile-h', '--tiles-w']) el.style.removeProperty(name);
+      return 0;
+    }
+    const aspects = this.cameras.map((c) => { const p = placement(this.event.images[c.id], this.mode); return p.width / p.height; });
+    // A caption's lines: the camera's name (with the edge flag beside it) and, with the
+    // hull check, the coverage line; plus the figure's gap above them.
+    const first = this.tiles.values().next().value?.figure.querySelector('figcaption');
+    const line = Math.ceil(parseFloat(first ? getComputedStyle(first).fontSize : '11') * 1.4);
+    const fit = packTiles(aspects, box.width, box.height, line * (this.hull ? 2 : 1) + 4, 6);
+    el.classList.add('flame-analysis__tiles--packed');
+    el.style.setProperty('--tile-h', `${fit.height}px`);
+    el.style.setProperty('--tiles-w', `${fit.width + 1}px`);
+    this.cameras.forEach((c, n) => this.tiles.get(c.id)!.figure.style.setProperty('--pack-aspect', String(aspects[n])));
+    return fit.width;
   }
 
   private caption(camera: TileCamera, index: number): string {

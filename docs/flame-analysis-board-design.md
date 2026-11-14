@@ -1,6 +1,7 @@
 # Flame analysis board: design
 
-Status: **phases 0 to 3 done** (2026-11-08). Phases 0 and 1: format 1.0 with its
+Status: **phases 0 to 3 done** (2026-11-08); the users' first feedback at the end of
+section 9 (2026-11-13). Phases 0 and 1: format 1.0 with its
 schemas and `fireplan.flame_analysis` (CONVENTIONS section 13), the synthetic test, the
 first delivery converted, and the board itself (`ui/flame-analysis*.ts`,
 `scene/flame-analysis.ts`, the shell's `/api/flame-analysis/*` routes). Phase 2: video
@@ -204,16 +205,16 @@ Target 1920 x 1080; everything stays usable at 1280 x 720.
   quality strip under the axis, and the key moments on every plot.
 - **Playback.** The shared transport, keys and Loop, with speeds below real time
   (×0.25, ×0.5) added to the shared `SPEEDS` or kept as a recorded exception.
-- **Units.** Volume in litres (ft³ in imperial), area m² (ft²), heights in metres
-  (feet in imperial), following the editor's unit system, not its exact length unit;
-  heat release rate kW, heat MJ.
+- **Units.** Volume in m³ (ft³ in imperial; litres until the users asked for m³ in
+  November 2026), area m² (ft²), heights in metres (feet in imperial), following the
+  editor's unit system, not its exact length unit; heat release rate kW, heat MJ.
 
 ## 7. Export video
 
 - **Composition.** A fixed 16:9 layout drawn for video, not a capture of the window:
   title and event, the time from the onset, the camera row, the 3-D view and the plots
   with a moving cursor, in the interface language. Choices: **Full board**,
-  **Cameras and 3-D**, **3-D and plots**; 1920 x 1080 or 1280 x 720; the whole event or
+  **Cameras and 3-D** (side by side since 2026-11-13), **3-D and plots**; 1920 x 1080 or 1280 x 720; the whole event or
   between two key moments; real time, ×0.5 or ×0.25 (each instant is held, never
   interpolated); the 3-D camera as it is on screen.
 - **How.** Frame by frame, off the clock: set the time, wait for the pictures, render
@@ -456,6 +457,72 @@ keeps the aspect ratio of what it copies (the format does not say so; the first
 delivery does to 0.03 %); key-moment labels can sit on the peak of the curve they
 name; a full event exported at ×0.25 and 1080p still needs a few hundred megabytes
 of memory.
+
+**After the users' first feedback (2026-11-13).** The fire safety engineers liked the
+board and asked for six changes, all made here: five on the board, and heat flux
+records with their gauges in the 3-D view, which needed event format 1.2.
+
+- **Volume in m³** on the card and the plot, as the estimates' coefficients are per
+  m³. A plot's readings keep one number of decimals, four significant digits at its
+  largest value (`readoutDecimals`), so a reading of a few hundredths of a m³ does not
+  change width as the cursor moves; the export's legends use the same.
+- **The fire's label** hung over the base of the flame, which rises from the vent it
+  was anchored 0.15 m above. On the board its anchor is the rim and the label hangs
+  below it (`CSS2DObject.center`), and `labelsAt` says so to the export, which draws
+  it below its point too. The editor keeps its own placement.
+- **Draw as it plays**, a pressed toggle on the plot bar and on by default, as the
+  users expect of a plot in a playback: each plot's clip ends at the cursor, for the
+  lines and the quality bands, while the axes, grid and key moments keep the whole
+  event, so nothing rescales as a peak arrives. Between two samples of a 1 Hz record
+  the line is drawn up to the cursor, and a one-second mean is centred, so a reading
+  can lead the cursor by half a second: a presentation of the record, not a claim
+  about what was known at that time. The cards keep their whole-event numbers. The
+  export clips its redrawn plots at the frame's time the same way.
+- **Plots**, a pressed toggle in the header, hides the plots. The pictures and the
+  3-D view then share the board side by side: `packTiles` tries every number of rows
+  and keeps the one with the tallest pictures inside 55 % of the width, the picture
+  column takes only the width its rows need (at least that of its buttons on one
+  line), and the 3-D view the rest. With the four portrait close-ups of the first
+  delivery at 1920 x 1080 the pictures go two by two at about 270 x 360 (224 x 298
+  with the plots) and the 3-D view grows from about 984 x 362 to 1202 x 778. On a
+  1280 x 720 screen one row gives larger pictures than two, and the packing takes it.
+  The users' first idea, halves, gave the same pictures with bars beside them and a
+  narrower 3-D view. Steps 5 and 6 bring the plots back to explain them; without
+  plots, a step's text opens over the panel it is not about. **Export video** starts
+  from the layout on screen, and its **Cameras and 3-D** composition is side by side
+  with the same packing (it was a picture row above a 3-D strip); **PNG** saves the
+  layout on screen. The board keeps both choices on this computer, as it does the
+  interface language. The 3-D view now frames by the narrower of its two fields of
+  view, so a panel taller than wide does not crop the site.
+- **Laptop size.** Draw as it plays does not fit beside the plot bar's other toggles
+  at 1280 x 720, so the bar takes a second row there and the plots list may scroll
+  by that row; the team's screens are 1920 x 1080 or larger (2026-11-13), where
+  everything fits.
+- **Heat flux** (event format 1.2, CONVENTIONS section 13). A heat flux series may
+  name the site plan's gauge that recorded it (`object`, a `heatFluxSensor`); the
+  gauge's position, facing and type stay in the site plan, where the editor can
+  place and edit them, and the records come as series like the hood's, prepared on
+  the test's time base by the folder's converter (for a logger workbook: from the
+  gauge's volts and its calibration, not from a workbook's processed columns, which
+  can carry a wrong factor). The board does not read workbooks. It refuses an event
+  whose series names a missing object or one that is not a gauge
+  (`seriesObjectProblems`). Records are grouped by gauge, so two sensors on one
+  mount are shown and hidden together. A gauge with records is labelled in the 3-D
+  view with its name and reading; a click on the label or near the gauge plots its
+  records, as does its toggle in the row under the plots, the keyboard's way and
+  the way to a gauge outside the view. No gauge is plotted at first; plotting one
+  while the plots are hidden shows them. The records share one plot on one scale,
+  so gauges compare, measured solid then the measured family's next dashes. The
+  export draws the plot and each gauge's reading at its frame. The synthetic test's
+  E1 is now 1.2, with a near gauge (two records, inside the close-up) and a far one.
+  Left for later: a point-source estimate beside the record (as Heskestad is beside
+  the flame height), a card for the peak heat flux, and labels that avoid each
+  other where gauges stand close in the whole-site view. Thermocouples could follow
+  the same way, with `object` allowed on temperatures.
+- **An application icon**, a fire on a test plan in the app's colours: one SVG
+  master for the page and, through `tools/build_app_icon.py` (headless Chrome renders
+  each size; PNG entries in the `.ico`), the exe, with a plainer master below 32 px.
+  pywebview's window takes the exe's icon.
 
 ## 10. Conventions this will touch
 

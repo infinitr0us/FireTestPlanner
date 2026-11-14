@@ -107,7 +107,11 @@ that lands after the document was replaced is ignored.
 ## Packaging
 
 `build_exe.py` runs PyInstaller one-file with the web bundle added as data;
-`resource_root()` finds it via `sys._MEIPASS` when frozen. The exe relies on the
+`resource_root()` finds it via `sys._MEIPASS` when frozen. The exe's icon is
+`FireTestPlanner.ico` beside it; pywebview's window takes it from the exe, so the title
+bar, taskbar and Alt-Tab show it too (a development run keeps Python's). After changing
+the artwork in `web/src/assets/app-icon*.svg`, rebuild the icon with
+`python tools/build_app_icon.py` (needs Pillow and Chrome or Edge) and commit it. The exe relies on the
 WebView2 runtime that ships with Windows 11 rather than embedding a browser, which
 is what keeps it in the tens of megabytes.
 

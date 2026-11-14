@@ -288,6 +288,13 @@ try {
     // A laptop screen shows every plot without scrolling and the playback bar on one row,
     // with four key moments (as a real delivery has), and each moment's label inside its plot.
     chartsScroll: (c => c.scrollHeight - c.clientHeight)(document.querySelector('.flame-analysis__plots')),
+    // The plot bar's toggles take a second row at this size (Draw as it plays did not
+    // fit beside the others); the plots list may lose that row, and nothing else.
+    barExtra: (b => { const s = getComputedStyle(b);
+      return b.offsetHeight - Math.max(...[...b.children].map(c => c.offsetHeight)) - parseFloat(s.paddingTop) - parseFloat(s.paddingBottom); })(
+      document.querySelector('.flame-analysis__charts > .flame-analysis__panel-bar')),
+    // And the heat flux gauges' toggles under the plots (event format 1.2).
+    fluxRow: (r => r ? r.offsetHeight : 0)(document.querySelector('.flame-analysis__flux')),
     transportHeight: Math.round(document.querySelector('.flame-analysis__transport').getBoundingClientRect().height),
     moments: document.querySelectorAll('.flame-analysis__moments button').length,
     labelsInside: [...document.querySelectorAll('.flame-analysis__moment-label')].every(t => {
@@ -297,8 +304,8 @@ try {
   check('French board: steps and plots in French, nothing overflows at 1280 x 720: ' + JSON.stringify(frenchBoard),
     frenchBoard.steps.some(s => s.includes('Flamme 3D')) && frenchBoard.plots[0].startsWith('Taux de dégagement de chaleur, convectif')
     && frenchBoard.overflow.length === 0 && frenchBoard.plotsFit);
-  check('French board at 1280 x 720: every plot without scrolling, the playback bar on one row, moment labels inside: '
-    + JSON.stringify(frenchBoard), frenchBoard.chartsScroll <= 1 && frenchBoard.transportHeight < 50
+  check('French board at 1280 x 720: every plot without scrolling but for a second row of the plot bar and the gauge toggles, the playback bar on one row, moment labels inside: '
+    + JSON.stringify(frenchBoard), frenchBoard.chartsScroll <= frenchBoard.barExtra + frenchBoard.fluxRow + 1 && frenchBoard.fluxRow < 40 && frenchBoard.barExtra < 45 && frenchBoard.transportHeight < 50
     && frenchBoard.moments === 4 && frenchBoard.labelsInside);
   await screenshot('flame-analysis-fr');
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });

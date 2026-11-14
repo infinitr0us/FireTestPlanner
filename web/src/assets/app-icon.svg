@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- FireTestPlanner's icon: a fire on a test plan. Master for the favicon and, through
+       tools/build_app_icon.py, the exe's icon at 32 px and up (app-icon-small.svg below that).
+       Colours are the app's background #0f172a and accent #38bdf8 tokens. -->
+  <defs>
+    <linearGradient id="outer" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fb923c"/><stop offset="1" stop-color="#ef4444"/></linearGradient>
+    <linearGradient id="inner" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fef08a"/><stop offset="1" stop-color="#facc15"/></linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#0f172a"/>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="none" stroke="#1e3a5f" stroke-width="6"/>
+  <g stroke="#38bdf8" stroke-width="5" opacity="0.45"><path d="M88 24 V232 M168 24 V232 M24 88 H232 M24 168 H232"/></g>
+  <ellipse cx="128" cy="206" rx="70" ry="20" fill="none" stroke="#38bdf8" stroke-width="9"/>
+  <g transform="translate(33 38) scale(0.74)">
+    <path fill="url(#outer)" d="M128 28 C140 70 196 96 196 156 C196 196 166 224 128 224 C90 224 60 196 60 156 C60 124 78 104 92 92 C92 116 102 132 116 138 C108 100 116 60 128 28 Z"/>
+    <path fill="url(#inner)" d="M128 120 C136 146 162 158 162 182 C162 204 146 216 128 216 C110 216 94 204 94 182 C94 166 104 156 112 150 C114 164 120 170 128 172 C124 156 124 136 128 120 Z"/>
+  </g>
+</svg>

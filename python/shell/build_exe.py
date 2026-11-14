@@ -22,6 +22,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 WEB_DIST = os.path.join(REPO, "web", "dist")
 APP_NAME = "FireTestPlanner"
+# The exe's icon, which pywebview's window and the taskbar take from the exe. Built from
+# web/src/assets/app-icon*.svg by tools/build_app_icon.py and committed.
+ICON = os.path.join(HERE, APP_NAME + ".ico")
 
 # The Visual C++ runtime is not part of Windows. Finding it in System32 on the build
 # machine says nothing about the machine the exe will run on, so it must be bundled.
@@ -98,6 +101,7 @@ def main() -> int:
         "--noconfirm",
         "--onefile",
         "--name", APP_NAME,
+        "--icon", ICON,
         "--distpath", os.path.join(HERE, "dist"),
         "--workpath", os.path.join(HERE, "build"),
         "--specpath", HERE,

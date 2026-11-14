@@ -366,9 +366,37 @@ camera sees flame, `--text-dim` for flame at a picture's edge), each with a text
 under the plots. Key moments are dotted `--text-faint` lines labelled on the first
 plot, to the right of the line or, where the label would run past the plot's edge, to
 its left; overlapping labels take the next row. At laptop size (1280 x 720, four
-cameras, four key moments, EN and FR) every plot stays on screen without scrolling: a
-plot is as tall as its legend and a minimum drawing area, and the playback bar keeps
-one row because the board's readout and slider may narrow (the step row may wrap).
+cameras, four key moments, EN and FR) every plot stays on screen without scrolling but
+for a second row of the plot bar, which its toggles need there, and the heat flux
+gauges' row under the plots: a plot is as tall as
+its legend and a minimum drawing area, and the playback bar keeps one row because the
+board's readout and slider may narrow (the step row may wrap). The team's screens are
+1920 x 1080 or larger, where the plot bar keeps one row.
+
+**Draw as it plays** (a pressed toggle on the plot bar, on by default) ends each
+plot's lines and quality bands at the cursor; the axes, grid, key moments and legend
+readings keep the whole event, so nothing rescales or moves as the event plays, and
+the export clips its plots at the frame's time the same way. A plot's readings keep
+one number of decimals, four significant digits at its largest value, so the value
+column does not change width under the cursor. **Plots** (a pressed toggle in the
+header, beside the other board-wide commands) hides the plots: the camera panel and
+the 3-D view then stand side by side, the pictures in rows of one height as large as
+the board's height allows (`packTiles` in `ui/flame-analysis-cameras.ts`, shared with
+the export's **Cameras and 3-D**), their column as wide as the rows need and the 3-D
+view taking the rest. A step about a plot shows the plots again. Both choices are kept
+for the computer, like the interface language.
+
+**Heat flux** (event format 1.2): a heat flux gauge of the site plan that has records
+is labelled in the 3-D view with its name and its reading at the playback time (the
+last sample at or before it), in the editor's gauge glyph and identity red. A click on
+its label, or within a few pixels of the gauge, plots its records; so does its toggle
+in the row under the plots, which is the keyboard's way and the way to a gauge outside
+the view (the labels are not in the tab order). A plotted gauge's label and toggle are
+pressed, the label with the accent ring. The records share one plot in kW/m², on one
+scale so the gauges compare: measured solid in `--plot-primary`, each further record
+the measured family's next dash, labelled per record. No gauge is plotted at first;
+plotting one while the plots are hidden shows them. The export draws each gauge's
+reading at its frame's instant.
 The flame outline over a camera picture is `--flame-outline`, stroked with a
 light even-odd fill, kept apart from the accent and every instrument colour. The hull
 check draws the 3-D flame through the camera as `--hull-check` squares, a second data
@@ -543,7 +571,7 @@ Token reuse alone is not an accessibility or scientific-validation claim.
 | Rake plots | Bead lines take the ordinal `--plot-ramp-*` colours instead of `--plot-primary`/`--plot-secondary` | Colour encodes bead height; the measured/simulated distinction is carried by dash, as on every instrument plot | Keep |
 | Gauge range on plots | Drawn only while within twice the plotted maximum; otherwise an off-scale label | A 50 kW/m² range on a 5 kW/m² reading would flatten the data the plot is for | Keep |
 | Flame analysis speeds | ×0.25 to ×5 (`ANALYSIS_SPEEDS`), default ×1, Loop off, instead of `SPEEDS` | Camera pictures come ten a second over about a minute: ×10 and up skip most of them, slow motion shows the flicker | Keep; same transport, keys and `×` notation |
-| Flame analysis 3-D labels | Only the cameras (by the folder's short names) and the fire are labelled | A label on every plate and pole of a real site hides the flame the view is for | Keep |
+| Flame analysis 3-D labels | Only the cameras (by the folder's short names), the fire and the heat flux gauges that have records are labelled; the fire's label hangs below its rim rather than over the flame's base; a gauge's label carries its reading and toggles its plot | A label on every plate and pole of a real site hides the flame the view is for, and the flame rises from the rim the editor labels just above | Keep |
 | Flame analysis plots | Drawn in screen pixels at their laid-out size and redrawn on resize, not a fixed `viewBox` scaled to fit | Each plot gets a share of the column whose shape changes with the window; a fixed aspect left the text a few pixels high | Keep |
 | Flame analysis video and PNG | A fixed 16:9 composition (1920 x 1080 or 1280 x 720) drawn on canvas for slides, with larger type (30 px title, 14 to 18 px labels at 1080p), not a capture of the window; plots redrawn on canvas from the same data, tokens, dashes and bands | A slide needs one layout at one size whatever the window was, and text legible from the back of a room | Keep |
 | Flame analysis hull coverage | Physical cube rectangles on a separate mask; the overlay retains enlarged squares | Visibility marks must remain legible without inflating the quantitative coverage. A rectangle can exceed the cube's true hexagonal silhouette | Keep |

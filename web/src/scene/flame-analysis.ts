@@ -11,8 +11,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 
-import { displayName, positionOf } from '../core/plan';
-import type { CameraObject, PlanDocument, PlanObject } from '../core/types';
+import { displayName, positionOf, rimHeightM } from '../core/plan';
+import type { BurnerObject, CameraObject, PlanDocument, PlanObject } from '../core/types';
 import type { FlameSequence } from '../core/flame';
 import type { Mesh as SurfaceMesh } from '../core/flame-analysis';
 import * as i18n from '../ui/i18n';
@@ -27,6 +27,9 @@ export type SceneView = 'site' | 'flame';
 /** Cubes (the hull as reconstructed) or the smoothed surface of format 1.1. */
 export type FlameLook = 'cubes' | 'surface';
 const SURFACE_CACHE = 40;
+/** A label's vertical anchor for one that hangs below its point: its top edge a
+ *  quarter of its height under it (CSS2DObject.center, 0.5 being the middle). */
+const LABEL_BELOW = -0.25;
 
 /** One object of the site plan, as the editor draws it; nothing that edits. */
 function buildSiteObject(obj: PlanObject): THREE.Group | null {
@@ -74,6 +77,12 @@ export class AnalysisScene {
   private frameIndex = -1;
   private look: FlameLook = 'cubes';
   private zRange: [number, number] = [0, 1];
+  /** The site's heat flux gauges, by plan id: their labels and where they stand. */
+  private gauges = new Map<string, { label: CSS2DObject; at: THREE.Vector3 }>();
+  /** Gauges with records on the board, and what a click on one does. */
+  private activeGauges = new Set<string>();
+  private onGauge: ((id: string) => void) | null = null;
+  private press: [number, number] | null = null;
 
   constructor(private host: HTMLElement) {
     const theme = visualTheme();
@@ -99,7 +108,60 @@ export class AnalysisScene {
     this.scene.add(key, fill, this.site, this.flame.group, this.surface);
     this.observer = new ResizeObserver(() => this.resize());
     this.observer.observe(host);
+    // A click (not a drag that turns the view) near a gauge with records toggles its plot.
+    const canvas = this.renderer.domElement;
+    canvas.addEventListener('pointerdown', (e) => { this.press = [e.clientX, e.clientY]; });
+    canvas.addEventListener('pointerup', (e) => {
+      const press = this.press;
+      this.press = null;
+      if (!press || Math.hypot(e.clientX - press[0], e.clientY - press[1]) > 4) return;
+      const id = this.gaugeAt(e.clientX, e.clientY);
+      if (id) this.onGauge?.(id);
+    });
     this.animate();
+  }
+
+  /** The gauge with records drawn within a few pixels of a point on screen, if any:
+   *  a gauge is a few centimetres, a few pixels in the whole site. */
+  gaugeAt(clientX: number, clientY: number): string | null {
+    const box = this.renderer.domElement.getBoundingClientRect();
+    let best: string | null = null, nearest = 14;
+    for (const id of this.activeGauges) {
+      const gauge = this.gauges.get(id);
+      if (!gauge) continue;
+      const p = gauge.at.clone().project(this.camera);
+      if (p.z > 1) continue;
+      const d = Math.hypot(box.left + ((p.x + 1) / 2) * box.width - clientX, box.top + ((1 - p.y) / 2) * box.height - clientY);
+      if (d < nearest) { nearest = d; best = id; }
+    }
+    return best;
+  }
+
+  /** The gauges that have records on the board: labelled, and toggling their plot when
+   *  clicked (`onToggle`), on the label or near the gauge. The others stay unlabelled. */
+  setGauges(ids: readonly string[], onToggle: ((id: string) => void) | null): void {
+    this.activeGauges = new Set(ids.filter((id) => this.gauges.has(id)));
+    this.onGauge = onToggle;
+    for (const [id, { label }] of this.gauges) {
+      const active = this.activeGauges.has(id);
+      label.visible = active;
+      const el = label.element;
+      el.classList.toggle('flame-analysis__gauge-label', active);
+      el.style.pointerEvents = active ? 'auto' : 'none';
+      // The plot bar's toggles are the keyboard's way; a label may sit outside the view.
+      if (active) { el.setAttribute('role', 'button'); el.tabIndex = -1; el.onclick = () => this.onGauge?.(id); }
+      else { el.removeAttribute('role'); el.removeAttribute('aria-pressed'); el.onclick = null; }
+    }
+    this.dirty = true;
+  }
+
+  /** A gauge label's text (its name and reading) and whether its plot is shown. */
+  setGaugeState(id: string, text: string, plotted: boolean): void {
+    const el = this.gauges.get(id)?.label.element;
+    if (!el) return;
+    if (el.textContent !== text) el.textContent = text;
+    el.setAttribute('aria-pressed', String(plotted));
+    el.classList.toggle('flame-analysis__gauge-label--on', plotted);
   }
 
   /** Move the view into another element (the board rebuilds its layout per event). */
@@ -115,6 +177,8 @@ export class AnalysisScene {
   /** The site plan, with each analysis camera labelled by its short name. */
   setSite(doc: PlanDocument, cameraLabels: Map<string, string>): void {
     this.clear(this.site);
+    this.gauges.clear();
+    this.activeGauges.clear();
     const size = doc.environment?.floorSize_m ?? [20, 20];
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(size[0], size[1]),
@@ -133,7 +197,17 @@ export class AnalysisScene {
       group.traverse((o) => {
         if (!(o instanceof CSS2DObject)) return;
         if (obj.type === 'camera') o.element.textContent = cameraLabels.get(obj.id) ?? displayName(obj);
-        else if (obj.type !== 'burner') o.visible = false;
+        else if (obj.type === 'burner') {
+          // The fire's name hangs below its rim, under the flame rising from it, not
+          // over its base where the editor puts it (above the predicted cone's foot).
+          o.position.z = Math.max(rimHeightM(obj as BurnerObject), 0.02);
+          o.center.set(0.5, LABEL_BELOW);
+        } else {
+          // A gauge's label shows once the event has its records (`setGauges`).
+          if (obj.type === 'heatFluxSensor') this.gauges.set(obj.id, { label: o, at: new THREE.Vector3(...positionOf(obj)) });
+          o.visible = false;
+        }
+        o.userData.planId = obj.id;
       });
       this.site.add(group);
       this.siteBounds.expandByPoint(new THREE.Vector3(...positionOf(obj)));
@@ -314,7 +388,11 @@ export class AnalysisScene {
     if (view === 'flame') box.expandByScalar(0.15);
     const centre = box.getCenter(new THREE.Vector3());
     const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, view === 'flame' ? 0.3 : 0.5);
-    const distance = radius / Math.sin(THREE.MathUtils.degToRad(this.camera.fov / 2)) * (view === 'flame' ? 0.95 : 0.6);
+    // The narrower of the two fields of view: a panel taller than wide (the pictures
+    // beside the 3-D view) must not crop the site sideways.
+    const vertical = THREE.MathUtils.degToRad(this.camera.fov);
+    const fov = Math.min(vertical, 2 * Math.atan(Math.tan(vertical / 2) * this.camera.aspect));
+    const distance = radius / Math.sin(fov / 2) * (view === 'flame' ? 0.95 : 0.6);
     // The whole site from the side the cameras stand on, low enough to see under a hood.
     const direction = view === 'flame' ? this.lookFrom.clone() : this.siteSide.clone();
     this.camera.position.copy(centre).addScaledVector(direction, distance);
@@ -369,16 +447,21 @@ export class AnalysisScene {
     return this.exportRenderer.domElement;
   }
 
-  /** The visible labels (cameras, the fire) where `renderTo` puts them. */
-  labelsAt(width: number, height: number): { text: string; x: number; y: number }[] {
+  /** The visible labels (cameras, the fire) where `renderTo` puts them; `below` for
+   *  one that hangs below its point (the fire's, under its rim) rather than above it. */
+  labelsAt(width: number, height: number): { id?: string; text: string; x: number; y: number; below: boolean; pressed: boolean }[] {
     const camera = this.exportCamera(width, height);
-    const out: { text: string; x: number; y: number }[] = [];
+    const out: { id?: string; text: string; x: number; y: number; below: boolean; pressed: boolean }[] = [];
     this.scene.updateMatrixWorld();
     this.scene.traverseVisible((o) => {
       if (!(o instanceof CSS2DObject) || !o.element.textContent) return;
       const p = o.getWorldPosition(new THREE.Vector3()).project(camera);
       if (p.z > 1 || Math.abs(p.x) > 1 || Math.abs(p.y) > 1) return;
-      out.push({ text: o.element.textContent, x: ((p.x + 1) / 2) * width, y: ((1 - p.y) / 2) * height });
+      out.push({
+        id: o.userData.planId as string | undefined, text: o.element.textContent,
+        x: ((p.x + 1) / 2) * width, y: ((1 - p.y) / 2) * height, below: o.center.y < 0,
+        pressed: o.element.getAttribute('aria-pressed') === 'true',
+      });
     });
     return out;
   }

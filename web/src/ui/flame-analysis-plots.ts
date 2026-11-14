@@ -8,6 +8,10 @@
  * gaps break a line and nothing is interpolated. The legend doubles as the
  * readout at the cursor. Each plot takes its share of the column and is drawn at
  * that size in screen pixels, so text stays the size of the interface's.
+ *
+ * With `reveal` the lines and quality bands end at the cursor, so the plots draw as
+ * the event plays; the axes, grid and key moments keep the whole event, so nothing
+ * rescales as a peak arrives.
  */
 
 import { fmt, niceTicks, PLANNED_DASH, roleColor, runs, seriesDash, svgElement, valueAt, valueExtent } from './plot-svg';
@@ -31,11 +35,33 @@ export interface PlotSpec {
   title: string;
   unit: string;
   lines: PlotLine[];
-  /** Shown value = stored value x scale (m3 to litres, ...). */
+  /** Shown value = stored value x scale (m3 to ft3, ...). */
   scale?: number;
 }
 export interface Band { from: number; to: number; kind: 'noHull' | 'outsideFrame' }
 export interface Moment { t: number; label: string }
+
+/** Decimals of a plot's readouts: four significant digits at the plot's largest
+ *  value inside the window, then the same for every value, so a reading keeps its
+ *  width while the cursor moves (a flame volume of a few hundredths of a m³). */
+export function readoutDecimals(spec: PlotSpec, window: [number, number]): number {
+  const scale = spec.scale ?? 1;
+  let peak = 0;
+  for (const line of spec.lines) {
+    for (let i = 0; i < line.t.length; i++) {
+      if (line.t[i] < window[0] || line.t[i] > window[1]) continue;
+      const v = Math.abs(line.v[i] * scale);
+      if (Number.isFinite(v) && v > peak) peak = v;
+    }
+  }
+  return peak > 0 ? Math.min(6, Math.max(0, 3 - Math.floor(Math.log10(peak)))) : 0;
+}
+/** A legend reading at `decimals`, '–' where there is none (and never a minus zero). */
+export function readoutText(value: number | null, decimals: number): string {
+  if (value === null || !Number.isFinite(value)) return '–';
+  const text = value.toFixed(decimals);
+  return i18n.numberText(/^-0(\.0*)?$/.test(text) ? text.slice(1) : text);
+}
 
 /** Shared text and colour meaning on the board and in exported compositions. */
 export const qualityKey = (kind: Band['kind']): { text: string; token: string } => kind === 'noHull'
@@ -57,15 +83,26 @@ export const dashOf = (line: Pick<PlotLine, 'role' | 'nth'>): string =>
   line.role === 'predicted' ? PLANNED_DASH : line.role === 'estimated' ? seriesDash('simulated', line.nth)
     : line.role === 'measured' ? seriesDash('measured', line.nth) : '';
 
-interface Drawn { spec: PlotSpec; host: HTMLElement; svg?: SVGSVGElement; cursor?: SVGLineElement; x0: number; x1: number; last: boolean }
+interface Drawn {
+  spec: PlotSpec; host: HTMLElement; svg?: SVGSVGElement; cursor?: SVGLineElement;
+  /** What the lines and bands are clipped to: the plot rectangle, or with `reveal` the part up to the cursor. */
+  clip?: SVGElement;
+  x0: number; x1: number; last: boolean;
+}
+
+export interface PlotOptions {
+  /** Draw each line only up to the playback time, as if it were drawn while the event plays. */
+  reveal?: boolean;
+}
 
 export class AnalysisPlots {
   readonly element = h('div', { class: 'flame-analysis__plots' });
   private plots: Drawn[] = [];
-  private readouts: { cell: HTMLElement; line: PlotLine; scale: number }[] = [];
+  private readouts: { cell: HTMLElement; line: PlotLine; scale: number; decimals: number }[] = [];
   private sections = new Map<string, HTMLElement>();
   private observer: ResizeObserver;
   private time: number;
+  private reveal: boolean;
 
   constructor(
     specs: PlotSpec[],
@@ -74,7 +111,9 @@ export class AnalysisPlots {
     private bands: Band[],
     private moments: Moment[],
     private onSeek: (t: number) => void,
+    options: PlotOptions = {},
   ) {
+    this.reveal = !!options.reveal;
     this.time = window[0];
     this.observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -85,11 +124,12 @@ export class AnalysisPlots {
     specs.forEach((spec, n) => {
       const host = h('div', { class: 'flame-analysis__plot-area' });
       const scale = spec.scale ?? 1;
+      const decimals = readoutDecimals(spec, window);
       const legend = h('table', { class: 'flame-analysis__legend' }, [
         h('caption', {}, [`${spec.title} (${spec.unit})`]),
         h('tbody', {}, spec.lines.map((line) => {
           const cell = h('td', { class: 'flame-analysis__value' }, ['–']);
-          this.readouts.push({ cell, line, scale });
+          this.readouts.push({ cell, line, scale, decimals });
           return h('tr', {}, [h('td', {}, [this.key(line)]), h('th', { scope: 'row', title: line.note }, [line.label]), cell]);
         })),
       ]);
@@ -133,9 +173,17 @@ export class AnalysisPlots {
       width, height, viewBox: `0 0 ${width} ${height}`, class: 'flame-analysis__plot-svg', role: 'img',
       'aria-label': i18n.t("{p1} over time; the table beside it reads the values at the playback time", { p1: spec.title }),
     }) as SVGSVGElement;
+    // A series may run past the event's instants (a hood record of the whole test):
+    // its line stops at the plot's edge, as in the exported composition. With
+    // `reveal` the clip ends at the cursor instead (`place`), for the bands as well.
+    const clip = `flame-analysis-clip-${++clips}`;
+    const clipPath = svgElement('clipPath', { id: clip });
+    plot.clip = svgElement('rect', { x: X0, y: Y0 - 2, width: Math.max(X1 - X0, 0), height: Math.max(Y1 - Y0 + 4, 0) });
+    clipPath.append(plot.clip);
+    svg.append(clipPath);
     for (const band of this.bands) {
       const a = Math.max(x(band.from), X0), b = Math.min(x(band.to), X1);
-      if (b > a) svg.append(svgElement('rect', { x: a, y: Y0, width: Math.max(b - a, 1.5), height: Y1 - Y0, class: `flame-analysis__band flame-analysis__band--${band.kind}` }));
+      if (b > a) svg.append(svgElement('rect', { x: a, y: Y0, width: Math.max(b - a, 1.5), height: Y1 - Y0, 'clip-path': `url(#${clip})`, class: `flame-analysis__band flame-analysis__band--${band.kind}` }));
     }
     for (const tick of extent.ticks) {
       svg.append(svgElement('line', { x1: X0, x2: X1, y1: y(tick), y2: y(tick), stroke: 'var(--plot-grid)', 'stroke-width': 0.6 }));
@@ -168,12 +216,6 @@ export class AnalysisPlots {
         labelEnd = start + width + 3;
       }
     }
-    // A series may run past the event's instants (a hood record of the whole test):
-    // its line stops at the plot's edge, as in the exported composition.
-    const clip = `flame-analysis-clip-${++clips}`;
-    const clipPath = svgElement('clipPath', { id: clip });
-    clipPath.append(svgElement('rect', { x: X0, y: Y0 - 2, width: Math.max(X1 - X0, 0), height: Math.max(Y1 - Y0 + 4, 0) }));
-    svg.append(clipPath);
     for (const line of spec.lines) {
       const d = this.path(line, scale, x, y);
       if (!d) continue;
@@ -239,14 +281,15 @@ export class AnalysisPlots {
     const px = plot.x0 + ((this.time - t0) / Math.max(t1 - t0, 1e-9)) * (plot.x1 - plot.x0);
     plot.cursor.setAttribute('x1', String(px));
     plot.cursor.setAttribute('x2', String(px));
+    if (this.reveal) plot.clip?.setAttribute('width', String(Math.max(Math.min(px, plot.x1) - plot.x0, 0)));
   }
 
   setTime(t: number): void {
     this.time = t;
     for (const plot of this.plots) this.place(plot);
-    for (const { cell, line, scale } of this.readouts) {
+    for (const { cell, line, scale, decimals } of this.readouts) {
       const value = valueAt(line.t, line.v, t);
-      cell.textContent = value === null || !Number.isFinite(value) ? '–' : fmt(value * scale);
+      cell.textContent = readoutText(value === null ? null : value * scale, decimals);
     }
   }
 

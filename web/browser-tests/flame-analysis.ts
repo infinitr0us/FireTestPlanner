@@ -174,12 +174,179 @@ export async function checkFlameAnalysis(workspace: FlameAnalysisWorkspace): Pro
   check('the board is given back after the export panel', !$<HTMLElement>('.flame-analysis__body')!.inert
     && !$<HTMLElement>('.flame-analysis__header')!.inert);
 
+  // Feedback of 2026-11-13: volume in m³, the fire's label under its rim, plots drawn as
+  // the event plays (on by default, in the export too), and the board without plots.
+  const feedback = workspace as unknown as {
+    scene: any; index: number; plotsShown: boolean; seekIndex(i: number): void;
+    composer(layout: string, width: number): { canvas: HTMLCanvasElement; draw(i: number): Promise<void>; pixels(): Uint8ClampedArray };
+  };
+  const frame = (): Promise<void> => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+  const cards = (): string[] => $$('.flame-analysis__number').map((n) => n.textContent!.replace(/ | /g, ' '));
+  check('flame volume is in m³ on its plot and its card', plotCaptions().includes('Flame volume (m³)')
+    && cards().some((n) => /^Largest flame0\.\d+ m³/.test(n)), [plotCaptions(), cards()]);
+  check('a volume reading keeps four significant digits at the plot’s largest value',
+    /^\d\.\d{4}$/.test($('[data-plot=volume] .flame-analysis__value')!.textContent!), $('[data-plot=volume] .flame-analysis__value')!.textContent);
+
+  const reveal = $<HTMLButtonElement>('.flame-analysis__reveal')!;
+  const plotEnds = (): { clip: number; cursor: number; full: number; bands: boolean }[] => $$('.flame-analysis__plot-svg').map((svg) => {
+    const rect = svg.querySelector('clipPath rect')!;
+    const cursor = [...svg.querySelectorAll('line')].find((l) => l.getAttribute('stroke') === 'var(--plot-cursor)')!;
+    return {
+      clip: Number(rect.getAttribute('x')) + Number(rect.getAttribute('width')), cursor: Number(cursor.getAttribute('x1')),
+      full: Number(svg.getAttribute('width')) - 10,
+      bands: [...svg.querySelectorAll('.flame-analysis__band')].every((b) => b.getAttribute('clip-path') === `url(#${rect.parentElement!.id})`),
+    };
+  });
+  await wait(() => $$('.flame-analysis__plot-svg').length === 4, 'plots before Draw as it plays');
+  check('Draw as it plays is on by default: every plot ends its lines and bands at the cursor',
+    reveal.getAttribute('aria-pressed') === 'true' && plotEnds().every((p) => Math.abs(p.clip - p.cursor) < 0.5 && p.bands), plotEnds());
+  feedback.seekIndex(0);
+  await frame();
+  const atFirst = plotEnds();
+  feedback.seekIndex(1e9);
+  await frame();
+  const atLast = plotEnds();
+  check('at the first instant nothing is drawn yet; at the last, everything',
+    atFirst.every((p) => Math.abs(p.clip - 44) < 0.5) && atLast.every((p) => Math.abs(p.clip - p.full) < 0.5), [atFirst, atLast]);
+  feedback.seekIndex(0);
+  await frame();
+  const primary = getComputedStyle(document.documentElement).getPropertyValue('--plot-primary').trim();
+  const [pr, pg, pb] = [1, 3, 5].map((i) => parseInt(primary.slice(i, i + 2), 16));
+  /** Pixels of the measured colour in the right part of the exported plots, at the first instant. */
+  const exportedRight = async (): Promise<number> => {
+    const composer = feedback.composer('board', 1280);
+    await composer.draw(0);
+    const { width, height } = composer.canvas, data = composer.pixels();
+    let n = 0;
+    for (let y = Math.round(height * 0.2); y < height * 0.95; y++) {
+      for (let x = Math.round(width * 0.8); x < width * 0.97; x++) {
+        const i = (y * width + x) * 4;
+        if (Math.abs(data[i] - pr) < 40 && Math.abs(data[i + 1] - pg) < 40 && Math.abs(data[i + 2] - pb) < 40) n++;
+      }
+    }
+    feedback.scene.setFrame(feedback.index);
+    return n;
+  };
+  const revealedExport = await exportedRight();
+  reveal.click();
+  await wait(() => $$('.flame-analysis__plot-svg').length === 4 && plotEnds().every((p) => Math.abs(p.clip - p.full) < 0.5), 'whole plots');
+  check('Draw as it plays off: every plot is whole again, and the choice is remembered',
+    reveal.getAttribute('aria-pressed') === 'false' && JSON.parse(localStorage.getItem('fire-test-plan.flame-analysis.view')!).reveal === false);
+  const wholeExport = await exportedRight();
+  check('the exported plots draw as it plays too', wholeExport > 200 && revealedExport * 4 < wholeExport, [revealedExport, wholeExport]);
+  $<HTMLButtonElement>('.flame-analysis__reveal')!.click();
+  await wait(() => $$('.flame-analysis__plot-svg').length === 4, 'plots drawn as it plays again');
+
+  // The fire's label hangs under its rim, below the flame rising from it, here and in the export.
+  const fireLabel = (() => {
+    let found: any;
+    feedback.scene.scene.traverse((o: any) => { if (o.isCSS2DObject && o.visible && o.element.textContent === 'Steel pan, 0.4 m square') found = o; });
+    return found;
+  })();
+  if (fireLabel) {
+    feedback.scene.render();
+    const anchor = fireLabel.getWorldPosition(fireLabel.position.clone()).project(feedback.scene.camera);
+    const host = feedback.scene.renderer.domElement.getBoundingClientRect();
+    const anchorY = host.top + ((1 - anchor.y) / 2) * host.height, top = fireLabel.element.getBoundingClientRect().top;
+    check('the fire’s label hangs just below its rim', fireLabel.center.y < 0 && top > anchorY && top < anchorY + 12, [top, anchorY]);
+    check('the export draws the fire’s label below its point too', feedback.scene.labelsAt(640, 360).some((l: any) => l.text === 'Steel pan, 0.4 m square' && l.below));
+  } else check('the fire is labelled in the 3-D view', false, 'no visible label for the fire');
+
+  // The board without its plots: the pictures beside the 3-D view, both larger.
+  const plotsToggle = $<HTMLButtonElement>('.flame-analysis__plots-toggle')!;
+  const area = (r: DOMRect): number => r.width * r.height;
+  const sceneBefore = $('.flame-analysis__scene-host')!.getBoundingClientRect();
+  const framesBefore = $$('.flame-analysis__tile-open').map((t) => t.getBoundingClientRect().height);
+  check('the header offers the plots, shown', !plotsToggle.hidden && plotsToggle.getAttribute('aria-pressed') === 'true');
+  plotsToggle.click();
+  await wait(() => !!$('.flame-analysis__tiles--packed'), 'pictures packed');
+  await frame();
+  const left = $('.flame-analysis__left')!.getBoundingClientRect(), cams = $('.flame-analysis__cameras')!.getBoundingClientRect();
+  const sceneAfter = $('.flame-analysis__scene-host')!.getBoundingClientRect();
+  const framesAfter = $$('.flame-analysis__tile-open').map((t) => t.getBoundingClientRect().height);
+  check('Plots off: the plots are hidden and the pictures stand beside the 3-D view, in a column no wider than they need',
+    plotsToggle.getAttribute('aria-pressed') === 'false' && getComputedStyle($('.flame-analysis__charts')!).display === 'none'
+    && cams.right < sceneAfter.left && Math.abs(cams.top - left.top) < 2 && cams.width < 0.56 * left.width,
+    { cams: [cams.left, cams.width], scene: [sceneAfter.left, sceneAfter.width], left: left.width });
+  check('Plots off: the pictures are one height and larger, and the 3-D view is larger',
+    Math.max(...framesAfter) - Math.min(...framesAfter) < 1.5 && framesAfter[0] > Math.max(...framesBefore)
+    && area(sceneAfter) > 1.5 * area(sceneBefore), { framesBefore, framesAfter, sceneBefore: area(sceneBefore), sceneAfter: area(sceneAfter) });
+  check('Plots off: the choice is remembered', JSON.parse(localStorage.getItem('fire-test-plan.flame-analysis.view')!).plots === false);
+  $<HTMLButtonElement>('.flame-analysis__export button')!.click();
+  check('Plots off: the export starts from the cameras and the 3-D view, as on screen',
+    ($('.flame-analysis__export-panel select') as HTMLSelectElement).value === 'cameras');
+  $('.flame-analysis__export-panel')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await wait(() => !$('.flame-analysis__export-panel'), 'export panel closes after the layout check');
+  $<HTMLButtonElement>('.flame-analysis__step[data-step=hrr]')!.click();
+  await wait(() => !$('.flame-analysis__tiles--packed') && $$('.flame-analysis__plot-svg').length === 4, 'the HRR step brings the plots back');
+  check('the heat release rate step brings the plots back to explain them',
+    plotsToggle.getAttribute('aria-pressed') === 'true' && getComputedStyle($('.flame-analysis__charts')!).display !== 'none'
+    && !!$('[data-plot=hrr].flame-analysis--pointed'));
+  $<HTMLButtonElement>('.flame-analysis__step[data-step=hrr]')!.click();
+  localStorage.removeItem('fire-test-plan.flame-analysis.view');
+
+  // Heat flux (event format 1.2): E1's two gauges, the near one with two records.
+  const fluxToggles = (): HTMLButtonElement[] => $$<HTMLButtonElement>('.flame-analysis__flux-toggle');
+  const gaugeLabel = (id: string): any => {
+    let found: any;
+    feedback.scene.scene.traverse((o: any) => { if (o.isCSS2DObject && o.userData.planId === id) found = o; });
+    return found;
+  };
+  const fluxPlot = (): Element | null => $('[data-plot=heatFlux]');
+  check('heat flux: one toggle per gauge under the plots, none plotted at first',
+    fluxToggles().map((b) => b.textContent).join('|') === 'Near gauge (synthetic)|Far gauge (synthetic)'
+    && fluxToggles().every((b) => b.getAttribute('aria-pressed') === 'false') && !fluxPlot(), fluxToggles().map((b) => b.textContent));
+  feedback.seekIndex(1e9);
+  await frame();
+  const near = gaugeLabel('gauge-near');
+  check('heat flux: a gauge with records is labelled in 3-D with its reading, as a toggle out of the tab order',
+    !!near && near.visible && /^Near gauge \(synthetic\): -?\d+\.\d kW\/m²$/.test(near.element.textContent)
+    && near.element.getAttribute('role') === 'button' && near.element.tabIndex === -1 && near.element.getAttribute('aria-pressed') === 'false',
+    near && [near.visible, near.element.textContent]);
+  near.element.click();
+  await wait(() => $$('[data-plot=heatFlux] .flame-analysis__plot-svg').length === 1, 'the heat flux plot');
+  check('heat flux: a click on the gauge’s label plots both its records, and presses it here and below the plots',
+    $$('[data-plot=heatFlux] tbody tr').length === 2 && near.element.getAttribute('aria-pressed') === 'true'
+    && fluxToggles()[0].getAttribute('aria-pressed') === 'true' && $('[data-plot=heatFlux] caption')!.textContent === 'Heat flux (kW/m²)');
+  check('heat flux: the gauge’s second record takes the measured family’s next dash',
+    (() => { const keys = $$('[data-plot=heatFlux] tbody tr line'); return keys.length === 2 && !keys[0].getAttribute('stroke-dasharray') && !!keys[1].getAttribute('stroke-dasharray'); })());
+  fluxToggles()[1].click();
+  await wait(() => $$('[data-plot=heatFlux] tbody tr').length === 3, 'the far gauge added');
+  check('heat flux: the far gauge’s toggle adds its record to the same plot', gaugeLabel('gauge-far').element.getAttribute('aria-pressed') === 'true');
+  // A click near a gauge in the view: the near one, where the view draws it.
+  {
+    const scene = feedback.scene, box = scene.renderer.domElement.getBoundingClientRect();
+    const p = gaugeLabel('gauge-near').parent.getWorldPosition(gaugeLabel('gauge-near').position.clone()).project(scene.camera);
+    const x = box.left + ((p.x + 1) / 2) * box.width, y = box.top + ((1 - p.y) / 2) * box.height;
+    check('heat flux: a click within a few pixels of a gauge in the view picks it', scene.gaugeAt(x + 3, y - 3) === 'gauge-near', [x, y]);
+  }
+  const exportedFlux = feedback.composer('board', 1280) as unknown as { source: { plots: { specs: { id: string }[] }; labelText(id: string, i: number): string } };
+  check('heat flux: the export draws the plot, and each gauge’s reading at its own frame',
+    exportedFlux.source.plots.specs.some((s) => s.id === 'heatFlux')
+    && exportedFlux.source.labelText('gauge-near', 0) !== exportedFlux.source.labelText('gauge-near', feedback.index)
+    && /^Near gauge \(synthetic\)/.test(exportedFlux.source.labelText('gauge-near', 0)));
+  // Plotting a gauge while the plots are hidden shows them.
+  fluxToggles().forEach((b) => b.click());
+  await wait(() => !fluxPlot(), 'heat flux plot gone');
+  $<HTMLButtonElement>('.flame-analysis__plots-toggle')!.click();
+  await wait(() => !!$('.flame-analysis__tiles--packed'), 'plots hidden again');
+  gaugeLabel('gauge-near').element.click();
+  await wait(() => !$('.flame-analysis__tiles--packed') && !!fluxPlot(), 'the gauge brings the plots back');
+  check('heat flux: plotting a gauge while the plots are hidden shows them',
+    $<HTMLButtonElement>('.flame-analysis__plots-toggle')!.getAttribute('aria-pressed') === 'true');
+  gaugeLabel('gauge-near').element.click();
+  await wait(() => !fluxPlot(), 'heat flux plot gone again');
+  localStorage.removeItem('fire-test-plan.flame-analysis.view');
+
   // The second event: two cameras, its own clock.
   const select = $('.flame-analysis__event select') as HTMLSelectElement;
   select.value = 'E2';
   select.dispatchEvent(new Event('change'));
   await wait(() => $$('.flame-analysis__tile').length === 2 && painted(), 'E2 board');
   check('E2 shows two cameras', true);
+  check('E2 (format 1.0) has no heat flux: no gauge toggles, no gauge labelled in 3-D',
+    !$('.flame-analysis__flux') && (() => { let shown = 0; (workspace as any).scene.scene.traverse((o: any) => {
+      if (o.isCSS2DObject && o.visible && /gauge/.test(o.userData.planId ?? '')) shown++; }); return shown === 0; })());
   check('the drawer closes with the event change', $<HTMLElement>('.flame-analysis__drawer')!.hidden === true);
   check('the outline choice carries over', ($('.flame-analysis__outline-toggle') as HTMLButtonElement).getAttribute('aria-pressed') === 'true');
   check('E2 times are its own', /\(t_clock 16\d/.test(text('.flame-analysis__readout')), text('.flame-analysis__readout'));
